@@ -129,28 +129,26 @@ def _try_ioreg(timeout: int) -> Optional[str]:
 
     Apple の USB Serial Number は 24 文字の16進数。
     これをそのまま UDID として使用する（Appium は受け付ける）。
+
+    注意: ioreg -l の出力では "USB Serial Number" が "idVendor" より
+    前に現れることがある。全テキストを一括検索することで順序に依存しない。
     """
     try:
         result = subprocess.run(
-            ["ioreg", "-p", "IOUSB", "-w", "0"],
+            ["ioreg", "-p", "IOUSB", "-w", "0", "-l"],
             capture_output=True,
             text=True,
             timeout=timeout,
         )
-        # Apple VendorID (0x05ac = 1452) のデバイスの Serial のみ対象
-        # ioreg の出力は USB デバイスツリー順なので
-        # idVendor = 1452 の直後にある Serial を採用する
-        lines = result.stdout.splitlines()
-        found_apple = False
-        for line in lines:
-            if '"idVendor" = 1452' in line:
-                found_apple = True
-            if found_apple:
-                m = _IOREG_SERIAL_PATTERN.search(line)
-                if m:
-                    serial = m.group(1).upper()
-                    logger.debug(f"[UDID] ioreg USB Serial: {serial}")
-                    return serial
+        output = result.stdout
+        # Apple VendorID (0x05ac = 1452) のデバイスが存在する場合のみ処理
+        if '"idVendor" = 1452' not in output:
+            return None
+        m = _IOREG_SERIAL_PATTERN.search(output)
+        if m:
+            serial = m.group(1).upper()
+            logger.debug(f"[UDID] ioreg USB Serial: {serial}")
+            return serial
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         logger.debug(f"[UDID] ioreg 実行失敗: {e}")
     return None

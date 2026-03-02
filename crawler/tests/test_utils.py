@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from appium.utils import get_device_udid, _try_idevice_id, _try_ioreg, diagnose_device_connection
+from lc.utils import get_device_udid, _try_idevice_id, _try_ioreg, diagnose_device_connection
 
 # ============================================================
 # テスト用定数

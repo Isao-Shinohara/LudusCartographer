@@ -12,7 +12,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any, Dict, Generator, Optional
 
 from appium import webdriver
 from appium.webdriver.common.appiumby import AppiumBy
@@ -142,7 +142,7 @@ class AppiumDriver:
         x: int,
         y: int,
         action_name: str = "ocr_tap",
-        ocr_data: dict | None = None,
+        ocr_data: Optional[Dict] = None,
     ) -> None:
         """
         OCR フォールバック: 座標を直接タップする。
@@ -238,9 +238,9 @@ def android_session(cfg: AndroidDeviceConfig) -> Generator[AppiumDriver, None, N
         driver.quit()
 
 
-def _make_options(caps: dict[str, Any]):
+def _make_options(caps: dict):
     """Capabilities dict を Appium Options オブジェクトに変換する。"""
-    from appium.options import AppiumOptions
+    from appium.options.common import AppiumOptions
     options = AppiumOptions()
     for k, v in caps.items():
         options.set_capability(k, v)

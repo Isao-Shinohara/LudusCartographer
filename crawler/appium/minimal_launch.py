@@ -43,8 +43,8 @@ from pathlib import Path
 # プロジェクトルートを sys.path に追加
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from appium.capabilities import ios_config_from_env
-from appium.driver import ios_session
+from lc.capabilities import ios_config_from_env
+from lc.driver import ios_session
 
 logging.basicConfig(
     level=logging.INFO,

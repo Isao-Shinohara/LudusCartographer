@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from appium.capabilities import (
+from lc.capabilities import (
     iOSDeviceConfig,
     AndroidDeviceConfig,
     build_ios_capabilities,
