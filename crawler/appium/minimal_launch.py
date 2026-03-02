@@ -36,7 +36,10 @@ import hashlib
 import json
 import logging
 import os
+import socket
+import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -51,6 +54,61 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# Appium サーバー自動ライフサイクル管理
+# ============================================================
+
+def ensure_appium_running(
+    host: str = "127.0.0.1",
+    port: int = 4723,
+    wait_sec: int = 30,
+) -> None:
+    """
+    Appium サーバーが起動していない場合、バックグラウンドで自動起動して待機する。
+
+    Args:
+        host:     Appium ホスト (デフォルト: 127.0.0.1)
+        port:     Appium ポート (デフォルト: 4723)
+        wait_sec: 起動完了まで待機する最大秒数 (デフォルト: 30)
+
+    Raises:
+        RuntimeError: 待機タイムアウトした場合
+    """
+    def _is_up() -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=1):
+                return True
+        except OSError:
+            return False
+
+    if _is_up():
+        logger.info(f"[APPIUM] 起動中を確認: http://{host}:{port}")
+        return
+
+    logger.info(f"[APPIUM] 未起動 → バックグラウンドで起動: appium --port {port}")
+    proc = subprocess.Popen(
+        ["appium", "--port", str(port), "--log", "/tmp/appium.log", "--log-timestamp"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    logger.info(f"[APPIUM] PID {proc.pid} で起動中 ... (最大 {wait_sec}秒待機)")
+
+    start = time.time()
+    while time.time() - start < wait_sec:
+        if _is_up():
+            elapsed = time.time() - start
+            logger.info(f"[APPIUM] 起動完了 (PID {proc.pid}, {elapsed:.1f}秒)")
+            return
+        time.sleep(1)
+
+    raise RuntimeError(
+        f"Appium が {wait_sec}秒以内に起動しませんでした。\n"
+        f"  ログ確認: cat /tmp/appium.log\n"
+        f"  Node.js v18 が有効か確認: node --version\n"
+        f"  (nodebrew use v18.20.8 で切り替え)"
+    )
 
 
 # ============================================================
@@ -165,18 +223,27 @@ def analyze_with_vertex_ai(screenshot_path: Path) -> dict:
 # ============================================================
 
 def main() -> None:
+    # --- .env ロード（存在する場合）---
+    env_path = Path(__file__).parent.parent / "config" / ".env"
+    if env_path.exists():
+        from dotenv import load_dotenv
+        load_dotenv(env_path)
+
+    # --- Appium サーバー自動起動 ---
+    appium_host = os.environ.get("APPIUM_HOST", "127.0.0.1")
+    appium_port = int(os.environ.get("APPIUM_PORT", "4723"))
+    try:
+        ensure_appium_running(host=appium_host, port=appium_port)
+    except RuntimeError as e:
+        logger.error(str(e))
+        sys.exit(1)
+
     # --- デバイス設定（UDID は自動検出） ---
     try:
         cfg = ios_config_from_env()
     except (ValueError, RuntimeError) as e:
         logger.error(str(e))
         sys.exit(1)
-
-    # --- .env ロード（存在する場合）---
-    env_path = Path(__file__).parent.parent / "config" / ".env"
-    if env_path.exists():
-        from dotenv import load_dotenv
-        load_dotenv(env_path)
 
     logger.info("=" * 60)
     logger.info("LudusCartographer — 最小疎通確認 (Vertex AI + MySQL 統合版)")

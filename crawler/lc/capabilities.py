@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Tuple, Union
 
 
 # ============================================================
@@ -173,3 +173,50 @@ def android_config_from_env() -> AndroidDeviceConfig:
         appium_host=os.environ.get("APPIUM_HOST", "127.0.0.1"),
         appium_port=int(os.environ.get("APPIUM_PORT", "4723")),
     )
+
+
+def auto_config_from_env() -> Tuple[Union[iOSDeviceConfig, AndroidDeviceConfig], str]:
+    """
+    接続中のデバイスを自動検出し、適切な DeviceConfig とプラットフォーム名を返す。
+
+    iOS / Android を自動判別して設定を生成する統合エントリポイント。
+
+    Returns:
+        (config, platform): platform は "ios" または "android"
+
+    Raises:
+        RuntimeError: デバイスが見つからない場合
+        ValueError: 必須環境変数 (IOS_BUNDLE_ID 等) が未設定の場合
+    """
+    from .utils import detect_connected_device
+
+    udid, platform = detect_connected_device()
+
+    if platform == "ios":
+        bundle_id = os.environ.get("IOS_BUNDLE_ID", "")
+        if not bundle_id:
+            raise ValueError(
+                "環境変数 IOS_BUNDLE_ID が設定されていません。\n"
+                "例: export IOS_BUNDLE_ID='com.apple.Preferences'"
+            )
+        cfg: Union[iOSDeviceConfig, AndroidDeviceConfig] = iOSDeviceConfig(
+            udid=udid,
+            bundle_id=bundle_id,
+            device_name=os.environ.get("IOS_DEVICE_NAME", "iPhone"),
+            platform_version=os.environ.get("IOS_PLATFORM_VERSION", ""),
+            appium_host=os.environ.get("APPIUM_HOST", "127.0.0.1"),
+            appium_port=int(os.environ.get("APPIUM_PORT", "4723")),
+        )
+        return cfg, "ios"
+
+    # platform == "android"
+    cfg = AndroidDeviceConfig(
+        udid=udid,
+        app_package=os.environ.get("ANDROID_APP_PACKAGE", ""),
+        app_activity=os.environ.get("ANDROID_APP_ACTIVITY", ".MainActivity"),
+        device_name=os.environ.get("ANDROID_DEVICE_NAME", "Android"),
+        platform_version=os.environ.get("ANDROID_PLATFORM_VERSION", ""),
+        appium_host=os.environ.get("APPIUM_HOST", "127.0.0.1"),
+        appium_port=int(os.environ.get("APPIUM_PORT", "4723")),
+    )
+    return cfg, "android"
