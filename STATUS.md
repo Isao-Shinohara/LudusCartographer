@@ -26,10 +26,11 @@
 
 ### Pytest (crawler)
 ```
-test_db_conn.py:     8 passed, 3 skipped (MySQL統合テストはDB起動時のみ)
+test_db_conn.py:      8 passed, 3 skipped (MySQL統合テストはDB起動時のみ)
 test_capabilities.py: 22 passed
-test_ocr.py:         10 passed (PaddleOCR 3.4.0 — 4テキスト検出確認済み)
-合計: 40 passed, 3 skipped
+test_ocr.py:          10 passed (PaddleOCR 3.4.0 — 4テキスト検出確認済み)
+test_ai_analyzer.py:  27 passed (Vertex AI モック — GCP接続不要)
+合計: 67 passed, 3 skipped
 ```
 
 ### Playwright E2E (web)
