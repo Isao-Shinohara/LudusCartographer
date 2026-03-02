@@ -1,0 +1,110 @@
+{% extends "layout.html.twig" %}
+
+{% block title %}画面検索 — LudusCartographer{% endblock %}
+
+{% block content %}
+
+<!-- 検索フォーム -->
+<section class="mb-8">
+    <form method="GET" action="" class="flex gap-3 items-center">
+        <div class="relative flex-1">
+            <span class="absolute inset-y-0 left-3 flex items-center text-gray-400">🔍</span>
+            <input
+                type="text"
+                name="q"
+                value="{{ keyword|e }}"
+                placeholder="OCRテキスト・画面名で検索（例: ショップ、ホーム）"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg pl-10 pr-4 py-3
+                       text-gray-100 placeholder-gray-500 focus:outline-none
+                       focus:ring-2 focus:ring-brand focus:border-transparent"
+                autofocus
+                id="search-input"
+            >
+        </div>
+        <button
+            type="submit"
+            class="bg-brand hover:bg-brand-dark text-white font-semibold px-6 py-3
+                   rounded-lg transition-colors duration-150"
+        >
+            検索
+        </button>
+        {% if keyword %}
+        <a href="?" class="text-gray-400 hover:text-gray-200 text-sm px-3 py-3">クリア</a>
+        {% endif %}
+    </form>
+</section>
+
+<!-- 件数表示 -->
+<div class="mb-4 text-sm text-gray-500">
+    {% if keyword %}
+        「<span class="text-gray-300 font-medium">{{ keyword|e }}</span>」の検索結果:
+        <span class="text-brand-light font-bold">{{ screens|length }}</span> 件
+    {% else %}
+        全スクリーン:
+        <span class="text-brand-light font-bold">{{ screens|length }}</span> 件
+    {% endif %}
+</div>
+
+<!-- 結果グリッド -->
+{% if screens is empty %}
+    <div class="text-center py-24 text-gray-600">
+        <p class="text-5xl mb-4">🏜️</p>
+        <p class="text-lg">該当する画面が見つかりませんでした。</p>
+        <p class="text-sm mt-2">別のキーワードで検索してみてください。</p>
+    </div>
+{% else %}
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6" id="results-grid">
+        {% for screen in screens %}
+        <article class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden
+                        hover:border-brand transition-colors duration-150 group">
+
+            <!-- サムネイル or プレースホルダー -->
+            <div class="h-36 bg-gray-800 flex items-center justify-center text-gray-600 relative">
+                {% if screen.thumbnail_path %}
+                    <img src="{{ screen.thumbnail_path|e }}"
+                         alt="{{ screen.name|e }}"
+                         class="w-full h-full object-cover">
+                {% else %}
+                    <div class="text-center">
+                        <span class="text-4xl">📱</span>
+                        <p class="text-xs mt-1">{{ screen.category|e }}</p>
+                    </div>
+                {% endif %}
+                <!-- カテゴリバッジ -->
+                <span class="absolute top-2 right-2 bg-gray-950/80 text-brand-light
+                             text-xs font-mono px-2 py-0.5 rounded-full">
+                    {{ screen.category|e }}
+                </span>
+            </div>
+
+            <!-- テキスト情報 -->
+            <div class="p-4">
+                <h2 class="font-semibold text-gray-100 group-hover:text-brand-light
+                           transition-colors truncate">
+                    {{ screen.name ?? '(名称未設定)' }}
+                </h2>
+                <p class="text-xs text-gray-500 mt-1 mb-3 truncate">
+                    🎮 {{ screen.game_name|e }}
+                    <span class="ml-1 bg-gray-800 px-1 rounded">{{ screen.platform|e }}</span>
+                </p>
+
+                <!-- OCRテキストプレビュー -->
+                {% if screen.ocr_text %}
+                <p class="text-xs text-gray-500 font-mono bg-gray-800/60 rounded p-2 line-clamp-2
+                          leading-relaxed" title="{{ screen.ocr_text|e }}">
+                    {{ screen.ocr_text|slice(0, 100)|e }}{% if screen.ocr_text|length > 100 %}…{% endif %}
+                </p>
+                {% endif %}
+
+                <!-- メタ情報 -->
+                <div class="flex items-center justify-between mt-3 text-xs text-gray-600">
+                    <span>👁 {{ screen.visited_count }} 回訪問</span>
+                    <span>{{ screen.last_seen_at|slice(0, 10)|e }}</span>
+                </div>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+{% endif %}
+
+{% endblock %}
