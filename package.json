@@ -1,0 +1,15 @@
+{
+    "name": "ludus-cartographer-e2e",
+    "version": "1.0.0",
+    "description": "Playwright E2E tests for LudusCartographer web UI",
+    "private": true,
+    "scripts": {
+        "test:e2e": "playwright test",
+        "test:e2e:ui": "playwright test --ui",
+        "test:e2e:headed": "playwright test --headed",
+        "test:e2e:report": "playwright show-report"
+    },
+    "devDependencies": {
+        "@playwright/test": "^1.41.0"
+    }
+}
