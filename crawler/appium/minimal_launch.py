@@ -2,8 +2,8 @@
 minimal_launch.py — 最小疎通確認スクリプト（Vertex AI + MySQL 統合版）
 
 【使い方】
-  # 必須
-  export IOS_UDID="00008120-000A1234ABCD1234"
+  # IOS_UDID は省略可能 — 接続中の iPhone を自動検出する
+  # (検出順: 環境変数 → idevice_id -l → ioreg USB Serial)
   export IOS_BUNDLE_ID="com.example.mygame"
 
   # Vertex AI 解析（任意 — 未設定時はスキップ）
@@ -165,10 +165,10 @@ def analyze_with_vertex_ai(screenshot_path: Path) -> dict:
 # ============================================================
 
 def main() -> None:
-    # --- 環境変数チェック ---
+    # --- デバイス設定（UDID は自動検出） ---
     try:
         cfg = ios_config_from_env()
-    except ValueError as e:
+    except (ValueError, RuntimeError) as e:
         logger.error(str(e))
         sys.exit(1)
 

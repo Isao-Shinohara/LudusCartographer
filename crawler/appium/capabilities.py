@@ -116,26 +116,29 @@ def build_android_capabilities(cfg: AndroidDeviceConfig) -> dict[str, Any]:
 
 def ios_config_from_env() -> iOSDeviceConfig:
     """
-    環境変数から iOSDeviceConfig を生成する。
+    環境変数 + 自動デバイス検出から iOSDeviceConfig を生成する。
+
+    UDID の取得順序 (get_device_udid() に委譲):
+        1. 環境変数 IOS_UDID (最優先)
+        2. idevice_id -l
+        3. ioreg USB Serial Number (ペアリング前でも取得可能)
 
     必須環境変数:
-        IOS_UDID       : デバイス UDID
         IOS_BUNDLE_ID  : ターゲットアプリの Bundle ID
 
     任意環境変数:
+        IOS_UDID            : UDID (未設定時は自動検出)
         IOS_DEVICE_NAME     : デバイス名 (デフォルト: "iPhone")
         IOS_PLATFORM_VERSION: iOS バージョン
         APPIUM_HOST         : Appium サーバーホスト (デフォルト: 127.0.0.1)
         APPIUM_PORT         : Appium サーバーポート (デフォルト: 4723)
     """
-    udid = os.environ.get("IOS_UDID", "")
-    bundle_id = os.environ.get("IOS_BUNDLE_ID", "")
+    from .utils import get_device_udid
 
-    if not udid:
-        raise ValueError(
-            "環境変数 IOS_UDID が設定されていません。\n"
-            "例: export IOS_UDID='00008120-000A1234ABCD1234'"
-        )
+    # UDID: 自動検出（環境変数 → idevice_id → ioreg の順）
+    udid = get_device_udid()
+
+    bundle_id = os.environ.get("IOS_BUNDLE_ID", "")
     if not bundle_id:
         raise ValueError(
             "環境変数 IOS_BUNDLE_ID が設定されていません。\n"

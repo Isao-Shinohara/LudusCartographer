@@ -1,10 +1,10 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-03 (Phase 0+1準備 完了)
+最終更新: 2026-03-03 (Phase 1準備 完了 — UDID自動検出実装)
 
 ---
 
-## 現在のフェーズ: Phase 0+1準備 ✅ 完了
+## 現在のフェーズ: Phase 1 実機接続待ち
 
 ## コミット履歴
 
@@ -19,6 +19,11 @@
 | 7 | `30a168b` | `docs: add STATUS.md and session history for Phase 0` |
 | 8 | `fba2e77` | `docs(claude): add iterative dev, robustness, and evidence rules` |
 | 9 | `d3a47cc` | `feat(crawler): add Appium base code and PaddleOCR tests` |
+| 10 | `1b5cc22` | `docs: update STATUS.md and add Phase 1 session history` |
+| 11 | `fdeb16f` | `feat(crawler): add Vertex AI GameAnalyzer and extend minimal_launch` |
+| 12 | `cf18e5e` | `docs: update STATUS.md with test counts and Vertex AI status` |
+| 13 | `c2e3822` | `refactor(crawler): switch authentication to ADC` |
+| 14 | (未push) | `feat(crawler): add UDID auto-detection and README` |
 
 ---
 
@@ -28,9 +33,10 @@
 ```
 test_db_conn.py:      8 passed, 3 skipped (MySQL統合テストはDB起動時のみ)
 test_capabilities.py: 22 passed
+test_utils.py:        20 passed (UDID自動検出 — 全パスをモック検証)
 test_ocr.py:          10 passed (PaddleOCR 3.4.0 — 4テキスト検出確認済み)
 test_ai_analyzer.py:  27 passed (Vertex AI モック — GCP接続不要)
-合計: 67 passed, 3 skipped
+合計: 87 passed, 3 skipped
 ```
 
 ### Playwright E2E (web)
@@ -59,27 +65,28 @@ test_ai_analyzer.py:  27 passed (Vertex AI モック — GCP接続不要)
 
 ## 実機接続 待機中
 
-iPhoneを接続したら以下を実行して UDID を教えてください:
+UDID は自動検出されます。iPhone を USB 接続後:
 
 ```bash
-idevice_id -l
-# または
-instruments -s devices
-```
+# 接続診断（任意）
+cd crawler
+venv/bin/python -c "
+from appium.utils import diagnose_device_connection
+import json
+print(json.dumps(diagnose_device_connection(), indent=2))
+"
 
-その後:
-```bash
-export IOS_UDID="<教えてもらったUDID>"
-export IOS_BUNDLE_ID="<対象アプリのBundle ID>"
-export IOS_DEVICE_NAME="iPhone XX"
+# 必須: Bundle ID のみ設定（UDID は自動検出）
+export IOS_BUNDLE_ID="com.example.mygame"
 
 # Appiumサーバー起動
 appium --port 4723 &
 
 # 最小疎通確認（起動→3秒待機→スクショ→終了）
-cd crawler
 venv/bin/python appium/minimal_launch.py
 ```
+
+**iPhone初回接続時**: 画面に「このコンピュータを信頼しますか？」が表示されたら「信頼」をタップしてください。
 
 ---
 

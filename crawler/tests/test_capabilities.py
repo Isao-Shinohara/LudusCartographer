@@ -119,10 +119,15 @@ class TestAndroidCapabilities:
 class TestConfigFromEnv:
 
     def test_ios_config_raises_without_udid(self, monkeypatch):
+        """IOS_UDID 未設定かつ実機未接続のとき RuntimeError を送出すること。
+        (get_device_udid() が自動検出を試み、全手段失敗で RuntimeError)"""
+        from unittest.mock import MagicMock, patch
         monkeypatch.delenv("IOS_UDID", raising=False)
         monkeypatch.delenv("IOS_BUNDLE_ID", raising=False)
-        with pytest.raises(ValueError, match="IOS_UDID"):
-            ios_config_from_env()
+        r = MagicMock(); r.stdout = ""
+        with patch("subprocess.run", return_value=r):
+            with pytest.raises(RuntimeError, match="見つかりませんでした"):
+                ios_config_from_env()
 
     def test_ios_config_raises_without_bundle_id(self, monkeypatch):
         monkeypatch.setenv("IOS_UDID", "test-udid")
