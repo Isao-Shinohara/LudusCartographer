@@ -1,10 +1,10 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-03
+最終更新: 2026-03-03 (Phase 0+1準備 完了)
 
 ---
 
-## 現在のフェーズ: Phase 0 — 基盤構築 ✅ 完了
+## 現在のフェーズ: Phase 0+1準備 ✅ 完了
 
 ## コミット履歴
 
@@ -16,17 +16,9 @@
 | 4 | `343b0ea` | `feat(crawler): set up Python venv and DB connection tests` |
 | 5 | `671d53d` | `feat(web): set up PHP 8.x + Twig search UI` |
 | 6 | `7e59c35` | `test(e2e): add Playwright E2E tests for search UI` |
-
----
-
-## Phase 0 タスク進捗
-
-- [x] **Task 1**: git init + .gitignore 作成・コミット
-- [x] **Task 2**: CLAUDE.md 運用憲法の作成・コミット
-- [x] **Task 3**: MySQL スキーマ設計 (`docs/schema/database.sql`) — games, screens, ui_elements, crawl_sessions
-- [x] **Task 4**: Python 仮想環境 + DB接続テスト — **8 passed, 3 skipped** (MySQL未起動時スキップ)
-- [x] **Task 5**: PHP 8.2 + Twig 3.x + Tailwind CSS — 検索画面をDB-free フォールバック付きで実装
-- [x] **Task 6**: Playwright E2E テスト — **17/17 passed** in 3.1s
+| 7 | `30a168b` | `docs: add STATUS.md and session history for Phase 0` |
+| 8 | `fba2e77` | `docs(claude): add iterative dev, robustness, and evidence rules` |
+| 9 | `d3a47cc` | `feat(crawler): add Appium base code and PaddleOCR tests` |
 
 ---
 
@@ -34,49 +26,70 @@
 
 ### Pytest (crawler)
 ```
-8 passed, 3 skipped (MySQL統合テストはDB起動時のみ実行)
+test_db_conn.py:     8 passed, 3 skipped (MySQL統合テストはDB起動時のみ)
+test_capabilities.py: 22 passed
+test_ocr.py:         10 passed (PaddleOCR 3.4.0 — 4テキスト検出確認済み)
+合計: 40 passed, 3 skipped
 ```
 
 ### Playwright E2E (web)
 ```
-17 passed in 3.1s — Chromium
+17/17 passed in 3.1s — Chromium
 ```
 
 ---
 
-## 次フェーズ予定: Phase 1 — Appium クローラー基盤
+## インストール済みツール
 
-- [ ] Appium サーバー設定 (`crawler/appium_config.py`)
-- [ ] iOS / Android デバイス接続テスト
-- [ ] スクリーンショット取得 + PaddleOCR 処理パイプライン
-- [ ] screens テーブルへの自動保存
-- [ ] 画面ハッシュによる重複検出
-
----
-
-## 環境情報
-
-| 項目 | バージョン |
-|------|-----------|
-| Python | 3.9.6 (venv: `crawler/venv/`) |
-| PHP | 8.2.30 |
-| Node.js | 21.1.0 |
-| Composer | 最新 |
-| Playwright | ^1.41 |
+| ツール | バージョン | 状態 |
+|--------|-----------|------|
+| Python | 3.9.6 | ✅ venv: `crawler/venv/` |
+| PHP | 8.2.30 | ✅ |
+| Node.js | 18.20.8 (LTS) | ✅ |
+| Appium | 2.19.0 | ✅ |
+| xcuitest driver | 8.4.3 | ✅ |
+| uiautomator2 driver | 3.10.0 | ✅ |
+| libimobiledevice | latest | ✅ |
+| ideviceinstaller | latest | ✅ |
+| ios-deploy | latest | ✅ |
+| PaddleOCR | 3.4.0 | ✅ |
 
 ---
 
-## DB セットアップ手順（実機接続時）
+## 実機接続 待機中
+
+iPhoneを接続したら以下を実行して UDID を教えてください:
 
 ```bash
-# MySQLにスキーマを適用
-mysql -u root -p < docs/schema/database.sql
-
-# crawler の環境変数を設定
-cp crawler/config/.env.example crawler/config/.env
-vi crawler/config/.env   # パスワードを設定
-
-# web の環境変数を設定
-cp web/config/.env.example web/config/.env
-vi web/config/.env   # パスワードを設定
+idevice_id -l
+# または
+instruments -s devices
 ```
+
+その後:
+```bash
+export IOS_UDID="<教えてもらったUDID>"
+export IOS_BUNDLE_ID="<対象アプリのBundle ID>"
+export IOS_DEVICE_NAME="iPhone XX"
+
+# Appiumサーバー起動
+appium --port 4723 &
+
+# 最小疎通確認（起動→3秒待機→スクショ→終了）
+cd crawler
+venv/bin/python appium/minimal_launch.py
+```
+
+---
+
+## 次フェーズ予定: Phase 1 — Appium 実機疎通確認
+
+- [ ] **Step 1-A**: iPhone接続 → UDID取得 → `minimal_launch.py` 実行
+- [ ] **Step 1-B**: 撮ったスクショに `test_ocr.py` でOCR実行 → ユーザー確認
+- [ ] **Step 1-C**: ホーム画面のUI要素をタップして画面遷移確認
+- [ ] **Step 1-D**: screensテーブルへの自動保存
+
+---
+
+## GitHub
+https://github.com/Isao-Shinohara/LudusCartographer
