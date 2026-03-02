@@ -5,8 +5,10 @@ GameAnalyzer クラスは画像を受け取り、以下を返す:
   - 画面の種類 (screen_type)
   - クリック可能な重要ボタンの一覧 (buttons)
 
-認証: 環境変数 GOOGLE_APPLICATION_CREDENTIALS に
-      サービスアカウントの JSON キーファイルパスを設定すること。
+認証: ADC (Application Default Credentials) を使用する。
+      事前に以下を実行しておくこと:
+        gcloud auth application-default login
+      JSONキーファイルは不要。ライブラリが ADC を自動参照する。
 
 使用例:
     from crawler.ai_analyzer import GameAnalyzer, AnalysisResult
@@ -195,14 +197,8 @@ class GameAnalyzer:
             import vertexai
             from vertexai.generative_models import GenerativeModel
 
-            # 認証: GOOGLE_APPLICATION_CREDENTIALS 環境変数を自動参照
-            credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-            if credentials_path and not Path(credentials_path).exists():
-                raise FileNotFoundError(
-                    f"GOOGLE_APPLICATION_CREDENTIALS で指定されたファイルが見つかりません:\n"
-                    f"  {credentials_path}"
-                )
-
+            # 認証: ADC を自動参照 (gcloud auth application-default login 済みであること)
+            # credentials 引数を渡さないことで google-auth ライブラリが ADC を自動検出する
             vertexai.init(project=self.project_id, location=self.location)
             self._client = GenerativeModel(self.model)
             logger.info(
@@ -280,12 +276,13 @@ def analyzer_from_env() -> GameAnalyzer:
     環境変数から GameAnalyzer を構築する。
 
     必須環境変数:
-        GCP_PROJECT_ID              : Google Cloud プロジェクト ID
+        GCP_PROJECT_ID : Google Cloud プロジェクト ID
 
     任意環境変数:
-        GOOGLE_APPLICATION_CREDENTIALS : サービスアカウント JSON キーのパス
-        GCP_LOCATION                   : Vertex AI リージョン (デフォルト: asia-northeast1)
-        VERTEX_AI_MODEL                : 使用モデル (デフォルト: gemini-1.5-flash-002)
+        GCP_LOCATION   : Vertex AI リージョン (デフォルト: asia-northeast1)
+        VERTEX_AI_MODEL: 使用モデル (デフォルト: gemini-1.5-flash-002)
+
+    認証は ADC を自動使用 (gcloud auth application-default login 済みであること)。
     """
     return GameAnalyzer(
         project_id= os.environ.get("GCP_PROJECT_ID", ""),
