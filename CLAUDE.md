@@ -86,8 +86,73 @@ LudusCartographer/
 
 ---
 
-## 7. 禁止事項
+## 7. イテレーティブ開発ルール
+
+実機検証・クローラー開発は必ず最小単位で進めること：
+
+1. **最小単位で実機確認:** 一気に完成させず、「アプリ起動のみ」「1タップのみ」などの
+   最小単位で実機動作を確認し、ユーザーの OK を得てから次のステップへ進む
+2. **ステップ間のコミット:** 各最小単位の検証が成功した時点で即座にコミットする
+3. **ユーザー確認ゲート:** 実機の画面状態・OCR結果・スクリーンショットを提示し、
+   進行可否をユーザーに確認してから次の操作を実行する
+
+---
+
+## 8. ゲーム解析堅牢化ルール
+
+Appium によるゲーム操作では以下を標準実装すること：
+
+### リトライ戦略
+- XML要素検索には **最大3回のリトライ（1秒間隔）** を標準実装する
+- 実装パターン（Python）:
+  ```python
+  import time
+  def find_element_with_retry(driver, by, value, retries=3, interval=1.0):
+      for i in range(retries):
+          try:
+              return driver.find_element(by, value)
+          except Exception:
+              if i < retries - 1:
+                  time.sleep(interval)
+      return None
+  ```
+
+### OCRフォールバック
+- XML要素が取得できない場合、PaddleOCR の座標データを用いた
+  **「座標指定タップ」** へフォールバックする
+- フォールバック時はログに `[FALLBACK_OCR_TAP]` プレフィックスを付けて記録する
+
+---
+
+## 9. 証拠記録ルール
+
+クローラーが行うすべてのアクションについて、以下をセットで保存すること：
+
+```
+crawler/evidence/<session_id>/<timestamp>_<action>/
+├── before.png          # アクション前のスクリーンショット
+├── after.png           # アクション後のスクリーンショット
+└── ocr_result.json     # PaddleOCR解析結果（テキスト・座標・信頼スコア）
+```
+
+- `ocr_result.json` の形式:
+  ```json
+  {
+    "timestamp": "2026-03-03T00:00:00",
+    "action": "tap",
+    "target": "ショップボタン",
+    "ocr_boxes": [
+      {"text": "ショップ", "confidence": 0.98, "box": [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]}
+    ]
+  }
+  ```
+- これにより「なぜその判断をしたか」を後から追跡可能にする
+
+---
+
+## 10. 禁止事項
 
 - テスト未通過のコードをコミットすること
 - `.env` や認証情報ファイルをコミットすること
 - セッション終了時に `STATUS.md` を更新しないこと
+- ユーザーの確認なしに実機で連続操作を実行すること
