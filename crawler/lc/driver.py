@@ -18,7 +18,11 @@ from appium import webdriver
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.common.exceptions import NoSuchElementException, WebDriverException
 
-from .capabilities import iOSDeviceConfig, AndroidDeviceConfig, build_ios_capabilities, build_android_capabilities
+from .capabilities import (
+    iOSDeviceConfig, AndroidDeviceConfig,
+    iOSSimulatorConfig,
+    build_ios_capabilities, build_android_capabilities, build_ios_simulator_capabilities,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +219,28 @@ def ios_session(cfg: iOSDeviceConfig) -> Generator[AppiumDriver, None, None]:
     caps = build_ios_capabilities(cfg)
 
     logger.info(f"[SESSION] connecting to {appium_url} | UDID: {cfg.udid}")
+    raw_driver = webdriver.Remote(appium_url, options=_make_options(caps))
+    driver = AppiumDriver(raw_driver)
+    try:
+        yield driver
+    finally:
+        driver.quit()
+
+
+@contextmanager
+def ios_simulator_session(cfg: iOSSimulatorConfig) -> Generator[AppiumDriver, None, None]:
+    """
+    iOS シミュレータ Appium セッションをコンテキストマネージャとして提供する。
+
+    使用例:
+        with ios_simulator_session(cfg) as d:
+            d.screenshot("launch")
+            d.wait(3)
+    """
+    appium_url = f"http://{cfg.appium_host}:{cfg.appium_port}"
+    caps = build_ios_simulator_capabilities(cfg)
+
+    logger.info(f"[SESSION] connecting to {appium_url} | Simulator UDID: {cfg.udid}")
     raw_driver = webdriver.Remote(appium_url, options=_make_options(caps))
     driver = AppiumDriver(raw_driver)
     try:

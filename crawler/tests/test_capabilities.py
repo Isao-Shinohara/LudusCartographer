@@ -13,10 +13,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from lc.capabilities import (
     iOSDeviceConfig,
     AndroidDeviceConfig,
+    iOSSimulatorConfig,
     build_ios_capabilities,
     build_android_capabilities,
+    build_ios_simulator_capabilities,
     ios_config_from_env,
     android_config_from_env,
+    simulator_config_from_env,
 )
 
 
@@ -156,6 +159,88 @@ class TestConfigFromEnv:
         # 未設定でも空文字で返ること（Android は UDID 任意）
         assert cfg.udid == ""
         assert cfg.app_activity == ".MainActivity"  # デフォルト値
+
+
+# ============================================================
+# iOS シミュレータ Capabilities テスト
+# ============================================================
+
+class TestIOSSimulatorCapabilities:
+
+    def _make_cfg(self, **kwargs) -> iOSSimulatorConfig:
+        defaults = dict(udid="SIM-UDID-001", bundle_id="com.apple.Preferences")
+        return iOSSimulatorConfig(**{**defaults, **kwargs})
+
+    def test_platform_name_is_iOS(self):
+        caps = build_ios_simulator_capabilities(self._make_cfg())
+        assert caps["platformName"] == "iOS"
+
+    def test_automation_name_is_xcuitest(self):
+        caps = build_ios_simulator_capabilities(self._make_cfg())
+        assert caps["appium:automationName"] == "XCUITest"
+
+    def test_is_simulator_flag(self):
+        caps = build_ios_simulator_capabilities(self._make_cfg())
+        assert caps["appium:isSimulator"] is True
+
+    def test_udid_and_bundle_id(self):
+        caps = build_ios_simulator_capabilities(self._make_cfg(
+            udid="SIM-ABC", bundle_id="com.test.app"
+        ))
+        assert caps["appium:udid"] == "SIM-ABC"
+        assert caps["appium:bundleId"] == "com.test.app"
+
+    def test_platform_version_set(self):
+        caps = build_ios_simulator_capabilities(self._make_cfg(platform_version="18.5"))
+        assert caps["appium:platformVersion"] == "18.5"
+
+    def test_no_reset_default_true(self):
+        caps = build_ios_simulator_capabilities(self._make_cfg())
+        assert caps["appium:noReset"] is True
+
+    def test_wait_for_idle_disabled(self):
+        caps = build_ios_simulator_capabilities(self._make_cfg())
+        assert caps["appium:waitForIdleTimeout"] == 0
+
+    def test_w3c_compliant_keys(self):
+        caps = build_ios_simulator_capabilities(self._make_cfg())
+        non_standard = {
+            k for k in caps
+            if k != "platformName" and not k.startswith("appium:")
+        }
+        assert non_standard == set(), f"W3C非準拠キー: {non_standard}"
+
+
+class TestSimulatorConfigFromEnv:
+
+    def test_raises_without_bundle_id(self, monkeypatch):
+        monkeypatch.delenv("IOS_BUNDLE_ID", raising=False)
+        with pytest.raises(ValueError, match="IOS_BUNDLE_ID"):
+            simulator_config_from_env()
+
+    def test_explicit_udid_used_as_is(self, monkeypatch):
+        monkeypatch.setenv("IOS_BUNDLE_ID", "com.test.app")
+        monkeypatch.setenv("IOS_SIMULATOR_UDID", "EXPLICIT-SIM-UDID")
+        cfg = simulator_config_from_env()
+        assert cfg.udid == "EXPLICIT-SIM-UDID"
+        assert cfg.bundle_id == "com.test.app"
+
+    def test_auto_select_returns_iphone(self, monkeypatch):
+        """IOS_SIMULATOR_UDID 未設定のとき自動選択で iPhone が返ること"""
+        monkeypatch.setenv("IOS_BUNDLE_ID", "com.apple.Preferences")
+        monkeypatch.delenv("IOS_SIMULATOR_UDID", raising=False)
+        cfg = simulator_config_from_env()
+        assert "iPhone" in cfg.device_name
+        assert cfg.udid != ""
+        assert cfg.platform_version != ""
+
+    def test_auto_select_prefers_stable_ios(self, monkeypatch):
+        """自動選択で iOS 18.x (stable) が iOS 26.x (beta) より優先されること"""
+        monkeypatch.setenv("IOS_BUNDLE_ID", "com.apple.Preferences")
+        monkeypatch.delenv("IOS_SIMULATOR_UDID", raising=False)
+        cfg = simulator_config_from_env()
+        major = int(cfg.platform_version.split(".")[0])
+        assert major < 20, f"beta iOS ({cfg.platform_version}) が選ばれました"
 
 
 # ============================================================
