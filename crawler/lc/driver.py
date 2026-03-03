@@ -242,6 +242,78 @@ class AppiumDriver:
         logger.debug(f"[WAIT] sleeping {seconds}s")
         time.sleep(seconds)
 
+    def wait_until_stable(
+        self,
+        interval: float = 0.5,
+        threshold: int = 5,
+        timeout: float = 3.0,
+    ) -> bool:
+        """
+        連続フレームの phash ハミング距離を監視し、画面が静止するまで待機する。
+
+        `interval` 秒ごとにスクリーンショットを取得し、前フレームとの
+        phash ハミング距離を計算する。距離が `threshold` 以下になった時点で
+        「静止した」とみなして即座に return する。
+        `timeout` 秒を超えた場合は静止未確認のまま強制 return して解析を続行する。
+
+        ゲームの Live2D アニメーション・画面遷移エフェクト・ローディング演出など
+        動的な UI が混在する環境で、無駄な固定待機を避けつつ安定後のスクリーンショットを
+        保証するために使用する。
+
+        Args:
+            interval  : フレーム間のポーリング間隔 (秒, デフォルト 0.5)
+            threshold : 静止とみなすハミング距離の上限 (デフォルト 5)
+            timeout   : 最大待機時間 (秒, デフォルト 3.0)
+
+        Returns:
+            True  = 静止確認 (ハミング距離 ≤ threshold)
+            False = タイムアウト強制終了
+        """
+        import cv2
+        import numpy as np
+
+        def _phash_from_png(png_bytes: bytes, hash_size: int = 8) -> str:
+            arr = np.frombuffer(png_bytes, np.uint8)
+            img = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                raise ValueError("cv2.imdecode failed")
+            img = cv2.resize(img, (hash_size * 4, hash_size * 4))
+            dct = cv2.dct(np.float32(img))
+            top = dct[:hash_size, :hash_size]
+            avg = top.mean()
+            bits = top.flatten() > avg
+            return format(int("".join("1" if b else "0" for b in bits), 2), "016x")
+
+        def _hamming(h1: str, h2: str) -> int:
+            return bin(int(h1, 16) ^ int(h2, 16)).count("1")
+
+        deadline = time.time() + timeout
+        prev_hash: Optional[str] = None
+
+        while True:
+            try:
+                png = self._driver.get_screenshot_as_png()
+                cur_hash = _phash_from_png(png)
+            except Exception as e:
+                logger.debug(f"[STABLE] phash 計算失敗: {e}")
+                cur_hash = None
+
+            if prev_hash is not None and cur_hash is not None:
+                dist = _hamming(prev_hash, cur_hash)
+                logger.debug(f"[STABLE] phash_dist={dist}")
+                if dist <= threshold:
+                    logger.debug(f"[STABLE] 静止確認 (dist={dist} ≤ {threshold})")
+                    return True
+
+            prev_hash = cur_hash
+
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                logger.debug(f"[STABLE] タイムアウト ({timeout}s) — 強制続行")
+                return False
+
+            time.sleep(min(interval, remaining))
+
     def back(self) -> None:
         """OS の「戻る」操作を実行する（XCUITest: NavigationBar 戻るボタン相当）。"""
         try:

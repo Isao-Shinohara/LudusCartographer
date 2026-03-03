@@ -248,7 +248,9 @@ class ScreenCrawler:
                 ]},
             )
             self._stats.taps_total += 1
-            self.driver.wait(self.config.wait_after_tap)
+            # 固定待機の代わりに phash で画面静止を検知
+            # Live2D アニメーション等がある場合も最大 3s でタイムアウトして続行
+            self.driver.wait_until_stable()
 
             # 子画面を再帰探索
             self._crawl_impl(depth + 1, record.fingerprint)
