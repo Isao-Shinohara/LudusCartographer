@@ -141,6 +141,31 @@ class AppiumDriver:
             logger.error(f"[TAP_ELEMENT] error tapping '{value}': {e}")
             return False
 
+    @property
+    def screenshot_scale(self) -> tuple:
+        """
+        OCR ピクセル座標 → Appium 論理座標（ポイント）への変換スケール係数を返す。
+
+        iOS @2x / @3x スクリーンショットを論理座標に変換するために使用する。
+        スケールは初回アクセス時に計算してキャッシュする。
+
+        Returns:
+            (scale_x, scale_y): pixel / point の比率 (例: iPhone 16 = (3.0, 3.0))
+        """
+        if not hasattr(self, "_screenshot_scale"):
+            import io
+            from PIL import Image
+            window = self._driver.get_window_size()
+            png = self._driver.get_screenshot_as_png()
+            img = Image.open(io.BytesIO(png))
+            px_w, px_h = img.size
+            sx = px_w / window["width"]
+            sy = px_h / window["height"]
+            self._screenshot_scale = (sx, sy)
+            logger.info(f"[SCALE] screenshot={px_w}x{px_h}  window={window['width']}x{window['height']}"
+                        f"  scale=({sx:.2f}, {sy:.2f})")
+        return self._screenshot_scale
+
     def tap_coordinate(
         self,
         x: int,
@@ -149,8 +174,11 @@ class AppiumDriver:
         ocr_data: Optional[Dict] = None,
     ) -> None:
         """
-        OCR フォールバック: 座標を直接タップする。
+        論理座標（ポイント）を直接タップする。
         CLAUDE.md §8 — XML要素取得不可時のフォールバック。
+
+        Note: OCR で取得したピクセル座標をタップする場合は
+              tap_ocr_coordinate() を使うこと（自動スケール変換）。
         """
         action_dir = self._evidence_dir / f"{datetime.now().strftime('%H%M%S')}_{action_name}"
         action_dir.mkdir(exist_ok=True)
@@ -176,6 +204,35 @@ class AppiumDriver:
 
         self._save_evidence_json(action_dir, evidence)
 
+    def tap_ocr_coordinate(
+        self,
+        pixel_x: int,
+        pixel_y: int,
+        action_name: str = "ocr_tap",
+        ocr_data: Optional[Dict] = None,
+    ) -> None:
+        """
+        OCR が返すピクセル座標をデバイス論理座標（ポイント）に自動変換してタップする。
+
+        iOS @2x/@3x のスクリーンショットから得た座標をそのまま渡せる。
+        スケール係数は screenshot_scale プロパティで自動計算する。
+
+        Args:
+            pixel_x    : OCR バウンディングボックスのピクセル x 座標
+            pixel_y    : OCR バウンディングボックスのピクセル y 座標
+            action_name: 証拠ディレクトリ名に使用するアクション名
+            ocr_data   : 証拠 JSON に記録する OCR データ
+        """
+        sx, sy = self.screenshot_scale
+        pt_x = int(pixel_x / sx)
+        pt_y = int(pixel_y / sy)
+        logger.info(
+            f"[OCR_TAP] pixel=({pixel_x},{pixel_y})"
+            f" → point=({pt_x},{pt_y})"
+            f" (scale={sx:.2f}×{sy:.2f})"
+        )
+        self.tap_coordinate(pt_x, pt_y, action_name, ocr_data)
+
     # ----------------------------------------------------------
     # ヘルパー
     # ----------------------------------------------------------
@@ -184,6 +241,47 @@ class AppiumDriver:
         """指定秒数待機する（ゲームの描画待ち用）。"""
         logger.debug(f"[WAIT] sleeping {seconds}s")
         time.sleep(seconds)
+
+    def back(self) -> None:
+        """OS の「戻る」操作を実行する（XCUITest: NavigationBar 戻るボタン相当）。"""
+        try:
+            self._driver.back()
+            logger.info("[BACK] 戻る操作を実行")
+        except Exception as e:
+            logger.warning(f"[BACK] 戻る操作に失敗: {e}")
+
+    def navigate_back_to_root(
+        self,
+        root_keyword: str = "設定",
+        root_max_y: int = 500,
+        max_attempts: int = 5,
+    ) -> bool:
+        """
+        root_keyword が画面上部 (y < root_max_y) に現れるまで back() を繰り返す。
+
+        Args:
+            root_keyword : ルート画面を示すキーワード (例: "設定")
+            root_max_y   : ルートタイトルの y 座標の上限
+            max_attempts : 最大戻り回数
+
+        Returns:
+            True = ルート画面に到達, False = 到達できなかった
+        """
+        from .ocr import run_ocr, find_best
+
+        for attempt in range(max_attempts):
+            shot = self.screenshot(f"back_check_{attempt}")
+            results = run_ocr(shot)
+            title = find_best(results, root_keyword)
+            if title and title["center"][1] < root_max_y:
+                logger.info(f"[NAVIGATE] ルート画面を確認 ({attempt} 回 back)")
+                return True
+            logger.info(f"[NAVIGATE] back #{attempt + 1}: 「{root_keyword}」未検出 → 戻る")
+            self.back()
+            time.sleep(1.0)
+
+        logger.warning(f"[NAVIGATE] {max_attempts} 回戻っても「{root_keyword}」が見つかりませんでした")
+        return False
 
     def _save_evidence_json(self, directory: Path, data: dict) -> None:
         """証拠 JSON を保存する。"""
