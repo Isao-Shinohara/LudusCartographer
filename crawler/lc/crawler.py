@@ -43,6 +43,29 @@ EXCLUDE_TEXTS: frozenset[str] = frozenset({
 # phash ハミング距離の重複判定閾値（この値未満 = ほぼ同一画面）
 PHASH_THRESHOLD = 8
 
+# タップ候補から除外するシンボルと後退ナビゲーション語
+# (クローラー自身が back() で後退処理するため「戻る」系は除外)
+_TAPPABLE_SKIP: frozenset[str] = frozenset({
+    '>', '›', '<', '‹', '…', 'Q',
+    '戻る', 'Back',
+})
+
+# テキストにこれらを含む要素は位置に関わらずタップ候補とする（操作系キーワード）
+_ACTION_KEYWORDS: frozenset[str] = frozenset({
+    # 日本語アクション
+    'OK', '完了', '次へ', '保存', '閉じる', '削除', '確認', '開く',
+    'リセット', '転送', '続ける', '許可', '追加', '選択', '設定する',
+    'キャンセル', '取り消し', '送信', '適用',
+    # 英語アクション
+    'Done', 'Save', 'Next', 'Close', 'Delete', 'Apply',
+    'Confirm', 'Cancel', 'Submit', 'Continue', 'Allow',
+})
+
+# 単一文字でもタップ候補とするアイコン類似文字
+_ICON_CHARS: frozenset[str] = frozenset({
+    '⚙', '⚙️', '☰', '＋', '+', '⋮', '✕', '×',
+})
+
 
 # ============================================================
 # 設定
@@ -378,80 +401,119 @@ class ScreenCrawler:
 
     def _find_tappable_items(self, ocr_results: list[dict]) -> list[dict]:
         """
-        OCR 結果からタップ可能な UI 項目を抽出する。
+        OCR 結果からタップ可能な UI 項目を自律的に抽出する。
 
-        iOS 標準設定アプリ（および一般的な iOS ナビゲーション）の検出ロジック:
-        1. 「>」シェブロンが右端（x > 800px）に存在する y レベルを収集
-        2. 各シェブロンと同じ y レベル（±60px）にある左側テキストをタップ候補とする
-        3. シェブロンがなければ位置ヒューリスティック（左寄り、下部）でフォールバック
+        ハードコードされたピクセル値を使わず、画面サイズに対する相対比率と
+        テキストの意味的・視覚的特徴で判定する。4 つの検出パスを持つ:
 
-        除外条件:
-        - ステータスバー: y < 100
-        - ナビゲーションバー左端の戻るボタン: y < 250 かつ x < 300
-        - 右端要素: x > 850（シェブロン, アイコン）
-        - 中央揃えの説明文: x > 400 かつ len > 20
-        - 低信頼スコア: conf < min_confidence
-        - 1 文字以下
+        Path A — キーワード優先:
+          _ACTION_KEYWORDS に含まれるテキスト (「完了」「リセット」「転送」等) を
+          画面上の位置に関わらずタップ候補とする。
+
+        Path B — フッターボタン:
+          画面下部 (y > 80%) にある要素を「アクションボタン」として優先取得する。
+          iOS 設定の「転送またはiPhoneをリセット」などが該当する。
+
+        Path C — シェブロン行:
+          右端 (x > 85%) で検出された「>」「›」と同じ水平バンド (±4%) にある
+          左側テキストをリスト行のラベルとして取得する。
+
+        Path D — コンテンツエリア (フォールバック):
+          シェブロンが疎な場合 (< 5 件) に発動。ナビバー以下かつフッター以上の
+          コンテンツ領域で、Large Title でも説明文でもない左寄りテキストを取得する。
+
+        共通除外:
+          - ステータスバー上端 (y < 5%)
+          - 右端シェブロン・アイコン (x > 85%)
+          - _TAPPABLE_SKIP (「戻る」等)
+          - 低信頼スコア / 空テキスト
         """
-        # --- シェブロン y 座標を収集 ---
-        chevron_ys: list[int] = []
+
+        def _box_h(r: dict) -> float:
+            ys = [p[1] for p in r["box"]]
+            return max(ys) - min(ys)
+
+        # 画面サイズを bounding-box 座標群から動的推定
+        all_ys = [p[1] for r in ocr_results for p in r["box"]]
+        all_xs = [p[0] for r in ocr_results for p in r["box"]]
+        screen_h = int(max(all_ys) * 1.05) if all_ys else 2000
+        screen_w = int(max(all_xs) * 1.05) if all_xs else 1000
+
+        # 相対境界値
+        STATUS_TOP  = screen_h * 0.05   # ステータスバー下端
+        NAV_BOTTOM  = screen_h * 0.15   # ナビバー下端
+        FOOTER_TOP  = screen_h * 0.80   # フッターエリア上端
+        RIGHT_EDGE  = screen_w * 0.85   # 右端 (シェブロン・アイコン帯)
+        LEFT_MAX    = screen_w * 0.80   # 左寄りテキストの右限
+        LARGE_FONT  = screen_h * 0.03   # Large Title の最小フォント高さ
+        CHEVRON_R   = screen_h * 0.04   # シェブロン行の近傍半径 (±4%)
+        DESC_X_MIN  = screen_w * 0.40   # 説明文の中央寄り判定閾値 (x > 40%)
+
+        # シェブロン (>) の y 座標を収集
+        chevron_ys: list[int] = [
+            r["center"][1]
+            for r in ocr_results
+            if r["text"].strip() in ('>', '›') and r["center"][0] > RIGHT_EDGE
+        ]
+
+        seen: set[str] = set()
+        result: list[dict] = []
+
+        def _emit(r: dict) -> None:
+            t = r["text"].strip()
+            if t and t not in seen:
+                seen.add(t)
+                result.append(r)
+
         for r in ocr_results:
-            cx, cy = r["center"]
             text = r["text"].strip()
-            if text in ('>', '›') and cx > 850:
-                chevron_ys.append(cy)
-
-        # --- 候補フィルタリング ---
-        filtered: list[dict] = []
-        for r in ocr_results:
             cx, cy = r["center"]
-            text    = r["text"].strip()
+            conf   = r["confidence"]
 
-            # 基本除外
-            if r["confidence"] < self.config.min_confidence:
+            # ── 共通ゲート ──────────────────────────────────────────────
+            if conf < self.config.min_confidence:
                 continue
-            if len(text) <= 1:
+            # 空 / 極端に短い (アイコン文字は例外)
+            if not text or (len(text) <= 1 and text not in _ICON_CHARS):
                 continue
-            if cy < 100:            # ステータスバー
+            if text in _TAPPABLE_SKIP:
                 continue
-            if cy < 250 and cx < 300:  # nav bar 戻るボタン
+            if cy < STATUS_TOP:         # ステータスバー内
                 continue
-            if cx > 850:            # 右端（シェブロン等）
-                continue
-            if cx > 400 and len(text) > 20:  # 中央の説明文
-                continue
-            if cy < 900 and cx > 400:  # タイトル・説明文ゾーン（大タイトル・副題）
-                continue
-            # 特殊記号
-            if text in ('>', '›', '<', '‹', 'Q', '…'):
+            if cx > RIGHT_EDGE:         # 右端 (シェブロン帯)
                 continue
 
-            filtered.append(r)
+            # ── Path A: キーワード ───────────────────────────────────────
+            if any(kw in text for kw in _ACTION_KEYWORDS):
+                _emit(r)
+                continue
 
-        # --- シェブロン近傍チェック ---
-        if chevron_ys:
-            # シェブロンと y 座標が近い項目のみを採用
-            tappable = [
-                r for r in filtered
-                if any(abs(r["center"][1] - chy) <= 60 for chy in chevron_ys)
-            ]
-            # 閾値 5: OCR がシェブロンを一部しか検出できない場合 (3-4 件)は
-            # 位置ヒューリスティックに落とし、より多くの行を取得する
-            if len(tappable) >= 5:
-                logger.debug(
-                    f"[TAPPABLE] シェブロン一致: {len(tappable)}件"
-                    f" / 候補: {len(filtered)}件"
-                )
-                return tappable
-            logger.debug(
-                f"[TAPPABLE] シェブロン一致が {len(tappable)}件のみ → 位置フォールバックへ"
-            )
+            # ── Path B: フッターボタン ────────────────────────────────────
+            if cy > FOOTER_TOP:
+                _emit(r)
+                continue
 
-        # --- フォールバック: 位置ヒューリスティック ---
+            # ── Path C: シェブロン行 ──────────────────────────────────────
+            if chevron_ys and any(abs(cy - chy) <= CHEVRON_R for chy in chevron_ys):
+                if _box_h(r) < LARGE_FONT:   # Large Title は除外
+                    _emit(r)
+                continue
+
+            # ── Path D: コンテンツエリア (フォールバック) ─────────────────
+            if len(chevron_ys) < 5:
+                if (NAV_BOTTOM <= cy <= FOOTER_TOP
+                        and cx < LEFT_MAX
+                        and 1 < len(text) <= 20
+                        and _box_h(r) < LARGE_FONT          # Large Title 除外
+                        # 中央寄り説明文 (x>40% かつ len>12) を除外
+                        and not (cx > DESC_X_MIN and len(text) > 12)):
+                    _emit(r)
+
         logger.debug(
-            f"[TAPPABLE] シェブロン不一致 → 位置フォールバック ({len(filtered)}件)"
+            f"[TAPPABLE] {len(result)}件  "
+            f"chevrons={len(chevron_ys)}  screen={screen_w}×{screen_h}"
         )
-        return [r for r in filtered if r["center"][1] > 400 and r["center"][0] < 600]
+        return result
 
     # ----------------------------------------------------------
     # DB 保存

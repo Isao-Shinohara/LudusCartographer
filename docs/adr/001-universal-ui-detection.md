@@ -89,21 +89,86 @@ screen_w = int(max(OCR bounding-box の x 座標) × 1.05)
 
 ---
 
-## 影響範囲
+## 影響範囲 (Step 1 — タイトル抽出)
 
-- `crawler/lc/crawler.py` — `_extract_title()` のみ変更
-- `_screen_fingerprint()` / `_find_tappable_items()` は現時点では対象外
-  (今後の ADR で段階的に座標依存を排除する)
+- `crawler/lc/crawler.py` — `_extract_title()` 書き換え
 - 既存テストへの影響: `test_crawler.py::test_first_screen_is_general` で
   タイトル判定が改善されることを確認 (13/13 pass)
 
 ---
 
+## Actionable Elements の抽出戦略 (Step 2 — 2026-03-03 追加)
+
+### コンテキスト
+
+Phase 3 の `_find_tappable_items()` はシェブロン (`>`) の絶対 x 座標 (`x > 900`)
+やピクセル固定の y 範囲 (`200–1800`) でタップ候補を絞り込んでいた。
+
+問題:
+1. シェブロンが右端に出ない UI (ゲーム独自ボタン、テキストリンク) を完全に見落とす
+2. 「リセット」「転送」のような **アクションボタンはシェブロンを持たない** ため常に除外
+3. 解像度変化でフィルタが機能不全になる
+
+### 決定 — 4-Path 分類アルゴリズム
+
+**座標境界はすべて OCR bounding-box から動的に推定した相対比率で定義する。**
+
+```
+STATUS_TOP  = screen_h × 5%   (ステータスバー除外下限)
+NAV_BOTTOM  = screen_h × 15%  (nav-bar 領域の下端)
+FOOTER_TOP  = screen_h × 80%  (フッターボタン領域の開始)
+RIGHT_EDGE  = screen_w × 85%  (シェブロン・アイコン除外右端)
+LEFT_MAX    = screen_w × 80%  (コンテンツ列の右端)
+LARGE_FONT  = screen_h × 3%   (タイトル相当フォント高さ、Path C/D で除外)
+CHEVRON_R   = screen_h × 4%   (シェブロン行の縦判定マージン)
+DESC_X_MIN  = screen_w × 40%  (右寄り長文説明テキスト除外)
+```
+
+| Path | 条件 | 対象例 |
+|------|------|--------|
+| A — キーワード | `_ACTION_KEYWORDS` に部分一致 | リセット, 転送, Done, Save |
+| B — フッター | `y > FOOTER_TOP` | 画面下部の確認ボタン群 |
+| C — シェブロン行 | `RIGHT_EDGE` より右にある `>` / `›` と `y` が `±CHEVRON_R` 以内 | 設定リスト項目 |
+| D — コンテンツ fallback | シェブロン数 < 5 かつ nav-bar 下〜フッター上、小フォント | ゲーム独自メニュー |
+
+**除外ルール (共通):**
+- `_TAPPABLE_SKIP` に含まれるテキスト (`戻る`, `>`, `›` 等)
+- `cy < STATUS_TOP` または `cx > RIGHT_EDGE` (枠外)
+- 文字数 0 または 1 文字 (アイコン文字 `_ICON_CHARS` を除く)
+
+### 根拠
+
+`_ACTION_KEYWORDS` を Path A として最優先することで、シェブロンを持たない
+「破壊的アクション」(リセット・削除) が確実にリストに載る。
+iOS 設定アプリ「一般」画面での実測:
+- シェブロン行 (Path C): 9 件 (VPN, BGアプリ更新 等)
+- フッターボタン (Path B): 2 件 (リセット, 転送)
+- キーワード (Path A): 0 件追加 (フッターと重複のため `seen` set で自動除外)
+
+### 却下した代替案
+
+| 案 | 却下理由 |
+|----|---------|
+| シェブロン数 >= N で fallback 切替 | N の最適値がアプリ依存；ゲームでは常に 0 になる可能性 |
+| Gemini で「タップ可能か」を判定 | レイテンシ・コストがリアルタイムクロールに不適 |
+| XPath `//XCUIElementTypeButton` | ゲームの多くは AccessibilityID を設定しておらず汎用性がない |
+
+---
+
+## 影響範囲 (Step 2)
+
+- `crawler/lc/crawler.py` — `_find_tappable_items()` 全面書き換え
+- モジュールレベル定数 `_TAPPABLE_SKIP`, `_ACTION_KEYWORDS`, `_ICON_CHARS` 追加
+- `_screen_fingerprint()` は現時点では対象外 (今後の ADR で段階的に対応)
+- テスト: 148 passed, 3 skipped (Appium 不要テストのみ)
+
+---
+
 ## 今後の展望
 
-本 ADR で確立した「相対比率 + 視覚的特徴」によるヒューリスティックは
+本 ADR で確立した「相対比率 + 視覚的特徴 + キーワード分類」によるヒューリスティックは
 以下の拡張の基盤となる:
 
-- `_find_tappable_items()` の相対座標化
+- `_screen_fingerprint()` の相対座標化
 - ゲーム UI (縦・横画面切替、カスタムフォント) への適応
 - 機械学習モデルへの段階的移行 (特徴量として bounding-box 比率を入力)
