@@ -12,21 +12,21 @@ test_ocr.py — PaddleOCR 単体テスト
 また、認識結果の一覧をターミナルに表示する（ユーザー確認用）。
 """
 import json
-import os
 import sys
 from pathlib import Path
 
 import pytest
-from typing import Union
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from lc.ocr import run_ocr, format_results
 
 # フィクスチャ画像のパス
 FIXTURE_IMAGE = Path(__file__).parent / "fixtures" / "test_game_screen.png"
 
 # PaddleOCR が利用可能かチェック
 try:
-    from paddleocr import PaddleOCR
+    from paddleocr import PaddleOCR  # noqa: F401
     HAS_PADDLE = True
 except ImportError:
     HAS_PADDLE = False
@@ -35,70 +35,6 @@ requires_paddle = pytest.mark.skipif(
     not HAS_PADDLE,
     reason="PaddleOCR がインストールされていないためスキップ"
 )
-
-
-# ============================================================
-# OCRユーティリティ関数 (crawler/ocr.py へ切り出し予定)
-# ============================================================
-
-def run_ocr(image_path: "Union[str, Path]", lang: str = "japan") -> "list[dict]":
-    """
-    PaddleOCR を実行し、構造化された結果リストを返す。
-
-    Returns:
-        [
-            {
-                "text": "認識テキスト",
-                "confidence": 0.98,
-                "box": [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
-            },
-            ...
-        ]
-    """
-    # PaddleOCR 3.x: use predict() with new key-based result format
-    # Keys: rec_texts, rec_scores, rec_polys (polygon bounding boxes)
-    ocr = PaddleOCR(
-        use_textline_orientation=True,
-        lang=lang,
-        device="cpu",
-    )
-    predict_results = ocr.predict(str(image_path))
-
-    results = []
-    if not predict_results:
-        return results
-
-    r = predict_results[0]
-    texts  = r.get("rec_texts",  []) or []
-    scores = r.get("rec_scores", []) or []
-    polys  = r.get("rec_polys",  []) or []
-
-    for text, confidence, poly in zip(texts, scores, polys):
-        if not text:
-            continue
-        results.append({
-            "text":       text,
-            "confidence": float(confidence),
-            "box":        [list(map(int, point)) for point in poly],
-        })
-    return results
-
-
-def print_ocr_results(results: list[dict]) -> None:
-    """OCR認識結果をターミナルに見やすく表示する（ユーザー確認用）。"""
-    print("\n" + "=" * 60)
-    print("  PaddleOCR 認識結果一覧")
-    print("=" * 60)
-    if not results:
-        print("  (認識結果なし)")
-    for i, r in enumerate(results, 1):
-        conf = r["confidence"]
-        text = r["text"]
-        box  = r["box"]
-        print(f"  [{i:02d}] {conf:.3f}  |  {text!r}")
-        print(f"        座標: {box[0]} → {box[2]}")
-    print("=" * 60)
-    print(f"  合計: {len(results)} 件\n")
 
 
 # ============================================================
@@ -114,7 +50,7 @@ class TestPaddleOCRBasic:
         """クラスレベルで OCR を1回だけ実行してキャッシュする。"""
         assert FIXTURE_IMAGE.exists(), f"フィクスチャ画像が見つかりません: {FIXTURE_IMAGE}"
         results = run_ocr(FIXTURE_IMAGE)
-        print_ocr_results(results)  # ターミナルに結果を表示
+        print(format_results(results))  # ターミナルに結果を表示
         return results
 
     def test_detects_at_least_one_text(self, ocr_results):
@@ -177,6 +113,7 @@ class TestPaddleOCROutput:
             assert "text" in r
             assert "confidence" in r
             assert "box" in r
+            assert "center" in r
 
     def test_text_is_non_empty_string(self):
         results = run_ocr(FIXTURE_IMAGE)
@@ -228,4 +165,4 @@ if __name__ == "__main__":
     if args.json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
     else:
-        print_ocr_results(results)
+        print(format_results(results))
