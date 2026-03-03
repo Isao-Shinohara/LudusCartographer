@@ -243,4 +243,15 @@ npx playwright test --reporter=line
 
 ## Current Development Status
 
-- Phase 4-G Step 1: タイトル抽出の汎用化完了。座標マジックナンバーを排除しADRに記録。(`docs/adr/001-universal-ui-detection.md`)
+**汎用 UI 探索エンジン (Phase 4-G) 実装完了 — 2026-03-03**
+
+座標依存を全面排除し、phash 安定判定を導入。iOS 設定アプリでの検証を完了し、
+ゲーム等の動的 UI（Live2D・カスタムレイアウト）への対応準備が整った。
+
+| Step | 内容 | 詳細 |
+|------|------|------|
+| 4-G Step 1 | タイトル抽出の汎用化 | `_extract_title()` を相対比率 2-Step 方式に書き換え。ピクセルマジックナンバーを完全排除。 |
+| 4-G Step 2 | タップ要素抽出の汎用化 | `_find_tappable_items()` を 4-Path 方式に書き換え。キーワード・フッター・シェブロン・fallback で分類。「リセット」「転送」等のアクションボタンを確実に検出。 |
+| 4-G Step 3 | 画面静止判定 (Settling Wait) | `wait_until_stable()` を実装。phash ハミング距離 ≤ 5 で静止確認・3.0s タイムアウト。Live2D アニメーション等に対応。 |
+
+設計の詳細・根拠・却下案は `docs/adr/001-universal-ui-detection.md` に記録。

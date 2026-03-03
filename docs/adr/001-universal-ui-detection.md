@@ -4,7 +4,8 @@
 |------|------|
 | 状態 | 承認済み (2026-03-03) |
 | 決定者 | Isao Shinohara |
-| 関連ファイル | `crawler/lc/crawler.py` — `_extract_title()` |
+| 関連ファイル | `crawler/lc/crawler.py` — `_extract_title()`, `_find_tappable_items()` |
+| | `crawler/lc/driver.py` — `wait_until_stable()` |
 
 ---
 
