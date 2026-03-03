@@ -250,17 +250,59 @@ class AppiumDriver:
         except Exception as e:
             logger.warning(f"[BACK] 戻る操作に失敗: {e}")
 
+    def dismiss_any_modal(
+        self,
+        dismiss_keywords: Optional[list] = None,
+        min_confidence: float = 0.6,
+    ) -> bool:
+        """
+        OCR でモーダル/ダイアログの解除ボタンを検出してタップする。
+
+        iOS では音声入力・通知許可・App Store アップデートなどの
+        ダイアログが突然現れることがある。このメソッドは一般的な
+        「今はしない」「キャンセル」などをタップして閉じる。
+
+        Returns:
+            True = 何かタップした, False = 解除対象なし
+        """
+        if dismiss_keywords is None:
+            dismiss_keywords = ["今はしない", "キャンセル", "スキップ", "閉じる", "OK", "後で"]
+
+        from .ocr import run_ocr, find_best
+        shot = self.screenshot("modal_check")
+        results = run_ocr(shot)
+        for kw in dismiss_keywords:
+            btn = find_best(results, kw, min_confidence=min_confidence)
+            if btn:
+                cx, cy = btn["center"]
+                logger.info(f"[MODAL] 「{kw}」を検出 → タップして解除 pixel=({cx},{cy})")
+                self.tap_ocr_coordinate(cx, cy, action_name="dismiss_modal")
+                import time as _time
+                _time.sleep(1.0)
+                return True
+        logger.debug("[MODAL] 解除対象のモーダルなし")
+        return False
+
     def navigate_back_to_root(
         self,
         root_keyword: str = "設定",
+        root_min_y: int = 200,
         root_max_y: int = 500,
         max_attempts: int = 5,
     ) -> bool:
         """
-        root_keyword が画面上部 (y < root_max_y) に現れるまで back() を繰り返す。
+        root_keyword が「大タイトル領域」(root_min_y ≤ y < root_max_y) に現れるまで
+        back() を繰り返す。
+
+        iOS のナビゲーション構造:
+          - ナビゲーションバー戻るボタン: y < 200px（小さい、画面最上部）
+          - 大タイトル (Large Title): y ≥ 200px（大きい、コンテンツ直上）
+        root_min_y=200 を指定することで、戻るボタンの「設定」を
+        ルート画面の「設定」タイトルと誤判定しなくなる。
 
         Args:
             root_keyword : ルート画面を示すキーワード (例: "設定")
+            root_min_y   : ルートタイトルの y 座標の下限 (nav bar 除外)
             root_max_y   : ルートタイトルの y 座標の上限
             max_attempts : 最大戻り回数
 
@@ -273,10 +315,11 @@ class AppiumDriver:
             shot = self.screenshot(f"back_check_{attempt}")
             results = run_ocr(shot)
             title = find_best(results, root_keyword)
-            if title and title["center"][1] < root_max_y:
-                logger.info(f"[NAVIGATE] ルート画面を確認 ({attempt} 回 back)")
+            if title and root_min_y <= title["center"][1] < root_max_y:
+                logger.info(f"[NAVIGATE] ルート画面を確認 ({attempt} 回 back) y={title['center'][1]}")
                 return True
-            logger.info(f"[NAVIGATE] back #{attempt + 1}: 「{root_keyword}」未検出 → 戻る")
+            y_info = f"y={title['center'][1]}" if title else "未検出"
+            logger.info(f"[NAVIGATE] back #{attempt + 1}: 「{root_keyword}」{y_info} → 戻る")
             self.back()
             time.sleep(1.0)
 
