@@ -223,6 +223,69 @@ Phase 3 のクローラーは `wait_after_tap = 3.0` 秒の固定待機でタッ
 
 ---
 
+## 異常系の可視化：スタック時のエビデンス自動保存戦略 (Step 4 — 2026-03-03 追加)
+
+### コンテキスト
+
+実環境クロール中に以下の「スタック事態」が発生しうる:
+
+1. **タップ候補 0 件**: OCR・分類ロジックが有効な UI 要素を検出できず、DFS が深入りできない。
+2. **Settling Wait タイムアウト**: タップ後 3.0s 経過してもフレーム間 phash 距離が 5 を
+   超え続ける。ゲームのエラーダイアログ・無限ループ演出・ネットワーク待機画面が考えられる。
+
+これらはログに記録されるが、**その時の画面を人間が後で目視確認できない** ため
+根本原因の特定が困難だった。
+
+### 決定 — スタック時エビデンス自動保存
+
+**異常検知トリガーが発火した瞬間のスクリーンショットと OCR コンテキストを evidence/ に自動保存する。**
+
+```
+保存パス:
+  evidence/{session_id}/{YYYYMMDD_HHMMSS}_{reason}.png
+  evidence/{session_id}/{YYYYMMDD_HHMMSS}_{reason}.json
+
+JSON スキーマ:
+  {
+    "timestamp":   "ISO8601",
+    "reason":      "no_tappable_items" | "settling_timeout",
+    "title":       "推定画面タイトル",
+    "ocr_results": [{"text", "confidence", "center"}, ...]
+  }
+```
+
+**トリガー条件:**
+
+| トリガー | 検知条件 | reason 値 |
+|---------|---------|----------|
+| タップ候補なし | `len(tappable_items) == 0` | `no_tappable_items` |
+| Settling Wait タイムアウト | `wait_until_stable()` が `False` を返す | `settling_timeout` |
+
+### 根拠
+
+- エビデンスファイルは既存の `evidence/{session_id}/` に集約することでディレクトリ分散を
+  防ぎ、クロールセッション単位でのデバッグが容易になる。
+- OCR 結果は軽量な `text / confidence / center` のみ保存し、生 `box` 座標 (4点リスト)
+  は省く。これにより JSON が人間可読サイズ (< 10 KB) に収まる。
+- `settling_timeout` 時は OCR 再実行を行わず、タップ元画面のコンテキストを記録する。
+  「どの画面からどのボタンをタップしたか」が判明すれば根本原因の特定に十分。
+
+### 却下した代替案
+
+| 案 | 却下理由 |
+|----|---------|
+| タイムアウト時に OCR を再実行して最新の画面状態を保存 | 追加の OCR コストと時間。スタック中の再実行は信頼性が低い |
+| 専用の `anomalies/` サブディレクトリに分離 | セッション横断でファイルが混在し、特定セッションのデバッグが煩雑になる |
+| 全画面に対して `before/after` ペアを保存 | evidence ディレクトリが肥大化。異常時のみで十分 |
+
+### 影響範囲 (Step 4)
+
+- `crawler/lc/crawler.py` — `_save_evidence()` 追加、`__init__` に evidence dir 保証を追加
+- `_crawl_impl` — 0 件タップ後と `wait_until_stable()` 戻り値キャプチャでトリガー追加
+- 既存テスト: 148 passed, 3 skipped (変化なし)
+
+---
+
 ## 今後の展望
 
 本 ADR で確立した「相対比率 + 視覚的特徴 + キーワード分類 + アダプティブ静止検知」は

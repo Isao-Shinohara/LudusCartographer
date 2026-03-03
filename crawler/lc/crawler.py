@@ -143,6 +143,11 @@ class ScreenCrawler:
         self._stats  = CrawlStats()
         self._start_time = time.time()
 
+        # evidence ディレクトリ（ドライバーのセッションディレクトリと共有）
+        # AppiumDriver が既に作成しているが、ここでも保証する
+        self._evidence_dir: Path = driver._evidence_dir
+        self._evidence_dir.mkdir(parents=True, exist_ok=True)
+
         # DB 接続（利用可能な場合のみ）
         self._db_conn        = None
         self._crawl_session_id: Optional[int] = None
@@ -227,6 +232,11 @@ class ScreenCrawler:
             f"  指紋={record.fingerprint[:8]}…"
         )
 
+        # --- タップ候補 0 件 = スタック検知 ---
+        if not record.tappable_items:
+            logger.warning(f"[CRAWL] ⚠ タップ候補なし: {record.title!r} — エビデンス保存")
+            self._save_evidence("no_tappable_items", record.ocr_results, record.title)
+
         # --- 各タップ候補を探索 ---
         for i, item in enumerate(record.tappable_items):
             if self._is_time_up():
@@ -250,7 +260,11 @@ class ScreenCrawler:
             self._stats.taps_total += 1
             # 固定待機の代わりに phash で画面静止を検知
             # Live2D アニメーション等がある場合も最大 3s でタイムアウトして続行
-            self.driver.wait_until_stable()
+            settled = self.driver.wait_until_stable()
+            if not settled:
+                # タイムアウト = 3s 経過しても画面が静止しなかった（ループアニメ等）
+                logger.warning(f"[CRAWL] ⚠ Settling タイムアウト: tap={text!r} — エビデンス保存")
+                self._save_evidence("settling_timeout", record.ocr_results, record.title)
 
             # 子画面を再帰探索
             self._crawl_impl(depth + 1, record.fingerprint)
@@ -691,6 +705,80 @@ class ScreenCrawler:
             encoding="utf-8",
         )
         logger.info(f"[CRAWL] サマリー保存: {path}")
+
+    # ----------------------------------------------------------
+    # 異常系エビデンス保存
+    # ----------------------------------------------------------
+
+    def _save_evidence(
+        self,
+        reason: str,
+        ocr_results: Optional[list] = None,
+        current_title: str = "unknown",
+    ) -> None:
+        """
+        スタック・異常検知が発生した瞬間のスクリーンショットと OCR コンテキストを保存する。
+
+        保存パス:
+            evidence/{session_id}/{YYYYMMDD_HHMMSS}_{reason}.png
+            evidence/{session_id}/{YYYYMMDD_HHMMSS}_{reason}.json
+
+        JSON スキーマ:
+            {
+              "timestamp":   "ISO8601",
+              "reason":      "no_tappable_items" | "settling_timeout" | ...,
+              "title":       "推定画面タイトル",
+              "ocr_results": [{"text", "confidence", "center"}, ...]
+            }
+
+        Args:
+            reason       : 保存理由 (ファイル名に使用)
+            ocr_results  : 保存時点の OCR 結果。省略時は空リストとして記録する。
+            current_title: 保存時点の推定画面タイトル
+        """
+        import json as _json
+
+        ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe = "".join(c for c in reason if c.isalnum() or c in "_-")[:24]
+        stem = f"{ts}_{safe}"
+
+        png_path  = self._evidence_dir / f"{stem}.png"
+        json_path = self._evidence_dir / f"{stem}.json"
+
+        # スクリーンショット保存
+        try:
+            self.driver.driver.save_screenshot(str(png_path))
+        except Exception as e:
+            logger.warning(f"[EVIDENCE] スクリーンショット保存失敗: {e}")
+            return
+
+        # OCR コンテキスト保存（軽量フィールドのみ）
+        payload = {
+            "timestamp":   datetime.now().isoformat(),
+            "reason":      reason,
+            "title":       current_title,
+            "ocr_results": [
+                {
+                    "text":       r["text"],
+                    "confidence": r["confidence"],
+                    "center":     r["center"],
+                }
+                for r in (ocr_results or [])
+            ],
+        }
+        try:
+            json_path.write_text(
+                _json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning(f"[EVIDENCE] JSON 保存失敗: {e}")
+            return
+
+        logger.warning(
+            f"[EVIDENCE] 異常検知エビデンス保存:"
+            f" {png_path.name}  reason={reason!r}  title={current_title!r}"
+        )
 
     def _finalize_session(self) -> None:
         """クロール終了時にサマリー JSON を保存し、DB セッションを completed にする。"""
