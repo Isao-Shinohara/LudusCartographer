@@ -1,10 +1,10 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-03 (Phase 4-A 完了 — Web UI 詳細検索・画像プロキシ・モーダル実装)
+最終更新: 2026-03-03 (Phase 7 完了 — OpenCV ハイブリッド検出・テンプレート PNG・GitHub push)
 
 ---
 
-## 現在のフェーズ: Phase 4-A 完了 → Phase 4-B/C (スクリーンショットギャラリー・E2E 統合) へ
+## 現在のフェーズ: Phase 7 完了 → Phase 8 (実機テンプレート取得・クロール実行) へ
 
 ## コミット履歴
 
@@ -143,7 +143,41 @@ venv/bin/python tools/visualize_map.py --session evidence/20260303_160759 --form
 - **`web/templates/search.html.twig`**: 詳細検索パネル・カードクリック → モーダル・画像サムネイル
 - **`tests/e2e/search.spec.ts`**: 詳細検索/API/モーダル 11テスト追加
 
-## 次フェーズ: Phase 4-B/C — スクリーンショットギャラリー・E2E 統合 + Phase 5-C 実戦テスト
+## Phase 6 完了内容 (2026-03-03)
+
+### Web-Crawl Integration — セッション統計・接続マップ
+- **`action=get_sessions` API**: `crawl_sessions` テーブルからセッション一覧 JSON を返す
+- **セッション統計パネル** (`#session-panel`): running/completed ステータス・Fingerprint 数・行クリック → 詳細検索連動
+- **`action=detail` に `parents` 追加**: 親画面リスト (逆引き `navigates_to`) を返す
+- **接続マップ**: モーダルに A→B テキスト表示 (`buildConnectionMap()`)
+- **`tests/e2e/search.spec.ts`**: 7テスト追加 (35/35 passed)
+
+## Phase 7 完了内容 (2026-03-03)
+
+### OpenCV ハイブリッド検出 — OCR + Template Matching
+- **`_detect_icons()`**: `cv2.matchTemplate(TM_CCOEFF_NORMED)` + NMS (IoU≥0.4) でアイコン検出
+- **`_iou()`**: IoU 計算ユーティリティ (NMS 用)
+- **`CrawlerConfig.icon_threshold = 0.80`**: 検出信頼度閾値
+- **`_load_icon_templates()`**: `assets/templates/*.png` 起動時自動読み込み
+- **設計方針**: 検出結果は `ocr_results` に追加しない（指紋・タイトル汚染防止）→ `tappable_items` に直接追加
+- **DB**: `element_type='icon'` で OCR テキスト要素と区別可能
+- **初期テンプレート**: `close_btn.png` / `menu_btn.png` / `back_arrow.png` (48×48 合成画像、実機取得後差替推奨)
+- **ADR**: `docs/adr/001-universal-ui-detection.md` Phase 7 セクション追加
+- **テスト**: `tests/test_icon_detection.py` 13/13 passed (Appium 不要)
+- **GitHub push**: `e5244a5..5b33ee3` main → main
+
+### テスト状況 (Phase 7 時点)
+```
+test_icon_detection.py:  13 passed
+その他 Pytest (非 Appium): 128 passed, 13 errors (既存 Appium 必須テスト・変化なし)
+Playwright E2E:           35/35 passed
+```
+
+## 次フェーズ: Phase 8 — 実機テンプレート取得・クロール実行・マップ完成
+
+- iOS Simulator / 実機でスクリーンショットを撮り、`assets/templates/` を実画像に差替
+- フルクロール実行 → `evidence/` 蓄積 → `tools/visualize_map.py --format all` で遷移マップ確認
+- DB へのデータ蓄積 → Web UI での検索・モーダル表示で E2E 確認
 
 詳細は `docs/ROADMAP.md` 参照。
 
