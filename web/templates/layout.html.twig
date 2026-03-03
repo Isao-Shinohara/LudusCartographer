@@ -21,12 +21,32 @@
 
 <!-- Header -->
 <header class="bg-gray-900 border-b border-gray-800 shadow-lg">
-    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center gap-3">
+    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center gap-4">
         <span class="text-2xl">🗺️</span>
         <div>
             <h1 class="text-xl font-bold text-brand-light tracking-wide">LudusCartographer</h1>
             <p class="text-xs text-gray-500">モバイルゲーム UI マップ</p>
         </div>
+
+        {% if game_titles is defined and game_titles is not empty %}
+        <!-- ゲームセレクター -->
+        <div class="ml-auto flex items-center gap-2 flex-shrink-0">
+            <label for="game-selector" class="text-xs text-gray-500 whitespace-nowrap">🎮 ゲーム:</label>
+            <select id="game-selector"
+                    aria-label="ゲーム選択"
+                    class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm
+                           text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand
+                           cursor-pointer min-w-[10rem]">
+                <option value="">すべてのゲーム</option>
+                {% for title in game_titles %}
+                <option value="{{ title|e }}"
+                    {% if (current_game ?? '') == title %}selected{% endif %}>
+                    {{ title|e }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
     </div>
 </header>
 
@@ -41,6 +61,53 @@
         LudusCartographer &copy; 2026 — powered by Appium + PaddleOCR
     </div>
 </footer>
+
+<!-- ゲームセレクター: localStorage + URL パラメータ同期 -->
+<script>
+(function () {
+    const LS_KEY = 'lc_selected_game';
+    const sel    = document.getElementById('game-selector');
+
+    // URL に ?game= パラメータがあればその値を優先して localStorage に保存
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlGame   = urlParams.get('game'); // null = パラメータなし, '' = ?game=, 'xxx' = ?game=xxx
+
+    if (urlGame !== null) {
+        // URL パラメータが明示されているので localStorage に保存して終了
+        localStorage.setItem(LS_KEY, urlGame);
+    } else if (sel) {
+        // URL に ?game= がない場合、localStorage の値でリダイレクト（初回訪問時の復元）
+        const stored = localStorage.getItem(LS_KEY);
+        if (stored) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('game', stored);
+            // 同じ URL なら無限ループ防止のためスキップ
+            if (url.toString() !== window.location.href) {
+                window.location.replace(url.toString());
+                return;
+            }
+        }
+    }
+
+    if (!sel) return;
+
+    // セレクター変更 → localStorage に保存 + ページ遷移
+    sel.addEventListener('change', function () {
+        const game = this.value;
+        localStorage.setItem(LS_KEY, game);
+
+        const url = new URL(window.location.href);
+        if (game) {
+            url.searchParams.set('game', game);
+        } else {
+            url.searchParams.delete('game');
+        }
+        // ゲーム切り替え時は検索状態をリセット
+        url.searchParams.delete('q');
+        window.location.href = url.toString();
+    });
+}());
+</script>
 
 </body>
 </html>

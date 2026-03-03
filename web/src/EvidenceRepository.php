@@ -10,101 +10,103 @@ use PDO;
  * SQLite evidence DB (crawler/storage/ludus.db) 用リポジトリ。
  *
  * ScreenRepository と同一のメソッドシグネチャを持ち、
- * search.php が MySQL / SQLite どちらでも同じコードで動作できるようにする。
+ * search.php / index.php が MySQL / SQLite どちらでも同じコードで動作できるようにする。
  */
 class EvidenceRepository
 {
     public function __construct(private PDO $db) {}
 
     // ------------------------------------------------------------------
-    // public API (ScreenRepository と同一シグネチャ)
+    // public API
     // ------------------------------------------------------------------
 
-    /** @return array<int, array<string, mixed>> */
-    public function search(string $keyword = '', int $limit = 50): array
+    /**
+     * DB に存在するゲームタイトルの一覧を返す（ヘッダーセレクター用）。
+     *
+     * @return string[]
+     */
+    public function getGameTitles(): array
     {
-        if ($keyword === '') {
-            $sql = <<<SQL
-                SELECT id, title AS name, depth AS category,
-                       screenshot_path, NULL AS thumbnail_path,
-                       ocr_text, 1 AS visited_count, discovered_at AS last_seen_at,
-                       session_id AS game_name, 'ios' AS platform,
-                       fingerprint AS screen_hash
-                FROM lc_screens
-                ORDER BY discovered_at DESC
-                LIMIT :limit
-            SQL;
-            $stmt = $this->db->prepare($sql);
-            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-        } else {
-            $sql = <<<SQL
-                SELECT id, title AS name, depth AS category,
-                       screenshot_path, NULL AS thumbnail_path,
-                       ocr_text, 1 AS visited_count, discovered_at AS last_seen_at,
-                       session_id AS game_name, 'ios' AS platform,
-                       fingerprint AS screen_hash
-                FROM lc_screens
-                WHERE title LIKE :like OR ocr_text LIKE :like2
-                ORDER BY discovered_at DESC
-                LIMIT :limit
-            SQL;
-            $stmt = $this->db->prepare($sql);
-            $stmt->bindValue(':like',  '%' . $keyword . '%');
-            $stmt->bindValue(':like2', '%' . $keyword . '%');
-            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-        }
-
-        $stmt->execute();
-        return array_map([$this, 'formatRow'], $stmt->fetchAll());
+        $stmt = $this->db->query(
+            "SELECT DISTINCT game_title FROM lc_sessions"
+            . " WHERE game_title IS NOT NULL ORDER BY game_title"
+        );
+        return array_column($stmt->fetchAll(), 'game_title');
     }
 
-    /** @return array<int, array<string, mixed>> */
-    public function searchAdvanced(
-        string $title     = '',
+    /**
+     * キーワードとゲームタイトルでスクリーンを検索する。
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function search(
         string $keyword   = '',
-        string $sessionId = '',
-        int    $limit     = 100,
+        int    $limit     = 50,
+        string $gameTitle = '',
     ): array {
-        $conditions = [];
-        $bindings   = [':limit' => $limit];
-
-        if ($title !== '') {
-            $conditions[]       = 'title LIKE :title';
-            $bindings[':title'] = '%' . $title . '%';
-        }
-
-        if ($keyword !== '') {
-            $conditions[]        = '(title LIKE :kw OR ocr_text LIKE :kw2)';
-            $bindings[':kw']     = '%' . $keyword . '%';
-            $bindings[':kw2']    = '%' . $keyword . '%';
-        }
-
-        if ($sessionId !== '') {
-            $conditions[]          = 'session_id = :session';
-            $bindings[':session']  = $sessionId;
-        }
-
-        $where = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
+        [$where, $bindings] = $this->buildScreenWhere($keyword, '', $gameTitle);
 
         $sql = <<<SQL
-            SELECT id, title AS name, depth AS category,
-                   screenshot_path, NULL AS thumbnail_path,
-                   ocr_text, 1 AS visited_count, discovered_at AS last_seen_at,
-                   session_id AS game_name, 'ios' AS platform,
-                   fingerprint AS screen_hash
-            FROM lc_screens
+            SELECT s.id, s.title, s.depth, s.screenshot_path,
+                   s.ocr_text, s.discovered_at, s.session_id, s.fingerprint,
+                   COALESCE(sess.game_title, 'Unknown Game') AS game_title
+            FROM lc_screens s
+            LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
             {$where}
-            ORDER BY discovered_at DESC
+            ORDER BY s.discovered_at DESC
             LIMIT :limit
         SQL;
 
+        $bindings[':limit'] = $limit;
         $stmt = $this->db->prepare($sql);
         foreach ($bindings as $key => $value) {
             $type = ($key === ':limit') ? PDO::PARAM_INT : PDO::PARAM_STR;
             $stmt->bindValue($key, $value, $type);
         }
         $stmt->execute();
-        return array_map([$this, 'formatRow'], $stmt->fetchAll());
+        return array_map([$this, 'toScreenArray'], $stmt->fetchAll());
+    }
+
+    /**
+     * title / keyword / session_id / game_title の複合条件でスクリーンを検索する。
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function searchAdvanced(
+        string $title     = '',
+        string $keyword   = '',
+        string $sessionId = '',
+        int    $limit     = 100,
+        string $gameTitle = '',
+    ): array {
+        [$where, $bindings] = $this->buildScreenWhere($keyword, $sessionId, $gameTitle);
+
+        // title 条件を追加
+        if ($title !== '') {
+            $cond = 's.title LIKE :title';
+            $where = ($where === '') ? "WHERE {$cond}" : "{$where} AND {$cond}";
+            $bindings[':title'] = '%' . $title . '%';
+        }
+
+        $sql = <<<SQL
+            SELECT s.id, s.title, s.depth, s.screenshot_path,
+                   s.ocr_text, s.discovered_at, s.session_id, s.fingerprint,
+                   COALESCE(sess.game_title, 'Unknown Game') AS game_title
+            FROM lc_screens s
+            LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
+            {$where}
+            ORDER BY s.discovered_at DESC
+            LIMIT :limit
+        SQL;
+
+        $bindings[':limit'] = $limit;
+        $stmt = $this->db->prepare($sql);
+        foreach ($bindings as $key => $value) {
+            $type = ($key === ':limit') ? PDO::PARAM_INT : PDO::PARAM_STR;
+            $stmt->bindValue($key, $value, $type);
+        }
+        $stmt->execute();
+        return array_map([$this, 'toScreenArray'], $stmt->fetchAll());
     }
 
     /**
@@ -113,9 +115,12 @@ class EvidenceRepository
     public function findWithElements(int $screenId): array
     {
         $stmt = $this->db->prepare(<<<SQL
-            SELECT id, title, depth, screenshot_path, ocr_text,
-                   discovered_at, session_id, fingerprint, parent_fp
-            FROM lc_screens WHERE id = :id
+            SELECT s.id, s.title, s.depth, s.screenshot_path, s.ocr_text,
+                   s.discovered_at, s.session_id, s.fingerprint, s.parent_fp,
+                   COALESCE(sess.game_title, 'Unknown Game') AS game_title
+            FROM lc_screens s
+            LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
+            WHERE s.id = :id
         SQL);
         $stmt->execute([':id' => $screenId]);
         $raw = $stmt->fetch() ?: null;
@@ -137,9 +142,11 @@ class EvidenceRepository
         $parents = [];
         if ($raw && $raw['parent_fp'] !== null) {
             $stmt = $this->db->prepare(<<<SQL
-                SELECT id, title AS name, fingerprint AS screen_hash, NULL AS via_label
-                FROM lc_screens
-                WHERE fingerprint = :fp AND session_id = :sid
+                SELECT s.id, s.title AS name, s.fingerprint AS screen_hash, NULL AS via_label,
+                       COALESCE(sess.game_title, 'Unknown Game') AS game_title
+                FROM lc_screens s
+                LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
+                WHERE s.fingerprint = :fp AND s.session_id = :sid
                 LIMIT 1
             SQL);
             $stmt->execute([':fp' => $raw['parent_fp'], ':sid' => $raw['session_id']]);
@@ -149,24 +156,45 @@ class EvidenceRepository
         return compact('screen', 'elements', 'parents');
     }
 
-    /** @return array<int, array<string, mixed>> */
-    public function getSessions(int $limit = 20): array
+    /**
+     * クロールセッション一覧を返す。
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getSessions(int $limit = 20, string $gameTitle = ''): array
     {
-        $stmt = $this->db->prepare(<<<SQL
+        $conditions = [];
+        $bindings   = [':limit' => $limit];
+
+        if ($gameTitle !== '') {
+            $conditions[]          = 'game_title = :game_title';
+            $bindings[':game_title'] = $gameTitle;
+        }
+
+        $where = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
+
+        $sql = <<<SQL
             SELECT id,
-                   session_id AS game_name,
-                   'ios'      AS platform,
+                   COALESCE(game_title, session_id) AS game_name,
+                   game_title,
+                   'ios'  AS platform,
                    status,
                    screens_found,
                    started_at,
-                   NULL       AS ended_at,
-                   NULL       AS error_message,
+                   NULL   AS ended_at,
+                   NULL   AS error_message,
                    session_id AS session_dir
             FROM lc_sessions
+            {$where}
             ORDER BY started_at DESC
             LIMIT :limit
-        SQL);
-        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        SQL;
+
+        $stmt = $this->db->prepare($sql);
+        foreach ($bindings as $key => $value) {
+            $type = ($key === ':limit') ? PDO::PARAM_INT : PDO::PARAM_STR;
+            $stmt->bindValue($key, $value, $type);
+        }
         $stmt->execute();
         return $stmt->fetchAll();
     }
@@ -174,6 +202,39 @@ class EvidenceRepository
     // ------------------------------------------------------------------
     // private helpers
     // ------------------------------------------------------------------
+
+    /**
+     * lc_screens クエリ用の WHERE 句とバインド値を構築する。
+     *
+     * @return array{string, array<string, mixed>}  [WHERE句, bindings]
+     */
+    private function buildScreenWhere(
+        string $keyword   = '',
+        string $sessionId = '',
+        string $gameTitle = '',
+    ): array {
+        $conditions = [];
+        $bindings   = [];
+
+        if ($keyword !== '') {
+            $conditions[]        = '(s.title LIKE :kw OR s.ocr_text LIKE :kw2)';
+            $bindings[':kw']     = '%' . $keyword . '%';
+            $bindings[':kw2']    = '%' . $keyword . '%';
+        }
+
+        if ($sessionId !== '') {
+            $conditions[]           = 's.session_id = :session';
+            $bindings[':session']   = $sessionId;
+        }
+
+        if ($gameTitle !== '') {
+            $conditions[]             = 'sess.game_title = :game_title';
+            $bindings[':game_title']  = $gameTitle;
+        }
+
+        $where = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
+        return [$where, $bindings];
+    }
 
     /** lc_screens の raw 行を API 出力フォーマットに変換する。 */
     private function toScreenArray(array $raw): array
@@ -187,16 +248,10 @@ class EvidenceRepository
             'ocr_text'        => $raw['ocr_text'],
             'visited_count'   => 1,
             'last_seen_at'    => $raw['discovered_at'],
-            'game_name'       => $raw['session_id'],
+            'game_name'       => $raw['game_title'] ?? $raw['session_id'],
             'platform'        => 'ios',
             'screen_hash'     => $raw['fingerprint'],
+            'game_title'      => $raw['game_title'] ?? 'Unknown Game',
         ];
-    }
-
-    /** SELECT 結果の行をフォーマットする（search/searchAdvanced 用）。 */
-    private function formatRow(array $row): array
-    {
-        $row['category'] = 'depth=' . $row['category'];
-        return $row;
     }
 }

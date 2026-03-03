@@ -185,6 +185,9 @@
 </div>
 
 <script>
+// 現在選択中のゲームタイトル（URL パラメータから取得）
+const CURRENT_GAME = new URLSearchParams(window.location.search).get('game') || '';
+
 function esc(s) {
     return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -203,6 +206,8 @@ function cardHtml(s) {
         ? `<p class="text-xs text-gray-500 font-mono bg-gray-800/60 rounded p-2 line-clamp-2 leading-relaxed"
                title="${esc(s.ocr_text)}">${esc((s.ocr_text||'').slice(0,100))}${(s.ocr_text||'').length>100?'…':''}</p>`
         : '';
+    // ゲームタイトルラベル: game_title を優先、なければ game_name
+    const gameLabel = s.game_title || s.game_name || '';
     return `<article class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden
                  hover:border-brand transition-colors duration-150 group cursor-pointer"
              onclick="openModal(${parseInt(s.id,10)})">
@@ -212,7 +217,10 @@ function cardHtml(s) {
         </div>
         <div class="p-4">
             <h2 class="font-semibold text-gray-100 group-hover:text-brand-light transition-colors truncate">${esc(s.name||'(名称未設定)')}</h2>
-            <p class="text-xs text-gray-500 mt-1 mb-3 truncate">🎮 ${esc(s.game_name)}<span class="ml-1 bg-gray-800 px-1 rounded">${esc(s.platform)}</span></p>
+            <p class="text-xs text-gray-500 mt-1 mb-3 truncate">
+                🎮 <span class="text-gray-300">${esc(gameLabel)}</span>
+                <span class="ml-1 bg-gray-800 px-1 rounded">${esc(s.platform)}</span>
+            </p>
             ${ocr}
             <div class="flex items-center justify-between mt-3 text-xs text-gray-600">
                 <span>👁 ${esc(s.visited_count)} 回訪問</span>
@@ -244,9 +252,10 @@ async function advancedSearch() {
     const keyword = document.getElementById('adv-keyword').value.trim();
     const session = document.getElementById('adv-session').value.trim();
     const params  = new URLSearchParams({ action: 'search' });
-    if (title)   params.set('title',      title);
-    if (keyword) params.set('keyword',    keyword);
-    if (session) params.set('session_id', session);
+    if (title)        params.set('title',      title);
+    if (keyword)      params.set('keyword',    keyword);
+    if (session)      params.set('session_id', session);
+    if (CURRENT_GAME) params.set('game',       CURRENT_GAME);
     try {
         const res  = await fetch(`/api/search.php?${params}`);
         const data = await res.json();
@@ -306,7 +315,7 @@ async function openModal(id) {
             ${imgHtml}
             ${mapHtml}
             <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mb-4 border border-gray-800 rounded-lg p-3">
-                <dt class="text-gray-500">ゲーム</dt><dd class="text-gray-200">${esc(s.game_name)}</dd>
+                <dt class="text-gray-500">ゲーム</dt><dd class="text-gray-200">${esc(s.game_title || s.game_name)}</dd>
                 <dt class="text-gray-500">プラットフォーム</dt><dd class="text-gray-200">${esc(s.platform)}</dd>
                 <dt class="text-gray-500">カテゴリ</dt><dd class="text-gray-200">${esc(s.category)}</dd>
                 <dt class="text-gray-500">訪問回数</dt><dd class="text-gray-200">${esc(s.visited_count)}</dd>
@@ -340,15 +349,18 @@ const STATUS_ICON = {
 };
 
 function sessionRowHtml(s) {
-    const cls  = STATUS_CLASS[s.status] || STATUS_CLASS.completed;
-    const icon = STATUS_ICON[s.status]  || '❓';
-    const dur  = s.ended_at
+    const cls      = STATUS_CLASS[s.status] || STATUS_CLASS.completed;
+    const icon     = STATUS_ICON[s.status]  || '❓';
+    const dur      = s.ended_at
         ? `${Math.round((new Date(s.ended_at) - new Date(s.started_at)) / 60000)} 分`
         : '実行中';
+    const gameLabel = s.game_title || s.game_name || '';
     return `<tr class="border-b border-gray-800 hover:bg-gray-800/40 cursor-pointer"
                 onclick="applySession('${esc(s.session_dir)}')">
         <td class="py-1.5 pr-3 text-gray-400">#${esc(s.id)}</td>
-        <td class="py-1.5 pr-3 text-gray-200 font-medium">${esc(s.game_name)}</td>
+        <td class="py-1.5 pr-3">
+            <span class="text-gray-200 font-medium">${esc(gameLabel)}</span>
+        </td>
         <td class="py-1.5 pr-3">
             <span class="px-1.5 py-0.5 rounded text-xs ${cls}">${icon} ${esc(s.status)}</span>
         </td>
@@ -370,7 +382,8 @@ async function loadSessions() {
     const panel = document.getElementById('session-list');
     const badge = document.getElementById('session-panel-badge');
     try {
-        const res  = await fetch('/api/search.php?action=get_sessions');
+        const gameParam = CURRENT_GAME ? `&game=${encodeURIComponent(CURRENT_GAME)}` : '';
+        const res  = await fetch(`/api/search.php?action=get_sessions${gameParam}`);
         const data = await res.json();
         const sessions = data.sessions || [];
         if (badge) badge.textContent = `${sessions.length} セッション`;

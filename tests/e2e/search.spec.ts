@@ -28,27 +28,28 @@ test.describe('検索ページ — 基本表示', () => {
         await expect(input).toHaveAttribute('placeholder', /検索/);
     });
 
-    test('サンプルデータのスクリーンカードが表示される', async ({ page }) => {
+    test('スクリーンカードが表示される', async ({ page }) => {
         await page.goto('/');
-        // DB未接続時はサンプルデータにフォールバック
+        // 実データが表示される（SQLite evidence DB から取得）
         const cards = page.locator('article');
-        await expect(cards).toHaveCount(3);
+        await expect(cards.first()).toBeVisible();
+        expect(await cards.count()).toBeGreaterThan(0);
     });
 
-    test('タイトル画面カードが表示される', async ({ page }) => {
+    test('一般画面カードが表示される', async ({ page }) => {
         await page.goto('/');
         const grid = page.locator('#results-grid');
-        await expect(grid).toContainText('タイトル画面');
+        await expect(grid).toContainText('一般');
     });
 
-    test('ホーム画面カードが表示される', async ({ page }) => {
+    test('情報画面カードが表示される', async ({ page }) => {
         await page.goto('/');
-        await expect(page.locator('#results-grid')).toContainText('ホーム画面');
+        await expect(page.locator('#results-grid')).toContainText('情報');
     });
 
-    test('ショップ画面カードが表示される', async ({ page }) => {
+    test('カレンダー画面カードが表示される', async ({ page }) => {
         await page.goto('/');
-        await expect(page.locator('#results-grid')).toContainText('ショップ画面');
+        await expect(page.locator('#results-grid')).toContainText('カレンダー');
     });
 
     test('件数表示が正しい', async ({ page }) => {
@@ -76,12 +77,12 @@ test.describe('検索フォーム — インタラクション', () => {
     });
 
     test('キーワード検索で結果が絞り込まれる', async ({ page }) => {
-        await page.goto('/?q=ショップ');
-        // ホーム画面のOCRにも「ショップ」が含まれるため2件
+        // 実データの OCR テキストに含まれる「言語」で検索
+        await page.goto('/?q=%E8%A8%80%E8%AA%9E');
         const cards = page.locator('article');
         const count = await cards.count();
         expect(count).toBeGreaterThan(0);
-        await expect(page.locator('body')).toContainText('ショップ');
+        await expect(page.locator('body')).toContainText('言語');
     });
 
     test('存在しないキーワードで "見つかりませんでした" が表示される', async ({ page }) => {
@@ -90,13 +91,14 @@ test.describe('検索フォーム — インタラクション', () => {
     });
 
     test('クリアリンクが表示され、クリックで全件表示に戻る', async ({ page }) => {
-        await page.goto('/?q=ショップ');
+        await page.goto('/?q=%E8%A8%80%E8%AA%9E');
         const clearLink = page.locator('a', { hasText: 'クリア' });
         await expect(clearLink).toBeVisible();
         await clearLink.click();
         // クリアリンク href="?" → URL は /?  (q パラメータなし)
         await expect(page).not.toHaveURL(/[?&]q=/);
-        await expect(page.locator('article')).toHaveCount(3);
+        // 全件が表示される（実データ）
+        expect(await page.locator('article').count()).toBeGreaterThan(0);
     });
 
     test('検索結果の件数が表示される', async ({ page }) => {
@@ -256,8 +258,8 @@ test.describe('セッション統計パネル', () => {
         await page.goto('/');
         // JS による loadSessions() 完了を待つ
         await expect(page.locator('#session-table')).toBeVisible({ timeout: 5000 });
-        // 実データのセッション ID が表示される
-        await expect(page.locator('#session-table')).toContainText('20260303_');
+        // 実データのゲームタイトルが表示される
+        await expect(page.locator('#session-table')).toContainText('iOS設定');
     });
 
     test('セッション統計パネルに画面数(Fingerprint数)が表示される', async ({ page }) => {
@@ -302,6 +304,76 @@ test.describe('セッション統計パネル', () => {
         await expect(details).toHaveAttribute('open', '');
         const sessionInput = page.locator('#adv-session');
         await expect(sessionInput).not.toHaveValue('');
+    });
+
+});
+
+// ============================================================
+// ゲームフィルター機能
+// ============================================================
+
+test.describe('ゲームフィルター', () => {
+
+    test('get_games API がゲームタイトル一覧を返す', async ({ page }) => {
+        const res  = await page.request.get('/api/search.php?action=get_games');
+        expect(res.status()).toBe(200);
+        const body = await res.json();
+        expect(body).toHaveProperty('games');
+        expect(Array.isArray(body.games)).toBe(true);
+        expect(body.games.length).toBeGreaterThan(0);
+    });
+
+    test('get_games API に iOS設定・カレンダー・マップが含まれる', async ({ page }) => {
+        const res  = await page.request.get('/api/search.php?action=get_games');
+        const body = await res.json();
+        expect(body.games).toContain('iOS設定');
+        expect(body.games).toContain('カレンダー');
+        expect(body.games).toContain('マップ');
+    });
+
+    test('game フィルターで iOS設定 のスクリーンのみ返される', async ({ page }) => {
+        const res  = await page.request.get('/api/search.php?action=search&game=iOS設定');
+        const body = await res.json();
+        expect(body.count).toBeGreaterThan(0);
+        for (const screen of body.screens) {
+            expect(screen.game_title).toBe('iOS設定');
+        }
+    });
+
+    test('game フィルターで カレンダー のスクリーンが 3 件返される', async ({ page }) => {
+        const res  = await page.request.get('/api/search.php?action=search&game=カレンダー');
+        const body = await res.json();
+        expect(body.count).toBe(3);
+        expect(body.screens[0].game_title).toBe('カレンダー');
+    });
+
+    test('ゲームセレクターがヘッダーに表示される', async ({ page }) => {
+        await page.goto('/');
+        const selector = page.locator('#game-selector');
+        await expect(selector).toBeVisible();
+        // 「すべてのゲーム」オプションを含む
+        await expect(selector).toContainText('すべてのゲーム');
+        // 実データのゲームタイトルが含まれる
+        await expect(selector).toContainText('iOS設定');
+        await expect(selector).toContainText('カレンダー');
+    });
+
+    test('game パラメータ付き URL でゲームが絞り込まれる', async ({ page }) => {
+        await page.goto('/?game=カレンダー');
+        const cards = page.locator('article');
+        await expect(cards.first()).toBeVisible();
+        // カレンダーの 3 画面のみ表示
+        expect(await cards.count()).toBe(3);
+        await expect(page.locator('#results-grid')).toContainText('カレンダー');
+        // ヘッダーセレクターが「カレンダー」を選択中
+        await expect(page.locator('#game-selector')).toHaveValue('カレンダー');
+    });
+
+    test('get_sessions API の game フィルターが機能する', async ({ page }) => {
+        const res  = await page.request.get('/api/search.php?action=get_sessions&game=カレンダー');
+        const body = await res.json();
+        expect(body.count).toBe(1);
+        expect(body.sessions[0].game_title).toBe('カレンダー');
     });
 
 });

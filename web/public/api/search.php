@@ -17,7 +17,8 @@ if (file_exists($envPath)) {
 
 header('Content-Type: application/json; charset=utf-8');
 
-$action = $_GET['action'] ?? 'search';
+$action    = $_GET['action'] ?? 'search';
+$gameTitle = trim(strip_tags($_GET['game'] ?? ''));
 
 try {
     $pdo        = Database::getConnection();
@@ -34,12 +35,24 @@ try {
     }
 }
 
+// --- get_games アクション ---
+if ($action === 'get_games') {
+    $games = ($useDb && $repository instanceof EvidenceRepository)
+        ? $repository->getGameTitles()
+        : [];
+    echo json_encode(
+        ['games' => $games, 'count' => count($games)],
+        JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+    );
+    exit;
+}
+
 // --- get_sessions アクション ---
 if ($action === 'get_sessions') {
     $limit = min((int)($_GET['limit'] ?? 20), 100);
 
     if ($useDb) {
-        $sessions = $repository->getSessions($limit);
+        $sessions = $repository->getSessions($limit, $gameTitle);
     } else {
         $sessions = ScreenRepository::getSampleSessions();
     }
@@ -84,7 +97,7 @@ $sessionId = trim(strip_tags($_GET['session_id'] ?? ''));
 $limit     = min((int)($_GET['limit'] ?? 100), 500);
 
 if ($useDb) {
-    $screens = $repository->searchAdvanced($title, $keyword, $sessionId, $limit);
+    $screens = $repository->searchAdvanced($title, $keyword, $sessionId, $limit, $gameTitle);
 } else {
     $screens = ScreenRepository::getSampleData();
     foreach (array_filter([$title, $keyword]) as $f) {

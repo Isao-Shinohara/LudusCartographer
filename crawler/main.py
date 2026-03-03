@@ -17,6 +17,7 @@ LudusCartographer — クローラー エントリポイント
 
 【環境変数】
   IOS_BUNDLE_ID         ターゲットアプリの Bundle ID（必須）
+  GAME_TITLE            ゲームタイトル（省略可 — 未設定時は IOS_BUNDLE_ID を使用）
   IOS_USE_SIMULATOR     "1" でシミュレータモード
   IOS_SIMULATOR_UDID    シミュレータ UDID（省略可 — 自動選択）
   IOS_UDID              実機 UDID（省略可 — 自動検出）
@@ -48,14 +49,16 @@ def main() -> None:
         print("  例: IOS_BUNDLE_ID=com.example.mygame python main.py")
         sys.exit(1)
 
-    duration  = int(os.environ.get("CRAWL_DURATION_SEC", "180"))
-    max_depth = int(os.environ.get("CRAWL_MAX_DEPTH",    "3"))
-    db_host   = os.environ.get("DB_HOST", "")
+    game_title = os.environ.get("GAME_TITLE", bundle_id)  # 未設定時は bundle_id をタイトルとして使う
+    duration   = int(os.environ.get("CRAWL_DURATION_SEC", "180"))
+    max_depth  = int(os.environ.get("CRAWL_MAX_DEPTH",    "3"))
+    db_host    = os.environ.get("DB_HOST", "")
 
     print("=" * 60)
     print("  LudusCartographer — 自律クロール開始")
     print("=" * 60)
     print(f"  ターゲット : {bundle_id}")
+    print(f"  ゲーム名  : {game_title}")
     print(f"  最大時間  : {duration} 秒")
     print(f"  最大深さ  : {max_depth}")
     print(f"  DB 保存   : {'有効 (' + db_host + ')' if db_host else '無効 (DB_HOST 未設定)'}")
@@ -68,6 +71,7 @@ def main() -> None:
     from lc.ocr import find_best, run_ocr
 
     crawler_cfg = CrawlerConfig(
+        game_title       = game_title,
         max_duration_sec = duration,
         max_depth        = max_depth,
         db_host          = db_host,

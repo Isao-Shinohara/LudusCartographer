@@ -17,7 +17,7 @@ class ScreenRepository
      * @param int    $limit   最大取得件数
      * @return array<int, array<string, mixed>>
      */
-    public function search(string $keyword = '', int $limit = 50): array
+    public function search(string $keyword = '', int $limit = 50, string $gameTitle = ''): array
     {
         if ($keyword === '') {
             $sql = <<<SQL
@@ -120,7 +120,7 @@ class ScreenRepository
      * @param int $limit 最大取得件数
      * @return array<int, array<string, mixed>>
      */
-    public function getSessions(int $limit = 20): array
+    public function getSessions(int $limit = 20, string $gameTitle = ''): array
     {
         $sql = <<<SQL
             SELECT
@@ -192,6 +192,7 @@ class ScreenRepository
         string $keyword   = '',
         string $sessionId = '',
         int    $limit     = 100,
+        string $gameTitle = '',
     ): array {
         $conditions = [];
         $bindings   = [':limit' => $limit];

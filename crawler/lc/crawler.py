@@ -108,6 +108,8 @@ class CrawlerConfig:
     wait_after_back:  float = 1.5    # back() 後の待機（秒）
     min_confidence:   float = 0.6    # OCR 最低信頼スコア
     icon_threshold:   float = 0.80   # テンプレートマッチング検出閾値 (TM_CCOEFF_NORMED)
+    # ゲームタイトル（SQLite保存時に使用）
+    game_title:       str   = "Unknown Game"
     # DB 設定（省略時はメモリのみ）
     db_game_id:       int   = 1
     db_host:          str   = ""
@@ -902,6 +904,7 @@ class ScreenCrawler:
 
         data = {
             "session_id": path.parent.name,
+            "game_title": self._config.game_title,
             "screens": [
                 {
                     "fingerprint":     rec.fingerprint,
