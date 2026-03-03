@@ -1,10 +1,10 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-03 (Phase 7 完了 — OpenCV ハイブリッド検出・テンプレート PNG・GitHub push)
+最終更新: 2026-03-04 (Phase 8 + Web 実データ接続 完了)
 
 ---
 
-## 現在のフェーズ: Phase 7 完了 → Phase 8 (実機テンプレート取得・クロール実行) へ
+## 現在のフェーズ: Phase 8 完了 — DFS クローラー安定化・管理画面実データ表示
 
 ## コミット履歴
 
@@ -173,13 +173,40 @@ test_icon_detection.py:  13 passed
 Playwright E2E:           35/35 passed
 ```
 
-## 次フェーズ: Phase 8 — 実機テンプレート取得・クロール実行・マップ完成
+## Phase 8 完了内容 (2026-03-04)
 
-- iOS Simulator / 実機でスクリーンショットを撮り、`assets/templates/` を実画像に差替
-- フルクロール実行 → `evidence/` 蓄積 → `tools/visualize_map.py --format all` で遷移マップ確認
-- DB へのデータ蓄積 → Web UI での検索・モーダル表示で E2E 確認
+### DFS クローラー安定化 — back() バグ修正
+- **`_crawl_impl() → bool`**: 遷移が発生したか否かを返り値で厳密判定
+  - `True` → 画面遷移あり → 呼び出し元が `back()` を実行
+  - `False` → 同一画面（指紋一致）→ `back()` をスキップ、`[NO_NAV]` ログ出力
+- **3分統合テスト**: 13/13 passed (情報/言語と地域/unknown が depth=1 に正常配置)
 
-詳細は `docs/ROADMAP.md` 参照。
+### プロジェクト最終クリーンアップ
+- `crawler/main.py`: クローラー CLI エントリポイント新設
+- `crawler/requirements.txt`: opencv-contrib / networkx / numpy / paddlex を正式追加
+- `README.md`: アーキテクチャ・セットアップ・ADR Phase 1-8 を完全記述
+
+### Web 管理画面 — 実探索データ接続 (MySQL 不要)
+- **`crawler/tools/import_to_sqlite.py`**: `crawl_summary.json` → `crawler/storage/ludus.db` 一括取り込み
+  - 6 セッション・20 画面・100+ タップ候補を SQLite に格納
+- **`web/src/Database.php`**: `getSqliteConnection()` 追加 (MySQL 失敗時フォールバック)
+- **`web/src/EvidenceRepository.php`**: SQLite 互換クエリ・ScreenRepository と同一 API
+- **`web/public/api/search.php`**: MySQL → SQLite の自動フォールバック実装
+- **`tests/e2e/search.spec.ts`**: 実データ対応に 3 テスト修正 (35/35 passed)
+
+### 現在の表示状態
+| 項目 | 値 |
+|------|-----|
+| 表示画面数 | 20 (6 セッション) |
+| screenshot_path | 実スクリーンショット絶対パス (img.php 経由で表示) |
+| fingerprint | 実 phash ベース指紋 (8f1a6277a8edc211 等) |
+| tappable_items | 実 OCR テキスト・信頼スコア |
+
+## 次フェーズ候補
+
+- 実機でのフルクロール → さらなる画面蓄積
+- `tools/import_to_sqlite.py` を自動実行 (クロール終了後に自動インポート)
+- タップ候補の遷移先を `navigates_to_name` に自動補完
 
 ---
 
