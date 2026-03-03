@@ -1,8 +1,35 @@
-pymysql>=1.1.0
+# ============================================================
+# LudusCartographer — Python 依存パッケージ
+# Python 3.9 以上、venv での使用を推奨
+# pip install -r requirements.txt
+# ============================================================
+
+# --- Appium クライアント ---
+Appium-Python-Client>=5.0.0       # v5.x: AppiumOptions が appium.options.common に移動
+
+# --- OCR ---
+paddleocr>=3.4.0                  # predict() API、PP-OCRv5_server モデル使用
+paddlex>=3.4.0                    # paddleocr 3.x の依存ライブラリ
+Pillow>=10.0.0
+
+# --- 画像処理（テンプレートマッチング・phash）---
+opencv-contrib-python>=4.10.0     # cv2.matchTemplate, cv2.dct を使用
+numpy>=1.24.0
+
+# --- データベース ---
+PyMySQL>=1.1.0                    # MySQL / MariaDB クライアント
+
+# --- 可視化ツール ---
+networkx>=3.0                     # tools/visualize_map.py の遷移グラフ構築
+
+# --- 設定ファイル ---
+python-dotenv>=1.0.0
+
+# --- テスト ---
 pytest>=7.4.0
 pytest-dotenv>=0.5.2
-python-dotenv>=1.0.0
-Appium-Python-Client>=3.1.0
-paddleocr>=3.4.0
-Pillow>=10.0.0
+
+# --- Google Cloud / Vertex AI（任意）---
+# 未設定時は AI 解析をスキップ。使用時は ADC 認証が必要:
+#   gcloud auth application-default login
 google-cloud-aiplatform>=1.40.0

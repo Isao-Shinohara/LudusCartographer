@@ -1,132 +1,125 @@
 # LudusCartographer
 
-AI でモバイルゲームの UI を自律的に探索し、画面遷移マップを自動生成するシステム。
+**AI にモバイルアプリを自律探索させ、すべての画面を「地図」として記録・検索できるシステム。**
 
-## アーキテクチャ概要
+Appium + PaddleOCR + OpenCV テンプレートマッチングによるハイブリッド UI 検出で、
+テキストのないグラフィカルボタン（× 閉じる・☰ メニュー・← 戻る）も自動認識。
+発見した画面は MySQL に保存され、PHP ベースの Web 管理画面からリアルタイムに検索できる。
 
 ```
-iPhone / Android 実機
-        ↓ USB
-  Appium 2.x (XCUITest / UiAutomator2)
+iPhone / Android (実機 or Simulator)
+        ↓  Appium 2.x (XCUITest / UiAutomator2)
+  Python クローラー  crawler/
+    ├── PaddleOCR 3.4.0  — テキスト要素を抽出
+    ├── OpenCV matchTemplate — アイコン・画像ボタンを検出
+    ├── DFS エンジン — 画面遷移を再帰探索
+    └── MySQL — 画面・遷移データを保存
         ↓
-  Python クローラー (crawler/)
-    ├── スクリーンショット撮影
-    ├── PaddleOCR 3.4.0 — テキスト抽出
-    ├── Vertex AI Gemini — 画面種別・ボタン分類
-    └── MySQL — 画面データ保存
-        ↓
-  PHP 8.x + Twig — 検索 UI (web/)
+  PHP 8.x + Twig  web/
+    ├── 全文検索・詳細検索 API
+    ├── セッション統計パネル
+    └── 画面接続マップ（A → B）
 ```
+
+---
+
+## システムの強み
+
+| 特徴 | 詳細 |
+|------|------|
+| **ハイブリッド検出** | OCR（文字）と OpenCV テンプレートマッチング（画像）を組み合わせ。テキストのないアイコンも見落とさない |
+| **座標依存ゼロ** | タイトル抽出・タップ候補抽出ともに相対比率で算出。任意の解像度・デバイスに対応 |
+| **phash 静止検知** | タップ後の固定待機を廃止。DCT phash ハミング距離でアダプティブに「画面が静止したか」を判定 |
+| **バックトラッキング検出** | `_crawl_impl()` の戻り値で「遷移が起きたか」を厳密に判定し、誤った `back()` 呼び出しを防止 |
+| **ADR による設計管理** | 全アーキテクチャ決定を `docs/adr/` に記録。却下案・根拠・実測データを含む |
+| **DB 未接続でも動作** | MySQL 未設定時はサンプルデータにフォールバック。ゼロ設定で Web UI を確認可能 |
+
+---
 
 ## ディレクトリ構成
 
 ```
 LudusCartographer/
 ├── crawler/
-│   ├── appium/
-│   │   └── minimal_launch.py   # 最小疎通確認スクリプト
-│   ├── lc/                     # メインパッケージ
-│   │   ├── capabilities.py     # iOS/Android Capabilities ビルダー
-│   │   ├── driver.py           # AppiumDriver ラッパー
-│   │   └── utils.py            # UDID 自動検出ユーティリティ (iOS/Android)
-│   ├── ai_analyzer.py          # Vertex AI Gemini 解析
-│   ├── config/
-│   │   └── .env.example        # 環境変数テンプレート
-│   ├── tests/                  # pytest テストスイート
-│   └── venv/                   # Python 3.9 仮想環境
+│   ├── lc/                        # メインパッケージ
+│   │   ├── crawler.py             # DFS クローラー本体
+│   │   ├── driver.py              # AppiumDriver ラッパー + wait_until_stable()
+│   │   ├── ocr.py                 # PaddleOCR ラッパー
+│   │   ├── capabilities.py        # iOS/Android Capabilities ビルダー
+│   │   └── utils.py               # UDID 自動検出・phash 計算
+│   ├── tools/
+│   │   └── visualize_map.py       # 遷移マップ可視化 (Mermaid/ASCII/Gap分析)
+│   ├── assets/templates/          # テンプレートマッチング用アイコン PNG
+│   ├── evidence/                  # クロール証拠ファイル (before/after/OCR結果)
+│   ├── tests/                     # Pytest テストスイート (Appium 不要テストあり)
+│   ├── main.py                    # クローラー エントリポイント
+│   └── requirements.txt
+├── web/
+│   ├── public/
+│   │   ├── index.php              # 検索 UI メイン
+│   │   ├── api/search.php         # JSON API (search / detail / get_sessions)
+│   │   └── img.php                # 証拠画像セキュアプロキシ
+│   ├── src/ScreenRepository.php   # MySQL クエリ + FULLTEXT 検索
+│   └── templates/search.html.twig
+├── tests/e2e/search.spec.ts       # Playwright E2E テスト (35/35)
 ├── docs/
-│   └── schema/database.sql     # MySQL スキーマ
-├── scripts/
-│   └── setup_mac.sh            # Mac 用自動セットアップスクリプト
-├── web/                        # PHP 検索 UI
-├── tests/e2e/                  # Playwright E2E テスト
-└── CLAUDE.md                   # 開発運用憲法
+│   ├── adr/001-universal-ui-detection.md   # アーキテクチャ決定記録 (Phase 1-8)
+│   └── schema/database.sql        # MySQL スキーマ
+└── CLAUDE.md                      # 開発運用憲法
 ```
 
 ---
 
 ## セットアップ
 
-### Mac (推奨: 自動セットアップ)
+### 1. 前提ツール（macOS）
 
 ```bash
-chmod +x scripts/setup_mac.sh
-./scripts/setup_mac.sh
+# Node.js v18 LTS (Appium 2.x は v21 に非対応)
+brew install nodebrew
+nodebrew install v18.20.8 && nodebrew use v18.20.8
+echo 'export PATH="$HOME/.nodebrew/current/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+
+# Appium 2.x + iOS/Android ドライバー
+npm install -g appium
+appium driver install xcuitest     # iOS
+appium driver install uiautomator2 # Android
+
+# iOS 実機ツール（iOS Simulator のみなら不要）
+brew install libimobiledevice ideviceinstaller ios-deploy
 ```
 
-スクリプトは以下を自動実行します:
-
-| ステップ | 内容 |
-|---------|------|
-| 1 | Homebrew インストール/確認 |
-| 2 | Node.js v18 LTS (nodebrew 経由) |
-| 3 | libimobiledevice / ideviceinstaller / ios-deploy (iOS ツール) |
-| 4 | android-platform-tools (adb) |
-| 5 | Python 3 仮想環境 + requirements.txt |
-| 6 | Appium 2.x + xcuitest / uiautomator2 ドライバー |
-| 7 | `.env` ファイル作成 |
-| 8 | デバイス接続診断 |
-
-完了後、`.env` を編集して `IOS_BUNDLE_ID` を設定してください。
-
-### Mac (手動セットアップ)
+### 2. Python 環境
 
 ```bash
-# 1. Homebrew ツール
-brew install libimobiledevice ideviceinstaller ios-deploy android-platform-tools
-
-# 2. Node.js v18 LTS (Appium 2.x に必要)
-brew install nodebrew
-nodebrew install v18.20.8
-nodebrew use v18.20.8
-export PATH="$HOME/.nodebrew/current/bin:$PATH"
-
-# 3. Appium 2.x + ドライバー
-npm install -g appium
-appium driver install xcuitest
-appium driver install uiautomator2
-
-# 4. Python 環境
 cd crawler
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
-
-# 5. 環境変数設定
-cp config/.env.example config/.env
-# .env を編集して IOS_BUNDLE_ID などを設定
 ```
 
-### Windows
+> **初回の PaddleOCR モデルダウンロードに数分かかります。**
+> ダウンロード後は `~/.paddlex/` にキャッシュされます。
 
-> **注意:** Windows での iOS 自動化には iTunes (または Apple デバイスドライバー) のインストールが必要です。
-> Android のみの場合は Android Studio + adb で対応可能です。
+### 3. 環境変数
 
-```powershell
-# winget (Windows Package Manager) を使用
-winget install --id Apple.iTunes           # iOS接続に必要
-winget install --id Google.AndroidStudio   # adb 含む (Android)
-# または choco を使用
-choco install adb
-
-# Node.js v18 LTS
-winget install --id OpenJS.NodeJS.LTS --version 18
-
-# Appium
-npm install -g appium
-appium driver install xcuitest      # macOS 専用 (Windows は Android のみ推奨)
-appium driver install uiautomator2  # Android
-
-# Python
-python -m venv crawler\venv
-crawler\venv\Scripts\pip install -r crawler\requirements.txt
+```bash
+cp crawler/config/.env.example crawler/config/.env
+# .env を編集: IOS_BUNDLE_ID を設定
 ```
 
-**Windows での iOS 制限事項:**
-- XCUITest ドライバーは macOS 専用 (Xcode が必要なため)
-- Windows から iOS を操作する場合は Mac を中継サーバーとして使う構成が必要
-- Android 実機/エミュレーターは Windows でも完全サポート
+主要な環境変数:
 
-### MySQL スキーマ
+| 変数 | 必須 | 説明 |
+|------|------|------|
+| `IOS_BUNDLE_ID` | ✅ | ターゲットアプリの Bundle ID (例: `com.apple.Preferences`) |
+| `IOS_USE_SIMULATOR` | — | `"1"` で iOS Simulator モード |
+| `IOS_SIMULATOR_UDID` | — | シミュレータ UDID (省略時: 自動選択) |
+| `IOS_UDID` | — | 実機 UDID (省略時: 自動検出) |
+| `CRAWL_DURATION_SEC` | — | クロール時間上限 (デフォルト: `180`) |
+| `CRAWL_MAX_DEPTH` | — | DFS 最大深さ (デフォルト: `3`) |
+| `DB_HOST` | — | MySQL ホスト (省略時: DB 保存スキップ) |
+
+### 4. MySQL スキーマ（任意）
 
 ```bash
 mysql -u root -p < docs/schema/database.sql
@@ -134,95 +127,139 @@ mysql -u root -p < docs/schema/database.sql
 
 ---
 
-## iOS / Android 実機接続
+## 実行方法
 
-### UDID / Serial 自動検出
+### Appium サーバーの起動
 
-`IOS_UDID` / `ANDROID_SERIAL` 環境変数は **省略可能** です。未設定の場合、以下の順序で自動検出します:
-
-| 優先度 | 方法 | 対象 | 条件 |
-|--------|------|------|------|
-| 1 | 環境変数 `IOS_UDID` | iOS | 常に最優先 |
-| 2 | 環境変数 `ANDROID_SERIAL` | Android | 常に最優先 |
-| 3 | `adb devices` | Android | USB デバッグ有効が必要 |
-| 4 | `idevice_id -l` | iOS | iPhone の「信頼」承認済みが必要 |
-| 5 | `ioreg` USB Serial Number | iOS | USB 接続のみで取得可能（ペアリング前でも可） |
-
-```
-iPhone 初回接続時の手順:
-  1. USB ケーブルで iPhone を Mac に接続
-  2. iPhone 画面に「このコンピュータを信頼しますか？」が表示されたら「信頼」をタップ
-  3. 承認後、idevice_id での自動検出が有効になります
-  ※ ioreg は「信頼」前でも UDID を取得できますが、WDA インストールにはペアリングが必要です
+```bash
+# 別ターミナルで起動（クロール中は常駐させる）
+PATH="$HOME/.nodebrew/current/bin:$PATH" appium --port 4723
 ```
 
-接続診断ツール:
+### クローラーの実行
 
 ```bash
 cd crawler
-venv/bin/python -c "
-from lc.utils import diagnose_device_connection
-import json
-print(json.dumps(diagnose_device_connection(), indent=2, ensure_ascii=False))
-"
+
+# iOS Simulator（設定アプリで動作確認）
+IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
+  CRAWL_DURATION_SEC=180 CRAWL_MAX_DEPTH=2 \
+  venv/bin/python main.py
+
+# iOS 実機（UDID 自動検出）
+IOS_BUNDLE_ID=com.example.mygame venv/bin/python main.py
+
+# Android（ADB 経由でデバイス自動検出）
+ANDROID_BUNDLE_ID=com.example.mygame venv/bin/python main.py
 ```
 
-### 最小疎通確認
+実行ログの見方:
+
+```
+[CRAWL] ✅ 新規画面 #1  深さ=0  title='一般'  items=10件  指紋=8f1a6277…
+[CRAWL]  → [1/10] タップ: '情報'  pixel=(259,1143)
+[CRAWL]  ← 戻る完了: '情報'
+[CRAWL]  🔄 [NO_NAV] 非遷移タップ: 'ああ' — back() スキップ   ← 遷移なしを正しく検出
+[ICON]  検出: 'close_btn'  score=0.923  pos=(1050,80)          ← テンプレートマッチング
+```
+
+### Web 管理画面へのアクセス
 
 ```bash
-# 必須: IOS_BUNDLE_ID のみ設定（UDID は自動検出）
-export IOS_BUNDLE_ID="com.example.mygame"
-
-# Appium サーバーは minimal_launch.py が自動起動します
-cd crawler
-venv/bin/python appium/minimal_launch.py
+cd web
+php -S localhost:8080 -t public/
 ```
 
-実行フロー:
-1. Appium サーバー自動起動 (ポート 4723)
-2. デバイス自動検出 (iOS / Android)
-3. アプリ起動
-4. 3 秒待機（描画完了まで）
-5. スクリーンショット撮影 → `crawler/evidence/<session>/launch.png`
-6. [任意] Vertex AI Gemini で画面解析
-7. [任意] MySQL の `screens` テーブルに保存
+ブラウザで `http://localhost:8080` を開く。
+
+| 機能 | URL |
+|------|-----|
+| 画面検索 | `http://localhost:8080/` |
+| 詳細検索 API | `http://localhost:8080/api/search.php?action=search&keyword=ショップ` |
+| セッション一覧 API | `http://localhost:8080/api/search.php?action=get_sessions` |
+| 画面詳細 API | `http://localhost:8080/api/search.php?action=detail&id=1` |
+
+> **DB 未接続時**: サンプルデータが表示されます。MySQL なしでもすべての機能を確認できます。
 
 ---
 
-## Vertex AI 設定（任意）
-
-認証は ADC (Application Default Credentials) を使用します:
+## 遷移マップの可視化
 
 ```bash
-gcloud auth application-default login
-export GCP_PROJECT_ID="your-project-id"
+cd crawler
+
+# 最新セッションのマップを全形式で出力
+venv/bin/python tools/visualize_map.py --format all
+
+# Mermaid 形式（Mermaid Live Editor で貼り付け可能）
+venv/bin/python tools/visualize_map.py --format mermaid
+
+# ASCII ツリー
+venv/bin/python tools/visualize_map.py --format tree
+
+# 要調査画面のレポート (unknown / タップ候補少 など)
+venv/bin/python tools/visualize_map.py --format gaps
 ```
 
-JSON キーファイルは不要です。
+Mermaid 出力例:
+
+```mermaid
+graph TD
+    A["一般 (d=0) | 10items"] --> B["情報 (d=1) | 8items"]
+    A --> C["言語と地域 (d=1) | 20items"]
+    A --> D["❓unknown (d=1) | 3items"]
+    style D fill:#ffcccc
+```
+
+---
+
+## アイコンテンプレートの追加
+
+`crawler/assets/templates/` に PNG を置くと、クローラー起動時に自動読み込みされ
+テンプレートマッチングによるアイコン検出に使用される。
+
+```
+ファイル名（拡張子なし）= 検出結果の text フィールド (icon: プレフィックス付き)
+
+例:
+  close_btn.png  →  text: "icon:close_btn"
+  menu_btn.png   →  text: "icon:menu_btn"
+```
+
+信頼度閾値（デフォルト `0.80`）は `CrawlerConfig(icon_threshold=0.80)` で調整可能。
 
 ---
 
 ## テスト
 
 ```bash
-# Python ユニットテスト
+# Appium・実機不要のユニットテスト
 cd crawler
-venv/bin/python -m pytest tests/ -v
+PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
+  venv/bin/python -m pytest tests/ -v --ignore=tests/test_crawler.py
 
-# Playwright E2E テスト (Web UI)
+# 統合テスト（Appium + iOS Simulator 必要）
+IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
+  CRAWL_DURATION_SEC=60 \
+  venv/bin/python -m pytest tests/test_crawler.py -v -s
+
+# Playwright E2E（Web UI）
 npx playwright test --reporter=line
 ```
 
 ### テスト状況
 
-| テストファイル | 件数 | 内容 |
+| テストファイル | 件数 | 条件 |
 |---------------|------|------|
-| `test_capabilities.py` | 22 passed | Appium Capabilities 構造・W3C 準拠 |
-| `test_utils.py` | 34 passed | UDID 自動検出 iOS/Android（全パスをモック検証） |
-| `test_ai_analyzer.py` | 27 passed | Vertex AI 解析（モック — GCP 接続不要） |
-| `test_ocr.py` | 10 passed | PaddleOCR 3.4.0 テキスト抽出 |
-| `test_db_conn.py` | 8 passed, 3 skipped | MySQL 接続（DB 起動時のみ） |
-| Playwright E2E | 17 passed | 検索 UI |
+| `test_capabilities.py` | 34 passed | Appium 不要 |
+| `test_utils.py` | 20 passed | Appium 不要 |
+| `test_ocr.py` | 10 passed | Appium 不要（実画像を使用） |
+| `test_icon_detection.py` | 13 passed | Appium 不要（合成画像） |
+| `test_visualize_map.py` | 10 passed | Appium 不要 |
+| `test_ai_analyzer.py` | 27 passed | Appium 不要（モック） |
+| `test_db_conn.py` | 8 passed, 3 skipped | MySQL 起動時のみ |
+| `test_crawler.py` | 13 passed | Appium + iOS Simulator 必要 |
+| Playwright E2E | 35 passed | PHP サーバー自動起動 |
 
 ---
 
@@ -231,27 +268,33 @@ npx playwright test --reporter=line
 | ツール | バージョン | 備考 |
 |--------|-----------|------|
 | Python | 3.9.6 | `crawler/venv/` |
-| PHP | 8.2.30 | Web UI |
-| Node.js | 18.20.8 LTS | Appium 2.x に必要 (v21 は非互換) |
+| PHP | 8.2.x | Web UI |
+| Node.js | **18.x LTS** | Appium 2.x に必要。v21 は非対応 |
 | Appium | 2.19.0 | |
-| xcuitest driver | 8.4.3 | iOS 自動化 (macOS 専用) |
-| uiautomator2 driver | 3.10.0 | Android 自動化 |
+| xcuitest driver | 8.4.3 | iOS（macOS 専用） |
+| uiautomator2 driver | 3.10.0 | Android |
 | PaddleOCR | 3.4.0 | `predict()` API を使用 |
-| google-cloud-aiplatform | 1.139.0 | Vertex AI |
+| OpenCV | 4.10.0 (contrib) | テンプレートマッチング |
+| Playwright | 1.41+ | E2E テスト（Chromium） |
 
 ---
 
-## Current Development Status
+## アーキテクチャ設計記録 (ADR)
 
-**汎用 UI 探索エンジン (Phase 4-G) 実装完了 — 2026-03-03**
+`docs/adr/001-universal-ui-detection.md` に全 Phase の設計決定を記録しています。
 
-座標依存を全面排除し、phash 安定判定を導入。iOS 設定アプリでの検証を完了し、
-ゲーム等の動的 UI（Live2D・カスタムレイアウト）への対応準備が整った。
+| Phase | 内容 |
+|-------|------|
+| Step 1-2 | タイトル抽出・タップ候補抽出の座標依存排除 |
+| Step 3 | phash による Settling Wait（アダプティブ静止検知） |
+| Step 4 | スタック時エビデンス自動保存 |
+| Step 5 | 数字除去 MD5 指紋 + `{title}@{fingerprint}` キー方式 |
+| Phase 6 | Web-Crawl Integration（セッション統計・接続マップ） |
+| Phase 7 | ハイブリッド検出（OCR + Template Matching + NMS） |
+| Phase 8 | バックトラッキング検出（`_crawl_impl` 戻り値による遷移判定） |
 
-| Step | 内容 | 詳細 |
-|------|------|------|
-| 4-G Step 1 | タイトル抽出の汎用化 | `_extract_title()` を相対比率 2-Step 方式に書き換え。ピクセルマジックナンバーを完全排除。 |
-| 4-G Step 2 | タップ要素抽出の汎用化 | `_find_tappable_items()` を 4-Path 方式に書き換え。キーワード・フッター・シェブロン・fallback で分類。「リセット」「転送」等のアクションボタンを確実に検出。 |
-| 4-G Step 3 | 画面静止判定 (Settling Wait) | `wait_until_stable()` を実装。phash ハミング距離 ≤ 5 で静止確認・3.0s タイムアウト。Live2D アニメーション等に対応。 |
+---
 
-設計の詳細・根拠・却下案は `docs/adr/001-universal-ui-detection.md` に記録。
+## ライセンス
+
+MIT License — Copyright (c) 2026 Isao Shinohara
