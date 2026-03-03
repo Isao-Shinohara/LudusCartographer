@@ -168,18 +168,15 @@ class ScreenCrawler:
         if record is None:
             return
 
-        # --- phash 重複チェック (text fingerprint チェック前) ---
-        if record.phash is not None:
-            for prev in self._visited.values():
-                if prev.phash is not None:
-                    dist = phash_distance(record.phash, prev.phash)
-                    if dist < PHASH_THRESHOLD:
-                        logger.info(
-                            f"[PHASH_DUP] 視覚的重複検出: {record.title!r}"
-                            f" ≈ {prev.title!r}  phash距離={dist}"
-                        )
-                        self._stats.screens_skipped += 1
-                        return
+        # --- phash ログ (診断用。iOS 設定の白系画面は phash 距離が 0-2 で差別不能のため
+        #     重複判定には使用せず、テキスト指紋を正とする) ---
+        if record.phash is not None and self._visited:
+            min_dist = min(
+                phash_distance(record.phash, prev.phash)
+                for prev in self._visited.values()
+                if prev.phash is not None
+            )
+            logger.debug(f"[PHASH] {record.title!r}  phash={record.phash}  min_dist={min_dist}")
 
         # --- 訪問済みチェック ---
         if record.fingerprint in self._visited:
@@ -332,11 +329,15 @@ class ScreenCrawler:
             and r["text"].strip() not in EXCLUDE_TEXTS
         ]
 
-        # Step 1: Large Title (左寄り, y=150-750)
+        # Step 1: Large Title (y=300-750, x<800, len≤15)
+        # y>=300 で nav-bar 戻るボタン (「< 設定」など) を除外
+        # x<800 で iOS の Large Title が中央寄り (x≈587) でも取得できるよう範囲を拡大
+        # len<=15 で説明文 (「ソフトウェアアップデート、デバイスの言語、」など) を除外
         large_title = [
             r for r in base_candidates
-            if 150 <= r["center"][1] <= 750
-            and r["center"][0] < 400
+            if 300 <= r["center"][1] <= 750
+            and r["center"][0] < 800
+            and len(r["text"]) <= 15
         ]
         if large_title:
             return max(large_title, key=lambda r: r["confidence"])["text"]
@@ -415,7 +416,9 @@ class ScreenCrawler:
                 r for r in filtered
                 if any(abs(r["center"][1] - chy) <= 60 for chy in chevron_ys)
             ]
-            if len(tappable) >= 3:
+            # 閾値 5: OCR がシェブロンを一部しか検出できない場合 (3-4 件)は
+            # 位置ヒューリスティックに落とし、より多くの行を取得する
+            if len(tappable) >= 5:
                 logger.debug(
                     f"[TAPPABLE] シェブロン一致: {len(tappable)}件"
                     f" / 候補: {len(filtered)}件"
