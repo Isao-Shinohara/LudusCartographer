@@ -71,6 +71,30 @@ _ICON_CHARS: frozenset[str] = frozenset({
 _DIGIT_RE = re.compile(r'\d+')
 
 
+def _iou(a: tuple, b: tuple) -> float:
+    """
+    2 つの XYWH 矩形の IoU (Intersection over Union) を返す。
+
+    NMS (Non-Maximum Suppression) での重複判定に使用する。
+
+    Args:
+        a: (x, y, w, h) タプル — 左上座標 + 幅・高さ
+        b: (x, y, w, h) タプル — 左上座標 + 幅・高さ
+
+    Returns:
+        0.0〜1.0 の IoU 値。重複なしのとき 0.0、完全一致のとき 1.0。
+    """
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ix  = max(ax, bx)
+    iy  = max(ay, by)
+    ix2 = min(ax + aw, bx + bw)
+    iy2 = min(ay + ah, by + bh)
+    inter = max(0, ix2 - ix) * max(0, iy2 - iy)
+    union = aw * ah + bw * bh - inter
+    return inter / union if union > 0 else 0.0
+
+
 # ============================================================
 # 設定
 # ============================================================
@@ -83,6 +107,7 @@ class CrawlerConfig:
     wait_after_tap:   float = 3.0    # タップ後の画面描画待機（秒）
     wait_after_back:  float = 1.5    # back() 後の待機（秒）
     min_confidence:   float = 0.6    # OCR 最低信頼スコア
+    icon_threshold:   float = 0.80   # テンプレートマッチング検出閾値 (TM_CCOEFF_NORMED)
     # DB 設定（省略時はメモリのみ）
     db_game_id:       int   = 1
     db_host:          str   = ""
@@ -151,6 +176,11 @@ class ScreenCrawler:
         # AppiumDriver が既に作成しているが、ここでも保証する
         self._evidence_dir: Path = driver._evidence_dir
         self._evidence_dir.mkdir(parents=True, exist_ok=True)
+
+        # アイコンテンプレート: {stem: np.ndarray(グレースケール)}
+        # assets/templates/*.png を起動時に一括読み込み
+        self._icon_templates: dict[str, object] = {}
+        self._load_icon_templates()
 
         # DB 接続（利用可能な場合のみ）
         self._db_conn        = None
@@ -307,6 +337,14 @@ class ScreenCrawler:
         fingerprint = self._generate_fingerprint(ocr_results)
         title       = self._extract_title(ocr_results)
         tappable    = self._find_tappable_items(ocr_results)
+
+        # アイコン検出（テンプレートマッチング）
+        # ocr_results は純粋に OCR のみを保持し、指紋・タイトルに影響させない。
+        # テンプレート一致 = タップ対象確定なので _find_tappable_items を経由せず直接追加。
+        # 位置フィルタ（RIGHT_EDGE 等）はアイコンに適さないためバイパスする。
+        icon_results = self._detect_icons(shot_path)
+        for icon in icon_results:
+            tappable.append(icon)
 
         # phash 計算（エラー時はスキップしてテキスト指紋のみで継続）
         ph = None
@@ -571,6 +609,134 @@ class ScreenCrawler:
         return result
 
     # ----------------------------------------------------------
+    # アイコン検出（テンプレートマッチング）
+    # ----------------------------------------------------------
+
+    def _load_icon_templates(self) -> None:
+        """
+        assets/templates/*.png をグレースケールで読み込み、self._icon_templates に格納する。
+
+        ファイル名（拡張子なし）がテンプレート識別子になる。
+        ディレクトリが存在しない場合や読み込み失敗時はスキップして続行する。
+        """
+        try:
+            import cv2 as _cv2
+        except ImportError:
+            logger.debug("[ICON] opencv-python 未インストール → テンプレートマッチング無効")
+            return
+
+        templates_dir = Path(__file__).parent.parent / "assets" / "templates"
+        if not templates_dir.is_dir():
+            logger.debug(f"[ICON] テンプレートディレクトリなし: {templates_dir}")
+            return
+
+        for png in sorted(templates_dir.glob("*.png")):
+            img = _cv2.imread(str(png), _cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                logger.warning(f"[ICON] 読み込み失敗: {png.name}")
+                continue
+            self._icon_templates[png.stem] = img
+            logger.info(f"[ICON] テンプレート登録: {png.name}  size={img.shape[1]}×{img.shape[0]}")
+
+        logger.info(f"[ICON] {len(self._icon_templates)} 件のテンプレートを読み込みました")
+
+    def _detect_icons(self, screenshot_path: Path) -> list[dict]:
+        """
+        テンプレートマッチングでアイコンボタンを検出し、OCR 互換形式で返す。
+
+        【信頼度 (confidence) の設計方針】
+        cv2.matchTemplate(TM_CCOEFF_NORMED) の出力スコアは -1.0〜+1.0 だが、
+        実用的には閾値 (icon_threshold=0.80) 以上の範囲 [0.80, 1.00] のみを採用する。
+        このスコアを OCR の confidence フィールドと同じ名前でそのまま保存することで、
+        OCR 結果とアイコン検出結果を統一フォーマットで扱える。
+
+        【NMS (Non-Maximum Suppression) の方針】
+        同一テンプレートが近接位置に複数マッチする場合（圧縮アーティファクト等）、
+        IoU >= 0.4 の後発候補をスコア降順で順次除去する。
+        これにより「本物の複数アイコン（別位置）」を保持しながら
+        「同一アイコンの偽複数検出」を除去する。
+
+        Returns:
+            list[dict]: 各要素は OCR 結果と同形式。
+            {
+              "text":       "icon:{template_stem}",  # 例: "icon:close_btn"
+              "confidence": 0.923,                   # TM_CCOEFF_NORMED スコア
+              "box":        [[x,y],[x+w,y],[x+w,y+h],[x,y+h]],
+              "center":     [cx, cy],
+            }
+        """
+        if not self._icon_templates:
+            return []
+
+        try:
+            import cv2 as _cv2
+            import numpy as _np
+        except ImportError:
+            return []
+
+        img = _cv2.imread(str(screenshot_path), _cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            logger.warning(f"[ICON] 画像読み込み失敗: {screenshot_path}")
+            return []
+
+        all_detections: list[dict] = []
+        threshold = self.config.icon_threshold
+
+        for name, tmpl in self._icon_templates.items():
+            th, tw = tmpl.shape[:2]
+
+            # テンプレートがスクリーンより大きい場合はスキップ
+            if th > img.shape[0] or tw > img.shape[1]:
+                logger.debug(f"[ICON] {name!r} はスクリーンより大きいためスキップ")
+                continue
+
+            # ── テンプレートマッチング ──────────────────────────────────
+            # TM_CCOEFF_NORMED: 照明変動に強い正規化相互相関。
+            # score_map の各セル = その位置を左上角としたときの一致スコア
+            score_map = _cv2.matchTemplate(img, tmpl, _cv2.TM_CCOEFF_NORMED)
+
+            # 閾値以上の全候補点 [(score, x, y), ...] を収集
+            ys, xs = _np.where(score_map >= threshold)
+            if len(xs) == 0:
+                continue
+
+            candidates: list[tuple[float, int, int]] = sorted(
+                ((float(score_map[y, x]), int(x), int(y)) for y, x in zip(ys, xs)),
+                key=lambda c: c[0],
+                reverse=True,
+            )
+
+            # ── NMS: スコア降順でイテレートし IoU >= 0.4 の後発候補を除去 ──
+            accepted: list[tuple[float, int, int]] = []
+            for score, x, y in candidates:
+                if all(_iou((x, y, tw, th), (ax, ay, tw, th)) < 0.4
+                       for _, ax, ay in accepted):
+                    accepted.append((score, x, y))
+
+            # ── OCR 互換形式に変換して結果リストに追加 ────────────────
+            for score, x, y in accepted:
+                cx  = x + tw // 2
+                cy  = y + th // 2
+                box = [[x, y], [x + tw, y], [x + tw, y + th], [x, y + th]]
+                all_detections.append({
+                    "text":       f"icon:{name}",
+                    "confidence": round(score, 4),
+                    "box":        box,
+                    "center":     [cx, cy],
+                })
+                logger.debug(
+                    f"[ICON] 検出: {name!r}  score={score:.3f}"
+                    f"  pos=({x},{y})  size={tw}×{th}"
+                )
+
+        if all_detections:
+            logger.info(
+                f"[ICON] {len(all_detections)} 件検出"
+                f" (テンプレート {len(self._icon_templates)} 種)"
+            )
+        return all_detections
+
+    # ----------------------------------------------------------
     # DB 保存
     # ----------------------------------------------------------
 
@@ -685,14 +851,18 @@ class ScreenCrawler:
                     x1, y1 = min(xs), min(ys)
                     x2, y2 = max(xs), max(ys)
 
+                    # アイコン検出結果は element_type='icon'、OCR要素は 'menu'
+                    etype = "icon" if item["text"].startswith("icon:") else "menu"
+
                     cur.execute(
                         """INSERT IGNORE INTO ui_elements
                            (screen_id, element_type, label,
                             bbox_x, bbox_y, bbox_w, bbox_h,
                             is_tappable, confidence)
-                           VALUES (%s, 'menu', %s, %s, %s, %s, %s, 1, %s)""",
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s)""",
                         (
                             record.db_screen_id,
+                            etype,
                             item["text"],
                             x1, y1, x2 - x1, y2 - y1,
                             item["confidence"],

@@ -469,3 +469,116 @@ ORDER BY s.id
 - `web/templates/search.html.twig` — セッション統計パネル、`buildConnectionMap()`, `loadSessions()`
 - `tests/e2e/search.spec.ts` — get_sessions / セッションパネル / 接続マップ テスト追加
 - 既存テスト: 28/28 pass → 35/35 pass (7 件追加)
+
+---
+
+## Phase 7: ハイブリッド検出 — OCR + Template Matching によるアイコン認識 (2026-03-03 追加)
+
+### コンテキスト
+
+OCR (PaddleOCR) はテキストを持つ UI 要素を高精度に検出するが、以下のグラフィカルボタンを
+完全に見落とす問題があった:
+
+1. **× 閉じるボタン**: 文字なし。右上隅に多く、`_find_tappable_items` の
+   `cx > RIGHT_EDGE` フィルタで除外されることもある。
+2. **☰ ハンバーガーメニュー**: ゲームによっては純粋な画像アイコン。
+3. **← 戻る矢印**: iOS / Android の標準ナビゲーション以外に使用されるカスタム矢印。
+4. **⚙ 設定歯車**: OCR で文字として認識されない場合がある。
+
+これらのアイコンはクロール時に未タップのまま残り、**画面遷移のカバレッジが低下する**。
+
+### 決定 — `cv2.matchTemplate (TM_CCOEFF_NORMED)` + NMS によるアイコン検出
+
+#### 信頼度 (Confidence) の設計方針
+
+`cv2.matchTemplate` に `TM_CCOEFF_NORMED` を指定した場合、出力スコアは **-1.0〜+1.0** の
+正規化相互相関値となる。
+
+| スコア範囲 | 意味 | 採用 |
+|-----------|------|------|
+| < 0 | テンプレートと逆パターン | ❌ 不採用 |
+| 0〜0.79 | 類似度低・誤検出リスク大 | ❌ 不採用 |
+| 0.80〜1.00 | 高類似度 | ✅ 採用 (`icon_threshold = 0.80`) |
+
+このスコアを OCR の `confidence` フィールドと **同名・同フォーマット** で保存することで、
+OCR 結果とアイコン検出結果を統一フォーマット (`{text, confidence, box, center}`) で扱える。
+
+`TM_CCOEFF_NORMED` を採用した理由:
+- **輝度変化に不変**: 明るさの異なる画面でも同一テンプレートが機能する
+- **符号付きスコア**: ノイズ・逆パターンを負のスコアで自然に排除できる
+- `TM_CCORR_NORMED` と比較して偽陽性が少ない（テンプレートの平均輝度を差し引く効果）
+
+#### NMS (Non-Maximum Suppression) によるアルゴリズム
+
+`matchTemplate` はテンプレートと一致する付近に **複数のピーク** を生成するため、
+NMS で重複候補を除去する。
+
+```
+アルゴリズム (1テンプレートあたり):
+  1. score >= icon_threshold の全ピクセル位置を収集
+  2. スコア降順にソート
+  3. accepted リストを空として開始
+  4. 各候補について: IoU(candidate, accepted[*]) が全て < 0.4 なら accepted に追加
+  5. accepted に残った候補のみを最終検出とする
+```
+
+**IoU 閾値 0.4 の根拠:**
+
+| ケース | IoU | 判定 |
+|--------|-----|------|
+| 完全重複 (同位置) | 1.0 | ❌ NMS で除去 |
+| 1px ズレ (テンプレートほぼ同位置) | ≈ 0.85 | ❌ NMS で除去 |
+| テンプレートの半分重複 | 0.33 | ✅ 別インスタンス |
+| 完全分離 | 0.0 | ✅ 別インスタンス |
+
+#### OCR 結果との統合方針
+
+**アイコン検出結果は `ocr_results` に追加しない。**
+
+`ocr_results` に追加すると以下の副作用が生じる:
+
+| 問題 | 影響 |
+|------|------|
+| `_generate_fingerprint` に `"icon:close_btn"` 等が混入 | 同一画面の指紋が不安定になる |
+| `_extract_title` が `"icon:..."` をタイトルに誤採用 | 全画面が `"icon:xxx"` になりうる |
+
+代わりにアイコン検出結果を **`tappable_items` に直接追加** する。
+これにより `_find_tappable_items` の各フィルタ（右端除外・ステータスバー除外等）を
+バイパスし、画面隅のアイコンも確実にクロール対象となる。
+
+#### DB の `element_type` との対応
+
+```python
+etype = "icon" if item["text"].startswith("icon:") else "menu"
+```
+
+`ui_elements.element_type` ENUM に `'icon'` を割り当てることで、
+後の分析でアイコン経由の遷移と OCR テキスト経由の遷移を区別できる。
+
+#### テンプレートの配置と自動読み込み
+
+```
+crawler/assets/templates/{icon_name}.png
+  └── 検出結果: {"text": "icon:{icon_name}", ...}
+```
+
+`_load_icon_templates()` がクローラー起動時に `assets/templates/*.png` を
+グレースケールで一括読み込みする。ファイルを追加するだけで新アイコンが有効になる。
+
+### 却下した代替案
+
+| 案 | 却下理由 |
+|----|---------|
+| PaddleOCR の画像領域検出を利用 | テキスト専用モデルであり、グラフィカルアイコンの検出精度が低い |
+| `TM_SQDIFF_NORMED` を使用 | スコアが 0 に近いほど一致するため `confidence` との統一フォーマットを維持しにくい |
+| SIFT / ORB 特徴点マッチング | 計算コストが高く、16〜64px の小アイコンでは特徴点が不足することがある |
+| アイコンを OCR 結果にマージ | 指紋汚染・タイトル誤認識のリスク。`tappable_items` への直接追加で代替可能 |
+
+### 影響範囲 (Phase 7)
+
+- `crawler/lc/crawler.py` — `_iou()` 追加、`CrawlerConfig.icon_threshold` 追加、
+  `_load_icon_templates()`, `_detect_icons()` 追加、`_snapshot_current_screen()` 更新、
+  `_save_ui_elements_to_db()` に `element_type='icon'` 対応追加
+- `crawler/assets/templates/README.md` — テンプレート命名規則・作成ガイドライン
+- `crawler/tests/test_icon_detection.py` — 13 テスト (Appium 不要、全通過)
+- 既存テスト: 128 passed, 13 errors (pre-existing Appium 必須テスト、変化なし)
