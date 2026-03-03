@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -65,6 +66,9 @@ _ACTION_KEYWORDS: frozenset[str] = frozenset({
 _ICON_CHARS: frozenset[str] = frozenset({
     '⚙', '⚙️', '☰', '＋', '+', '⋮', '✕', '×',
 })
+
+# 指紋生成時に除去する数字パターン（時刻・所持金・レベル等の可変数値を無視するため）
+_DIGIT_RE = re.compile(r'\d+')
 
 
 # ============================================================
@@ -138,7 +142,7 @@ class ScreenCrawler:
     def __init__(self, driver: AppiumDriver, config: CrawlerConfig):
         self.driver  = driver
         self.config  = config
-        self._visited:   dict[str, ScreenRecord] = {}  # fingerprint → ScreenRecord
+        self._visited:   dict[str, ScreenRecord] = {}  # "{title}@{fingerprint}" → ScreenRecord
         self._nav_stack: list[str] = []               # 現在の探索経路（指紋スタック）
         self._stats  = CrawlStats()
         self._start_time = time.time()
@@ -207,8 +211,9 @@ class ScreenCrawler:
             logger.debug(f"[PHASH] {record.title!r}  phash={record.phash}  min_dist={min_dist}")
 
         # --- 訪問済みチェック ---
-        if record.fingerprint in self._visited:
-            prev = self._visited[record.fingerprint]
+        _vkey = f"{record.title}@{record.fingerprint}"
+        if _vkey in self._visited:
+            prev = self._visited[_vkey]
             logger.info(
                 f"[CRAWL] skip（既訪問）: {record.title!r}"
                 f" (深さ{prev.depth} で既に訪問済み)"
@@ -217,7 +222,7 @@ class ScreenCrawler:
             return
 
         # --- 新規画面として登録・保存 ---
-        self._visited[record.fingerprint] = record
+        self._visited[_vkey] = record
         self._nav_stack.append(record.fingerprint)
         self._stats.screens_found += 1
 
@@ -299,7 +304,7 @@ class ScreenCrawler:
             logger.error(f"[CRAWL] OCR 失敗: {e}")
             return None
 
-        fingerprint = self._screen_fingerprint(ocr_results)
+        fingerprint = self._generate_fingerprint(ocr_results)
         title       = self._extract_title(ocr_results)
         tappable    = self._find_tappable_items(ocr_results)
 
@@ -342,6 +347,40 @@ class ScreenCrawler:
             and len(r["text"]) > 1
         )
         fp_str = "|".join(texts)
+        return hashlib.md5(fp_str.encode("utf-8")).hexdigest()[:16]
+
+    def _generate_fingerprint(self, ocr_results: list[dict]) -> str:
+        """
+        数字を除外したテキスト群から MD5 指紋を生成する。
+
+        `_screen_fingerprint` の上位互換。時刻・所持金・残弾数・レベル等の
+        可変数値をハッシュ前に _DIGIT_RE で除去することで、「同じ画面構造でも
+        数値が変わるたびに別画面と誤認識される」副作用を防ぐ。
+
+        判定方式:
+          1. 画面サイズを OCR bounding-box 座標から動的に推定（絶対値ではなく相対比率）
+          2. ステータスバー (y < screen_h × 5%) を除外
+          3. 信頼スコア < 0.75 を除外
+          4. 各テキストから数字列を除去し、残りが 2 文字以上のものだけを採用
+          5. 採用テキストをソートして結合し、MD5 hex 先頭 16 文字を返す
+
+        Returns:
+            16 文字の hex 文字列 (例: "a3f1c2d9e8b70451")
+        """
+        all_ys = [p[1] for r in ocr_results for p in r["box"]]
+        screen_h = int(max(all_ys) * 1.05) if all_ys else 2000
+
+        texts: list[str] = []
+        for r in ocr_results:
+            if r["confidence"] < 0.75:
+                continue
+            if r["center"][1] < screen_h * 0.05:   # ステータスバー除外
+                continue
+            stripped = _DIGIT_RE.sub("", r["text"]).strip()
+            if len(stripped) > 1:
+                texts.append(stripped)
+
+        fp_str = "|".join(sorted(texts))
         return hashlib.md5(fp_str.encode("utf-8")).hexdigest()[:16]
 
     # ----------------------------------------------------------
