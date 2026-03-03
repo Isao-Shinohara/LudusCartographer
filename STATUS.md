@@ -1,10 +1,10 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-03 (Phase 4-G + Phase 5-B 完了 — 汎用 UI 探索エンジン完成)
+最終更新: 2026-03-03 (Phase 4-A 完了 — Web UI 詳細検索・画像プロキシ・モーダル実装)
 
 ---
 
-## 現在のフェーズ: Phase 5-B 完了 → Phase 5-C (実戦テスト) へ
+## 現在のフェーズ: Phase 4-A 完了 → Phase 4-B/C (スクリーンショットギャラリー・E2E 統合) へ
 
 ## コミット履歴
 
@@ -44,7 +44,8 @@ test_auto_navigation.py:  1 passed (Appium 実機不要ゲート確認)
 
 ### Playwright E2E (web)
 ```
-17/17 passed in 3.1s — Chromium
+28/28 passed in 5.4s — Chromium
+  (詳細検索パネル 3件 + API 4件 + モーダル 4件 追加)
 ```
 
 ---
@@ -133,7 +134,16 @@ venv/bin/python tools/visualize_map.py --session evidence/20260303_160759 --form
 - `docs/adr/001-universal-ui-detection.md`: Step 1〜5 の全決定を記録
 - `docs/ROADMAP.md`: 次回タスクのロードマップ
 
-## 次フェーズ: Phase 5-C — 実戦テスト・アイコン認識・マップ可視化強化
+## Phase 4-A 完了内容 (2026-03-03)
+
+### Web UI 詳細検索・画像プロキシ・モーダル
+- **`web/src/ScreenRepository.php`**: `searchAdvanced()` — title/keyword/session_id AND 複合検索
+- **`web/public/api/search.php`**: JSON API (action=search / action=detail), DB 未接続時サンプルデータフォールバック
+- **`web/public/img.php`**: 証拠画像プロキシ — `realpath()` パストラバーサル防止、`crawler/evidence/` のみ許可
+- **`web/templates/search.html.twig`**: 詳細検索パネル・カードクリック → モーダル・画像サムネイル
+- **`tests/e2e/search.spec.ts`**: 詳細検索/API/モーダル 11テスト追加
+
+## 次フェーズ: Phase 4-B/C — スクリーンショットギャラリー・E2E 統合 + Phase 5-C 実戦テスト
 
 詳細は `docs/ROADMAP.md` 参照。
 
