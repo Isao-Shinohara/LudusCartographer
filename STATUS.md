@@ -1,10 +1,10 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-03 (Phase 1準備 完了 — UDID自動検出実装)
+最終更新: 2026-03-03 (Phase 1 完了 — iOS Simulator 疎通確認成功)
 
 ---
 
-## 現在のフェーズ: Phase 1 実機接続待ち
+## 現在のフェーズ: Phase 1 完了 → Phase 2 (画面クローリング) へ
 
 ## コミット履歴
 
@@ -23,7 +23,8 @@
 | 11 | `fdeb16f` | `feat(crawler): add Vertex AI GameAnalyzer and extend minimal_launch` |
 | 12 | `cf18e5e` | `docs: update STATUS.md with test counts and Vertex AI status` |
 | 13 | `c2e3822` | `refactor(crawler): switch authentication to ADC` |
-| 14 | (未push) | `feat(crawler): add UDID auto-detection and README` |
+| 14 | `52978a8` | `feat(crawler): add UDID auto-detection and README` |
+| 15 | `745b290` | `feat(simulator): iOS Simulator 対応 — capabilities/driver/launch を更新` |
 
 ---
 
@@ -32,11 +33,11 @@
 ### Pytest (crawler)
 ```
 test_db_conn.py:      8 passed, 3 skipped (MySQL統合テストはDB起動時のみ)
-test_capabilities.py: 22 passed
+test_capabilities.py: 34 passed (シミュレータ用 14 件追加)
 test_utils.py:        20 passed (UDID自動検出 — 全パスをモック検証)
 test_ocr.py:          10 passed (PaddleOCR 3.4.0 — 4テキスト検出確認済み)
 test_ai_analyzer.py:  27 passed (Vertex AI モック — GCP接続不要)
-合計: 87 passed, 3 skipped
+合計: 99 passed, 3 skipped
 ```
 
 ### Playwright E2E (web)
@@ -63,39 +64,35 @@ test_ai_analyzer.py:  27 passed (Vertex AI モック — GCP接続不要)
 
 ---
 
-## 実機接続 待機中
+## iOS Simulator 疎通確認 ✅ 完了
 
-UDID は自動検出されます。iPhone を USB 接続後:
+**デバイス**: iPhone 16 / iOS 18.5
+**UDID**: `BA7E719D-8EBA-4049-996C-AC51945A7AE4`
 
 ```bash
-# 接続診断（任意）
-cd crawler
-venv/bin/python -c "
-from appium.utils import diagnose_device_connection
-import json
-print(json.dumps(diagnose_device_connection(), indent=2))
-"
-
-# 必須: Bundle ID のみ設定（UDID は自動検出）
-export IOS_BUNDLE_ID="com.example.mygame"
+# シミュレータ起動
+xcrun simctl boot BA7E719D-8EBA-4049-996C-AC51945A7AE4
 
 # Appiumサーバー起動
-appium --port 4723 &
+PATH="$HOME/.nodebrew/current/bin:$PATH" appium --port 4723 &
 
-# 最小疎通確認（起動→3秒待機→スクショ→終了）
-venv/bin/python appium/minimal_launch.py
+# 最小疎通確認（シミュレータモード）
+cd crawler
+IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
+  venv/bin/python appium/minimal_launch.py
 ```
 
-**iPhone初回接続時**: 画面に「このコンピュータを信頼しますか？」が表示されたら「信頼」をタップしてください。
+スクリーンショット: `crawler/evidence/20260303_132722/132725_637207_launch.png`
+→ 設定アプリ（日本語）が正常に描画されていることを確認済み。
 
 ---
 
-## 次フェーズ予定: Phase 1 — Appium 実機疎通確認
+## 次フェーズ: Phase 2 — 画面クローリング
 
-- [ ] **Step 1-A**: iPhone接続 → UDID取得 → `minimal_launch.py` 実行
-- [ ] **Step 1-B**: 撮ったスクショに `test_ocr.py` でOCR実行 → ユーザー確認
-- [ ] **Step 1-C**: ホーム画面のUI要素をタップして画面遷移確認
-- [ ] **Step 1-D**: screensテーブルへの自動保存
+- [ ] **Step 2-A**: OCR 解析パイプライン (`test_ocr.py`) → スクリーンショットからUIテキスト抽出
+- [ ] **Step 2-B**: UI要素タップ → 画面遷移の自動記録
+- [ ] **Step 2-C**: 複数画面を自動巡回 → `screens` テーブルへ蓄積
+- [ ] **Step 2-D**: 地図データ (UI グラフ) の可視化
 
 ---
 
