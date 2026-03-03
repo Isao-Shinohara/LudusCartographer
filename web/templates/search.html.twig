@@ -4,8 +4,8 @@
 
 {% block content %}
 
-<!-- 検索フォーム -->
-<section class="mb-8">
+<!-- 基本検索フォーム -->
+<section class="mb-4">
     <form method="GET" action="" class="flex gap-3 items-center">
         <div class="relative flex-1">
             <span class="absolute inset-y-0 left-3 flex items-center text-gray-400">🔍</span>
@@ -34,8 +34,45 @@
     </form>
 </section>
 
+<!-- 詳細検索パネル -->
+<details class="mb-6 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <summary class="px-4 py-3 cursor-pointer text-sm text-gray-400 hover:text-gray-200 select-none">
+        🔧 詳細検索（タイトル / OCRキーワード / セッションID）
+    </summary>
+    <div class="px-4 pb-4 pt-2 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+            <label class="block text-xs text-gray-500 mb-1">タイトル</label>
+            <input id="adv-title" type="text" placeholder="画面名（部分一致）"
+                   class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2
+                          text-gray-100 placeholder-gray-500 text-sm focus:outline-none
+                          focus:ring-2 focus:ring-brand">
+        </div>
+        <div>
+            <label class="block text-xs text-gray-500 mb-1">キーワード (OCR)</label>
+            <input id="adv-keyword" type="text" placeholder="OCRテキスト全文"
+                   class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2
+                          text-gray-100 placeholder-gray-500 text-sm focus:outline-none
+                          focus:ring-2 focus:ring-brand">
+        </div>
+        <div>
+            <label class="block text-xs text-gray-500 mb-1">セッション ID</label>
+            <input id="adv-session" type="text" placeholder="例: 20260303_181720"
+                   class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2
+                          text-gray-100 placeholder-gray-500 text-sm focus:outline-none
+                          focus:ring-2 focus:ring-brand">
+        </div>
+        <div class="sm:col-span-3 flex justify-end">
+            <button onclick="advancedSearch()"
+                    class="bg-brand hover:bg-brand-dark text-white text-sm font-semibold
+                           px-5 py-2 rounded-lg transition-colors duration-150">
+                詳細検索
+            </button>
+        </div>
+    </div>
+</details>
+
 <!-- 件数表示 -->
-<div class="mb-4 text-sm text-gray-500">
+<div class="mb-4 text-sm text-gray-500" id="result-count">
     {% if keyword %}
         「<span class="text-gray-300 font-medium">{{ keyword|e }}</span>」の検索結果:
         <span class="text-brand-light font-bold">{{ screens|length }}</span> 件
@@ -45,66 +82,226 @@
     {% endif %}
 </div>
 
+<!-- 空の状態 -->
+<div id="empty-state"
+     class="text-center py-24 text-gray-600 {% if screens is not empty %}hidden{% endif %}">
+    <p class="text-5xl mb-4">🏜️</p>
+    <p class="text-lg">該当する画面が見つかりませんでした。</p>
+    <p class="text-sm mt-2">別のキーワードで検索してみてください。</p>
+</div>
+
 <!-- 結果グリッド -->
-{% if screens is empty %}
-    <div class="text-center py-24 text-gray-600">
-        <p class="text-5xl mb-4">🏜️</p>
-        <p class="text-lg">該当する画面が見つかりませんでした。</p>
-        <p class="text-sm mt-2">別のキーワードで検索してみてください。</p>
-    </div>
-{% else %}
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6" id="results-grid">
-        {% for screen in screens %}
-        <article class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden
-                        hover:border-brand transition-colors duration-150 group">
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 {% if screens is empty %}hidden{% endif %}"
+     id="results-grid">
+    {% for screen in screens %}
+    <article class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden
+                    hover:border-brand transition-colors duration-150 group cursor-pointer"
+             onclick="openModal({{ screen.id }})">
 
-            <!-- サムネイル or プレースホルダー -->
-            <div class="h-36 bg-gray-800 flex items-center justify-center text-gray-600 relative">
-                {% if screen.thumbnail_path %}
-                    <img src="{{ screen.thumbnail_path|e }}"
-                         alt="{{ screen.name|e }}"
-                         class="w-full h-full object-cover">
-                {% else %}
-                    <div class="text-center">
-                        <span class="text-4xl">📱</span>
-                        <p class="text-xs mt-1">{{ screen.category|e }}</p>
-                    </div>
-                {% endif %}
-                <!-- カテゴリバッジ -->
-                <span class="absolute top-2 right-2 bg-gray-950/80 text-brand-light
-                             text-xs font-mono px-2 py-0.5 rounded-full">
-                    {{ screen.category|e }}
-                </span>
-            </div>
-
-            <!-- テキスト情報 -->
-            <div class="p-4">
-                <h2 class="font-semibold text-gray-100 group-hover:text-brand-light
-                           transition-colors truncate">
-                    {{ screen.name ?? '(名称未設定)' }}
-                </h2>
-                <p class="text-xs text-gray-500 mt-1 mb-3 truncate">
-                    🎮 {{ screen.game_name|e }}
-                    <span class="ml-1 bg-gray-800 px-1 rounded">{{ screen.platform|e }}</span>
-                </p>
-
-                <!-- OCRテキストプレビュー -->
-                {% if screen.ocr_text %}
-                <p class="text-xs text-gray-500 font-mono bg-gray-800/60 rounded p-2 line-clamp-2
-                          leading-relaxed" title="{{ screen.ocr_text|e }}">
-                    {{ screen.ocr_text|slice(0, 100)|e }}{% if screen.ocr_text|length > 100 %}…{% endif %}
-                </p>
-                {% endif %}
-
-                <!-- メタ情報 -->
-                <div class="flex items-center justify-between mt-3 text-xs text-gray-600">
-                    <span>👁 {{ screen.visited_count }} 回訪問</span>
-                    <span>{{ screen.last_seen_at|slice(0, 10)|e }}</span>
+        <!-- サムネイル -->
+        <div class="h-36 bg-gray-800 flex items-center justify-center text-gray-600 relative overflow-hidden">
+            {% if screen.screenshot_path %}
+                <img src="/img.php?path={{ screen.screenshot_path|url_encode }}"
+                     alt="{{ screen.name|e }}"
+                     class="w-full h-full object-cover"
+                     onerror="this.classList.add('hidden');this.nextElementSibling.classList.remove('hidden')">
+                <div class="text-center hidden">
+                    <span class="text-4xl">📱</span>
+                    <p class="text-xs mt-1">{{ screen.category|e }}</p>
                 </div>
+            {% elseif screen.thumbnail_path %}
+                <img src="{{ screen.thumbnail_path|e }}"
+                     alt="{{ screen.name|e }}"
+                     class="w-full h-full object-cover">
+            {% else %}
+                <div class="text-center">
+                    <span class="text-4xl">📱</span>
+                    <p class="text-xs mt-1">{{ screen.category|e }}</p>
+                </div>
+            {% endif %}
+            <span class="absolute top-2 right-2 bg-gray-950/80 text-brand-light
+                         text-xs font-mono px-2 py-0.5 rounded-full">
+                {{ screen.category|e }}
+            </span>
+        </div>
+
+        <!-- テキスト情報 -->
+        <div class="p-4">
+            <h2 class="font-semibold text-gray-100 group-hover:text-brand-light
+                       transition-colors truncate">
+                {{ screen.name ?? '(名称未設定)' }}
+            </h2>
+            <p class="text-xs text-gray-500 mt-1 mb-3 truncate">
+                🎮 {{ screen.game_name|e }}
+                <span class="ml-1 bg-gray-800 px-1 rounded">{{ screen.platform|e }}</span>
+            </p>
+
+            {% if screen.ocr_text %}
+            <p class="text-xs text-gray-500 font-mono bg-gray-800/60 rounded p-2 line-clamp-2
+                      leading-relaxed" title="{{ screen.ocr_text|e }}">
+                {{ screen.ocr_text|slice(0, 100)|e }}{% if screen.ocr_text|length > 100 %}…{% endif %}
+            </p>
+            {% endif %}
+
+            <div class="flex items-center justify-between mt-3 text-xs text-gray-600">
+                <span>👁 {{ screen.visited_count }} 回訪問</span>
+                <span>{{ screen.last_seen_at|slice(0, 10)|e }}</span>
             </div>
-        </article>
-        {% endfor %}
+        </div>
+    </article>
+    {% endfor %}
+</div>
+
+<!-- モーダル -->
+<div id="modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true">
+    <div class="absolute inset-0 bg-black/70 backdrop-blur-sm" onclick="closeModal()"></div>
+    <div class="relative z-10 mx-4 sm:mx-auto mt-12 mb-8 max-w-3xl bg-gray-900
+                border border-gray-700 rounded-2xl shadow-2xl overflow-hidden
+                max-h-[85vh] overflow-y-auto">
+        <div class="flex items-center justify-between p-4 border-b border-gray-800 sticky top-0 bg-gray-900">
+            <h2 id="modal-title" class="text-lg font-bold text-gray-100 truncate pr-4">—</h2>
+            <button onclick="closeModal()"
+                    class="text-gray-500 hover:text-gray-200 text-2xl leading-none flex-shrink-0"
+                    aria-label="閉じる">&times;</button>
+        </div>
+        <div id="modal-body" class="p-4">
+            <p class="text-gray-500 text-sm">読み込み中…</p>
+        </div>
     </div>
-{% endif %}
+</div>
+
+<script>
+function esc(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function cardHtml(s) {
+    const imgPath = s.screenshot_path
+        ? `/img.php?path=${encodeURIComponent(s.screenshot_path)}`
+        : null;
+    const thumb = imgPath
+        ? `<img src="${esc(imgPath)}" alt="${esc(s.name)}"
+                class="w-full h-full object-cover"
+                onerror="this.classList.add('hidden');this.nextElementSibling.classList.remove('hidden')">
+           <div class="text-center hidden"><span class="text-4xl">📱</span><p class="text-xs mt-1">${esc(s.category)}</p></div>`
+        : `<div class="text-center"><span class="text-4xl">📱</span><p class="text-xs mt-1">${esc(s.category)}</p></div>`;
+    const ocr = s.ocr_text
+        ? `<p class="text-xs text-gray-500 font-mono bg-gray-800/60 rounded p-2 line-clamp-2 leading-relaxed"
+               title="${esc(s.ocr_text)}">${esc((s.ocr_text||'').slice(0,100))}${(s.ocr_text||'').length>100?'…':''}</p>`
+        : '';
+    return `<article class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden
+                 hover:border-brand transition-colors duration-150 group cursor-pointer"
+             onclick="openModal(${parseInt(s.id,10)})">
+        <div class="h-36 bg-gray-800 flex items-center justify-center text-gray-600 relative overflow-hidden">
+            ${thumb}
+            <span class="absolute top-2 right-2 bg-gray-950/80 text-brand-light text-xs font-mono px-2 py-0.5 rounded-full">${esc(s.category)}</span>
+        </div>
+        <div class="p-4">
+            <h2 class="font-semibold text-gray-100 group-hover:text-brand-light transition-colors truncate">${esc(s.name||'(名称未設定)')}</h2>
+            <p class="text-xs text-gray-500 mt-1 mb-3 truncate">🎮 ${esc(s.game_name)}<span class="ml-1 bg-gray-800 px-1 rounded">${esc(s.platform)}</span></p>
+            ${ocr}
+            <div class="flex items-center justify-between mt-3 text-xs text-gray-600">
+                <span>👁 ${esc(s.visited_count)} 回訪問</span>
+                <span>${esc((s.last_seen_at||'').slice(0,10))}</span>
+            </div>
+        </div>
+    </article>`;
+}
+
+function renderGrid(screens) {
+    const grid    = document.getElementById('results-grid');
+    const empty   = document.getElementById('empty-state');
+    const countEl = document.getElementById('result-count');
+    if (!screens.length) {
+        grid.classList.add('hidden');
+        empty.classList.remove('hidden');
+    } else {
+        empty.classList.add('hidden');
+        grid.classList.remove('hidden');
+        grid.innerHTML = screens.map(cardHtml).join('');
+    }
+    if (countEl) {
+        countEl.innerHTML = `詳細検索結果: <span class="text-brand-light font-bold">${screens.length}</span> 件`;
+    }
+}
+
+async function advancedSearch() {
+    const title   = document.getElementById('adv-title').value.trim();
+    const keyword = document.getElementById('adv-keyword').value.trim();
+    const session = document.getElementById('adv-session').value.trim();
+    const params  = new URLSearchParams({ action: 'search' });
+    if (title)   params.set('title',      title);
+    if (keyword) params.set('keyword',    keyword);
+    if (session) params.set('session_id', session);
+    try {
+        const res  = await fetch(`/api/search.php?${params}`);
+        const data = await res.json();
+        renderGrid(data.screens || []);
+    } catch (e) {
+        console.error('詳細検索エラー:', e);
+    }
+}
+
+async function openModal(id) {
+    const modal = document.getElementById('modal');
+    const title = document.getElementById('modal-title');
+    const body  = document.getElementById('modal-body');
+    modal.classList.remove('hidden');
+    title.textContent = '読み込み中…';
+    body.innerHTML    = '<p class="text-gray-500 text-sm">読み込み中…</p>';
+    document.addEventListener('keydown', onEsc);
+    try {
+        const res  = await fetch(`/api/search.php?action=detail&id=${encodeURIComponent(id)}`);
+        const data = await res.json();
+        const s    = data.screen;
+        if (!s) { body.innerHTML = '<p class="text-red-400">データが見つかりませんでした。</p>'; return; }
+        title.textContent = s.name || '(名称未設定)';
+        const imgSrc  = s.screenshot_path ? `/img.php?path=${encodeURIComponent(s.screenshot_path)}` : null;
+        const imgHtml = imgSrc
+            ? `<img src="${esc(imgSrc)}" alt="${esc(s.name)}" class="w-full rounded-xl mb-4 border border-gray-700" onerror="this.remove()">`
+            : '';
+        const elems = data.elements || [];
+        const tableHtml = elems.length ? `
+            <h3 class="text-sm font-semibold text-gray-300 mb-2">UI 要素 (${elems.length} 件)</h3>
+            <div class="overflow-x-auto mb-4">
+            <table class="w-full text-xs text-gray-400 border-collapse">
+                <thead><tr class="border-b border-gray-700">
+                    <th class="text-left py-1 pr-4 font-medium">ラベル</th>
+                    <th class="text-left py-1 pr-4 font-medium">種類</th>
+                    <th class="text-left py-1 font-medium">遷移先</th>
+                </tr></thead>
+                <tbody>${elems.map(e=>`<tr class="border-b border-gray-800 hover:bg-gray-800/40">
+                    <td class="py-1 pr-4 text-gray-200">${esc(e.label)}</td>
+                    <td class="py-1 pr-4">${esc(e.element_type)}</td>
+                    <td class="py-1 text-brand-light">${esc(e.navigates_to_name||'—')}</td>
+                </tr>`).join('')}</tbody>
+            </table></div>` : '';
+        const ocrHtml = s.ocr_text
+            ? `<h3 class="text-sm font-semibold text-gray-300 mb-2">OCR テキスト</h3>
+               <pre class="text-xs text-gray-400 bg-gray-800 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap leading-relaxed">${esc(s.ocr_text)}</pre>`
+            : '';
+        body.innerHTML = `
+            ${imgHtml}
+            <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mb-4 border border-gray-800 rounded-lg p-3">
+                <dt class="text-gray-500">ゲーム</dt><dd class="text-gray-200">${esc(s.game_name)}</dd>
+                <dt class="text-gray-500">プラットフォーム</dt><dd class="text-gray-200">${esc(s.platform)}</dd>
+                <dt class="text-gray-500">カテゴリ</dt><dd class="text-gray-200">${esc(s.category)}</dd>
+                <dt class="text-gray-500">訪問回数</dt><dd class="text-gray-200">${esc(s.visited_count)}</dd>
+                <dt class="text-gray-500">最終確認</dt><dd class="text-gray-200">${esc((s.last_seen_at||'').slice(0,16))}</dd>
+            </dl>
+            ${tableHtml}
+            ${ocrHtml}`;
+    } catch (e) {
+        body.innerHTML = `<p class="text-red-400 text-sm">読み込みエラー: ${esc(String(e))}</p>`;
+    }
+}
+
+function closeModal() {
+    document.getElementById('modal').classList.add('hidden');
+    document.removeEventListener('keydown', onEsc);
+}
+
+function onEsc(e) { if (e.key === 'Escape') closeModal(); }
+</script>
 
 {% endblock %}

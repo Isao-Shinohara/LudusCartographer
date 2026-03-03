@@ -103,6 +103,76 @@ class ScreenRepository
     }
 
     /**
+     * title / keyword / session_id の複合条件でスクリーンを検索する。
+     *
+     * - title     : screens.name の部分一致（LIKE）
+     * - keyword   : screens.name LIKE + screens.ocr_text FULLTEXT の OR
+     * - session_id: screenshot_path に含まれるセッションディレクトリ名
+     *
+     * 各条件は AND で結合する。すべて空の場合は全件を返す。
+     *
+     * @param string $title     画面タイトル絞り込み
+     * @param string $keyword   OCR 全文キーワード
+     * @param string $sessionId セッション ID（例: 20260303_181720）
+     * @param int    $limit     最大取得件数
+     * @return array<int, array<string, mixed>>
+     */
+    public function searchAdvanced(
+        string $title     = '',
+        string $keyword   = '',
+        string $sessionId = '',
+        int    $limit     = 100,
+    ): array {
+        $conditions = [];
+        $bindings   = [':limit' => $limit];
+
+        if ($title !== '') {
+            $conditions[]       = 's.name LIKE :title';
+            $bindings[':title'] = '%' . $title . '%';
+        }
+
+        if ($keyword !== '') {
+            $conditions[]          = '(s.name LIKE :kw_like OR MATCH(s.ocr_text) AGAINST (:kw_ft IN BOOLEAN MODE))';
+            $bindings[':kw_like']  = '%' . $keyword . '%';
+            $bindings[':kw_ft']    = $keyword . '*';
+        }
+
+        if ($sessionId !== '') {
+            $conditions[]           = 's.screenshot_path LIKE :session';
+            $bindings[':session']   = '%/' . $sessionId . '/%';
+        }
+
+        $where = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
+
+        $sql = <<<SQL
+            SELECT
+                s.id,
+                s.name,
+                s.category,
+                s.screenshot_path,
+                s.thumbnail_path,
+                s.ocr_text,
+                s.visited_count,
+                s.last_seen_at,
+                g.name     AS game_name,
+                g.platform
+            FROM screens s
+            JOIN games g ON g.id = s.game_id
+            {$where}
+            ORDER BY s.last_seen_at DESC
+            LIMIT :limit
+        SQL;
+
+        $stmt = $this->db->prepare($sql);
+        foreach ($bindings as $key => $value) {
+            $type = ($key === ':limit') ? \PDO::PARAM_INT : \PDO::PARAM_STR;
+            $stmt->bindValue($key, $value, $type);
+        }
+        $stmt->execute();
+        return $stmt->fetchAll();
+    }
+
+    /**
      * テスト・デモ用のインメモリサンプルデータを返す（DB不要）。
      *
      * @return array<int, array<string, mixed>>

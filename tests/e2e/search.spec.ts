@@ -129,3 +129,109 @@ test.describe('カードコンテンツ', () => {
     });
 
 });
+
+test.describe('詳細検索パネル', () => {
+
+    test('詳細検索パネルが存在する', async ({ page }) => {
+        await page.goto('/');
+        const panel = page.locator('details');
+        await expect(panel).toBeVisible();
+        await expect(panel).toContainText('詳細検索');
+    });
+
+    test('詳細検索パネルを開くと入力フォームが表示される', async ({ page }) => {
+        await page.goto('/');
+        await page.click('details summary');
+        await expect(page.locator('#adv-title')).toBeVisible();
+        await expect(page.locator('#adv-keyword')).toBeVisible();
+        await expect(page.locator('#adv-session')).toBeVisible();
+    });
+
+    test('詳細検索ボタンをクリックするとAPI呼び出しが行われる', async ({ page }) => {
+        await page.goto('/');
+        await page.click('details summary');
+        await page.fill('#adv-keyword', 'ショップ');
+
+        // API レスポンスを待つ
+        const responsePromise = page.waitForResponse(r => r.url().includes('/api/search.php'));
+        await page.click('details button');
+        const response = await responsePromise;
+        expect(response.status()).toBe(200);
+
+        const body = await response.json();
+        expect(body).toHaveProperty('screens');
+        expect(body).toHaveProperty('count');
+    });
+
+});
+
+test.describe('API エンドポイント', () => {
+
+    test('search API が JSON を返す', async ({ page }) => {
+        const res  = await page.request.get('/api/search.php?action=search');
+        expect(res.status()).toBe(200);
+        expect(res.headers()['content-type']).toContain('application/json');
+        const body = await res.json();
+        expect(body).toHaveProperty('screens');
+        expect(Array.isArray(body.screens)).toBe(true);
+    });
+
+    test('search API がキーワードでフィルタリングする', async ({ page }) => {
+        const res  = await page.request.get('/api/search.php?action=search&keyword=ショップ');
+        const body = await res.json();
+        expect(body.count).toBeGreaterThan(0);
+    });
+
+    test('detail API が screen と elements を返す', async ({ page }) => {
+        const res  = await page.request.get('/api/search.php?action=detail&id=1');
+        expect(res.status()).toBe(200);
+        const body = await res.json();
+        expect(body).toHaveProperty('screen');
+        expect(body).toHaveProperty('elements');
+    });
+
+    test('detail API で無効な ID は 400 を返す', async ({ page }) => {
+        const res = await page.request.get('/api/search.php?action=detail&id=0');
+        expect(res.status()).toBe(400);
+    });
+
+});
+
+test.describe('モーダル', () => {
+
+    test('カードをクリックするとモーダルが表示される', async ({ page }) => {
+        await page.goto('/');
+        const modal = page.locator('#modal');
+        await expect(modal).toHaveClass(/hidden/);
+
+        await page.locator('article').first().click();
+        await expect(modal).not.toHaveClass(/hidden/);
+    });
+
+    test('モーダルにスクリーン情報が表示される', async ({ page }) => {
+        await page.goto('/');
+        await page.locator('article').first().click();
+        const modalBody = page.locator('#modal-body');
+        // サンプルデータのゲーム名が表示される
+        await expect(modalBody).toContainText('Demo Game', { timeout: 5000 });
+    });
+
+    test('モーダルを閉じるとモーダルが非表示になる', async ({ page }) => {
+        await page.goto('/');
+        await page.locator('article').first().click();
+        await expect(page.locator('#modal')).not.toHaveClass(/hidden/);
+
+        await page.click('#modal button[aria-label="閉じる"]');
+        await expect(page.locator('#modal')).toHaveClass(/hidden/);
+    });
+
+    test('Escape キーでモーダルを閉じられる', async ({ page }) => {
+        await page.goto('/');
+        await page.locator('article').first().click();
+        await expect(page.locator('#modal')).not.toHaveClass(/hidden/);
+
+        await page.keyboard.press('Escape');
+        await expect(page.locator('#modal')).toHaveClass(/hidden/);
+    });
+
+});
