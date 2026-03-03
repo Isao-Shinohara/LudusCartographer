@@ -30,8 +30,18 @@ from typing import Optional
 
 from .driver import AppiumDriver
 from .ocr import run_ocr, find_best, format_results
+from .utils import compute_phash, phash_distance
 
 logger = logging.getLogger(__name__)
+
+# タイトル抽出から除外するテキスト（ナビゲーションバーの制御要素など）
+EXCLUDE_TEXTS: frozenset[str] = frozenset({
+    '>', '›', '<', '‹', '7', 'L',
+    '戻る', 'Done', '完了', 'Edit', '編集', 'キャンセル',
+})
+
+# phash ハミング距離の重複判定閾値（この値未満 = ほぼ同一画面）
+PHASH_THRESHOLD = 8
 
 
 # ============================================================
@@ -70,6 +80,7 @@ class ScreenRecord:
     ocr_results:    list[dict]             # run_ocr() の生結果
     tappable_items: list[dict]             # タップ候補
     db_screen_id:   Optional[int] = None   # screens.id（DB保存後に設定）
+    phash:          Optional[str] = None   # 画像知覚ハッシュ (compute_phash)
     discovered_at:  str = field(
         default_factory=lambda: datetime.now().isoformat()
     )
@@ -157,6 +168,19 @@ class ScreenCrawler:
         if record is None:
             return
 
+        # --- phash 重複チェック (text fingerprint チェック前) ---
+        if record.phash is not None:
+            for prev in self._visited.values():
+                if prev.phash is not None:
+                    dist = phash_distance(record.phash, prev.phash)
+                    if dist < PHASH_THRESHOLD:
+                        logger.info(
+                            f"[PHASH_DUP] 視覚的重複検出: {record.title!r}"
+                            f" ≈ {prev.title!r}  phash距離={dist}"
+                        )
+                        self._stats.screens_skipped += 1
+                        return
+
         # --- 訪問済みチェック ---
         if record.fingerprint in self._visited:
             prev = self._visited[record.fingerprint]
@@ -239,9 +263,16 @@ class ScreenCrawler:
             logger.error(f"[CRAWL] OCR 失敗: {e}")
             return None
 
-        fingerprint   = self._screen_fingerprint(ocr_results)
-        title         = self._extract_title(ocr_results)
-        tappable      = self._find_tappable_items(ocr_results)
+        fingerprint = self._screen_fingerprint(ocr_results)
+        title       = self._extract_title(ocr_results)
+        tappable    = self._find_tappable_items(ocr_results)
+
+        # phash 計算（エラー時はスキップしてテキスト指紋のみで継続）
+        ph = None
+        try:
+            ph = compute_phash(shot_path)
+        except Exception as e:
+            logger.debug(f"[CRAWL] phash 計算スキップ: {e}")
 
         return ScreenRecord(
             fingerprint=fingerprint,
@@ -251,6 +282,7 @@ class ScreenCrawler:
             parent_fp=parent_fp,
             ocr_results=ocr_results,
             tappable_items=tappable,
+            phash=ph,
         )
 
     # ----------------------------------------------------------
@@ -282,26 +314,43 @@ class ScreenCrawler:
 
     def _extract_title(self, ocr_results: list[dict]) -> str:
         """
-        画面タイトルを OCR 結果から推定する。
+        画面タイトルを OCR 結果から推定する。2 ステップ方式:
 
-        iOS 大タイトル（Large Title）は通常:
-        - y: 200〜700px（スクリーンショット座標）
-        - 短いテキスト（< 20 文字）
-        - 高い信頼スコア（> 0.8）
+        Step 1 — Large Title (iOS 大タイトル):
+          左寄り (x < 400px)、y: 150〜750px、高信頼スコア
+          → ナビバー制御要素 (戻る/Done/Edit) を除外
+
+        Step 2 — Nav-bar center title (ナビゲーションバー中央タイトル):
+          中央寄り (x: 300〜900px)、y: 100〜260px、高信頼スコア
+          → Large Title が見つからなかった場合のフォールバック
         """
-        candidates = [
+        # 共通フィルタ
+        base_candidates = [
             r for r in ocr_results
-            if 200 <= r["center"][1] <= 700
-            and r["confidence"] > 0.8
+            if r["confidence"] > 0.8
             and 1 < len(r["text"]) <= 20
-            # シェブロンや記号は除外
-            and not r["text"].strip() in ('>', '›', '<', '‹', '7', 'L')
+            and r["text"].strip() not in EXCLUDE_TEXTS
         ]
-        if not candidates:
-            return "unknown"
-        # 最も高い信頼スコアのものをタイトルとして採用
-        best = max(candidates, key=lambda r: r["confidence"])
-        return best["text"]
+
+        # Step 1: Large Title (左寄り, y=150-750)
+        large_title = [
+            r for r in base_candidates
+            if 150 <= r["center"][1] <= 750
+            and r["center"][0] < 400
+        ]
+        if large_title:
+            return max(large_title, key=lambda r: r["confidence"])["text"]
+
+        # Step 2: Nav-bar center title (中央, y=100-260)
+        nav_candidates = [
+            r for r in base_candidates
+            if 100 <= r["center"][1] <= 260
+            and 300 <= r["center"][0] <= 900
+        ]
+        if nav_candidates:
+            return max(nav_candidates, key=lambda r: r["confidence"])["text"]
+
+        return "unknown"
 
     # ----------------------------------------------------------
     # タップ候補抽出
@@ -514,8 +563,62 @@ class ScreenCrawler:
         except Exception as e:
             logger.warning(f"[DB] ui_elements 保存エラー: {e}")
 
+    def save_summary_json(self, path: Path) -> None:
+        """
+        クロール結果を JSON ファイルに保存する。
+
+        出力フィールド (各画面): fingerprint / title / depth / parent_fp /
+          tappable_items / phash / screenshot_path / discovered_at
+
+        Args:
+            path: 保存先パス (例: evidence/20260303_160759/crawl_summary.json)
+        """
+        import json
+
+        data = {
+            "session_id": path.parent.name,
+            "screens": [
+                {
+                    "fingerprint":     rec.fingerprint,
+                    "title":           rec.title,
+                    "depth":           rec.depth,
+                    "parent_fp":       rec.parent_fp,
+                    "tappable_items":  [
+                        {"text": item["text"], "confidence": item["confidence"]}
+                        for item in rec.tappable_items
+                    ],
+                    "phash":           rec.phash,
+                    "screenshot_path": str(rec.screenshot_path),
+                    "discovered_at":   rec.discovered_at,
+                }
+                for rec in self._visited.values()
+            ],
+            "stats": {
+                "screens_found":   self._stats.screens_found,
+                "screens_skipped": self._stats.screens_skipped,
+                "taps_total":      self._stats.taps_total,
+                "elapsed_sec":     self._stats.elapsed_sec,
+            },
+        }
+        path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info(f"[CRAWL] サマリー保存: {path}")
+
     def _finalize_session(self) -> None:
-        """クロール終了時にセッションを completed にする。"""
+        """クロール終了時にサマリー JSON を保存し、DB セッションを completed にする。"""
+        # JSON サマリーを evidence ディレクトリに保存
+        if self._visited:
+            first_rec = next(iter(self._visited.values()))
+            evidence_dir = first_rec.screenshot_path.parent
+            summary_path = evidence_dir / "crawl_summary.json"
+            try:
+                self.save_summary_json(summary_path)
+            except Exception as e:
+                logger.warning(f"[CRAWL] サマリー保存失敗: {e}")
+
+        # DB セッション終了処理
         if self._db_conn is None or self._crawl_session_id is None:
             return
         try:

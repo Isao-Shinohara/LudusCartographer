@@ -1,5 +1,5 @@
 """
-utils.py — デバイス接続ユーティリティ
+utils.py — デバイス接続ユーティリティ + 画像ハッシュ (phash)
 
 detect_connected_device() は以下の順序で iOS / Android デバイスを自動検出する:
 
@@ -290,3 +290,55 @@ def diagnose_device_connection() -> dict:
         report["platform"] = "android"
 
     return report
+
+
+# ============================================================
+# 画像ハッシュ (phash)
+# ============================================================
+
+def compute_phash(image_path: "Path", hash_size: int = 8) -> str:
+    """
+    DCT phash (64-bit) を計算して 16 文字 hex 文字列で返す。
+
+    opencv-contrib-python の cv2.dct() を使用。imagehash パッケージ不要。
+    hash_size=8 → 8×8 DCT → 64 bit のハッシュ → 16 桁 hex。
+
+    Args:
+        image_path: 画像ファイルパス
+        hash_size:  ハッシュサイズ (デフォルト 8 → 64bit)
+
+    Returns:
+        16 文字の hex 文字列 (例: "a3f0c2e1b4d59876")
+
+    Raises:
+        ValueError: 画像を読み込めない場合
+        ImportError: cv2 / numpy が利用できない場合
+    """
+    import cv2
+    import numpy as np
+
+    img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise ValueError(f"画像を読み込めません: {image_path}")
+    img = cv2.resize(img, (hash_size * 4, hash_size * 4))
+    dct = cv2.dct(np.float32(img))
+    top = dct[:hash_size, :hash_size]
+    avg = top.mean()
+    bits = top.flatten() > avg
+    return format(int("".join("1" if b else "0" for b in bits), 2), "016x")
+
+
+def phash_distance(h1: str, h2: str) -> int:
+    """
+    2 つの phash 文字列のハミング距離を返す。
+
+    距離 < 8 → ほぼ同一画面（重複とみなす閾値として使用）。
+
+    Args:
+        h1, h2: compute_phash() が返す 16 文字 hex 文字列
+
+    Returns:
+        ハミング距離 (0 〜 64)
+    """
+    a, b = int(h1, 16), int(h2, 16)
+    return bin(a ^ b).count("1")
