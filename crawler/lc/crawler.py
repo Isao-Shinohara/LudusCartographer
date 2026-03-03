@@ -311,45 +311,64 @@ class ScreenCrawler:
 
     def _extract_title(self, ocr_results: list[dict]) -> str:
         """
-        画面タイトルを OCR 結果から推定する。2 ステップ方式:
+        画面タイトルを OCR 結果から推定する。座標絶対値に依存しない汎用ロジック。
 
-        Step 1 — Large Title (iOS 大タイトル):
-          左寄り (x < 400px)、y: 150〜750px、高信頼スコア
-          → ナビバー制御要素 (戻る/Done/Edit) を除外
+        【アルゴリズム概要】
+        画面サイズを OCR の bounding-box 座標群から推定し、すべての判定を
+        「画面高さ・幅に対する相対比率」で行う。ハードコードされたピクセル値は使用しない。
 
-        Step 2 — Nav-bar center title (ナビゲーションバー中央タイトル):
-          中央寄り (x: 300〜900px)、y: 100〜260px、高信頼スコア
-          → Large Title が見つからなかった場合のフォールバック
+        Step 1 — Large Title:
+          画面上部 (y < 30%) かつ bounding-box 高さが画面高さの 3% 以上の候補の中で
+          最もフォントが大きいテキストをタイトルと推論する。
+          → iOS Large Title (~34pt @3x ≈ 3.3%)、ゲームのタイトルバーなど。
+          → nav-bar 戻るボタン (~17pt @3x ≈ 2.5%) は高さ不足で自動除外される。
+
+        Step 2 — Nav-bar center title (fallback):
+          画面上部 (y < 20%) かつ水平中央寄り (x: 20%〜80%) の候補の中で
+          信頼スコアが最も高いテキストをタイトルと推論する。
+          → iOS ナビゲーションバーの中央タイトル (例: 「情報」「言語と地域」)。
+
+        EXCLUDE_TEXTS (戻る/Done/Edit/キャンセル 等) は共通フィルタで除外する。
         """
-        # 共通フィルタ
-        base_candidates = [
+
+        def _box_height(r: dict) -> float:
+            """bounding-box の高さ（フォントサイズの代理指標）を返す。"""
+            ys = [p[1] for p in r["box"]]
+            return max(ys) - min(ys)
+
+        # 画面サイズを OCR bounding-box 座標群から推定
+        # (画面下端 / 右端テキストの座標 + 5% のマージン)
+        all_ys = [p[1] for r in ocr_results for p in r["box"]]
+        all_xs = [p[0] for r in ocr_results for p in r["box"]]
+        screen_h = int(max(all_ys) * 1.05) if all_ys else 2000
+        screen_w = int(max(all_xs) * 1.05) if all_xs else 1000
+
+        # 共通フィルタ: 信頼スコア / テキスト長 / ナビゲーション除外ワード / ステータスバー
+        base = [
             r for r in ocr_results
             if r["confidence"] > 0.8
             and 1 < len(r["text"]) <= 20
             and r["text"].strip() not in EXCLUDE_TEXTS
+            and r["center"][1] > screen_h * 0.05      # ステータスバー (上端 5%) 除外
         ]
 
-        # Step 1: Large Title (y=300-750, x<800, len≤15)
-        # y>=300 で nav-bar 戻るボタン (「< 設定」など) を除外
-        # x<800 で iOS の Large Title が中央寄り (x≈587) でも取得できるよう範囲を拡大
-        # len<=15 で説明文 (「ソフトウェアアップデート、デバイスの言語、」など) を除外
-        large_title = [
-            r for r in base_candidates
-            if 300 <= r["center"][1] <= 750
-            and r["center"][0] < 800
-            and len(r["text"]) <= 15
+        # Step 1: Large Title — 上部 30% かつ文字高さ 3% 以上
+        large = [
+            r for r in base
+            if r["center"][1] < screen_h * 0.30
+            and _box_height(r) >= screen_h * 0.03
         ]
-        if large_title:
-            return max(large_title, key=lambda r: r["confidence"])["text"]
+        if large:
+            return max(large, key=_box_height)["text"]
 
-        # Step 2: Nav-bar center title (中央, y=100-260)
-        nav_candidates = [
-            r for r in base_candidates
-            if 100 <= r["center"][1] <= 260
-            and 300 <= r["center"][0] <= 900
+        # Step 2: Nav-bar center title — 上部 20% かつ水平中央 20%〜80%
+        nav = [
+            r for r in base
+            if r["center"][1] < screen_h * 0.20
+            and screen_w * 0.20 <= r["center"][0] <= screen_w * 0.80
         ]
-        if nav_candidates:
-            return max(nav_candidates, key=lambda r: r["confidence"])["text"]
+        if nav:
+            return max(nav, key=lambda r: r["confidence"])["text"]
 
         return "unknown"
 

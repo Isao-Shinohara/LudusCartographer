@@ -238,3 +238,9 @@ npx playwright test --reporter=line
 | uiautomator2 driver | 3.10.0 | Android 自動化 |
 | PaddleOCR | 3.4.0 | `predict()` API を使用 |
 | google-cloud-aiplatform | 1.139.0 | Vertex AI |
+
+---
+
+## Current Development Status
+
+- Phase 4-G Step 1: タイトル抽出の汎用化完了。座標マジックナンバーを排除しADRに記録。(`docs/adr/001-universal-ui-detection.md`)
