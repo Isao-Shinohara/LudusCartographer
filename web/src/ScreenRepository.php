@@ -72,9 +72,9 @@ class ScreenRepository
     }
 
     /**
-     * スクリーン詳細 + そのUI要素一覧を取得する。
+     * スクリーン詳細 + UI要素一覧 + 親画面一覧を取得する。
      *
-     * @return array{screen: array<string,mixed>|null, elements: array<int,array<string,mixed>>}
+     * @return array{screen: array<string,mixed>|null, elements: array<int,array<string,mixed>>, parents: array<int,array<string,mixed>>}
      */
     public function findWithElements(int $screenId): array
     {
@@ -99,7 +99,77 @@ class ScreenRepository
         $stmt->execute([':id' => $screenId]);
         $elements = $stmt->fetchAll();
 
-        return compact('screen', 'elements');
+        // この画面を navigates_to として持つ親画面を取得する（接続マップの "A → B" 用）
+        $parentsSql = <<<SQL
+            SELECT DISTINCT s.id, s.name, s.screen_hash, e.label AS via_label
+            FROM ui_elements e
+            JOIN screens s ON s.id = e.screen_id
+            WHERE e.navigates_to = :id
+            ORDER BY s.id
+        SQL;
+        $stmt = $this->db->prepare($parentsSql);
+        $stmt->execute([':id' => $screenId]);
+        $parents = $stmt->fetchAll();
+
+        return compact('screen', 'elements', 'parents');
+    }
+
+    /**
+     * クロールセッション一覧を取得する（最新順）。
+     *
+     * @param int $limit 最大取得件数
+     * @return array<int, array<string, mixed>>
+     */
+    public function getSessions(int $limit = 20): array
+    {
+        $sql = <<<SQL
+            SELECT
+                cs.id,
+                cs.status,
+                cs.screens_found,
+                cs.started_at,
+                cs.ended_at,
+                cs.error_message,
+                g.name     AS game_name,
+                g.platform AS platform
+            FROM crawl_sessions cs
+            JOIN games g ON g.id = cs.game_id
+            ORDER BY cs.started_at DESC
+            LIMIT :limit
+        SQL;
+        $stmt = $this->db->prepare($sql);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll();
+
+        // started_at → session_dir (YYYYMMDD_HHmmss) を付加（screenshot_path フィルタ用）
+        foreach ($rows as &$row) {
+            $dt                = new \DateTime($row['started_at']);
+            $row['session_dir'] = $dt->format('Ymd_His');
+        }
+        return $rows;
+    }
+
+    /**
+     * セッション一覧のサンプルデータを返す（DB不要）。
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public static function getSampleSessions(): array
+    {
+        return [
+            [
+                'id'            => 1,
+                'status'        => 'completed',
+                'screens_found' => 3,
+                'started_at'    => '2026-03-03 13:00:00',
+                'ended_at'      => '2026-03-03 13:05:00',
+                'error_message' => null,
+                'game_name'     => 'Demo Game',
+                'platform'      => 'android',
+                'session_dir'   => '20260303_130000',
+            ],
+        ];
     }
 
     /**

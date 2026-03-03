@@ -34,6 +34,20 @@
     </form>
 </section>
 
+<!-- セッション統計パネル -->
+<div id="session-panel" class="mb-4 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <div class="px-4 py-3 flex items-center justify-between border-b border-gray-800">
+        <h3 class="text-sm font-semibold text-gray-300">📡 クローラー セッション統計</h3>
+        <span id="session-panel-badge"
+              class="text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">
+            読み込み中…
+        </span>
+    </div>
+    <div id="session-list" class="px-4 py-3 text-xs text-gray-600">
+        セッションデータを取得中…
+    </div>
+</div>
+
 <!-- 詳細検索パネル -->
 <details class="mb-6 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
     <summary class="px-4 py-3 cursor-pointer text-sm text-gray-400 hover:text-gray-200 select-none">
@@ -260,7 +274,15 @@ async function openModal(id) {
         const imgHtml = imgSrc
             ? `<img src="${esc(imgSrc)}" alt="${esc(s.name)}" class="w-full rounded-xl mb-4 border border-gray-700" onerror="this.remove()">`
             : '';
-        const elems = data.elements || [];
+        const elems   = data.elements || [];
+        const parents = data.parents  || [];
+
+        // --- 接続マップ (Mermaid 種) ---
+        const mapLines = buildConnectionMap(s, parents, elems);
+        const mapHtml  = mapLines.length ? `
+            <h3 class="text-sm font-semibold text-gray-300 mb-2">🔗 接続マップ</h3>
+            <pre class="text-xs text-brand-light bg-gray-800 rounded-lg p-3 mb-4 leading-relaxed overflow-x-auto">${mapLines.map(esc).join('\n')}</pre>` : '';
+
         const tableHtml = elems.length ? `
             <h3 class="text-sm font-semibold text-gray-300 mb-2">UI 要素 (${elems.length} 件)</h3>
             <div class="overflow-x-auto mb-4">
@@ -282,6 +304,7 @@ async function openModal(id) {
             : '';
         body.innerHTML = `
             ${imgHtml}
+            ${mapHtml}
             <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mb-4 border border-gray-800 rounded-lg p-3">
                 <dt class="text-gray-500">ゲーム</dt><dd class="text-gray-200">${esc(s.game_name)}</dd>
                 <dt class="text-gray-500">プラットフォーム</dt><dd class="text-gray-200">${esc(s.platform)}</dd>
@@ -302,6 +325,104 @@ function closeModal() {
 }
 
 function onEsc(e) { if (e.key === 'Escape') closeModal(); }
+
+// -------------------------------------------------------
+// セッション統計パネル
+// -------------------------------------------------------
+const STATUS_CLASS = {
+    running:   'bg-green-900/60 text-green-300',
+    completed: 'bg-gray-700    text-gray-300',
+    failed:    'bg-red-900/60  text-red-300',
+    paused:    'bg-yellow-900/60 text-yellow-300',
+};
+const STATUS_ICON = {
+    running: '🟢', completed: '✅', failed: '❌', paused: '⏸',
+};
+
+function sessionRowHtml(s) {
+    const cls  = STATUS_CLASS[s.status] || STATUS_CLASS.completed;
+    const icon = STATUS_ICON[s.status]  || '❓';
+    const dur  = s.ended_at
+        ? `${Math.round((new Date(s.ended_at) - new Date(s.started_at)) / 60000)} 分`
+        : '実行中';
+    return `<tr class="border-b border-gray-800 hover:bg-gray-800/40 cursor-pointer"
+                onclick="applySession('${esc(s.session_dir)}')">
+        <td class="py-1.5 pr-3 text-gray-400">#${esc(s.id)}</td>
+        <td class="py-1.5 pr-3 text-gray-200 font-medium">${esc(s.game_name)}</td>
+        <td class="py-1.5 pr-3">
+            <span class="px-1.5 py-0.5 rounded text-xs ${cls}">${icon} ${esc(s.status)}</span>
+        </td>
+        <td class="py-1.5 pr-3 text-brand-light font-bold">${esc(s.screens_found)} 画面</td>
+        <td class="py-1.5 pr-3 text-gray-500">${esc((s.started_at||'').slice(0,16))}</td>
+        <td class="py-1.5 text-gray-500">${esc(dur)}</td>
+    </tr>`;
+}
+
+function applySession(sessionDir) {
+    const details = document.querySelector('details');
+    if (details) details.open = true;
+    const input = document.getElementById('adv-session');
+    if (input) { input.value = sessionDir; input.focus(); }
+    advancedSearch();
+}
+
+async function loadSessions() {
+    const panel = document.getElementById('session-list');
+    const badge = document.getElementById('session-panel-badge');
+    try {
+        const res  = await fetch('/api/search.php?action=get_sessions');
+        const data = await res.json();
+        const sessions = data.sessions || [];
+        if (badge) badge.textContent = `${sessions.length} セッション`;
+        if (!sessions.length) {
+            if (panel) panel.innerHTML = '<p class="text-gray-600">セッションが見つかりません。</p>';
+            return;
+        }
+        const runningCount = sessions.filter(s => s.status === 'running').length;
+        if (badge && runningCount > 0) {
+            badge.textContent = `🟢 ${runningCount} 件実行中 / 計 ${sessions.length}`;
+            badge.className   = badge.className.replace('bg-gray-700 text-gray-400', 'bg-green-900/60 text-green-300');
+        }
+        if (panel) {
+            panel.innerHTML = `
+                <p class="text-gray-500 mb-2 text-xs">行をクリックするとそのセッションで絞り込みます。</p>
+                <div class="overflow-x-auto">
+                <table class="w-full text-xs border-collapse" id="session-table">
+                    <thead><tr class="border-b border-gray-700 text-gray-500">
+                        <th class="text-left py-1 pr-3">#</th>
+                        <th class="text-left py-1 pr-3">ゲーム</th>
+                        <th class="text-left py-1 pr-3">状態</th>
+                        <th class="text-left py-1 pr-3">Fingerprint 数</th>
+                        <th class="text-left py-1 pr-3">開始時刻</th>
+                        <th class="text-left py-1">所要時間</th>
+                    </tr></thead>
+                    <tbody>${sessions.map(sessionRowHtml).join('')}</tbody>
+                </table></div>`;
+        }
+    } catch (e) {
+        if (panel) panel.innerHTML = '<p class="text-gray-600 text-xs">セッション取得失敗。</p>';
+        if (badge) badge.textContent = '取得失敗';
+        console.error('loadSessions:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadSessions);
+
+// -------------------------------------------------------
+// モーダル 接続マップ (A → B 表示) 拡張
+// -------------------------------------------------------
+function buildConnectionMap(s, parents, elements) {
+    const lines = [];
+    for (const p of (parents || [])) {
+        lines.push(`${p.name}(${(p.screen_hash||'').slice(0,8)}) → ${s.name}(${(s.screen_hash||'').slice(0,8)})`);
+    }
+    for (const e of (elements || [])) {
+        if (e.navigates_to_name) {
+            lines.push(`${s.name}(${(s.screen_hash||'').slice(0,8)}) → ${e.navigates_to_name} [via: ${e.label||'?'}]`);
+        }
+    }
+    return lines;
+}
 </script>
 
 {% endblock %}

@@ -358,3 +358,114 @@ _visited キー:
 - `_screen_fingerprint()` の相対座標化
 - ゲーム UI (縦・横画面切替、カスタムフォント) への適応
 - 機械学習モデルへの段階的移行 (特徴量として bounding-box 比率を入力)
+
+---
+
+## Phase 6: Web-Crawl Integration — モニタリング & セッション管理 (2026-03-03 追加)
+
+### コンテキスト
+
+Phase 5-B までのクローラーは証拠ファイルを `crawler/evidence/` に保存するが、
+その進行状況を **リアルタイムで人間が把握する手段がなかった**。
+
+問題:
+1. どのセッションが `running` / `completed` かを CLI ログでしか確認できない。
+2. 発見した Fingerprint（画面）の総数が一目でわからない。
+3. 画面間の接続関係 (A → B) を検索 UI から確認できない。
+
+### 決定 — Web UI へのセッション統計パネルと接続マップ表示
+
+#### Step 6-A: `action=get_sessions` API
+
+`web/public/api/search.php` に `action=get_sessions` を追加し、
+`crawl_sessions` テーブルから最新セッション一覧を返す。
+
+```json
+{
+  "sessions": [
+    {
+      "id": 1,
+      "status": "completed",
+      "screens_found": 3,
+      "started_at": "2026-03-03 13:00:00",
+      "ended_at":   "2026-03-03 13:05:00",
+      "game_name":  "Demo Game",
+      "platform":   "android",
+      "session_dir": "20260303_130000"
+    }
+  ],
+  "count": 1
+}
+```
+
+`session_dir` は `started_at` から `Ymd_His` フォーマットで算出し、
+`searchAdvanced()` の `screenshot_path LIKE '%/session_dir/%'` フィルタと連動する。
+
+**DB 未接続時のフォールバック:** `ScreenRepository::getSampleSessions()` を返す。
+
+#### Step 6-B: セッション統計パネル (Web UI)
+
+検索ページに常時表示パネルを追加する。
+
+| 列 | 内容 |
+|----|------|
+| # | セッション ID |
+| ゲーム | `game_name` |
+| 状態 | running (🟢) / completed (✅) / failed (❌) |
+| **Fingerprint 数** | `screens_found` (クローラーが発見した一意な `{title}@{fingerprint}` 数) |
+| 開始時刻 | `started_at` (YYYY-MM-DD HH:mm) |
+| 所要時間 | `ended_at - started_at` (分) |
+
+行クリック → `adv-session` 入力欄に `session_dir` をセットして詳細検索を自動実行。
+
+#### Step 6-C: `action=detail` に `parents` を追加
+
+`findWithElements()` に親画面クエリを追加する。
+
+```sql
+SELECT DISTINCT s.id, s.name, s.screen_hash, e.label AS via_label
+FROM ui_elements e
+JOIN screens s ON s.id = e.screen_id
+WHERE e.navigates_to = :id
+ORDER BY s.id
+```
+
+これにより API レスポンスが `{screen, elements, parents}` 形式になる。
+
+#### Step 6-D: 接続マップ表示 (Mermaid 種)
+
+モーダル内で親画面 (`parents`) と子画面 (`elements[].navigates_to_name`) を
+シンプルなテキストで表示する。
+
+```
+ホーム画面(abc12345) → ショップ画面(def67890) [via: ショップ]
+ショップ画面(def67890) → ホーム画面(abc12345) [via: 戻る]
+```
+
+このフォーマットは将来の Mermaid.js / D3.js 描画の「種」として設計されており、
+フロントエンドの `buildConnectionMap()` が `parents + elements` から生成する。
+
+### 根拠
+
+- `screens_found` は `crawl_sessions` テーブルのカウンタを直接使用するため、
+  追加の集計クエリが不要でリアルタイム性が高い。
+- `session_dir` を `started_at` から算出することで、クローラーと Web UI で
+  命名規則を共有しつつ、DB にカラムを追加しない。
+- 接続マップのテキスト形式はコードに依存しないため、Mermaid.js / Graphviz /
+  NetworkX への移行時にフォーマット変換のみで対応できる。
+
+### 却下した代替案
+
+| 案 | 却下理由 |
+|----|---------|
+| WebSocket でリアルタイム更新 | クローラー側に WebSocket サーバーが必要。複雑性に対しメリット小 |
+| `crawl_sessions` に `session_dir` カラムを追加 | スキーマ変更は後退互換を壊すリスクあり。算出で十分 |
+| Mermaid.js をモーダル内で即時描画 | `screens_found` が数百を超えると描画が重い。テキスト表示を先行 |
+
+### 影響範囲 (Phase 6)
+
+- `web/src/ScreenRepository.php` — `getSessions()`, `getSampleSessions()`, `findWithElements()` 拡張
+- `web/public/api/search.php` — `action=get_sessions` ハンドラ追加
+- `web/templates/search.html.twig` — セッション統計パネル、`buildConnectionMap()`, `loadSessions()`
+- `tests/e2e/search.spec.ts` — get_sessions / セッションパネル / 接続マップ テスト追加
+- 既存テスト: 28/28 pass → 35/35 pass (7 件追加)

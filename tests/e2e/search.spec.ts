@@ -234,4 +234,73 @@ test.describe('モーダル', () => {
         await expect(page.locator('#modal')).toHaveClass(/hidden/);
     });
 
+    test('モーダルの detail API レスポンスに parents フィールドがある', async ({ page }) => {
+        const res  = await page.request.get('/api/search.php?action=detail&id=1');
+        const body = await res.json();
+        expect(body).toHaveProperty('parents');
+        expect(Array.isArray(body.parents)).toBe(true);
+    });
+
+});
+
+test.describe('セッション統計パネル', () => {
+
+    test('セッション統計パネルが存在する', async ({ page }) => {
+        await page.goto('/');
+        await expect(page.locator('#session-panel')).toBeVisible();
+        await expect(page.locator('#session-panel')).toContainText('クローラー セッション統計');
+    });
+
+    test('セッション統計パネルがデータを読み込む', async ({ page }) => {
+        await page.goto('/');
+        // JS による loadSessions() 完了を待つ
+        await expect(page.locator('#session-table')).toBeVisible({ timeout: 5000 });
+        // サンプルデータの "Demo Game" が表示される
+        await expect(page.locator('#session-table')).toContainText('Demo Game');
+    });
+
+    test('セッション統計パネルに画面数(Fingerprint数)が表示される', async ({ page }) => {
+        await page.goto('/');
+        await expect(page.locator('#session-table')).toBeVisible({ timeout: 5000 });
+        await expect(page.locator('#session-table')).toContainText('画面');
+    });
+
+    test('get_sessions API が sessions 配列を返す', async ({ page }) => {
+        const res  = await page.request.get('/api/search.php?action=get_sessions');
+        expect(res.status()).toBe(200);
+        const body = await res.json();
+        expect(body).toHaveProperty('sessions');
+        expect(Array.isArray(body.sessions)).toBe(true);
+        expect(body.sessions.length).toBeGreaterThan(0);
+    });
+
+    test('get_sessions API の各セッションに必須フィールドがある', async ({ page }) => {
+        const res  = await page.request.get('/api/search.php?action=get_sessions');
+        const body = await res.json();
+        const s    = body.sessions[0];
+        expect(s).toHaveProperty('id');
+        expect(s).toHaveProperty('status');
+        expect(s).toHaveProperty('screens_found');
+        expect(s).toHaveProperty('started_at');
+        expect(s).toHaveProperty('game_name');
+        expect(s).toHaveProperty('session_dir');
+    });
+
+    test('セッション行クリックで詳細検索パネルが開く', async ({ page }) => {
+        await page.goto('/');
+        await expect(page.locator('#session-table')).toBeVisible({ timeout: 5000 });
+
+        // details パネルは初期状態で閉じている
+        const details = page.locator('details');
+        await expect(details).not.toHaveAttribute('open', '');
+
+        // セッション行をクリック
+        await page.locator('#session-table tbody tr').first().click();
+
+        // details が開き、adv-session に session_dir がセットされる
+        await expect(details).toHaveAttribute('open', '');
+        const sessionInput = page.locator('#adv-session');
+        await expect(sessionInput).not.toHaveValue('');
+    });
+
 });

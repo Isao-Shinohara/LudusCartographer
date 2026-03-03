@@ -26,6 +26,23 @@ try {
     $useDb = false;
 }
 
+// --- get_sessions アクション ---
+if ($action === 'get_sessions') {
+    $limit = min((int)($_GET['limit'] ?? 20), 100);
+
+    if ($useDb) {
+        $sessions = $repository->getSessions($limit);
+    } else {
+        $sessions = ScreenRepository::getSampleSessions();
+    }
+
+    echo json_encode(
+        ['sessions' => $sessions, 'count' => count($sessions)],
+        JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+    );
+    exit;
+}
+
 // --- detail アクション ---
 if ($action === 'detail') {
     $id = (int)($_GET['id'] ?? 0);
@@ -45,7 +62,7 @@ if ($action === 'detail') {
                 break;
             }
         }
-        $result = ['screen' => $screen, 'elements' => []];
+        $result = ['screen' => $screen, 'elements' => [], 'parents' => []];
     }
 
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
