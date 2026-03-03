@@ -9,7 +9,8 @@ use PDOException;
 
 class Database
 {
-    private static ?PDO $instance = null;
+    private static ?PDO $instance       = null;
+    private static ?PDO $sqliteInstance = null;
 
     public static function getConnection(): PDO
     {
@@ -34,5 +35,27 @@ class Database
         }
 
         return self::$instance;
+    }
+
+    /**
+     * SQLite フォールバック接続。
+     * crawler/storage/ludus.db が存在する場合に接続を返す。
+     *
+     * @throws \RuntimeException DB ファイルが見つからない場合
+     */
+    public static function getSqliteConnection(): PDO
+    {
+        if (self::$sqliteInstance === null) {
+            $dbFile = realpath(__DIR__ . '/../../crawler/storage/ludus.db');
+            if ($dbFile === false || !is_file($dbFile)) {
+                throw new \RuntimeException('SQLite DB not found: crawler/storage/ludus.db');
+            }
+            self::$sqliteInstance = new PDO('sqlite:' . $dbFile, null, null, [
+                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            ]);
+        }
+
+        return self::$sqliteInstance;
     }
 }

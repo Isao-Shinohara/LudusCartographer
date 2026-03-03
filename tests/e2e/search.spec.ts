@@ -177,7 +177,8 @@ test.describe('API エンドポイント', () => {
     });
 
     test('search API がキーワードでフィルタリングする', async ({ page }) => {
-        const res  = await page.request.get('/api/search.php?action=search&keyword=ショップ');
+        // 実データに存在するキーワード（OCR テキストに含まれる）
+        const res  = await page.request.get('/api/search.php?action=search&keyword=%E8%A8%80%E8%AA%9E');
         const body = await res.json();
         expect(body.count).toBeGreaterThan(0);
     });
@@ -212,8 +213,8 @@ test.describe('モーダル', () => {
         await page.goto('/');
         await page.locator('article').first().click();
         const modalBody = page.locator('#modal-body');
-        // サンプルデータのゲーム名が表示される
-        await expect(modalBody).toContainText('Demo Game', { timeout: 5000 });
+        // 実データのプラットフォーム情報が表示される
+        await expect(modalBody).toContainText('ios', { timeout: 5000 });
     });
 
     test('モーダルを閉じるとモーダルが非表示になる', async ({ page }) => {
@@ -255,8 +256,8 @@ test.describe('セッション統計パネル', () => {
         await page.goto('/');
         // JS による loadSessions() 完了を待つ
         await expect(page.locator('#session-table')).toBeVisible({ timeout: 5000 });
-        // サンプルデータの "Demo Game" が表示される
-        await expect(page.locator('#session-table')).toContainText('Demo Game');
+        // 実データのセッション ID が表示される
+        await expect(page.locator('#session-table')).toContainText('20260303_');
     });
 
     test('セッション統計パネルに画面数(Fingerprint数)が表示される', async ({ page }) => {

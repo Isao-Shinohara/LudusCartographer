@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../vendor/autoload.php';
 
 use LudusCartographer\Database;
+use LudusCartographer\EvidenceRepository;
 use LudusCartographer\ScreenRepository;
 
 // --- 環境変数ロード ---
@@ -23,7 +24,14 @@ try {
     $repository = new ScreenRepository($pdo);
     $useDb      = true;
 } catch (\Throwable) {
-    $useDb = false;
+    // MySQL が使えない場合は SQLite evidence DB にフォールバック
+    try {
+        $pdo        = Database::getSqliteConnection();
+        $repository = new EvidenceRepository($pdo);
+        $useDb      = true;
+    } catch (\Throwable) {
+        $useDb = false;
+    }
 }
 
 // --- get_sessions アクション ---
