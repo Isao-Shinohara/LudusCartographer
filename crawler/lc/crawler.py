@@ -29,9 +29,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from typing import TYPE_CHECKING
+
 from .driver import AppiumDriver
 from .ocr import run_ocr, find_best, format_results
 from .utils import compute_phash, phash_distance
+
+if TYPE_CHECKING:
+    from driver_adapter import BaseDriver
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +171,7 @@ class ScreenCrawler:
         print(f"{stats.screens_found} 画面を発見")
     """
 
-    def __init__(self, driver: AppiumDriver, config: CrawlerConfig):
+    def __init__(self, driver: "AppiumDriver | BaseDriver", config: CrawlerConfig):
         self.driver  = driver
         self.config  = config
         self._visited:   dict[str, ScreenRecord] = {}  # "{title}@{fingerprint}" → ScreenRecord

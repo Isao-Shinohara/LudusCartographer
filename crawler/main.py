@@ -5,19 +5,20 @@ LudusCartographer — クローラー エントリポイント
 環境変数を読み込み、iOS Simulator / 実機でアプリを自動探索する。
 
 【使い方】
-  # iOS Simulator
+  # iOS Simulator (デフォルト)
   IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.example.mygame python main.py
 
-  # 実機 (UDID 自動検出)
-  IOS_BUNDLE_ID=com.example.mygame python main.py
+  # ミラーリング (UxPlay 使用)
+  DEVICE_MODE=MIRROR GAME_TITLE=MyGame IOS_BUNDLE_ID=com.example.mygame python main.py
 
   # 探索パラメータ調整
   CRAWL_DURATION_SEC=300 CRAWL_MAX_DEPTH=3 IOS_USE_SIMULATOR=1 \\
-    IOS_BUNDLE_ID=com.apple.Preferences python main.py
+    IOS_BUNDLE_ID=com.apple.Preferences GAME_TITLE=iOS設定 python main.py
 
 【環境変数】
   IOS_BUNDLE_ID         ターゲットアプリの Bundle ID（必須）
   GAME_TITLE            ゲームタイトル（省略可 — 未設定時は IOS_BUNDLE_ID を使用）
+  DEVICE_MODE           "SIMULATOR" (デフォルト) または "MIRROR"
   IOS_USE_SIMULATOR     "1" でシミュレータモード
   IOS_SIMULATOR_UDID    シミュレータ UDID（省略可 — 自動選択）
   IOS_UDID              実機 UDID（省略可 — 自動検出）
@@ -27,6 +28,13 @@ LudusCartographer — クローラー エントリポイント
   DB_NAME               MySQL DB 名 (デフォルト: ludus_cartographer)
   DB_USER               MySQL ユーザー (デフォルト: root)
   DB_PASSWORD           MySQL パスワード
+
+  # MIRROR モード専用
+  MIRROR_WINDOW_TITLE   キャプチャ対象ウィンドウタイトル (デフォルト: UxPlay を自動検索)
+  MIRROR_DEVICE_WIDTH   デバイス論理幅 pt (デフォルト: 393)
+  MIRROR_DEVICE_HEIGHT  デバイス論理高さ pt (デフォルト: 852)
+  APPIUM_HOST           Appium ホスト (デフォルト: 127.0.0.1)
+  APPIUM_PORT           Appium ポート (デフォルト: 4723)
 """
 from __future__ import annotations
 
@@ -64,10 +72,9 @@ def main() -> None:
     print(f"  DB 保存   : {'有効 (' + db_host + ')' if db_host else '無効 (DB_HOST 未設定)'}")
     print("=" * 60)
 
-    # --- Appium セッション開始 ---
-    from lc.capabilities import simulator_config_from_env
+    # --- Driver セッション開始 ---
+    from driver_factory import create_driver_session
     from lc.crawler import CrawlerConfig, ScreenCrawler
-    from lc.driver import ios_simulator_session
     from lc.ocr import find_best, run_ocr
 
     crawler_cfg = CrawlerConfig(
@@ -80,9 +87,7 @@ def main() -> None:
         db_password      = os.environ.get("DB_PASSWORD", ""),
     )
 
-    sim_cfg = simulator_config_from_env()
-
-    with ios_simulator_session(sim_cfg) as driver:
+    with create_driver_session() as driver:
         # モーダルダイアログを解除（起動直後のアラート等）
         for _ in range(3):
             if not driver.dismiss_any_modal():
