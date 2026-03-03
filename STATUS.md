@@ -1,10 +1,10 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-03 (Phase 3 完了 — 遷移マップ可視化・phash重複判定)
+最終更新: 2026-03-03 (Phase 4-G + Phase 5-B 完了 — 汎用 UI 探索エンジン完成)
 
 ---
 
-## 現在のフェーズ: Phase 3 完了 → Phase 4 (Web UI 統合) へ
+## 現在のフェーズ: Phase 5-B 完了 → Phase 5-C (実戦テスト) へ
 
 ## コミット履歴
 
@@ -32,13 +32,14 @@
 
 ### Pytest (crawler)
 ```
-test_db_conn.py:         8 passed, 3 skipped (MySQL統合テストはDB起動時のみ)
-test_capabilities.py:   34 passed (シミュレータ用 14 件追加)
-test_utils.py:          20 passed (UDID自動検出 — 全パスをモック検証)
-test_ocr.py:            10 passed (PaddleOCR 3.4.0 — 4テキスト検出確認済み)
-test_ai_analyzer.py:    27 passed (Vertex AI モック — GCP接続不要)
-test_visualize_map.py:   9 passed, 1 skipped (統合テストはevidence/生成後に実行)
-合計: 110 passed, 4 skipped
+test_db_conn.py:          8 passed, 3 skipped (MySQL統合テストはDB起動時のみ)
+test_capabilities.py:    34 passed (シミュレータ用 14 件追加)
+test_utils.py:           20 passed (UDID自動検出 — 全パスをモック検証)
+test_ocr.py:             10 passed (PaddleOCR 3.4.0 — 4テキスト検出確認済み)
+test_ai_analyzer.py:     27 passed (Vertex AI モック — GCP接続不要)
+test_visualize_map.py:   10 passed (統合テスト含む)
+test_auto_navigation.py:  1 passed (Appium 実機不要ゲート確認)
+合計: 148 passed, 3 skipped
 ```
 
 ### Playwright E2E (web)
@@ -119,11 +120,22 @@ venv/bin/python tools/visualize_map.py --format all
 venv/bin/python tools/visualize_map.py --session evidence/20260303_160759 --format mermaid
 ```
 
-## 次フェーズ: Phase 4 — Web UI 統合・crawl_summary.json 可視化
+## Phase 4-G / Phase 5-B 完了内容 (2026-03-03)
 
-- [ ] **Step 4-A**: Web UI に Mermaid.js 描画機能を追加
-- [ ] **Step 4-B**: スクリーンショットギャラリーと OCR テキスト検索の統合
-- [ ] **Step 4-C**: クローラー → DB → Web UI エンドツーエンド動作確認
+### 汎用 UI 探索エンジン (ADR 001 Step 1〜5)
+- **`_extract_title`**: 相対比率 2-Step 方式（Large Title / Nav-bar center）
+- **`_find_tappable_items`**: 相対比率 4-Path 方式（キーワード / フッター / シェブロン / fallback）
+- **`wait_until_stable`**: phash ハミング距離 ≤ 5 でアダプティブ静止検知・3s タイムアウト
+- **`_save_evidence`**: スタック時エビデンス自動保存（no_tappable_items / settling_timeout）
+- **`_generate_fingerprint`**: 数字除去 MD5 指紋 + `{title}@{fingerprint}` キー方式
+
+### 設計記録
+- `docs/adr/001-universal-ui-detection.md`: Step 1〜5 の全決定を記録
+- `docs/ROADMAP.md`: 次回タスクのロードマップ
+
+## 次フェーズ: Phase 5-C — 実戦テスト・アイコン認識・マップ可視化強化
+
+詳細は `docs/ROADMAP.md` 参照。
 
 ---
 

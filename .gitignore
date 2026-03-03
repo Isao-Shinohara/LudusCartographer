@@ -79,3 +79,10 @@ crawler/config/db.ini
 # --- Logs ---
 *.log
 logs/
+
+# --- 生成物・実行証拠 ---
+crawler/evidence/
+crawler/screenshots/*.png
+
+# --- AI ツール設定 ---
+.claude/
