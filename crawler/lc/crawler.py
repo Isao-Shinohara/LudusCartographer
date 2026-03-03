@@ -214,21 +214,29 @@ class ScreenCrawler:
     # DFS 実装
     # ----------------------------------------------------------
 
-    def _crawl_impl(self, depth: int, parent_fp: Optional[str]) -> None:
-        """再帰 DFS の本体。"""
+    def _crawl_impl(self, depth: int, parent_fp: Optional[str]) -> bool:
+        """
+        再帰 DFS の本体。
+
+        Returns:
+            True  — 画面遷移が発生した（新規 or 既訪問の別画面へ移動）
+                     → 呼び出し元は back() で元の画面に戻る必要がある
+            False — 画面遷移なし（同一画面のまま）
+                     → 呼び出し元は back() 不要（呼ぶと1階層多く戻ってしまう）
+        """
 
         # --- 停止条件 ---
         if self._is_time_up():
             logger.info("[CRAWL] ⏱ 時間制限に達しました")
-            return
+            return False
         if depth >= self.config.max_depth:
             logger.info(f"[CRAWL] 最大深さ {depth} に到達 — これ以上深く探索しません")
-            return
+            return False
 
         # --- 現在画面を取得・同定 ---
         record = self._snapshot_current_screen(depth, parent_fp)
         if record is None:
-            return
+            return False
 
         # --- phash ログ (診断用。iOS 設定の白系画面は phash 距離が 0-2 で差別不能のため
         #     重複判定には使用せず、テキスト指紋を正とする) ---
@@ -249,7 +257,8 @@ class ScreenCrawler:
                 f" (深さ{prev.depth} で既に訪問済み)"
             )
             self._stats.screens_skipped += 1
-            return
+            # 遷移判定: 呼び出し元の画面と同一指紋 → 遷移なし、別指紋 → 遷移あり
+            return record.fingerprint != parent_fp
 
         # --- 新規画面として登録・保存 ---
         self._visited[_vkey] = record
@@ -302,15 +311,22 @@ class ScreenCrawler:
                 self._save_evidence("settling_timeout", record.ocr_results, record.title)
 
             # 子画面を再帰探索
-            self._crawl_impl(depth + 1, record.fingerprint)
+            # _did_navigate=True → 遷移発生 → back() で元の画面に戻る必要がある
+            # _did_navigate=False → 遷移なし（同一画面）→ back() を呼ぶと1階層多く戻る
+            _did_navigate = self._crawl_impl(depth + 1, record.fingerprint)
 
-            # 戻る
-            if not self._is_time_up():
-                self.driver.back()
-                self.driver.wait(self.config.wait_after_back)
-                logger.info(f"[CRAWL]  ← 戻る完了: {text!r}")
+            if _did_navigate:
+                # 遷移先から元の画面に戻る
+                if not self._is_time_up():
+                    self.driver.back()
+                    self.driver.wait(self.config.wait_after_back)
+                    logger.info(f"[CRAWL]  ← 戻る完了: {text!r}")
+            else:
+                # 遷移なし: back() せずに次のタップ候補へ
+                logger.info(f"[CRAWL]  🔄 [NO_NAV] 非遷移タップ: {text!r} — back() スキップ")
 
         self._nav_stack.pop()
+        return True
 
     # ----------------------------------------------------------
     # 画面スナップショット
