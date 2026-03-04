@@ -1,8 +1,55 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-04 (Phase 9 完了 — マルチゲーム対応・game_title フロー実装)
+最終更新: 2026-03-04 (Phase 12 完了 — ミラーリング情報可視化・CLI 洗練)
 
 ---
+
+## 現在のフェーズ: Phase 12 完了 — ミラーリング情報可視化・CLI 洗練
+
+## Phase 12 完了内容 (2026-03-04)
+
+### ミラーリング情報の可視化と CLI 洗練
+
+#### SQLite スキーマ拡張
+- **`tools/import_to_sqlite.py`**: `lc_sessions` に `device_mode TEXT DEFAULT 'SIMULATOR'` カラム追加
+  - `SCHEMA` 定義に追加
+  - `migrate()`: 既存 DB を ALTER TABLE で自動マイグレーション (冪等)
+  - `import_session()`: JSON の `device_mode` を取り込み (未設定時は "SIMULATOR")
+  - `seed_test_games()`: カレンダー=SIMULATOR / マップ=MIRROR でシード
+
+#### Web UI — デバイスモードバッジ
+- **`web/src/EvidenceRepository.php`**: `getSessions()` に `COALESCE(device_mode, 'SIMULATOR') AS device_mode` 追加
+- **`web/templates/search.html.twig`**: セッション行に SIMULATOR / MIRROR バッジ表示
+  - SIMULATOR: 紫系バッジ (`🖥 SIMULATOR`)
+  - MIRROR: 青系バッジ (`📡 MIRROR`)
+
+#### CLI — `--mirror` フラグ
+- **`crawler/main.py`**: `argparse` + `--mirror` フラグ追加
+  - `DEVICE_MODE=MIRROR` / `IOS_USE_SIMULATOR=0` を自動設定
+  - UxPlay セットアップガイドをコンソール表示
+  - `--bundle`, `--title`, `--duration`, `--depth` も追加
+
+#### README 更新
+- `--mirror` フラグ使い方、ミラーリング前提条件テーブル、CLI 引数一覧を追記
+
+#### テスト — 15 件追加 (全テストグリーン)
+- **`tests/test_import_to_sqlite.py`**: 15件
+  - `TestSchema`: device_mode カラム存在・デフォルト値
+  - `TestMigrate`: 古い DB への追加・冪等性
+  - `TestImportSession`: SIMULATOR/MIRROR 保存・未設定時デフォルト
+  - `TestSeedTestGames`: カレンダー/マップ種別・冪等性
+  - `TestMainMirrorFlag`: `--mirror` → DEVICE_MODE/IOS_USE_SIMULATOR 環境変数設定
+- **`tests/test_mirror_recovery.py`**: モジュールレベル preload で sys.modules 汚染解決
+  - `patch.dict(sys.modules, {"Quartz": ...})` + `importlib.reload()` の後処理で
+    `tools.window_manager` が sys.modules から消える Python 3.9 の挙動を修正
+
+### テスト状況 (Phase 12 時点)
+```
+test_import_to_sqlite.py: 15 passed (新規)
+test_mirror_recovery.py:  全テストグリーン (汚染修正済み)
+合計 Pytest: 235 passed, 3 skipped (Appium 実機テストのみ)
+Playwright E2E: 42/42 passed
+```
 
 ## 現在のフェーズ: Phase 9 完了 — マルチゲーム対応・ゲームタイトルフロー全体実装
 
