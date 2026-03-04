@@ -30,9 +30,89 @@ iPhone / Android (実機 or Simulator)
 | **ハイブリッド検出** | OCR（文字）と OpenCV テンプレートマッチング（画像）を組み合わせ。テキストのないアイコンも見落とさない |
 | **座標依存ゼロ** | タイトル抽出・タップ候補抽出ともに相対比率で算出。任意の解像度・デバイスに対応 |
 | **phash 静止検知** | タップ後の固定待機を廃止。DCT phash ハミング距離でアダプティブに「画面が静止したか」を判定 |
+| **増分探索（1ゲーム1プロジェクト）** | 前回セッションの pHash を SQLite からロードし、既知画面をスキップして新規画面に集中 |
+| **自己修復（Self-Healing）** | Appium `query_app_state` でクラッシュを検知 → `activate_app` で自動復帰。探索を止めない |
+| **スマートバックトラック** | DFS 打ち切り後、フロンティア（未踏分岐点）へのナビゲーションレシピを再生して深部を再探索 |
+| **アンチスタック** | 同一画面スタック時にスワイプ（リスト更新）→ 長押し（コンテキストメニュー）で物理突破 |
 | **バックトラッキング検出** | `_crawl_impl()` の戻り値で「遷移が起きたか」を厳密に判定し、誤った `back()` 呼び出しを防止 |
-| **ADR による設計管理** | 全アーキテクチャ決定を `docs/adr/` に記録。却下案・根拠・実測データを含む |
 | **DB 未接続でも動作** | MySQL 未設定時はサンプルデータにフォールバック。ゼロ設定で Web UI を確認可能 |
+
+---
+
+## 増分探索・自己修復機能（Phase 14–15）
+
+### プロジェクト制増分探索
+
+同じ `game_title` の複数クロールセッションは **1 つのプロジェクト** にまとめられ、
+前回発見済みの画面（pHash が近い画面）を `[PHASH_DUP]` でスキップします。
+
+```bash
+cd crawler
+
+# 1回目: iOS設定アプリを探索（結果が storage/ludus.db に蓄積される）
+IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
+  venv/bin/python main.py "iOS設定" -d 120
+
+# 2回目: 前回既知の画面はスキップ → 新しい経路に集中
+IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
+  venv/bin/python main.py "iOS設定" -d 120
+# → ログに [PHASH_DUP] 前回セッション既知画面 (dist=0): 'ホーム' — スキップ が出現
+```
+
+### 自己修復（App Health Check）
+
+クロール中にアプリがクラッシュ / バックグラウンドに落ちた場合、自動的に `activate_app()` で復帰します。
+
+```
+[HEALTH] アプリ非アクティブ: state=1  bundle='com.apple.Preferences' — 復帰を試みます
+[HEALTH] ✅ アプリ復帰成功 (試行 1/2)
+```
+
+### スマートバックトラック
+
+DFS が `max_depth` で打ち切られた後も、時間が残っていれば **フロンティア画面（未踏の分岐点）** へ自動再ナビゲートします。
+
+```
+[BACKTRACK] フロンティア発見: 3 画面 — 最大深さ 3 を延長して再探索
+[BACKTRACK] → '情報' depth=2  path=2 ステップ
+[BACKTRACK] ✅ フロンティアへのナビゲーション完了
+[CRAWL] ✅ 新規画面 #5  深さ=3  title='法的情報'  items=2件  指紋=a1b2c3d4…
+```
+
+### アンチスタック（Anti-Stuck Gestures）
+
+同一画面で `anti_stuck_threshold`（デフォルト: 2）回以上タップ候補が見つからない場合：
+
+1. **スワイプ**（画面下→上） — リストのスクロールで隠れた要素を出現させる
+2. **長押し**（threshold×2 回以上時） — コンテキストメニューや隠しメニューを起動
+
+```
+[STUCK] スタックカウント: 2  fp=8f1a6277
+[UNSTUCK] スワイプ: (196,554)→(196,212)
+[UNSTUCK] ✅ ジェスチャー後タップ候補出現: 3 件
+```
+
+### タップ座標オーバーレイ（デバッグ用）
+
+`DEBUG_DRAW_OPS=1` を設定すると、各タップ前の `before.png` に
+プロフェッショナル品質のターゲットマーカーが描画されます：
+
+```bash
+DEBUG_DRAW_OPS=1 IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
+  venv/bin/python main.py "iOS設定" -d 60
+# → evidence/{session_id}/*.png に赤リング+クロスヘアでタップ座標が記録される
+```
+
+### Web API — プロジェクト網羅率
+
+```bash
+# ゲーム別のユニーク画面数・最大深さ・セッション数
+curl "http://localhost:8080/api/search.php?action=get_coverage&game=iOS設定"
+# → {"unique_screens":12,"max_depth_reached":3,"total_sessions":5}
+
+# プロジェクト全体のデデュープ済み画面一覧（全セッション横断）
+curl "http://localhost:8080/api/search.php?action=get_project_screens&game=iOS設定"
+```
 
 ---
 

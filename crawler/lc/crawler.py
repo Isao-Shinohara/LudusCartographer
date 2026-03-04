@@ -31,6 +31,7 @@ from typing import Optional
 
 from typing import TYPE_CHECKING
 
+from .core import AppHealthMonitor, StuckDetector, FrontierTracker
 from .driver import AppiumDriver
 from .ocr import run_ocr, find_best, format_results
 from .utils import compute_phash, phash_distance
@@ -119,6 +120,10 @@ class CrawlerConfig:
     device_mode:      str   = "SIMULATOR"  # "SIMULATOR" または "MIRROR"
     # SQLite DB パス（グローバル pHash 重複排除・増分探索用）
     sqlite_db_path:   Optional[str] = None
+    # 自己修復パラメーター
+    max_heal_retries:     int  = 2      # アプリ復帰最大試行回数
+    anti_stuck_threshold: int  = 2      # スタック検知閾値（同一画面の dead-end 回数）
+    smart_backtrack:      bool = True   # フロンティアへのスマートバックトラック有効
     # DB 設定（省略時はメモリのみ）
     db_game_id:       int   = 1
     db_host:          str   = ""
@@ -197,6 +202,17 @@ class ScreenCrawler:
         self._known_phashes: set[str] = set()
         self._load_known_phashes()
 
+        # 自己修復コンポーネント
+        _bundle_id = os.environ.get("IOS_BUNDLE_ID", "")
+        self._health_monitor = AppHealthMonitor(
+            driver, _bundle_id, max_retries=config.max_heal_retries
+        )
+        self._stuck_detector  = StuckDetector(threshold=config.anti_stuck_threshold)
+        self._frontier_tracker = FrontierTracker()
+        # _crawl_impl → 親の tap_map 記録用サイドチャネル
+        # save/restore により深い再帰でも正しい直近の子 fp を取得できる
+        self._pending_child_fp: Optional[str] = None
+
         # DB 接続（利用可能な場合のみ）
         self._db_conn        = None
         self._crawl_session_id: Optional[int] = None
@@ -212,11 +228,17 @@ class ScreenCrawler:
 
         現在表示されている画面から探索を開始する。
         back() による復帰と再帰を繰り返し、時間 or 深さ制限に達するまで続ける。
+        主 DFS 終了後、時間が残っていればフロンティアへスマートバックトラックを試みる。
 
         Returns:
             CrawlStats: 実行統計
         """
         self._crawl_impl(depth, parent_fp)
+
+        # スマートバックトラック: フロンティア（max_depth で打ち切られた画面）を再探索
+        if self.config.smart_backtrack and not self._is_time_up():
+            self._smart_backtrack_loop()
+
         self._stats.elapsed_sec = time.time() - self._start_time
         self._finalize_session()
         return self._stats
@@ -248,10 +270,18 @@ class ScreenCrawler:
             logger.info(f"[CRAWL] 最大深さ {depth} に到達 — これ以上深く探索しません")
             return False
 
+        # --- アプリ生存確認（クラッシュ/バックグラウンド落ちを自動復帰）---
+        if not self._health_monitor.check_and_heal():
+            logger.error("[CRAWL] ❌ アプリ不応答 — このブランチをスキップ")
+            return False
+
         # --- 現在画面を取得・同定 ---
         record = self._snapshot_current_screen(depth, parent_fp)
         if record is None:
             return False
+
+        # サイドチャネル: 親の tap_map 記録用に自分の fingerprint をセット
+        self._pending_child_fp = record.fingerprint
 
         # --- グローバル pHash 重複チェック（増分探索: 前回セッションで既知の画面をスキップ）---
         if record.phash and self._known_phashes:
@@ -284,13 +314,15 @@ class ScreenCrawler:
                 f" (深さ{prev.depth} で既に訪問済み)"
             )
             self._stats.screens_skipped += 1
-            # 遷移判定: 呼び出し元の画面と同一指紋 → 遷移なし、別指紋 → 遷移あり
             return record.fingerprint != parent_fp
 
         # --- 新規画面として登録・保存 ---
         self._visited[_vkey] = record
         self._nav_stack.append(record.fingerprint)
         self._stats.screens_found += 1
+
+        # フロンティアトラッカーに親子関係を記録（スマートバックトラック用）
+        self._frontier_tracker.record_nav(record.fingerprint, parent_fp)
 
         self._save_screen_to_db(record)
         self._save_ui_elements_to_db(record)
@@ -307,8 +339,22 @@ class ScreenCrawler:
         if not record.tappable_items:
             logger.warning(f"[CRAWL] ⚠ タップ候補なし: {record.title!r} — エビデンス保存")
             self._save_evidence("no_tappable_items", record.ocr_results, record.title)
-            # root (depth=0) かつタップ候補なし → デッドエンド脱出を試みる
-            if depth == 0:
+            count = self._stuck_detector.record(record.fingerprint)
+            logger.info(f"[STUCK] スタックカウント: {count}  fp={record.fingerprint[:8]}")
+
+            # スワイプ・長押しで突破を試みる
+            if self._try_unstuck_gestures(record):
+                # ジェスチャー後に再スナップショット
+                new_record = self._snapshot_current_screen(depth, parent_fp)
+                if new_record and new_record.tappable_items:
+                    logger.info(
+                        f"[UNSTUCK] ✅ ジェスチャー後タップ候補出現: {len(new_record.tappable_items)} 件"
+                    )
+                    record = new_record  # 更新された record で継続
+                    self._stuck_detector.reset(record.fingerprint)
+
+            # root (depth=0) かつタップ候補なし → デッドエンド脱出
+            if depth == 0 and not record.tappable_items:
                 self._escape_dead_end()
 
         # --- 各タップ候補を探索 ---
@@ -336,17 +382,23 @@ class ScreenCrawler:
             )
             self._stats.taps_total += 1
             # 固定待機の代わりに phash で画面静止を検知
-            # Live2D アニメーション等がある場合も最大 3s でタイムアウトして続行
             settled = self.driver.wait_until_stable()
             if not settled:
-                # タイムアウト = 3s 経過しても画面が静止しなかった（ループアニメ等）
                 logger.warning(f"[CRAWL] ⚠ Settling タイムアウト: tap={text!r} — エビデンス保存")
                 self._save_evidence("settling_timeout", record.ocr_results, record.title)
 
-            # 子画面を再帰探索
-            # _did_navigate=True → 遷移発生 → back() で元の画面に戻る必要がある
-            # _did_navigate=False → 遷移なし（同一画面）→ back() を呼ぶと1階層多く戻る
+            # 子画面を再帰探索（サイドチャネル save/restore で直近の子 fp を取得）
+            _saved_child_fp = self._pending_child_fp
+            self._pending_child_fp = None
+
             _did_navigate = self._crawl_impl(depth + 1, record.fingerprint)
+
+            # 子が報告した fingerprint を tap_map に記録
+            child_fp = self._pending_child_fp
+            self._pending_child_fp = _saved_child_fp  # 親へ向けて restore
+
+            if child_fp:
+                self._frontier_tracker.record_tap(record.fingerprint, text, child_fp)
 
             if _did_navigate:
                 # 遷移先から元の画面に戻る
@@ -680,6 +732,195 @@ class ScreenCrawler:
             logger.warning(f"[PHASH] pHash ロード失敗 (スキップ): {e}")
 
     # ----------------------------------------------------------
+    # Anti-Stuck: スワイプ・長押しによる UI スタック突破
+    # ----------------------------------------------------------
+
+    def _try_unstuck_gestures(self, record: "ScreenRecord") -> bool:
+        """
+        同一画面でスタックが繰り返された場合、スワイプ・長押しで突破を試みる。
+
+        【ジェスチャー戦略】
+          threshold 回目   → スワイプ（画面を下から上に 60% 幅でスクロール）
+          threshold×2 回目 → 長押し（画面中央付近をランダムにずらして長押し）
+          threshold×3 回以上 → 諦め（ジェスチャー打ち切り）
+
+        Returns:
+            True  — ジェスチャー実行（画面が変わった可能性あり）
+            False — 閾値未到達 or 全ジェスチャー失敗
+        """
+        import random
+
+        fp = record.fingerprint
+        if not self._stuck_detector.should_swipe(fp):
+            return False
+
+        if self._stuck_detector.is_hopeless(fp):
+            logger.warning(f"[UNSTUCK] 打ち切り — ジェスチャーが {self._stuck_detector.get_count(fp)} 回効かず: {fp[:8]}")
+            return False
+
+        # デバイス論理サイズの取得（driver から、なければデフォルト）
+        w = int(getattr(self.driver, '_device_width',  None) or 393)
+        h = int(getattr(self.driver, '_device_height', None) or 852)
+
+        try:
+            # スワイプ: 画面下 65% → 上 25%（リスト更新・隠れた要素を出す）
+            sx  = w // 2 + random.randint(-40, 40)
+            sy1 = int(h * 0.65) + random.randint(-20, 20)
+            sy2 = int(h * 0.25) + random.randint(-20, 20)
+            self.driver.driver.swipe(sx, sy1, sx, sy2, 400)
+            self.driver.wait(1.5)
+            logger.info(f"[UNSTUCK] スワイプ: ({sx},{sy1})→({sx},{sy2})")
+
+            # 長押し: stuck_count >= threshold×2 のみ
+            if self._stuck_detector.should_long_press(fp):
+                cx = w // 2 + random.randint(-60, 60)
+                cy = h // 2 + random.randint(-80, 80)
+                self.driver.driver.execute_script(
+                    "mobile: touchAndHold",
+                    {"x": cx, "y": cy, "duration": 1.5},
+                )
+                self.driver.wait(1.5)
+                logger.info(f"[UNSTUCK] 長押し: ({cx},{cy})")
+
+            return True
+        except Exception as e:
+            logger.debug(f"[UNSTUCK] ジェスチャー失敗: {e}")
+            return False
+
+    # ----------------------------------------------------------
+    # スマートバックトラック: フロンティアへの再探索
+    # ----------------------------------------------------------
+
+    def _smart_backtrack_loop(self) -> None:
+        """
+        主 DFS 終了後にフロンティア（max_depth で打ち切られた画面）を再探索する。
+
+        【フロンティアの定義】
+          depth == config.max_depth - 1 かつタップ候補あり の画面。
+          これらは max_depth の制限で子画面が未探索のまま残っている。
+
+        【再探索手順】
+          1. フロンティアを depth 昇順にソート
+          2. 各フロンティアへのナビゲーションレシピを構築
+          3. アプリを activate_app で再起動
+          4. レシピ通りにタップして遷移 → _crawl_impl() を 1 段深く呼ぶ
+        """
+        if self._is_time_up():
+            return
+
+        frontier = [
+            rec for rec in self._visited.values()
+            if rec.depth >= self.config.max_depth - 1
+            and rec.tappable_items
+        ]
+
+        if not frontier:
+            logger.debug("[BACKTRACK] フロンティアなし — スマートバックトラックをスキップ")
+            return
+
+        logger.info(
+            f"[BACKTRACK] フロンティア発見: {len(frontier)} 画面"
+            f" — 最大深さ {self.config.max_depth} を延長して再探索"
+        )
+
+        # フロンティアを最浅順に処理（上位層から探索する方が効率的）
+        for target in sorted(frontier, key=lambda r: r.depth):
+            if self._is_time_up():
+                break
+
+            path = self._frontier_tracker.build_path_to(target.fingerprint)
+            if not path:
+                logger.warning(f"[BACKTRACK] パス再構築失敗: {target.title!r}")
+                continue
+
+            recipe = self._frontier_tracker.get_nav_recipe(path, self._visited)
+            if not recipe and len(path) > 1:
+                logger.warning(f"[BACKTRACK] ナビレシピ構築失敗: {target.title!r}")
+                continue
+
+            logger.info(
+                f"[BACKTRACK] → {target.title!r}  depth={target.depth}"
+                f"  path={len(path)} ステップ"
+            )
+
+            if self._navigate_to_frontier(recipe):
+                # フロンティアから 1 段深く探索（max_depth を一時的に +1）
+                _orig_max = self.config.max_depth
+                try:
+                    object.__setattr__(self.config, 'max_depth', _orig_max + 1)
+                    self._crawl_impl(target.depth + 1, target.fingerprint)
+                except AttributeError:
+                    # dataclass が frozen の場合はそのまま呼ぶ
+                    self._crawl_impl(target.depth + 1, target.fingerprint)
+                finally:
+                    try:
+                        object.__setattr__(self.config, 'max_depth', _orig_max)
+                    except AttributeError:
+                        pass
+
+                # バックトラック先からルートへ戻る
+                if not self._is_time_up():
+                    for _ in range(target.depth + 1):
+                        self.driver.back()
+                        self.driver.wait(self.config.wait_after_back)
+
+    def _navigate_to_frontier(
+        self,
+        recipe: list[tuple[str, dict]],
+    ) -> bool:
+        """
+        フロンティアへのナビゲーションを再生する。
+
+        1. activate_app でアプリをルート状態に戻す
+        2. recipe に従って順にタップして遷移する
+
+        Args:
+            recipe: [(item_text, item_dict), ...] — FrontierTracker.get_nav_recipe() の結果
+
+        Returns:
+            True  — ナビゲーション成功（フロンティアに到達）
+            False — 失敗（bundle_id 未設定 or activate_app 失敗 or タップ失敗）
+        """
+        bundle_id = os.environ.get("IOS_BUNDLE_ID", "")
+        if not bundle_id:
+            logger.warning("[BACKTRACK] IOS_BUNDLE_ID 未設定 — ナビゲーション不可")
+            return False
+
+        # アプリをルートに戻す
+        try:
+            self.driver.driver.activate_app(bundle_id)
+            self.driver.wait(2.0)
+            logger.info(f"[BACKTRACK] アプリ再起動: {bundle_id!r}")
+        except Exception as e:
+            logger.warning(f"[BACKTRACK] activate_app 失敗: {e}")
+            return False
+
+        # recipe が空 = root が target → ナビゲーション不要
+        if not recipe:
+            return True
+
+        # 各ステップをタップして遷移
+        for text, item in recipe:
+            if self._is_time_up():
+                return False
+            px, py = item["center"]
+            logger.info(f"[BACKTRACK] → タップ: {text!r}  pixel=({px},{py})")
+            try:
+                self.driver.tap_ocr_coordinate(
+                    px, py,
+                    action_name=f"backtrack_{_safe_name(text)}",
+                    ocr_data={"ocr_boxes": [{"text": text, "confidence": 1.0, "box": item["box"]}]},
+                )
+                self._stats.taps_total += 1
+                self.driver.wait(self.config.wait_after_tap)
+            except Exception as e:
+                logger.warning(f"[BACKTRACK] タップ失敗: {e}")
+                return False
+
+        logger.info("[BACKTRACK] ✅ フロンティアへのナビゲーション完了")
+        return True
+
+    # ----------------------------------------------------------
     # DEBUG_DRAW_OPS: タップ座標オーバーレイ
     # ----------------------------------------------------------
 
@@ -699,21 +940,29 @@ class ScreenCrawler:
             return
         try:
             import cv2 as _cv2
-            import numpy as _np
             img = _cv2.imread(str(shot_path))
             if img is None:
                 return
-            # 赤半透明円（塗りつぶし）
-            overlay = img.copy()
-            _cv2.circle(overlay, (px, py), 40, (0, 0, 255), -1)
-            _cv2.addWeighted(overlay, 0.4, img, 0.6, 0, img)
-            # 枠線
-            _cv2.circle(img, (px, py), 40, (0, 0, 255), 3)
-            # アクションテキスト（座標右横に表示）
-            _cv2.putText(
-                img, action[:15], (px + 45, py + 10),
-                _cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2,
-            )
+
+            # --- プロフェッショナル品質タップマーカー ---
+            # 1. ドロップシャドウ（黒・太め）
+            _cv2.circle(img, (px + 2, py + 2), 24, (0, 0, 0), 5)
+            # 2. 白背景リング（視認性確保）
+            _cv2.circle(img, (px, py), 24, (255, 255, 255), 7)
+            # 3. 赤リング（メインマーカー）
+            _cv2.circle(img, (px, py), 24, (40, 40, 220), 3)
+            # 4. 中心ドット: 白インナー + 赤コア
+            _cv2.circle(img, (px, py), 7, (255, 255, 255), -1)
+            _cv2.circle(img, (px, py), 4, (40, 40, 220), -1)
+            # 5. クロスヘア（精密位置表示）
+            _cv2.line(img, (px - 10, py), (px + 10, py), (40, 40, 220), 1)
+            _cv2.line(img, (px, py - 10), (px, py + 10), (40, 40, 220), 1)
+            # 6. テキスト: 黒アウトライン + 白本体（どんな背景でも読める）
+            label = action[:20]
+            tx, ty = px + 30, py + 6
+            _cv2.putText(img, label, (tx, ty), _cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3)
+            _cv2.putText(img, label, (tx, ty), _cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+
             _cv2.imwrite(str(shot_path), img)
             logger.debug(f"[DEBUG_DRAW_OPS] タップ描画: ({px},{py}) {action!r}")
         except Exception as e:

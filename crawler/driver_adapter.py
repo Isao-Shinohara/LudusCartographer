@@ -88,6 +88,19 @@ class BaseDriver(ABC):
         シミュレータ環境の場合 True、実機ミラーリングの場合 False を返す。
         """
 
+    def is_app_alive(self, bundle_id: str) -> bool:
+        """
+        アプリが RUNNING_IN_FOREGROUND (state=4) かどうかを確認する。
+
+        query_app_state() が利用できない環境では True を返す（楽観的継続）。
+        AppHealthMonitor.check_and_heal() と組み合わせて使用する。
+        """
+        try:
+            state = self.driver.query_app_state(bundle_id)  # type: ignore[attr-defined]
+            return state == 4
+        except Exception:
+            return True  # チェック不可 = 楽観的に True
+
 
 # ============================================================
 # SimulatorDriver — iOS シミュレータ向け

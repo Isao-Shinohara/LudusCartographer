@@ -201,6 +201,31 @@ class EvidenceRepository
     }
 
     /**
+     * game_title の探索網羅率サマリーを返す。
+     *
+     * @return array{unique_screens: int, max_depth_reached: int, total_sessions: int}
+     */
+    public function getProjectCoverage(string $gameTitle): array
+    {
+        $stmt = $this->db->prepare(<<<SQL
+            SELECT COUNT(DISTINCT s.fingerprint) AS unique_screens,
+                   COALESCE(MAX(s.depth), 0)     AS max_depth_reached,
+                   COUNT(DISTINCT sess.session_id) AS total_sessions
+            FROM lc_screens s
+            JOIN lc_sessions sess ON sess.session_id = s.session_id
+            WHERE sess.game_title = :game_title
+        SQL);
+        $stmt->bindValue(':game_title', $gameTitle, PDO::PARAM_STR);
+        $stmt->execute();
+        $row = $stmt->fetch();
+        return [
+            'unique_screens'    => (int)($row['unique_screens']    ?? 0),
+            'max_depth_reached' => (int)($row['max_depth_reached'] ?? 0),
+            'total_sessions'    => (int)($row['total_sessions']    ?? 0),
+        ];
+    }
+
+    /**
      * game_title に属する全セッションのユニーク画面を返す（fingerprint でデデュープ）。
      *
      * 同じ fingerprint が複数セッションに存在する場合は、最初に発見された画面のみ返す。

@@ -1,10 +1,74 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-04 (Phase 14 完了 — 1ゲーム1プロジェクト・増分探索・DEBUG_DRAW_OPS)
+最終更新: 2026-03-04 (Phase 15 完了 — 自己修復型探索・スマートバックトラック・アンチスタック)
 
 ---
 
-## 現在のフェーズ: Phase 14 完了 — 1ゲーム1プロジェクト増分探索
+## 現在のフェーズ: Phase 15 完了 — 自己修復型探索（セルフヒーリング）
+
+## Phase 15 完了内容 (2026-03-04)
+
+### 自己修復・探索効率最大化コンポーネント
+
+#### `crawler/lc/core.py` (新規)
+- **`AppHealthMonitor`**: Appium `query_app_state()` でアプリ生存確認 + `activate_app()` 自動復帰
+  - `FOREGROUND_STATE=4` (RUNNING_IN_FOREGROUND) 以外を検知して最大 `max_retries` 回復帰試行
+  - `check_and_heal()`: 生存確認 + 復帰。クエリ失敗時は楽観的に True 返却
+  - `is_alive()`: チェックのみ（復帰試行なし）
+- **`StuckDetector`**: 同一 fingerprint での dead-end 連続回数を追跡
+  - `should_swipe()`: count ≥ threshold かつ < threshold×3 → スワイプ対象
+  - `should_long_press()`: count ≥ threshold×2 → 長押し対象
+  - `is_hopeless()`: count ≥ threshold×3 → 諦め
+  - `reset()`: 復帰成功時にカウントをクリア
+- **`FrontierTracker`**: DFS 探索経路の記録と最短経路再構築
+  - `record_nav(fp, parent_fp)`: 親子ナビゲーション記録
+  - `record_tap(parent_fp, text, child_fp)`: タップ→遷移先マッピング記録
+  - `build_path_to(target_fp)`: root → target の fingerprint パス再構築（サイクル検出付き）
+  - `get_nav_recipe(path, visited)`: パスを `[(item_text, item_dict)]` 手順に変換
+
+#### `crawler/lc/crawler.py` (修正)
+- **`CrawlerConfig`**: `max_heal_retries=2` / `anti_stuck_threshold=2` / `smart_backtrack=True` 追加
+- **`_crawl_impl()`**:
+  - ヘルスチェック統合: 各ブランチ進入時に `AppHealthMonitor.check_and_heal()` を呼ぶ
+  - フロンティア記録: `_pending_child_fp` サイドチャネル (save/restore パターン) で child_fp を取得し `FrontierTracker.record_tap()` に渡す
+  - アンチスタック: dead-end 時に `StuckDetector.record()` → `_try_unstuck_gestures()` を呼ぶ
+- **`_try_unstuck_gestures()`**: スワイプ (65%→25%) + 長押し (`mobile: touchAndHold`) ジェスチャー
+- **`_smart_backtrack_loop()`**: 主 DFS 後に depth≥max_depth-1 のフロンティアを再探索
+  - `FrontierTracker.get_nav_recipe()` でタップ手順を再生
+  - `object.__setattr__` で max_depth を一時的に +1 に延長
+- **`_navigate_to_frontier()`**: `activate_app()` でアプリをルートに戻し recipe をタップ再生
+- **`_annotate_screenshot()`**: プロフェッショナル品質マーカーに改善
+  - ドロップシャドウ + 白背景リング (r=24) + 赤リング + 中心白/赤ドット + クロスヘア + アウトライン付きテキスト
+
+#### `crawler/driver_adapter.py` (修正)
+- **`BaseDriver.is_app_alive()`**: `query_app_state()` で状態確認。例外時は楽観的に True 返却
+
+#### Web — 探索網羅率 API
+- **`web/src/EvidenceRepository.php`**: `getProjectCoverage()` — ゲームの探索網羅率サマリー
+  - `unique_screens` / `max_depth_reached` / `total_sessions`
+- **`web/public/api/search.php`**: `get_coverage` アクション追加
+
+#### テスト — 55 件追加
+- **`tests/test_phase15.py`**: 55件 (全パス)
+  - `TestAppHealthMonitor`: check_and_heal/is_alive の全分岐 (9件)
+  - `TestStuckDetector`: record/should_swipe/should_long_press/is_hopeless/reset (12件)
+  - `TestFrontierTracker`: record_nav/record_tap/build_path_to/get_nav_recipe/cycle検出 (14件)
+  - `TestIsAppAlive`: SimulatorDriver.is_app_alive() (3件)
+  - `TestUnstuckGestures`: swipe/long_press/hopeless/例外 (5件)
+  - `TestNavigateToFrontier`: bundle未設定/activate_app/タップ再生/失敗 (6件)
+  - `TestSmartBacktrackLoop`: フロンティアあり/なし/タイムアップ (3件)
+  - `TestAnnotateScreenshotMarkerQuality`: 白リング r=24/赤リング/中心ドット (3件)
+
+### テスト状況 (Phase 15 時点)
+```
+test_phase15.py: 55 passed (新規)
+合計 Pytest: 328 passed, 3 skipped (Appium 実機テストのみ)
+Playwright E2E: 42/42 passed
+```
+
+---
+
+## Phase 14 完了内容 (2026-03-04) — 1ゲーム1プロジェクト増分探索
 
 ## Phase 14 完了内容 (2026-03-04)
 

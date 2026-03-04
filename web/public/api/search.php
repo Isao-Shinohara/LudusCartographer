@@ -64,6 +64,15 @@ if ($action === 'get_sessions') {
     exit;
 }
 
+// --- get_coverage アクション ---
+if ($action === 'get_coverage') {
+    $coverage = ($useDb && $repository instanceof EvidenceRepository)
+        ? $repository->getProjectCoverage($gameTitle)
+        : ['unique_screens' => 0, 'max_depth_reached' => 0, 'total_sessions' => 0];
+    echo json_encode($coverage, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
 // --- get_project_screens アクション ---
 if ($action === 'get_project_screens') {
     $limit = min((int)($_GET['limit'] ?? 100), 500);
