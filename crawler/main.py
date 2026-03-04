@@ -354,11 +354,6 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--copy",
-        action="store_true",
-        help="探索完了後に Gemini 報告用サマリーをクリップボードにコピーする",
-    )
-    parser.add_argument(
         "--teacher-mode",
         action="store_true",
         dest="teacher_mode",
@@ -685,15 +680,6 @@ def main() -> None:
         if args.open_web:
             _open_web_dashboard(game_title)
 
-        # --copy: Gemini 報告用サマリーをクリップボードにコピー
-        if getattr(args, "copy", False):
-            try:
-                from tools.copy_to_clipboard import _build_gemini_report, copy as _clip_copy
-                report_text = _build_gemini_report(slug=game_slug)
-                _clip_copy(report_text)
-                logger.info("[CLIPBOARD] Gemini 報告用テキストをクリップボードにコピーしました")
-            except Exception as _ce:
-                logger.warning("[CLIPBOARD] コピー失敗: %s", _ce)
 
 
 if __name__ == "__main__":
