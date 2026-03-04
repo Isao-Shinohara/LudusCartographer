@@ -94,8 +94,28 @@ _MIRROR_SETUP_GUIDE = """\
 def _ensure_directories() -> None:
     """実行に必要なディレクトリ構造を自動生成する。"""
     base = Path(__file__).parent
-    for d in ["storage", "evidence", "logs", "assets/templates"]:
+    for d in ["storage", "evidence", "logs", "assets/templates", "knowledge"]:
         (base / d).mkdir(parents=True, exist_ok=True)
+
+
+def _load_game_profile(game_title: str, crawler_root: Path) -> dict:
+    """
+    config/game_profiles.json からゲームタイトルに対応するプロファイルを返す。
+    見つからない場合は空 dict を返す。
+    """
+    import json as _json
+    profiles_path = crawler_root / "config" / "game_profiles.json"
+    if not profiles_path.exists():
+        return {}
+    try:
+        profiles = _json.loads(profiles_path.read_text(encoding="utf-8"))
+        profile = profiles.get(game_title, {})
+        if profile:
+            logger.info("[PROFILE] ゲームプロファイル読み込み: %s (slug=%s)", game_title, profile.get("slug", "-"))
+        return profile
+    except Exception as e:
+        logger.warning("[PROFILE] game_profiles.json 読み込み失敗: %s", e)
+        return {}
 
 
 def _configure_logging() -> None:
@@ -471,6 +491,11 @@ def main() -> None:
         is_mirror = is_mirror,
     )
 
+    # ゲームプロファイル読み込み (config/game_profiles.json)
+    _crawler_root = Path(__file__).parent
+    _game_profile = _load_game_profile(game_title, _crawler_root)
+    game_slug: Optional[str] = _game_profile.get("slug")
+
     duration  = int(os.environ.get("CRAWL_DURATION_SEC", "300"))  # デフォルト 5 分
     max_depth = int(os.environ.get("CRAWL_MAX_DEPTH",    "3"))
     db_host   = os.environ.get("DB_HOST", "")
@@ -515,10 +540,13 @@ def main() -> None:
         except Exception:
             pass
 
-    # ミラーモード向けデフォルト: ゲームのローディング時間を考慮して待機を長めに設定
+    # tap_wait 優先順位: CLI引数 > ゲームプロファイル > モード別デフォルト
     _default_tap_wait    = 4.0 if is_mirror else 3.0
+    _profile_tap_wait    = _game_profile.get("tap_wait_sec")
     _default_stuck_thr   = 3   # ゲームロード考慮で統一デフォルト
-    tap_wait         = args.tap_wait        if args.tap_wait        is not None else _default_tap_wait
+    tap_wait         = (args.tap_wait if args.tap_wait is not None
+                        else _profile_tap_wait if _profile_tap_wait is not None
+                        else _default_tap_wait)
     stuck_threshold  = args.stuck_threshold if args.stuck_threshold is not None else _default_stuck_thr
 
     knowledge_base_dir = (
@@ -533,23 +561,31 @@ def main() -> None:
     if getattr(args, "resume_from", None):
         resume_tree_path = args.resume_from
     elif getattr(args, "resume", False):
-        # 同一ゲームの最新 discovery_tree.json を自動検出
-        evidence_dir_r = Path(__file__).parent / "evidence"
-        for tree_path in reversed(sorted(evidence_dir_r.glob("*/discovery_tree.json"))):
-            try:
-                import json as _json
-                data = _json.loads(tree_path.read_text(encoding="utf-8"))
-                if data.get("game_title") == game_title:
-                    resume_tree_path = str(tree_path)
-                    logger.info("[RESUME] 前回ツリーを自動検出: %s", tree_path)
-                    break
-            except Exception:
-                continue
+        # 優先: knowledge/{slug}/discovery_tree.json
+        if game_slug:
+            slug_tree = Path(__file__).parent / "knowledge" / game_slug / "discovery_tree.json"
+            if slug_tree.exists():
+                resume_tree_path = str(slug_tree)
+                logger.info("[RESUME] knowledge ディレクトリから検出: %s", slug_tree)
+        # フォールバック: evidence/ から同一ゲームの最新ツリーを検索
+        if not resume_tree_path:
+            evidence_dir_r = Path(__file__).parent / "evidence"
+            for tree_path in reversed(sorted(evidence_dir_r.glob("*/discovery_tree.json"))):
+                try:
+                    import json as _json
+                    data = _json.loads(tree_path.read_text(encoding="utf-8"))
+                    if data.get("game_title") == game_title:
+                        resume_tree_path = str(tree_path)
+                        logger.info("[RESUME] evidence ディレクトリから検出: %s", tree_path)
+                        break
+                except Exception:
+                    continue
         if not resume_tree_path:
             logger.warning("[RESUME] 同一ゲームの discovery_tree.json が見つかりません")
 
     crawler_cfg = CrawlerConfig(
         game_title           = game_title,
+        game_slug            = game_slug,
         device_mode          = device_mode,
         max_duration_sec     = duration,
         max_depth            = max_depth,
@@ -569,6 +605,7 @@ def main() -> None:
         tap_wait, stuck_threshold,
     )
     logger.info("  知識ベース : %s", knowledge_base_dir)
+    logger.info("  ゲームスラグ: %s", game_slug or "(なし — game_profiles.json に未登録)")
     logger.info("  Teacher Mode: %s", "有効" if teacher_mode else "無効")
 
     crawler: "ScreenCrawler | None" = None  # WindowNotFoundError 時の参照用
@@ -630,6 +667,14 @@ def main() -> None:
                 report_path = summary_path.parent / "discovery_report.md"
                 crawler.save_discovery_report(report_path)
                 logger.info("[REPORT] Markdown レポート: %s", report_path)
+                # knowledge/{slug}/ へ永続保存（セッション横断で累積）
+                if game_slug:
+                    knowledge_tree_path = (
+                        Path(__file__).parent / "knowledge" / game_slug / "discovery_tree.json"
+                    )
+                    knowledge_tree_path.parent.mkdir(parents=True, exist_ok=True)
+                    crawler.save_discovery_tree(knowledge_tree_path)
+                    logger.info("[KNOWLEDGE] Discovery Tree 永続保存: %s", knowledge_tree_path)
 
         # --open-web: ブラウザで管理画面を自動表示
         if args.open_web:

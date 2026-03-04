@@ -147,6 +147,9 @@ class CrawlerConfig:
     teacher_mode_enabled: bool = False
     # セッション再開用: 前回の discovery_tree.json パス (省略時は新規セッション)
     resume_tree_path: Optional[str] = None
+    # ゲーム固有スラグ (例: "madodora") — knowledge/{slug}/ パス解決に使用
+    # 省略時は knowledge_base_dir/{game_title}/knowledge/ にフォールバック
+    game_slug: Optional[str] = None
 
 
 # ============================================================
@@ -242,6 +245,10 @@ class ScreenCrawler:
         self._resumed_fingerprints: set[str] = set()
         self._load_resume_tree()
 
+        # ゲーム固有行動ルール (knowledge/{slug}/behavior_rules.json)
+        self._behavior_rules: dict = {}
+        self._load_behavior_rules()
+
         # Teacher Mode
         self._human_teacher: Optional[HumanTeacher] = None
         if self.config.teacher_mode_enabled:
@@ -290,15 +297,18 @@ class ScreenCrawler:
         """
         ゲームタイトル別の知識ベースディレクトリを解決して ScreenCache を初期化する。
 
-        パス:  {crawler_root}/{knowledge_base_dir}/{game_title}/knowledge/
-        相対パスは crawler/ ルート (main.py と同じディレクトリ) からの相対として解釈。
+        パス優先順位:
+          1. game_slug が設定されている場合: {crawler_root}/knowledge/{slug}/
+          2. フォールバック: {crawler_root}/{knowledge_base_dir}/{game_title}/knowledge/
         """
-        base = Path(self.config.knowledge_base_dir)
-        if not base.is_absolute():
-            crawler_root = Path(__file__).parent.parent
-            base = crawler_root / base
-
-        knowledge_dir = base / self.config.game_title / "knowledge"
+        crawler_root = Path(__file__).parent.parent
+        if self.config.game_slug:
+            knowledge_dir = crawler_root / "knowledge" / self.config.game_slug
+        else:
+            base = Path(self.config.knowledge_base_dir)
+            if not base.is_absolute():
+                base = crawler_root / base
+            knowledge_dir = base / self.config.game_title / "knowledge"
         platform = "android" if "ANDROID" in self.config.device_mode.upper() else "ios"
         self._screen_cache = ScreenCache(
             knowledge_dir  = knowledge_dir,
@@ -310,6 +320,71 @@ class ScreenCrawler:
             knowledge_dir,
             len(self._screen_cache._index),
         )
+
+    # ----------------------------------------------------------
+    # ゲーム固有行動ルール
+    # ----------------------------------------------------------
+
+    def _load_behavior_rules(self) -> None:
+        """knowledge/{slug}/behavior_rules.json を読み込む。"""
+        slug = self.config.game_slug
+        if not slug:
+            return
+        import json as _json
+        rules_path = Path(__file__).parent.parent / "knowledge" / slug / "behavior_rules.json"
+        if not rules_path.exists():
+            return
+        try:
+            self._behavior_rules = _json.loads(rules_path.read_text(encoding="utf-8"))
+            count = len(self._behavior_rules.get("rules", []))
+            logger.info("[RULES] 行動ルール読み込み: %d件 (%s)", count, rules_path)
+        except Exception as e:
+            logger.warning("[RULES] 読み込み失敗 (スキップ): %s", e)
+
+    def _apply_pre_tap_rules(self, title: str) -> None:
+        """
+        新規画面のタップ開始前に行動ルールを適用する。
+
+        trigger.keywords が画面タイトルに含まれるルールを順に評価し、
+        マッチしたルールのアクション (scroll_before_tap 等) を実行する。
+        """
+        for rule in self._behavior_rules.get("rules", []):
+            trigger = rule.get("trigger", {})
+            if trigger.get("type") != "screen_title_contains":
+                continue
+            keywords = trigger.get("keywords", [])
+            if not any(kw in title for kw in keywords):
+                continue
+            action = rule.get("action", {})
+            rule_id = rule.get("id", "unknown")
+            if action.get("type") == "scroll_before_tap":
+                self._execute_scroll_before_tap(action, rule_id)
+
+    def _execute_scroll_before_tap(self, action: dict, rule_id: str) -> None:
+        """scroll_before_tap アクションを実行する (adb swipe / driver.swipe)。"""
+        import subprocess as _sp
+        count    = action.get("scroll_count", 3)
+        fx, fy   = action.get("scroll_from", [700, 500])
+        tx, ty   = action.get("scroll_to",   [700, 200])
+        dur      = action.get("scroll_duration_ms",  500)
+        wait_ms  = action.get("wait_after_scroll_ms", 800)
+        is_android = "ANDROID" in self.config.device_mode.upper()
+        udid = os.environ.get("ANDROID_UDID", "")
+        logger.info("[RULE:%s] scroll_before_tap — %d回スクロール開始", rule_id, count)
+        for _ in range(count):
+            if is_android:
+                cmd = (
+                    ["adb", "-s", udid, "shell", "input", "swipe",
+                     str(fx), str(fy), str(tx), str(ty), str(dur)]
+                    if udid else
+                    ["adb", "shell", "input", "swipe",
+                     str(fx), str(fy), str(tx), str(ty), str(dur)]
+                )
+                _sp.run(cmd, check=False, timeout=10)
+            else:
+                self.driver.driver.swipe(fx, fy, tx, ty, dur)
+            time.sleep(wait_ms / 1000)
+        logger.info("[RULE:%s] スクロール完了 → タップ可能状態", rule_id)
 
     # ----------------------------------------------------------
     # セッション再開
@@ -516,6 +591,9 @@ class ScreenCrawler:
             f"  items={len(record.tappable_items)}件"
             f"  指紋={record.fingerprint[:8]}…"
         )
+
+        # --- ゲーム固有行動ルール適用 (タップ前フック) ---
+        self._apply_pre_tap_rules(record.title)
 
         # --- タップ候補 0 件 = スタック検知 ---
         if not record.tappable_items:

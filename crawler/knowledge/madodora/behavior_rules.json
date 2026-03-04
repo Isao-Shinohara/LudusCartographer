@@ -1,0 +1,26 @@
+{
+  "game_title": "まどドラ",
+  "game_slug": "madodora",
+  "created_at": "2026-03-04",
+  "rules": [
+    {
+      "id": "scroll_before_agreement",
+      "description": "規約同意ダイアログの同意ボタンはスクロール完了後でないとタップ判定が有効化されない。3回スワイプしてから同意ボタンをタップする。",
+      "trigger": {
+        "type": "screen_title_contains",
+        "keywords": ["同意", "規約", "terms", "agree", "consent"]
+      },
+      "action": {
+        "type": "scroll_before_tap",
+        "scroll_count": 3,
+        "scroll_from": [700, 500],
+        "scroll_to": [700, 200],
+        "scroll_duration_ms": 500,
+        "wait_after_scroll_ms": 800
+      },
+      "learned_at": "2026-03-04",
+      "success_count": 1,
+      "context": "利用規約ダイアログで同意ボタンが長時間無反応→3連スワイプ後に突破。読了フラグがスクロール量で制御されている模様。"
+    }
+  ]
+}

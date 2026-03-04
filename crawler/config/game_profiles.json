@@ -1,0 +1,10 @@
+{
+  "まどドラ": {
+    "slug": "madodora",
+    "package": "com.aniplex.magia.exedra.jp",
+    "activity": "com.google.firebase.MessagingUnityPlayerActivity",
+    "platform": "android",
+    "tap_wait_sec": 4.0,
+    "notes": "Unity製。タップはadb shell input tap。規約同意画面は scroll_before_agreement が必須。"
+  }
+}
