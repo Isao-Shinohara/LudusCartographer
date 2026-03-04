@@ -1,5 +1,5 @@
 """
-window_manager.py — macOS ミラーリングウィンドウ検索・キャプチャ
+window_manager.py — macOS ミラーリングウィンドウ検索・キャプチャ・前面表示
 
 UxPlay (iOS) または scrcpy (Android) のウィンドウを検索し、
 OpenCV 形式 (BGR numpy.ndarray) でキャプチャして返す。
@@ -12,11 +12,19 @@ OpenCV 形式 (BGR numpy.ndarray) でキャプチャして返す。
 
 from __future__ import annotations
 
+import logging
+import subprocess
 import sys
 from typing import Optional
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# ウィンドウ検索
+# ============================================================
 
 def find_mirroring_window(
     title_candidates: list[str],
@@ -40,28 +48,10 @@ def find_mirroring_window(
         NotImplementedError: macOS 以外で呼び出された場合
         ImportError: pyobjc-framework-Quartz がインストールされていない場合
     """
-    if sys.platform != "darwin":
-        raise NotImplementedError(
-            "window_manager は macOS 専用です。"
-            f" 現在のプラットフォーム: {sys.platform}"
-        )
+    _require_darwin()
+    Quartz = _import_quartz()
 
-    try:
-        import Quartz
-    except ImportError:
-        raise ImportError(
-            "pyobjc-framework-Quartz が必要です。\n"
-            "  pip install pyobjc-framework-Quartz"
-        )
-
-    options = (
-        Quartz.kCGWindowListOptionOnScreenOnly
-        | Quartz.kCGWindowListExcludeDesktopElements
-    )
-    window_list = Quartz.CGWindowListCopyWindowInfo(
-        options, Quartz.kCGNullWindowID
-    )
-
+    window_list = _get_window_list(Quartz)
     for win in window_list:
         owner = (win.get("kCGWindowOwnerName") or "")
         title = (win.get("kCGWindowName") or "")
@@ -79,6 +69,60 @@ def find_mirroring_window(
 
     return None
 
+
+def bring_window_to_front(title_candidates: list[str]) -> bool:
+    """
+    タイトル候補に一致するウィンドウを前面に持ってくる。
+
+    Quartz でオーナーアプリ名を取得し、AppleScript (osascript) で
+    そのアプリをアクティベートする。
+
+    Args:
+        title_candidates: 検索するタイトルリスト (例: ["UxPlay", "iPhone"])
+
+    Returns:
+        前面表示に成功した場合 True、ウィンドウが見つからない場合 False。
+
+    Raises:
+        NotImplementedError: macOS 以外で呼び出された場合
+        ImportError: pyobjc-framework-Quartz がインストールされていない場合
+    """
+    _require_darwin()
+    Quartz = _import_quartz()
+
+    window_list = _get_window_list(Quartz)
+    owner = _find_window_owner(title_candidates, window_list)
+    if not owner:
+        logger.debug(f"[WM] 前面表示対象ウィンドウ未発見: {title_candidates}")
+        return False
+
+    try:
+        script = f'tell application "{owner}" to activate'
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            timeout=3.0,
+        )
+        if result.returncode == 0:
+            logger.debug(f"[WM] 前面表示成功: {owner}")
+            return True
+        else:
+            logger.warning(
+                f"[WM] 前面表示失敗 (osascript exit={result.returncode}): "
+                f"{result.stderr.decode(errors='replace').strip()}"
+            )
+            return False
+    except subprocess.TimeoutExpired:
+        logger.warning("[WM] 前面表示タイムアウト (osascript が応答しない)")
+        return False
+    except Exception as e:
+        logger.warning(f"[WM] 前面表示エラー: {e}")
+        return False
+
+
+# ============================================================
+# キャプチャ
+# ============================================================
 
 def capture_region(rect: tuple[int, int, int, int]) -> np.ndarray:
     """
@@ -114,6 +158,10 @@ def capture_region(rect: tuple[int, int, int, int]) -> np.ndarray:
     return img_bgr
 
 
+# ============================================================
+# デバッグ用
+# ============================================================
+
 def list_all_windows() -> list[dict]:
     """
     現在表示中のすべてのウィンドウ情報を返す (デバッグ用)。
@@ -124,22 +172,10 @@ def list_all_windows() -> list[dict]:
           title  : ウィンドウタイトル
           bounds : {"X": int, "Y": int, "Width": int, "Height": int}
     """
-    if sys.platform != "darwin":
-        raise NotImplementedError("window_manager は macOS 専用です。")
+    _require_darwin()
+    Quartz = _import_quartz()
 
-    try:
-        import Quartz
-    except ImportError:
-        raise ImportError("pip install pyobjc-framework-Quartz")
-
-    options = (
-        Quartz.kCGWindowListOptionOnScreenOnly
-        | Quartz.kCGWindowListExcludeDesktopElements
-    )
-    window_list = Quartz.CGWindowListCopyWindowInfo(
-        options, Quartz.kCGNullWindowID
-    )
-
+    window_list = _get_window_list(Quartz)
     results = []
     for win in window_list:
         bounds = win.get("kCGWindowBounds") or {}
@@ -154,3 +190,64 @@ def list_all_windows() -> list[dict]:
                            "Width": w, "Height": h},
             })
     return results
+
+
+# ============================================================
+# 内部ヘルパー
+# ============================================================
+
+def _require_darwin() -> None:
+    if sys.platform != "darwin":
+        raise NotImplementedError(
+            "window_manager は macOS 専用です。"
+            f" 現在のプラットフォーム: {sys.platform}"
+        )
+
+
+def _import_quartz():
+    """Quartz をインポートして返す。未インストール時は ImportError。"""
+    try:
+        import Quartz
+        return Quartz
+    except ImportError:
+        raise ImportError(
+            "pyobjc-framework-Quartz が必要です。\n"
+            "  pip install pyobjc-framework-Quartz"
+        )
+
+
+def _get_window_list(Quartz) -> list:
+    """オンスクリーンのウィンドウ一覧を取得する。"""
+    options = (
+        Quartz.kCGWindowListOptionOnScreenOnly
+        | Quartz.kCGWindowListExcludeDesktopElements
+    )
+    return Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID)
+
+
+def _find_window_owner(
+    title_candidates: list[str],
+    window_list: Optional[list] = None,
+) -> Optional[str]:
+    """
+    タイトル候補に一致するウィンドウのオーナーアプリ名を返す。
+
+    Args:
+        title_candidates: 検索するタイトルリスト
+        window_list: 既取得のウィンドウリスト (None の場合は再取得)
+
+    Returns:
+        オーナーアプリ名、見つからない場合は None
+    """
+    if window_list is None:
+        Quartz = _import_quartz()
+        window_list = _get_window_list(Quartz)
+
+    for win in window_list:
+        owner = (win.get("kCGWindowOwnerName") or "")
+        title = (win.get("kCGWindowName") or "")
+        combined = f"{owner} {title}".lower()
+        for candidate in title_candidates:
+            if candidate.lower() in combined:
+                return owner
+    return None

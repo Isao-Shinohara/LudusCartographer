@@ -216,8 +216,9 @@ class TestMirroringDriver:
         rect = (10, 20, 393, 852)
 
         with patch("tools.window_manager.find_mirroring_window", return_value=rect):
-            with patch("tools.window_manager.capture_region", return_value=fake_img):
-                result = driver.get_screenshot()
+            with patch("tools.window_manager.bring_window_to_front"):
+                with patch("tools.window_manager.capture_region", return_value=fake_img):
+                    result = driver.get_screenshot()
 
         assert isinstance(result, np.ndarray)
         assert result.shape == (852, 393, 3)
@@ -230,9 +231,10 @@ class TestMirroringDriver:
         rect      = (0, 0, 100, 100)
 
         with patch("tools.window_manager.find_mirroring_window", return_value=rect) as mock_find:
-            with patch("tools.window_manager.capture_region", return_value=fake_img):
-                driver.get_screenshot()
-                driver.get_screenshot()
+            with patch("tools.window_manager.bring_window_to_front"):
+                with patch("tools.window_manager.capture_region", return_value=fake_img):
+                    driver.get_screenshot()
+                    driver.get_screenshot()
 
         # find_mirroring_window は初回のみ呼ばれる
         mock_find.assert_called_once()
@@ -269,8 +271,9 @@ class TestMirroringDriver:
         fake_img = np.zeros((100, 100, 3), dtype=np.uint8)
 
         with patch("tools.window_manager.find_mirroring_window", return_value=(0, 0, 100, 100)) as mock_find:
-            with patch("tools.window_manager.capture_region", return_value=fake_img):
-                driver.get_screenshot()
+            with patch("tools.window_manager.bring_window_to_front"):
+                with patch("tools.window_manager.capture_region", return_value=fake_img):
+                    driver.get_screenshot()
 
         # ["MyMirror"] で検索されること
         mock_find.assert_called_once_with(["MyMirror"])
@@ -281,8 +284,9 @@ class TestMirroringDriver:
         fake_img = np.zeros((100, 100, 3), dtype=np.uint8)
 
         with patch("tools.window_manager.find_mirroring_window", return_value=(0, 0, 100, 100)) as mock_find:
-            with patch("tools.window_manager.capture_region", return_value=fake_img):
-                driver.get_screenshot()
+            with patch("tools.window_manager.bring_window_to_front"):
+                with patch("tools.window_manager.capture_region", return_value=fake_img):
+                    driver.get_screenshot()
 
         called_candidates = mock_find.call_args[0][0]
         assert "UxPlay" in called_candidates

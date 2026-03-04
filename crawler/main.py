@@ -57,28 +57,35 @@ def main() -> None:
         print("  例: IOS_BUNDLE_ID=com.example.mygame python main.py")
         sys.exit(1)
 
-    game_title = os.environ.get("GAME_TITLE", bundle_id)  # 未設定時は bundle_id をタイトルとして使う
-    duration   = int(os.environ.get("CRAWL_DURATION_SEC", "180"))
-    max_depth  = int(os.environ.get("CRAWL_MAX_DEPTH",    "3"))
-    db_host    = os.environ.get("DB_HOST", "")
+    game_title  = os.environ.get("GAME_TITLE", bundle_id)  # 未設定時は bundle_id をタイトルとして使う
+    duration    = int(os.environ.get("CRAWL_DURATION_SEC", "180"))
+    max_depth   = int(os.environ.get("CRAWL_MAX_DEPTH",    "3"))
+    db_host     = os.environ.get("DB_HOST", "")
+
+    # DEVICE_MODE 解決（driver_factory と同じロジック）
+    from driver_factory import _resolve_device_mode
+    device_mode = _resolve_device_mode()
 
     print("=" * 60)
     print("  LudusCartographer — 自律クロール開始")
     print("=" * 60)
     print(f"  ターゲット : {bundle_id}")
     print(f"  ゲーム名  : {game_title}")
+    print(f"  モード    : {device_mode}")
     print(f"  最大時間  : {duration} 秒")
     print(f"  最大深さ  : {max_depth}")
     print(f"  DB 保存   : {'有効 (' + db_host + ')' if db_host else '無効 (DB_HOST 未設定)'}")
     print("=" * 60)
 
     # --- Driver セッション開始 ---
+    from driver_adapter import BaseDriver
     from driver_factory import create_driver_session
     from lc.crawler import CrawlerConfig, ScreenCrawler
     from lc.ocr import find_best, run_ocr
 
     crawler_cfg = CrawlerConfig(
         game_title       = game_title,
+        device_mode      = device_mode,
         max_duration_sec = duration,
         max_depth        = max_depth,
         db_host          = db_host,
@@ -87,16 +94,38 @@ def main() -> None:
         db_password      = os.environ.get("DB_PASSWORD", ""),
     )
 
-    with create_driver_session() as driver:
-        # モーダルダイアログを解除（起動直後のアラート等）
-        for _ in range(3):
-            if not driver.dismiss_any_modal():
-                break
-            driver.wait(1.0)
+    crawler: "ScreenCrawler | None" = None  # WindowNotFoundError 時の参照用
 
-        # クローラー実行
-        crawler = ScreenCrawler(driver, crawler_cfg)
-        stats   = crawler.crawl(depth=0, parent_fp=None)
+    with create_driver_session() as driver:
+        try:
+            # モーダルダイアログを解除（起動直後のアラート等）
+            for _ in range(3):
+                if not driver.dismiss_any_modal():
+                    break
+                driver.wait(1.0)
+
+            # クローラー実行
+            crawler = ScreenCrawler(driver, crawler_cfg)
+            stats   = crawler.crawl(depth=0, parent_fp=None)
+
+        except BaseDriver.WindowNotFoundError as exc:
+            # ---- ウィンドウ喪失: 現時点のデータを保存して安全終了 ----
+            print(f"\n[LC] ⚠ ウィンドウ消失を検知しました: {exc}")
+            print("[LC] 現時点のクロールデータを保存して終了します...")
+            if crawler is not None:
+                evidence_dir = Path(__file__).parent / "evidence"
+                # crawler が生成したセッションディレクトリに保存
+                session_dirs = sorted(evidence_dir.glob("*/"))
+                if session_dirs:
+                    interrupted_path = session_dirs[-1] / "crawl_summary.json"
+                    crawler.save_summary_json(interrupted_path)
+                    print(f"[LC] 中断サマリーを保存: {interrupted_path}")
+                    stats = crawler._stats  # type: ignore[attr-defined]
+                    print(
+                        f"[LC] 発見済み: {stats.screens_found} 画面"
+                        f" / {stats.taps_total} 回タップ"
+                    )
+            return  # メイン処理を安全終了
 
         # サマリー表示
         print(crawler.summary())

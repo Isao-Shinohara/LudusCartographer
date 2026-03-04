@@ -5,9 +5,10 @@ driver_adapter.py — 画面取得・タップ操作の抽象化層
 両方に対応する Driver インターフェースを定義する。
 
 【クラス構成】
-  BaseDriver     — 抽象基底クラス
-  SimulatorDriver — iOS シミュレータ用 (AppiumDriver ラッパー)
-  MirroringDriver — 実機ミラーリング用 (ウィンドウキャプチャ + Appium Wi-Fi)
+  BaseDriver.WindowNotFoundError — ウィンドウ消失例外
+  BaseDriver       — 抽象基底クラス
+  SimulatorDriver  — iOS シミュレータ用 (AppiumDriver ラッパー)
+  MirroringDriver  — 実機ミラーリング用 (ウィンドウキャプチャ + Appium Wi-Fi)
 
 【使い方】
   from driver_factory import create_driver_session
@@ -23,13 +24,17 @@ driver_adapter.py — 画面取得・タップ操作の抽象化層
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from lc.driver import AppiumDriver
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -48,6 +53,13 @@ class BaseDriver(ABC):
     get_screenshot / tap / is_simulator の 3 メソッドが最小契約。
     その他の AppiumDriver メソッドは具象クラスの __getattr__ 委譲で利用可能。
     """
+
+    class WindowNotFoundError(RuntimeError):
+        """
+        ミラーリングウィンドウが見失われた、または閉じられた場合に送出される。
+
+        main.py はこの例外を捕捉し、クロール中断 + 現時点のサマリーを保存する。
+        """
 
     @abstractmethod
     def get_screenshot(self) -> np.ndarray:
@@ -163,6 +175,15 @@ class MirroringDriver(BaseDriver):
     操作    : Appium (Network / Wi-Fi 経由) でタップ。
               ウィンドウ座標からデバイス論理座標への変換を自動実施。
 
+    解像度チェック:
+      キャプチャ結果が MIN_CAPTURE_WIDTH × MIN_CAPTURE_HEIGHT px 未満の場合、
+      警告ログを出力してデバイス論理解像度にアップスケールする。
+      (UxPlay ウィンドウが小さすぎると OCR 精度が低下するため)
+
+    ウィンドウ消失検知:
+      screenshot() 呼び出し VERIFY_INTERVAL 回に 1 回、ウィンドウ存在を確認する。
+      ウィンドウが消失していた場合は WindowNotFoundError を送出する。
+
     環境変数:
       MIRROR_WINDOW_TITLE   : キャプチャ対象ウィンドウのタイトル (部分一致)
                               例: "UxPlay" / "iPhone" / "scrcpy"
@@ -174,6 +195,13 @@ class MirroringDriver(BaseDriver):
     # キャプチャ対象ウィンドウのタイトル検索候補 (優先順)
     _WINDOW_TITLE_CANDIDATES: tuple[str, ...] = ("UxPlay", "iPhone", "scrcpy")
 
+    # 解像度チェック閾値 — これ未満は OCR 精度が著しく低下する
+    MIN_CAPTURE_WIDTH:  int = 300
+    MIN_CAPTURE_HEIGHT: int = 600
+
+    # ウィンドウ存在確認の頻度 (screenshot() 呼び出し N 回に 1 回)
+    VERIFY_INTERVAL: int = 5
+
     def __init__(
         self,
         appium_driver: "AppiumDriver",
@@ -181,12 +209,14 @@ class MirroringDriver(BaseDriver):
         device_logical_width: int = 393,
         device_logical_height: int = 852,
     ) -> None:
-        self._appium         = appium_driver
-        self._window_title   = window_title
-        self._device_width   = device_logical_width
-        self._device_height  = device_logical_height
+        self._appium          = appium_driver
+        self._window_title    = window_title
+        self._device_width    = device_logical_width
+        self._device_height   = device_logical_height
         # (x, y, width, height) — 初回 get_screenshot() 時に確定
         self._window_rect: Optional[tuple[int, int, int, int]] = None
+        # screenshot() 呼び出し回数カウンタ（ウィンドウ検証用）
+        self._screenshot_count: int = 0
 
     # ----------------------------------------------------------
     # BaseDriver 抽象メソッド実装
@@ -196,25 +226,67 @@ class MirroringDriver(BaseDriver):
         """
         UxPlay / scrcpy ウィンドウをキャプチャして BGR numpy.ndarray を返す。
 
-        初回呼び出しでウィンドウを検索し、以降はキャッシュした領域を使用する。
-        ウィンドウが見つからない場合は RuntimeError を送出する。
-        """
-        from tools.window_manager import capture_region, find_mirroring_window
+        初回呼び出しでウィンドウを検索・前面表示し、以降はキャッシュを使用する。
+        キャプチャ解像度が低い場合はログ警告 + デバイス論理サイズにリサイズする。
 
+        Raises:
+            WindowNotFoundError: ウィンドウが見つからない / 消失した場合
+        """
+        import cv2
+        from tools.window_manager import bring_window_to_front, capture_region, find_mirroring_window
+
+        candidates = (
+            [self._window_title] if self._window_title
+            else list(self._WINDOW_TITLE_CANDIDATES)
+        )
+
+        # 初回: ウィンドウ検索 + 前面表示
         if self._window_rect is None:
-            candidates = (
-                [self._window_title] if self._window_title
-                else list(self._WINDOW_TITLE_CANDIDATES)
-            )
             self._window_rect = find_mirroring_window(candidates)
             if self._window_rect is None:
-                raise RuntimeError(
+                raise BaseDriver.WindowNotFoundError(
                     "ミラーリングウィンドウが見つかりません。"
                     " UxPlay または scrcpy が起動しているか確認してください。"
                     f" 検索タイトル: {candidates}"
                 )
+            brought = bring_window_to_front(candidates)
+            logger.info(
+                f"[MIRROR] ウィンドウ発見 rect={self._window_rect}"
+                f" 前面表示={'成功' if brought else 'スキップ'}"
+            )
 
-        return capture_region(self._window_rect)
+        # キャプチャ (失敗時は再検索して1回リトライ)
+        try:
+            img = capture_region(self._window_rect)
+        except Exception as e:
+            logger.warning(f"[MIRROR] キャプチャ失敗、ウィンドウを再検索します: {e}")
+            self._window_rect = find_mirroring_window(candidates)
+            if self._window_rect is None:
+                raise BaseDriver.WindowNotFoundError(
+                    "ミラーリングウィンドウが消失しました。"
+                    " UxPlay または scrcpy が終了した可能性があります。"
+                ) from e
+            bring_window_to_front(candidates)
+            img = capture_region(self._window_rect)
+
+        # 解像度チェック: 低すぎる場合は警告 + リサイズ
+        h, w = img.shape[:2]
+        if w < self.MIN_CAPTURE_WIDTH or h < self.MIN_CAPTURE_HEIGHT:
+            logger.warning(
+                f"[MIRROR] キャプチャ解像度が低すぎます: {w}×{h}px"
+                f" (推奨: {self.MIN_CAPTURE_WIDTH}×{self.MIN_CAPTURE_HEIGHT}px 以上)。"
+                " OCR 精度が低下する可能性があります。"
+                " UxPlay ウィンドウを大きくすることを推奨します。"
+                f" デバイス論理サイズ ({self._device_width}×{self._device_height}px)"
+                " にアップスケールします。"
+            )
+            img = cv2.resize(
+                img,
+                (self._device_width, self._device_height),
+                interpolation=cv2.INTER_LANCZOS4,
+            )
+
+        return img
 
     def tap(self, x: int, y: int) -> None:
         """
@@ -233,6 +305,65 @@ class MirroringDriver(BaseDriver):
 
     def is_simulator(self) -> bool:
         return False
+
+    # ----------------------------------------------------------
+    # screenshot() オーバーライド — ウィンドウ存在確認を追加
+    # ----------------------------------------------------------
+
+    def screenshot(self, name: str = "") -> "Path":
+        """
+        AppiumDriver.screenshot() の前にウィンドウ存在を定期確認する。
+
+        VERIFY_INTERVAL 回に 1 回 find_mirroring_window() を実行し、
+        ウィンドウが消失していた場合は WindowNotFoundError を送出する。
+
+        Args:
+            name: スクリーンショットのファイル名サフィックス
+
+        Returns:
+            保存された PNG ファイルの Path
+
+        Raises:
+            WindowNotFoundError: ウィンドウが消失した場合
+        """
+        self._screenshot_count += 1
+        if self._screenshot_count % self.VERIFY_INTERVAL == 1:
+            # 1, 6, 11, ... 回目に確認
+            self._verify_window_exists()
+        return self._appium.screenshot(name)
+
+    # ----------------------------------------------------------
+    # 内部メソッド
+    # ----------------------------------------------------------
+
+    def _verify_window_exists(self) -> None:
+        """
+        ウィンドウが引き続き存在することを確認する。
+
+        ウィンドウが見つからない場合は _window_rect キャッシュを無効化し、
+        WindowNotFoundError を送出する。
+
+        Raises:
+            WindowNotFoundError: ウィンドウが消失した場合
+        """
+        from tools.window_manager import find_mirroring_window
+
+        candidates = (
+            [self._window_title] if self._window_title
+            else list(self._WINDOW_TITLE_CANDIDATES)
+        )
+        rect = find_mirroring_window(candidates)
+        if rect is None:
+            self._window_rect = None  # キャッシュを無効化
+            raise BaseDriver.WindowNotFoundError(
+                "ミラーリングウィンドウが消失しました。"
+                " UxPlay または scrcpy が終了した可能性があります。"
+                " クロールを中断してデータを保存します。"
+            )
+        # ウィンドウが移動した場合のために位置を更新
+        if self._window_rect != rect:
+            logger.info(f"[MIRROR] ウィンドウ位置更新: {self._window_rect} → {rect}")
+            self._window_rect = rect
 
     # ----------------------------------------------------------
     # 後方互換: AppiumDriver の全メソッド・属性を透過委譲

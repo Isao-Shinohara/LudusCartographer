@@ -115,6 +115,8 @@ class CrawlerConfig:
     icon_threshold:   float = 0.80   # テンプレートマッチング検出閾値 (TM_CCOEFF_NORMED)
     # ゲームタイトル（SQLite保存時に使用）
     game_title:       str   = "Unknown Game"
+    # 動作モード（crawl_summary.json に記録、管理画面で実機/シミュ判別に使用）
+    device_mode:      str   = "SIMULATOR"  # "SIMULATOR" または "MIRROR"
     # DB 設定（省略時はメモリのみ）
     db_game_id:       int   = 1
     db_host:          str   = ""
@@ -908,8 +910,9 @@ class ScreenCrawler:
         import json
 
         data = {
-            "session_id": path.parent.name,
-            "game_title": self._config.game_title,
+            "session_id":  path.parent.name,
+            "game_title":  self.config.game_title,
+            "device_mode": self.config.device_mode,
             "screens": [
                 {
                     "fingerprint":     rec.fingerprint,
