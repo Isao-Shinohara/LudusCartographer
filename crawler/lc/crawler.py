@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 from .core import AppHealthMonitor, StuckDetector, FrontierTracker
 from .driver import AppiumDriver
 from .ocr import run_ocr, find_best, format_results
+from .screen_cache import ScreenCache, CachedSolution
 from .utils import compute_phash, phash_distance
 
 if TYPE_CHECKING:
@@ -138,6 +139,9 @@ class CrawlerConfig:
     db_name:          str   = "ludus_cartographer"
     db_user:          str   = "root"
     db_password:      str   = ""
+    # 知識ベースのベースディレクトリ (game_title サブディレクトリが自動作成される)
+    # 相対パスの場合は crawler/ ルートからの相対として解釈される
+    knowledge_base_dir: str = "games"
 
 
 # ============================================================
@@ -220,6 +224,10 @@ class ScreenCrawler:
         # save/restore により深い再帰でも正しい直近の子 fp を取得できる
         self._pending_child_fp: Optional[str] = None
 
+        # 知識ベース（キャッシュ）
+        self._screen_cache: Optional[ScreenCache] = None
+        self._init_screen_cache()
+
         # DB 接続（利用可能な場合のみ）
         self._db_conn        = None
         self._crawl_session_id: Optional[int] = None
@@ -253,6 +261,106 @@ class ScreenCrawler:
     def get_visited_screens(self) -> list[ScreenRecord]:
         """訪問済み画面の一覧を返す。"""
         return list(self._visited.values())
+
+    # ----------------------------------------------------------
+    # 知識ベース初期化
+    # ----------------------------------------------------------
+
+    def _init_screen_cache(self) -> None:
+        """
+        ゲームタイトル別の知識ベースディレクトリを解決して ScreenCache を初期化する。
+
+        パス:  {crawler_root}/{knowledge_base_dir}/{game_title}/knowledge/
+        相対パスは crawler/ ルート (main.py と同じディレクトリ) からの相対として解釈。
+        """
+        base = Path(self.config.knowledge_base_dir)
+        if not base.is_absolute():
+            crawler_root = Path(__file__).parent.parent
+            base = crawler_root / base
+
+        knowledge_dir = base / self.config.game_title / "knowledge"
+        platform = "android" if "ANDROID" in self.config.device_mode.upper() else "ios"
+        self._screen_cache = ScreenCache(
+            knowledge_dir  = knowledge_dir,
+            hash_threshold = 10,
+            platform       = platform,
+        )
+        logger.info(
+            "[CACHE] 知識ベース初期化: %s  エントリ=%d件",
+            knowledge_dir,
+            len(self._screen_cache._index),
+        )
+
+    # ----------------------------------------------------------
+    # キャッシュアクション実行
+    # ----------------------------------------------------------
+
+    def _execute_cached_actions(self, actions: list[dict]) -> bool:
+        """
+        キャッシュされたアクションリストを順番に実行する。
+
+        action の "type" キーで処理を分岐:
+          "tap"   → tap_ocr_coordinate(x, y)  (ピクセル座標)
+          "swipe" → Android: adb shell input swipe / iOS: driver.swipe()
+          "back"  → driver.back()
+          "wait"  → driver.wait(duration)
+
+        Returns:
+            True  — 全アクション実行完了
+            False — 途中でエラー発生（呼び出し元はフォールバック）
+        """
+        import subprocess as _sp
+
+        is_android = os.environ.get("DEVICE_MODE", "").upper() == "ANDROID"
+        udid = os.environ.get("ANDROID_UDID", "")
+
+        for i, action in enumerate(actions):
+            action_type = action.get("type", "")
+            try:
+                if action_type == "tap":
+                    x = int(action["x"])
+                    y = int(action["y"])
+                    label = action.get("label", f"cache_tap_{i}")
+                    self.driver.tap_ocr_coordinate(x, y, action_name=f"cache_{label}")
+                    self.driver.wait_until_stable()
+
+                elif action_type == "swipe":
+                    x1 = int(action["x1"])
+                    y1 = int(action["y1"])
+                    x2 = int(action["x2"])
+                    y2 = int(action["y2"])
+                    dur = int(action.get("duration", 300))
+                    if is_android:
+                        cmd = (
+                            ["adb", "-s", udid, "shell", "input", "swipe",
+                             str(x1), str(y1), str(x2), str(y2), str(dur)]
+                            if udid else
+                            ["adb", "shell", "input", "swipe",
+                             str(x1), str(y1), str(x2), str(y2), str(dur)]
+                        )
+                        _sp.run(cmd, check=False, timeout=10)
+                    else:
+                        self.driver.driver.swipe(x1, y1, x2, y2, dur)
+                    self.driver.wait(action.get("delay_after", 0.3))
+
+                elif action_type == "back":
+                    self.driver.back()
+                    self.driver.wait(self.config.wait_after_back)
+
+                elif action_type == "wait":
+                    self.driver.wait(float(action.get("duration", 1.0)))
+
+                else:
+                    logger.warning("[CACHE] 未知アクションタイプ: %r — スキップ", action_type)
+
+            except Exception as e:
+                logger.warning(
+                    "[CACHE] アクション実行失敗: type=%r  index=%d  error=%s",
+                    action_type, i, e,
+                )
+                return False
+
+        return True
 
     # ----------------------------------------------------------
     # DFS 実装
@@ -364,6 +472,35 @@ class ScreenCrawler:
             if depth == 0 and not record.tappable_items:
                 self._escape_dead_end()
 
+        # --- キャッシュ照合 (CACHE_HIT: 知識ベースのアクションを優先実行) ---
+        if self._screen_cache is not None and record.tappable_items:
+            cached = self._screen_cache.lookup(record.screenshot_path)
+            if cached is not None:
+                logger.info(
+                    "[CACHE_HIT] %r → キャッシュアクション実行  dist=%d  actions=%d件",
+                    record.title, cached.distance, len(cached.actions),
+                )
+                hit_ok = self._execute_cached_actions(cached.actions)
+                self._screen_cache.record_hit(cached.hash)
+                self._stats.taps_total += len(cached.actions)
+                if hit_ok:
+                    _saved_child_fp = self._pending_child_fp
+                    self._pending_child_fp = None
+                    _did_nav = self._crawl_impl(depth + 1, record.fingerprint)
+                    child_fp = self._pending_child_fp
+                    self._pending_child_fp = _saved_child_fp
+                    if child_fp:
+                        self._frontier_tracker.record_tap(
+                            record.fingerprint, f"[CACHE]{cached.title}", child_fp
+                        )
+                    if _did_nav and not self._is_time_up():
+                        self.driver.back()
+                        self.driver.wait(self.config.wait_after_back)
+                    self._nav_stack.pop()
+                    return True
+                # hit_ok == False: フォールバックして通常タップループへ
+                logger.info("[CACHE] キャッシュアクション失敗 → 通常探索にフォールバック")
+
         # --- 各タップ候補を探索 ---
         for i, item in enumerate(record.tappable_items):
             if self._is_time_up():
@@ -408,6 +545,18 @@ class ScreenCrawler:
                 self._frontier_tracker.record_tap(record.fingerprint, text, child_fp)
 
             if _did_navigate:
+                # 遷移成功 → 知識ベースに記録
+                if self._screen_cache is not None:
+                    try:
+                        self._screen_cache.save(
+                            screenshot_path = record.screenshot_path,
+                            title           = record.title,
+                            actions         = [{"type": "tap", "x": px, "y": py,
+                                                "label": _safe_name(text)}],
+                            success         = True,
+                        )
+                    except Exception as _ce:
+                        logger.debug("[CACHE] save スキップ: %s", _ce)
                 # 遷移先から元の画面に戻る
                 if not self._is_time_up():
                     self.driver.back()

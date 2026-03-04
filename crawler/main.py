@@ -316,6 +316,16 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--knowledge-dir",
+        metavar="PATH",
+        default=None,
+        help=(
+            "知識ベースのベースディレクトリ (デフォルト: games/)。"
+            " {PATH}/{game_title}/knowledge/ にキャッシュが保存される。"
+            " 環境変数 KNOWLEDGE_BASE_DIR でも設定可能。"
+        ),
+    )
+    parser.add_argument(
         "--open-web",
         action="store_true",
         help=(
@@ -493,6 +503,11 @@ def main() -> None:
     tap_wait         = args.tap_wait        if args.tap_wait        is not None else _default_tap_wait
     stuck_threshold  = args.stuck_threshold if args.stuck_threshold is not None else _default_stuck_thr
 
+    knowledge_base_dir = (
+        getattr(args, "knowledge_dir", None)
+        or os.environ.get("KNOWLEDGE_BASE_DIR", "games")
+    )
+
     crawler_cfg = CrawlerConfig(
         game_title           = game_title,
         device_mode          = device_mode,
@@ -505,11 +520,13 @@ def main() -> None:
         db_name              = os.environ.get("DB_NAME",     "ludus_cartographer"),
         db_user              = os.environ.get("DB_USER",     "root"),
         db_password          = os.environ.get("DB_PASSWORD", ""),
+        knowledge_base_dir   = knowledge_base_dir,
     )
     logger.info(
         "  タップ待機: %.1f 秒  スタック閾値: %d 回",
         tap_wait, stuck_threshold,
     )
+    logger.info("  知識ベース : %s", knowledge_base_dir)
 
     crawler: "ScreenCrawler | None" = None  # WindowNotFoundError 時の参照用
 
