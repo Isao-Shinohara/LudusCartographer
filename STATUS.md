@@ -1,10 +1,50 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-04 (Phase 4 完了 — 探索強化・Undo/Re-teach・Discovery Tree)
+最終更新: 2026-03-04 (Phase 5 完了 — 運用効率化4機能)
 
 ---
 
-## 現在のフェーズ: Phase 4 完了 — 探索強化・Undo/Re-teach・Discovery Tree 🗺️
+## 現在のフェーズ: Phase 5 完了 — 運用効率化・データ活用 🛠️
+
+### Phase 5 完了内容 (2026-03-04)
+
+#### 実装内容
+
+- **`crawler/lc/human_teacher.py`**:
+  - `_history: list[dict]` — 直近5件のタップ履歴 (MRU順)
+  - `ask_for_action(screen_size)` — 画面サイズ表示・番号入力で履歴再選択
+  - `_update_history()` — dedup + MRU 5件管理
+  - `_print_prompt(screen_size, history)` — 拡張プロンプト表示
+
+- **`crawler/lc/crawler.py`**:
+  - `CrawlerConfig.resume_tree_path` — セッション再開用 JSON パス
+  - `_resumed_fingerprints: set[str]` + `_load_resume_tree()` — 前回セッション復元
+  - `_crawl_impl`: 再開既知画面に [RESUME] ログ
+  - Teacher Mode: `screen_size` (PIL から取得) を `ask_for_action` に渡す
+  - `save_discovery_report(path)` — Markdown レポート生成
+
+- **`crawler/main.py`**:
+  - `--resume` / `--resume-from PATH` フラグ
+  - `resume_tree_path` 自動検出ロジック
+  - `save_discovery_report()` 呼び出し (セッション終了後)
+
+- **`crawler/tools/organize_screenshots.py`** (新規):
+  - `organize_screenshots(session_dir, output_dir, dry_run)` — 階層ディレクトリ整理
+  - `_slugify()` / `_build_title_chain()` ヘルパー
+  - `organized_index.md` 自動生成
+
+#### テスト状況 (Phase 5)
+```
+test_phase5.py:           23 passed (新規)
+test_phase4.py:           21 passed (回帰)
+test_human_teacher.py:    28 passed (回帰)
+test_screen_cache.py:     16 passed (回帰)
+合計:                     88 passed
+```
+
+---
+
+## Phase 4 完了 — 探索強化・Undo/Re-teach・Discovery Tree 🗺️
 
 ### Phase 4 完了内容 (2026-03-04)
 
