@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sqlite3
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS lc_projects (
@@ -67,7 +70,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             )
         """)
         conn.commit()
-        print("  [migrate] lc_projects テーブルを作成")
+        logger.info("[migrate] lc_projects テーブルを作成")
 
     cols = [r[1] for r in conn.execute("PRAGMA table_info(lc_sessions)")]
     if "game_title" not in cols:
@@ -77,15 +80,15 @@ def migrate(conn: sqlite3.Connection) -> None:
             " WHERE game_title IS NULL OR game_title = 'Unknown Game'"
         )
         conn.commit()
-        print("  [migrate] game_title カラムを追加 → 既存セッションを 'iOS設定' に設定")
+        logger.info("[migrate] game_title カラムを追加 → 既存セッションを 'iOS設定' に設定")
     if "device_mode" not in cols:
         conn.execute("ALTER TABLE lc_sessions ADD COLUMN device_mode TEXT DEFAULT 'SIMULATOR'")
         conn.commit()
-        print("  [migrate] device_mode カラムを追加 → 既存セッションを 'SIMULATOR' に設定")
+        logger.info("[migrate] device_mode カラムを追加 → 既存セッションを 'SIMULATOR' に設定")
     if "project_id" not in cols:
         conn.execute("ALTER TABLE lc_sessions ADD COLUMN project_id INTEGER")
         conn.commit()
-        print("  [migrate] project_id カラムを追加")
+        logger.info("[migrate] project_id カラムを追加")
 
 
 def upsert_project(conn: sqlite3.Connection, game_title: str) -> int:
@@ -166,7 +169,7 @@ def seed_test_games(conn: sqlite3.Connection) -> None:
             )
 
     conn.commit()
-    print("  [seed] カレンダー/SIMULATOR (3 screens) + マップ/MIRROR (2 screens) を投入")
+    logger.info("[seed] カレンダー/SIMULATOR (3 screens) + マップ/MIRROR (2 screens) を投入")
 
 
 def import_session(conn: sqlite3.Connection, summary_path: Path, game_title: str = "") -> int:
@@ -262,7 +265,7 @@ def main() -> None:
     total = 0
     for summary_path in sorted(evidence_dir.glob("*/crawl_summary.json")):
         n = import_session(conn, summary_path, args.game_title)
-        print(f"  [{summary_path.parent.name}] {n} screens imported")
+        logger.info("  [%s] %d screens imported", summary_path.parent.name, n)
         total += n
 
     # テストデータの投入
@@ -270,7 +273,7 @@ def main() -> None:
         seed_test_games(conn)
 
     conn.close()
-    print(f"\nDone: {total} screens total → {db_path}")
+    logger.info("Done: %d screens total → %s", total, db_path)
 
 
 if __name__ == "__main__":

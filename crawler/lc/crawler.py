@@ -177,7 +177,7 @@ class ScreenCrawler:
         cfg = CrawlerConfig(max_duration_sec=180, max_depth=3)
         crawler = ScreenCrawler(driver, cfg)
         stats = crawler.crawl()
-        print(f"{stats.screens_found} 画面を発見")
+        logger.info("%d 画面を発見", stats.screens_found)
     """
 
     def __init__(self, driver: "AppiumDriver | BaseDriver", config: CrawlerConfig):

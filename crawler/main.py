@@ -14,12 +14,15 @@ LudusCartographer — クローラー エントリポイント
   # 実機ミラーリング (UxPlay 使用) — ワンコマンド
   python main.py --mirror --bundle com.example.mygame "MyGame"
 
-  # 実機ミラーリング・アプリ名省略 → MirrorRun_YYYYMMDD_HHMM
+  # ミラーリング・名前省略 → MirrorRun_YYYYMMDD_HHMM
   python main.py --mirror --bundle com.example.mygame
 
   # 探索パラメータ調整 (-d は --duration の短縮形)
-  IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
+  IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \\
     python main.py "iOS設定" -d 600 --depth 4
+
+  # 探索後にブラウザで管理画面を自動表示
+  python main.py --mirror --bundle com.example.mygame "MyGame" --open-web
 
 【環境変数】
   IOS_BUNDLE_ID         ターゲットアプリの Bundle ID（必須）
@@ -45,8 +48,10 @@ LudusCartographer — クローラー エントリポイント
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -57,6 +62,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent / "config" / ".env")
+
+logger = logging.getLogger(__name__)
 
 _MIRROR_SETUP_GUIDE = """\
   ┌─────────────────────────────────────────────────────┐
@@ -82,6 +89,32 @@ _MIRROR_SETUP_GUIDE = """\
 
   詳細: https://github.com/Isao-Shinohara/LudusCartographer#mirror-mode
 """
+
+
+def _ensure_directories() -> None:
+    """実行に必要なディレクトリ構造を自動生成する。"""
+    base = Path(__file__).parent
+    for d in ["storage", "evidence", "logs", "assets/templates"]:
+        (base / d).mkdir(parents=True, exist_ok=True)
+
+
+def _configure_logging() -> None:
+    """logging 設定（コンソール + logs/crawler.log）。"""
+    log_dir  = Path(__file__).parent / "logs"
+    log_file = log_dir / "crawler.log"
+
+    logging.basicConfig(
+        level   = logging.INFO,
+        format  = "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt = "%H:%M:%S",
+        handlers = [
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler(str(log_file), encoding="utf-8"),
+        ],
+    )
+    # Appium / urllib3 の大量ログを抑制
+    for noisy in ("urllib3", "appium", "selenium", "websocket"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def _resolve_game_title(
@@ -112,6 +145,63 @@ def _resolve_game_title(
     return f"MirrorRun_{ts}" if is_mirror else f"TestRun_{ts}"
 
 
+def _print_session_summary(
+    stats,
+    game_title: str,
+    sqlite_db: Path,
+    known_before: int,
+) -> None:
+    """
+    探索完了後のセッションサマリーをコンソール表示する。
+
+    表示内容:
+      - 今回の新規発見画面数
+      - プロジェクト累計ユニーク画面数（SQLite から取得）
+      - 概算網羅率（前回既知 / 今回発見の割合）
+    """
+    sep = "=" * 62
+
+    # SQLite からプロジェクト累計を取得
+    total_unique = stats.screens_found  # フォールバック
+    if sqlite_db.exists():
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(sqlite_db))
+            row = conn.execute(
+                """SELECT COUNT(DISTINCT s.fingerprint) AS cnt
+                   FROM lc_screens s
+                   JOIN lc_sessions sess ON sess.session_id = s.session_id
+                   WHERE sess.game_title = ?""",
+                (game_title,),
+            ).fetchone()
+            conn.close()
+            if row:
+                total_unique = int(row[0])
+        except Exception:
+            pass
+
+    # 今セッションで新たに追加された画面数
+    newly_found = stats.screens_found
+
+    # 概算: 「既知 pHash でスキップされた数」÷「全接触画面」でどれだけ既知か
+    skipped   = stats.screens_skipped
+    contacted = newly_found + skipped
+    coverage_pct = (
+        f"{skipped / contacted * 100:.0f}% 既知" if contacted > 0 else "初回探索"
+    )
+
+    print(sep)
+    print("  LudusCartographer — 探索完了")
+    print(sep)
+    print(f"  プロジェクト         : {game_title}")
+    print(f"  今回の新規発見画面   : {newly_found} 画面")
+    print(f"  累計ユニーク画面     : {total_unique} 画面")
+    print(f"  既知画面スキップ     : {skipped} 画面  ({coverage_pct})")
+    print(f"  タップ操作数         : {stats.taps_total} 回")
+    print(f"  経過時間             : {stats.elapsed_sec:.1f} 秒")
+    print(sep)
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="LudusCartographer — モバイルアプリ自律クローラー",
@@ -132,6 +222,9 @@ def _parse_args() -> argparse.Namespace:
 
   # 探索パラメータ指定 (-d は --duration の短縮形)
   python main.py --mirror --bundle com.example.mygame "MyGame" -d 600 --depth 4
+
+  # 探索後にブラウザで管理画面を自動表示
+  python main.py --mirror --bundle com.example.mygame "MyGame" --open-web
 """,
     )
     parser.add_argument(
@@ -175,19 +268,70 @@ def _parse_args() -> argparse.Namespace:
         metavar="N",
         help="DFS 最大深さ (デフォルト: 3)",
     )
+    parser.add_argument(
+        "--open-web",
+        action="store_true",
+        help=(
+            "探索完了後にブラウザで管理画面 (http://localhost:8080) を自動表示する。"
+            " PHP ビルトインサーバーが起動していない場合は自動起動する。"
+        ),
+    )
     # 未知の引数（環境変数由来のフラグ等）を無視して続行
     args, _ = parser.parse_known_args()
     return args
 
 
+def _open_web_dashboard(game_title: str) -> None:
+    """
+    管理画面 (http://localhost:8080) をブラウザで開く。
+
+    PHP ビルトインサーバーが起動していない場合は起動してから開く。
+    """
+    import subprocess
+    import time
+    import urllib.request
+
+    base_url = "http://localhost:8080"
+    url = f"{base_url}/?game={game_title}"
+
+    # サーバーが応答するか確認
+    server_up = False
+    try:
+        urllib.request.urlopen(base_url, timeout=1)
+        server_up = True
+    except Exception:
+        pass
+
+    if not server_up:
+        # PHP ビルトインサーバーを起動
+        web_dir = Path(__file__).parent.parent / "web" / "public"
+        if web_dir.exists():
+            logger.info("[WEB] PHP ビルトインサーバーを起動します: %s", web_dir)
+            subprocess.Popen(
+                ["php", "-S", "localhost:8080", "-t", str(web_dir)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            time.sleep(1.5)  # 起動待機
+        else:
+            logger.warning("[WEB] web/public ディレクトリが見つかりません: %s", web_dir)
+
+    logger.info("[WEB] ブラウザで管理画面を開きます: %s", url)
+    webbrowser.open(url)
+
+
 def main() -> None:
+    # 起動直後: ディレクトリ保証 → logging 設定
+    _ensure_directories()
+    _configure_logging()
+
     args = _parse_args()
 
     # --mirror フラグ: 環境変数を上書きして MIRROR モードに切り替え
     if args.mirror:
         os.environ["DEVICE_MODE"]        = "MIRROR"
         os.environ["IOS_USE_SIMULATOR"]  = "0"
-        print(_MIRROR_SETUP_GUIDE)
+        logger.info(_MIRROR_SETUP_GUIDE)
 
     # CLI 引数が環境変数より優先される
     if args.bundle:
@@ -199,11 +343,11 @@ def main() -> None:
 
     bundle_id = os.environ.get("IOS_BUNDLE_ID")
     if not bundle_id:
-        print("ERROR: IOS_BUNDLE_ID が設定されていません。")
+        logger.error("IOS_BUNDLE_ID が設定されていません。")
         if args.mirror:
-            print("  例: python main.py --mirror --bundle com.example.mygame")
+            logger.error("  例: python main.py --mirror --bundle com.example.mygame")
         else:
-            print("  例: IOS_BUNDLE_ID=com.example.mygame python main.py")
+            logger.error("  例: IOS_BUNDLE_ID=com.example.mygame python main.py")
         sys.exit(1)
 
     # is_mirror を先に確定してからゲームタイトルを決定する
@@ -223,24 +367,41 @@ def main() -> None:
     from driver_factory import _resolve_device_mode
     device_mode = _resolve_device_mode()
 
-    print("=" * 60)
-    print("  LudusCartographer — 自律クロール開始")
-    print("=" * 60)
-    print(f"  ターゲット : {bundle_id}")
-    print(f"  ゲーム名  : {game_title}")
-    print(f"  モード    : {device_mode}")
-    print(f"  最大時間  : {duration} 秒")
-    print(f"  最大深さ  : {max_depth}")
-    print(f"  DB 保存   : {'有効 (' + db_host + ')' if db_host else '無効 (DB_HOST 未設定)'}")
-    print("=" * 60)
+    sep = "=" * 62
+    logger.info(sep)
+    logger.info("  LudusCartographer — 自律クロール開始")
+    logger.info(sep)
+    logger.info("  ターゲット : %s", bundle_id)
+    logger.info("  ゲーム名  : %s", game_title)
+    logger.info("  モード    : %s", device_mode)
+    logger.info("  最大時間  : %s 秒", duration)
+    logger.info("  最大深さ  : %s", max_depth)
+    logger.info("  DB 保存   : %s", f"有効 ({db_host})" if db_host else "無効 (DB_HOST 未設定)")
+    logger.info(sep)
 
     # --- Driver セッション開始 ---
     from driver_adapter import BaseDriver
     from driver_factory import create_driver_session
     from lc.crawler import CrawlerConfig, ScreenCrawler
-    from lc.ocr import find_best, run_ocr
 
     _sqlite_db = Path(__file__).parent / "storage" / "ludus.db"
+
+    # SQLite から今セッション前の既知 pHash 数を記録（サマリー用）
+    known_before = 0
+    if _sqlite_db.exists():
+        try:
+            import sqlite3 as _sl3
+            _c = _sl3.connect(str(_sqlite_db))
+            row = _c.execute(
+                "SELECT COUNT(DISTINCT s.fingerprint) FROM lc_screens s"
+                " JOIN lc_sessions sess ON sess.session_id = s.session_id"
+                " WHERE sess.game_title = ?",
+                (game_title,),
+            ).fetchone()
+            _c.close()
+            known_before = int(row[0]) if row else 0
+        except Exception:
+            pass
 
     crawler_cfg = CrawlerConfig(
         game_title       = game_title,
@@ -270,30 +431,25 @@ def main() -> None:
 
         except BaseDriver.WindowNotFoundError as exc:
             # ---- ウィンドウ喪失: 現時点のデータを保存して安全終了 ----
-            print(f"\n[LC] ⚠ ウィンドウ消失を検知しました: {exc}")
-            print("[LC] 現時点のクロールデータを保存して終了します...")
+            logger.warning("ウィンドウ消失を検知しました: %s", exc)
+            logger.warning("現時点のクロールデータを保存して終了します...")
             if crawler is not None:
                 evidence_dir = Path(__file__).parent / "evidence"
-                # crawler が生成したセッションディレクトリに保存
                 session_dirs = sorted(evidence_dir.glob("*/"))
                 if session_dirs:
                     interrupted_path = session_dirs[-1] / "crawl_summary.json"
                     crawler.save_summary_json(interrupted_path)
-                    print(f"[LC] 中断サマリーを保存: {interrupted_path}")
+                    logger.info("中断サマリーを保存: %s", interrupted_path)
                     stats = crawler._stats  # type: ignore[attr-defined]
-                    print(
-                        f"[LC] 発見済み: {stats.screens_found} 画面"
-                        f" / {stats.taps_total} 回タップ"
+                    logger.info(
+                        "発見済み: %d 画面 / %d 回タップ",
+                        stats.screens_found, stats.taps_total,
                     )
             return  # メイン処理を安全終了
 
-        # サマリー表示
-        print(crawler.summary())
-        print(
-            f"\n[LC] 完了: {stats.screens_found} 画面発見"
-            f" / {stats.taps_total} 回タップ"
-            f" / {stats.elapsed_sec:.1f} 秒"
-        )
+        # セッションサマリー表示
+        logger.info(crawler.summary())
+        _print_session_summary(stats, game_title, _sqlite_db, known_before)
 
         # 遷移マップ出力
         evidence_dir = Path(__file__).parent / "evidence"
@@ -306,9 +462,13 @@ def main() -> None:
             print("\n" + render_tree(graph))
             gaps = analyze_gaps(screens)
             if gaps["unknown_screens"] or gaps["suspicious_titles"]:
-                print("\n[LC] ⚠ 要調査:")
+                logger.warning("要調査画面あり:")
                 for s in gaps["unknown_screens"]:
-                    print(f"  unknown: depth={s.depth}  fp={s.fingerprint[:8]}")
+                    logger.warning("  unknown: depth=%d  fp=%s", s.depth, s.fingerprint[:8])
+
+        # --open-web: ブラウザで管理画面を自動表示
+        if args.open_web:
+            _open_web_dashboard(game_title)
 
 
 if __name__ == "__main__":

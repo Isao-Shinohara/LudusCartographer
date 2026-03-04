@@ -1,439 +1,379 @@
 # LudusCartographer
 
-**AI にモバイルアプリを自律探索させ、すべての画面を「地図」として記録・検索できるシステム。**
+**USB 不要の実機ミラーリングで、モバイルアプリのすべての画面を自律的に探索・地図化するエンジン。**
 
 Appium + PaddleOCR + OpenCV テンプレートマッチングによるハイブリッド UI 検出で、
-テキストのないグラフィカルボタン（× 閉じる・☰ メニュー・← 戻る）も自動認識。
-発見した画面は MySQL に保存され、PHP ベースの Web 管理画面からリアルタイムに検索できる。
+テキストのないグラフィカルボタン（×閉じる・☰メニュー・←戻る）も自動認識。
+発見した画面は SQLite（または MySQL）に保存され、PHP ベースの Web 管理画面から全文検索できる。
 
 ```
-iPhone / Android (実機 or Simulator)
-        ↓  Appium 2.x (XCUITest / UiAutomator2)
+iPhone / Android (実機ミラーリング or Simulator)
+        ↓  UxPlay (画面ミラーリング) — USB 不要
   Python クローラー  crawler/
-    ├── PaddleOCR 3.4.0  — テキスト要素を抽出
-    ├── OpenCV matchTemplate — アイコン・画像ボタンを検出
-    ├── DFS エンジン — 画面遷移を再帰探索
-    └── MySQL — 画面・遷移データを保存
+    ├── PaddleOCR 3.4.0       — テキスト要素を抽出
+    ├── OpenCV matchTemplate  — アイコン・画像ボタンを検出
+    ├── DFS エンジン           — 画面遷移を再帰探索
+    ├── AppHealthMonitor      — アプリクラッシュ自動復帰
+    ├── FrontierTracker       — 未踏分岐点へスマートバックトラック
+    └── SQLite / MySQL        — 画面・遷移データを永続保存
         ↓
   PHP 8.x + Twig  web/
     ├── 全文検索・詳細検索 API
     ├── セッション統計パネル
-    └── 画面接続マップ（A → B）
+    └── プロジェクト網羅率ダッシュボード
 ```
 
 ---
 
-## システムの強み
+## クイックスタート
 
-| 特徴 | 詳細 |
-|------|------|
-| **ハイブリッド検出** | OCR（文字）と OpenCV テンプレートマッチング（画像）を組み合わせ。テキストのないアイコンも見落とさない |
-| **座標依存ゼロ** | タイトル抽出・タップ候補抽出ともに相対比率で算出。任意の解像度・デバイスに対応 |
-| **phash 静止検知** | タップ後の固定待機を廃止。DCT phash ハミング距離でアダプティブに「画面が静止したか」を判定 |
-| **増分探索（1ゲーム1プロジェクト）** | 前回セッションの pHash を SQLite からロードし、既知画面をスキップして新規画面に集中 |
-| **自己修復（Self-Healing）** | Appium `query_app_state` でクラッシュを検知 → `activate_app` で自動復帰。探索を止めない |
-| **スマートバックトラック** | DFS 打ち切り後、フロンティア（未踏分岐点）へのナビゲーションレシピを再生して深部を再探索 |
-| **アンチスタック** | 同一画面スタック時にスワイプ（リスト更新）→ 長押し（コンテキストメニュー）で物理突破 |
-| **バックトラッキング検出** | `_crawl_impl()` の戻り値で「遷移が起きたか」を厳密に判定し、誤った `back()` 呼び出しを防止 |
-| **DB 未接続でも動作** | MySQL 未設定時はサンプルデータにフォールバック。ゼロ設定で Web UI を確認可能 |
-
----
-
-## 増分探索・自己修復機能（Phase 14–15）
-
-### プロジェクト制増分探索
-
-同じ `game_title` の複数クロールセッションは **1 つのプロジェクト** にまとめられ、
-前回発見済みの画面（pHash が近い画面）を `[PHASH_DUP]` でスキップします。
+### 1. 事前準備
 
 ```bash
+# Python 仮想環境
 cd crawler
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
 
-# 1回目: iOS設定アプリを探索（結果が storage/ludus.db に蓄積される）
-IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
-  venv/bin/python main.py "iOS設定" -d 120
-
-# 2回目: 前回既知の画面はスキップ → 新しい経路に集中
-IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
-  venv/bin/python main.py "iOS設定" -d 120
-# → ログに [PHASH_DUP] 前回セッション既知画面 (dist=0): 'ホーム' — スキップ が出現
+# Appium（Node.js v18 LTS 必須）
+nodebrew use v18.20.8
+npm install -g appium
+appium driver install xcuitest    # iOS
+appium driver install uiautomator2  # Android
 ```
 
-### 自己修復（App Health Check）
+### 2. ミラーリングモード（USB 不要・推奨）
 
-クロール中にアプリがクラッシュ / バックグラウンドに落ちた場合、自動的に `activate_app()` で復帰します。
+```bash
+# 1. UxPlay をインストール・起動
+brew install uxplay
+uxplay          # macOS デスクトップに iPhone 映像が表示される
+
+# 2. iPhone の「コントロールセンター」→「画面ミラーリング」→ UxPlay を選択
+
+# 3. Appium サーバーを起動（別ターミナル）
+PATH="$HOME/.nodebrew/current/bin:$PATH" appium --port 4723
+
+# 4. クローラー起動（ワンコマンド）
+cd crawler
+python main.py "MyApp" --mirror --bundle com.example.myapp
+
+# 探索後にブラウザで管理画面を自動表示
+python main.py "MyApp" --mirror --bundle com.example.myapp --open-web
+```
+
+### 3. シミュレータモード
+
+```bash
+# シミュレータを起動
+xcrun simctl boot <UDID>
+PATH="$HOME/.nodebrew/current/bin:$PATH" appium --port 4723 &
+
+# クローラー起動
+cd crawler
+IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
+  python main.py "iOS設定"
+```
+
+### 4. Web 管理画面
+
+```bash
+# PHP ビルトインサーバーを起動
+cd web/public
+php -S localhost:8080
+
+# ブラウザで開く
+open http://localhost:8080
+```
+
+---
+
+## CLI リファレンス
 
 ```
-[HEALTH] アプリ非アクティブ: state=1  bundle='com.apple.Preferences' — 復帰を試みます
+python main.py [APP_NAME] [OPTIONS]
+
+位置引数:
+  APP_NAME              アプリ/ゲーム名（省略可）
+
+オプション:
+  --mirror              実機ミラーリングモード (UxPlay / scrcpy)
+  --bundle BUNDLE_ID    ターゲット Bundle ID（IOS_BUNDLE_ID より優先）
+  --title GAME_TITLE    ゲームタイトル（後方互換用）
+  --duration, -d SEC    最大探索時間 秒（デフォルト: 300）
+  --depth N             DFS 最大深さ（デフォルト: 3）
+  --open-web            探索完了後にブラウザで管理画面を自動表示
+```
+
+**使用例**
+
+```bash
+# 5分間・深さ3で探索
+python main.py "iOS設定" --bundle com.apple.Preferences -d 300 --depth 3
+
+# 10分間・深さ4で探索 → ブラウザ自動表示
+python main.py "MyGame" --mirror --bundle com.example.mygame -d 600 --depth 4 --open-web
+```
+
+---
+
+## プロジェクト制増分探索
+
+LudusCartographer は同じ `APP_NAME`（ゲームタイトル）を **1 つのプロジェクト** として管理します。
+何度もクローラーを起動するたびに「地図が育っていく」仕組みです。
+
+```
+1回目の実行:
+  python main.py "MyGame" --mirror --bundle com.example.mygame
+  → 30 画面発見 → SQLite に保存
+
+2回目の実行（翌日）:
+  python main.py "MyGame" --mirror --bundle com.example.mygame
+  → [PHASH_DUP] 既知30画面をスキップ → 新規5画面だけ探索
+```
+
+### セッションサマリー
+
+探索終了時に以下のサマリーが表示されます:
+
+```
+==============================================================
+  LudusCartographer — 探索完了
+==============================================================
+  プロジェクト         : MyGame
+  今回の新規発見画面   : 5 画面
+  累計ユニーク画面     : 35 画面
+  既知画面スキップ     : 30 画面  (86% 既知)
+  タップ操作数         : 48 回
+  経過時間             : 142.3 秒
+==============================================================
+```
+
+### 遷移マップの自動生成
+
+クロール終了後、ASCII ツリーで画面遷移マップを表示します:
+
+```
+📱 一般 [depth=0] (9 items)
+├── 情報 [depth=1] (11 items)
+├── アプリ [depth=1] (1 item)
+└── ❓ unknown [depth=1] (0 items)  ← 要調査
+```
+
+---
+
+## 自己修復機能（Self-Healing）
+
+### アプリヘルスチェック
+
+Appium の `query_app_state()` でアプリの状態を監視し、バックグラウンド落ちやクラッシュを検知すると
+自動的に `activate_app()` でアプリを前面に復帰させます。
+
+```
+[HEALTH] アプリ非アクティブ: state=3  bundle='com.example.mygame' — 復帰を試みます
 [HEALTH] ✅ アプリ復帰成功 (試行 1/2)
 ```
 
 ### スマートバックトラック
 
-DFS が `max_depth` で打ち切られた後も、時間が残っていれば **フロンティア画面（未踏の分岐点）** へ自動再ナビゲートします。
+DFS が `max_depth` で打ち切られた分岐点（フロンティア）を記録し、
+主探索後に `activate_app` → タップ手順を再生して深部を追加探索します。
 
 ```
 [BACKTRACK] フロンティア発見: 3 画面 — 最大深さ 3 を延長して再探索
-[BACKTRACK] → '情報' depth=2  path=2 ステップ
+[BACKTRACK] → 'アプリ'  depth=2  path=2 ステップ
 [BACKTRACK] ✅ フロンティアへのナビゲーション完了
-[CRAWL] ✅ 新規画面 #5  深さ=3  title='法的情報'  items=2件  指紋=a1b2c3d4…
 ```
 
-### アンチスタック（Anti-Stuck Gestures）
+### アンチスタック
 
-同一画面で `anti_stuck_threshold`（デフォルト: 2）回以上タップ候補が見つからない場合：
-
-1. **スワイプ**（画面下→上） — リストのスクロールで隠れた要素を出現させる
-2. **長押し**（threshold×2 回以上時） — コンテキストメニューや隠しメニューを起動
+同一画面で dead-end が連続した場合、スワイプや長押しで物理的に突破します:
 
 ```
-[STUCK] スタックカウント: 2  fp=8f1a6277
-[UNSTUCK] スワイプ: (196,554)→(196,212)
-[UNSTUCK] ✅ ジェスチャー後タップ候補出現: 3 件
-```
-
-### タップ座標オーバーレイ（デバッグ用）
-
-`DEBUG_DRAW_OPS=1` を設定すると、各タップ前の `before.png` に
-プロフェッショナル品質のターゲットマーカーが描画されます：
-
-```bash
-DEBUG_DRAW_OPS=1 IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
-  venv/bin/python main.py "iOS設定" -d 60
-# → evidence/{session_id}/*.png に赤リング+クロスヘアでタップ座標が記録される
-```
-
-### Web API — プロジェクト網羅率
-
-```bash
-# ゲーム別のユニーク画面数・最大深さ・セッション数
-curl "http://localhost:8080/api/search.php?action=get_coverage&game=iOS設定"
-# → {"unique_screens":12,"max_depth_reached":3,"total_sessions":5}
-
-# プロジェクト全体のデデュープ済み画面一覧（全セッション横断）
-curl "http://localhost:8080/api/search.php?action=get_project_screens&game=iOS設定"
+[UNSTUCK] スワイプ: (196,554)→(196,213)   ← リスト更新
+[UNSTUCK] 長押し: (217,412)                ← コンテキストメニュー
+[UNSTUCK] 打ち切り — ジェスチャーが 6 回効かず  ← 諦め
 ```
 
 ---
 
-## ディレクトリ構成
+## デバッグ機能
 
+### タップ座標オーバーレイ（DEBUG_DRAW_OPS）
+
+`DEBUG_DRAW_OPS=1` を設定すると、各アクションの `before.png` にタップ座標マーカーが描画されます。
+「なぜここをタップしたか」を後から追跡できます。
+
+```bash
+DEBUG_DRAW_OPS=1 python main.py "iOS設定" --bundle com.apple.Preferences
 ```
-LudusCartographer/
-├── crawler/
-│   ├── lc/                        # メインパッケージ
-│   │   ├── crawler.py             # DFS クローラー本体
-│   │   ├── driver.py              # AppiumDriver ラッパー + wait_until_stable()
-│   │   ├── ocr.py                 # PaddleOCR ラッパー
-│   │   ├── capabilities.py        # iOS/Android Capabilities ビルダー
-│   │   └── utils.py               # UDID 自動検出・phash 計算
-│   ├── tools/
-│   │   └── visualize_map.py       # 遷移マップ可視化 (Mermaid/ASCII/Gap分析)
-│   ├── assets/templates/          # テンプレートマッチング用アイコン PNG
-│   ├── evidence/                  # クロール証拠ファイル (before/after/OCR結果)
-│   ├── tests/                     # Pytest テストスイート (Appium 不要テストあり)
-│   ├── main.py                    # クローラー エントリポイント
-│   └── requirements.txt
-├── web/
-│   ├── public/
-│   │   ├── index.php              # 検索 UI メイン
-│   │   ├── api/search.php         # JSON API (search / detail / get_sessions)
-│   │   └── img.php                # 証拠画像セキュアプロキシ
-│   ├── src/ScreenRepository.php   # MySQL クエリ + FULLTEXT 検索
-│   └── templates/search.html.twig
-├── tests/e2e/search.spec.ts       # Playwright E2E テスト (35/35)
-├── docs/
-│   ├── adr/001-universal-ui-detection.md   # アーキテクチャ決定記録 (Phase 1-8)
-│   └── schema/database.sql        # MySQL スキーマ
-└── CLAUDE.md                      # 開発運用憲法
+
+マーカーの仕様:
+- 赤リング（半径 24px）＋ ドロップシャドウ
+- 中心ドット（白インナー ＋ 赤コア）
+- クロスヘア（精密位置表示）
+- アクション名テキスト（黒アウトライン ＋ 白本体）
+
+### ログファイル
+
+実行ログは `crawler/logs/crawler.log` に自動保存されます。
+
+---
+
+## トラブルシューティング
+
+### UxPlay のウィンドウが見つからない
+
+```bash
+# ウィンドウタイトルを明示指定
+MIRROR_WINDOW_TITLE="UxPlay" python main.py "MyGame" --mirror --bundle ...
+
+# ウィンドウが小さすぎる（OCR 精度低下）→ ウィンドウを大きくする
+# 推奨: 幅 300px × 高さ 600px 以上
+```
+
+### Appium セッションが切れる
+
+```bash
+# Appium サーバーのリセット
+pkill -f "appium" && appium --port 4723 &
+
+# セルフヒーリング閾値を増やす（デフォルト: 2回）
+# CrawlerConfig(max_heal_retries=5) に変更
+```
+
+### iOS Simulator の UDID を確認する
+
+```bash
+xcrun simctl list devices | grep -E "Booted|iPhone"
+```
+
+### OCR 精度が低い
+
+```bash
+# PaddleOCR モデルの初回ダウンロード確認
+PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
+  python -c "from lc.ocr import run_ocr; print('OK')"
 ```
 
 ---
 
-## セットアップ
-
-### 1. 前提ツール（macOS）
-
-```bash
-# Node.js v18 LTS (Appium 2.x は v21 に非対応)
-brew install nodebrew
-nodebrew install v18.20.8 && nodebrew use v18.20.8
-echo 'export PATH="$HOME/.nodebrew/current/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
-
-# Appium 2.x + iOS/Android ドライバー
-npm install -g appium
-appium driver install xcuitest     # iOS
-appium driver install uiautomator2 # Android
-
-# iOS 実機ツール（iOS Simulator のみなら不要）
-brew install libimobiledevice ideviceinstaller ios-deploy
-```
-
-### 2. Python 環境
-
-```bash
-cd crawler
-python3 -m venv venv
-venv/bin/pip install -r requirements.txt
-```
-
-> **初回の PaddleOCR モデルダウンロードに数分かかります。**
-> ダウンロード後は `~/.paddlex/` にキャッシュされます。
-
-### 3. 環境変数
-
-```bash
-cp crawler/config/.env.example crawler/config/.env
-# .env を編集: IOS_BUNDLE_ID を設定
-```
-
-主要な環境変数:
-
-| 変数 | 必須 | 説明 |
-|------|------|------|
-| `IOS_BUNDLE_ID` | ✅ | ターゲットアプリの Bundle ID (例: `com.apple.Preferences`) |
-| `DEVICE_MODE` | — | `"SIMULATOR"` (デフォルト) または `"MIRROR"` |
-| `IOS_USE_SIMULATOR` | — | `"1"` で iOS Simulator モード |
-| `IOS_SIMULATOR_UDID` | — | シミュレータ UDID (省略時: 自動選択) |
-| `IOS_UDID` | — | 実機 UDID (省略時: 自動検出) |
-| `CRAWL_DURATION_SEC` | — | クロール時間上限 (デフォルト: `180`) |
-| `CRAWL_MAX_DEPTH` | — | DFS 最大深さ (デフォルト: `3`) |
-| `DB_HOST` | — | MySQL ホスト (省略時: DB 保存スキップ) |
-| `MIRROR_WINDOW_TITLE` | — | UxPlay ウィンドウ検索タイトル (デフォルト: 自動検索) |
-| `MIRROR_DEVICE_WIDTH` | — | デバイス論理幅 pt (デフォルト: `393` — iPhone 16) |
-| `MIRROR_DEVICE_HEIGHT` | — | デバイス論理高さ pt (デフォルト: `852` — iPhone 16) |
-
-### 4. MySQL スキーマ（任意）
-
-```bash
-mysql -u root -p < docs/schema/database.sql
-```
-
----
-
-## 実行方法
-
-### Appium サーバーの起動
-
-```bash
-# 別ターミナルで起動（クロール中は常駐させる）
-PATH="$HOME/.nodebrew/current/bin:$PATH" appium --port 4723
-```
-
-### クローラーの実行
-
-```bash
-cd crawler
-
-# ── iOS Simulator — アプリ名を指定 ───────────────────────────────
-IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
-  venv/bin/python main.py "iOS設定"
-
-# ── iOS Simulator — アプリ名省略 → TestRun_YYYYMMDD_HHMM で自動命名
-IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
-  venv/bin/python main.py
-
-# ── iOS Simulator — 探索パラメータ指定 (-d は --duration の短縮形)
-IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
-  venv/bin/python main.py "iOS設定" -d 600 --depth 4
-
-# ── 実機ミラーリング (UxPlay) — アプリ名あり ─────────────────────
-# UxPlay と Appium を起動してから実行する（--mirror がセットアップガイドを表示）
-venv/bin/python main.py --mirror \
-  --bundle com.example.mygame \
-  "MyGame" -d 300 --depth 4
-
-# ── 実機ミラーリング — アプリ名省略 → MirrorRun_YYYYMMDD_HHMM で自動命名
-venv/bin/python main.py --mirror --bundle com.example.mygame
-
-# ── 実機ミラーリング（環境変数でも指定可能） ────────────────────
-DEVICE_MODE=MIRROR IOS_BUNDLE_ID=com.example.mygame \
-  venv/bin/python main.py "MyGame"
-
-# ── iOS 実機 Appium（UDID 自動検出） ─────────────────────────────
-IOS_BUNDLE_ID=com.example.mygame venv/bin/python main.py "MyGame"
-
-# ── Android（ADB 経由でデバイス自動検出） ────────────────────────
-ANDROID_BUNDLE_ID=com.example.mygame venv/bin/python main.py
-```
-
-#### ゲーム名の自動命名ルール
-
-`APP_NAME` 位置引数を省略した場合、以下の優先順位で `game_title` が決まります:
-
-| 優先順位 | 条件 | 命名結果 |
-|---------|------|---------|
-| 1 | `APP_NAME` 位置引数を指定 | 指定値をそのまま使用 |
-| 2 | `--title` オプションを指定 | 指定値をそのまま使用 |
-| 3 | `GAME_TITLE` 環境変数が設定済み | 環境変数の値を使用 |
-| 4 | `IOS_BUNDLE_ID` 環境変数が設定済み | Bundle ID をそのまま使用 |
-| 5 | 何も設定なし・Simulator モード | `TestRun_YYYYMMDD_HHMM` |
-| 6 | 何も設定なし・Mirror モード | `MirrorRun_YYYYMMDD_HHMM` |
-
-#### ミラーリングモード (`--mirror`) の前提条件
-
-| ステップ | 内容 |
-|----------|------|
-| 1. UxPlay 起動 | `brew install uxplay && uxplay` — iPhone の映像を Mac に表示 |
-| 2. 画面ミラーリング | iPhone「コントロールセンター」→「画面ミラーリング」→ UxPlay を選択 |
-| 3. Appium 起動 | `PATH="$HOME/.nodebrew/current/bin:$PATH" appium --port 4723` |
-| 4. ネットワーク | iPhone と Mac を同じ Wi-Fi に接続 (USB 接続も可) |
-
-> **ウィンドウが見つからない場合**: `MIRROR_WINDOW_TITLE=UxPlay` を環境変数に設定してください。
-
-#### CLI 引数一覧
-
-| 引数 | 説明 |
-|------|------|
-| `APP_NAME` | アプリ/ゲーム名（位置引数・省略可）。省略時は自動命名 |
-| `--mirror` | ミラーリングモードで起動 (`DEVICE_MODE=MIRROR` / `IOS_USE_SIMULATOR=0` を自動設定) |
-| `--bundle BUNDLE_ID` | Bundle ID を直接指定 (`IOS_BUNDLE_ID` より優先) |
-| `--title GAME_TITLE` | ゲームタイトルを直接指定（後方互換用。`APP_NAME` 位置引数が優先） |
-| `--duration SEC`, `-d SEC` | クロール最大時間（秒）デフォルト: 300 (5分) |
-| `--depth N` | DFS 最大深さ。デフォルト: 3 |
-
-実行ログの見方:
+## アーキテクチャ
 
 ```
-[CRAWL] ✅ 新規画面 #1  深さ=0  title='一般'  items=10件  指紋=8f1a6277…
-[CRAWL]  → [1/10] タップ: '情報'  pixel=(259,1143)
-[CRAWL]  ← 戻る完了: '情報'
-[CRAWL]  🔄 [NO_NAV] 非遷移タップ: 'ああ' — back() スキップ   ← 遷移なしを正しく検出
-[ICON]  検出: 'close_btn'  score=0.923  pos=(1050,80)          ← テンプレートマッチング
+crawler/
+├── main.py                    — エントリポイント (argparse + --open-web)
+├── driver_factory.py          — SIMULATOR / MIRROR モード切り替え
+├── driver_adapter.py          — BaseDriver / SimulatorDriver / MirroringDriver
+├── lc/
+│   ├── crawler.py             — DFS クローラー (ScreenCrawler)
+│   ├── core.py                — AppHealthMonitor / StuckDetector / FrontierTracker
+│   ├── ocr.py                 — PaddleOCR ラッパー
+│   ├── driver.py              — AppiumDriver (Appium セッション管理)
+│   ├── capabilities.py        — iOS Simulator / 実機 Capabilities 生成
+│   └── utils.py               — UDID 自動検出 / compute_phash / phash_distance
+├── tools/
+│   ├── import_to_sqlite.py    — crawl_summary.json → SQLite 取り込み
+│   ├── visualize_map.py       — Mermaid / ASCII ツリー / gap 分析 CLI
+│   └── window_manager.py      — UxPlay ウィンドウキャプチャ (macOS)
+├── storage/
+│   └── ludus.db               — SQLite データベース (自動生成)
+├── evidence/                  — スクリーンショット・OCR 結果 (自動生成)
+└── logs/
+    └── crawler.log            — 実行ログ (自動生成)
+
+web/
+├── src/
+│   ├── EvidenceRepository.php — SQLite クエリ (ScreenRepository 互換 API)
+│   ├── ScreenRepository.php   — MySQL クエリ + サンプルフォールバック
+│   └── Database.php           — MySQL / SQLite 接続
+├── templates/
+│   ├── layout.html.twig       — 基底レイアウト (ゲームセレクター)
+│   └── search.html.twig       — 検索 UI・セッション統計・モーダル
+└── public/
+    ├── index.php              — エントリポイント
+    ├── api/search.php         — JSON API (search / detail / get_sessions / get_coverage)
+    └── img.php                — 証拠画像プロキシ (パストラバーサル防止)
 ```
 
-### Web 管理画面へのアクセス
-
-```bash
-cd web
-php -S localhost:8080 -t public/
-```
-
-ブラウザで `http://localhost:8080` を開く。
-
-| 機能 | URL |
-|------|-----|
-| 画面検索 | `http://localhost:8080/` |
-| 詳細検索 API | `http://localhost:8080/api/search.php?action=search&keyword=ショップ` |
-| セッション一覧 API | `http://localhost:8080/api/search.php?action=get_sessions` |
-| 画面詳細 API | `http://localhost:8080/api/search.php?action=detail&id=1` |
-
-> **DB 未接続時**: サンプルデータが表示されます。MySQL なしでもすべての機能を確認できます。
-
----
-
-## 遷移マップの可視化
-
-```bash
-cd crawler
-
-# 最新セッションのマップを全形式で出力
-venv/bin/python tools/visualize_map.py --format all
-
-# Mermaid 形式（Mermaid Live Editor で貼り付け可能）
-venv/bin/python tools/visualize_map.py --format mermaid
-
-# ASCII ツリー
-venv/bin/python tools/visualize_map.py --format tree
-
-# 要調査画面のレポート (unknown / タップ候補少 など)
-venv/bin/python tools/visualize_map.py --format gaps
-```
-
-Mermaid 出力例:
-
-```mermaid
-graph TD
-    A["一般 (d=0) | 10items"] --> B["情報 (d=1) | 8items"]
-    A --> C["言語と地域 (d=1) | 20items"]
-    A --> D["❓unknown (d=1) | 3items"]
-    style D fill:#ffcccc
-```
-
----
-
-## アイコンテンプレートの追加
-
-`crawler/assets/templates/` に PNG を置くと、クローラー起動時に自動読み込みされ
-テンプレートマッチングによるアイコン検出に使用される。
+### 証拠記録フォーマット
 
 ```
-ファイル名（拡張子なし）= 検出結果の text フィールド (icon: プレフィックス付き)
-
-例:
-  close_btn.png  →  text: "icon:close_btn"
-  menu_btn.png   →  text: "icon:menu_btn"
+evidence/<session_id>/<timestamp>_<action>/
+├── before.png          — アクション前スクリーンショット
+├── after.png           — アクション後スクリーンショット
+└── ocr_result.json     — PaddleOCR 結果（テキスト・座標・信頼スコア）
 ```
 
-信頼度閾値（デフォルト `0.80`）は `CrawlerConfig(icon_threshold=0.80)` で調整可能。
+```json
+{
+  "timestamp": "2026-03-04T12:00:00",
+  "action": "tap",
+  "target": "一般",
+  "ocr_boxes": [
+    {"text": "一般", "confidence": 0.98, "box": [[40,350],[170,350],[170,390],[40,390]]}
+  ]
+}
+```
 
 ---
 
 ## テスト
 
 ```bash
-# Appium・実機不要のユニットテスト
 cd crawler
+
+# 全テスト（Appium 不要）
 PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
-  venv/bin/python -m pytest tests/ -v --ignore=tests/test_crawler.py
+  venv/bin/python -m pytest tests/ -v
 
-# 統合テスト（Appium + iOS Simulator 必要）
-IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
-  CRAWL_DURATION_SEC=60 \
-  venv/bin/python -m pytest tests/test_crawler.py -v -s
+# Phase 別テスト
+venv/bin/python -m pytest tests/test_phase15.py -v  # 自己修復
+venv/bin/python -m pytest tests/test_phase14.py -v  # 増分探索
+venv/bin/python -m pytest tests/test_visualize_map.py -v  # 可視化
 
-# Playwright E2E（Web UI）
+# Playwright E2E (Web UI)
+cd ..
 npx playwright test --reporter=line
 ```
 
 ### テスト状況
 
-| テストファイル | 件数 | 条件 |
-|---------------|------|------|
-| `test_capabilities.py` | 34 passed | Appium 不要 |
-| `test_utils.py` | 20 passed | Appium 不要 |
-| `test_ocr.py` | 10 passed | Appium 不要（実画像を使用） |
-| `test_icon_detection.py` | 13 passed | Appium 不要（合成画像） |
-| `test_visualize_map.py` | 10 passed | Appium 不要 |
-| `test_ai_analyzer.py` | 27 passed | Appium 不要（モック） |
-| `test_db_conn.py` | 8 passed, 3 skipped | MySQL 起動時のみ |
-| `test_crawler.py` | 13 passed | Appium + iOS Simulator 必要 |
-| Playwright E2E | 35 passed | PHP サーバー自動起動 |
+| スイート | 件数 | 状態 |
+|---------|------|------|
+| test_phase15.py | 55 | ✅ |
+| test_phase14.py | 25 | ✅ |
+| test_visualize_map.py | 10 | ✅ |
+| test_import_to_sqlite.py | 15 | ✅ |
+| test_icon_detection.py | 13 | ✅ |
+| test_ocr.py | 10 | ✅ |
+| その他 | 200+ | ✅ |
+| **合計 Pytest** | **328 passed** | ✅ |
+| **Playwright E2E** | **42/42** | ✅ |
 
 ---
 
-## 環境情報
+## 環境変数リファレンス
 
-| ツール | バージョン | 備考 |
-|--------|-----------|------|
-| Python | 3.9.6 | `crawler/venv/` |
-| PHP | 8.2.x | Web UI |
-| Node.js | **18.x LTS** | Appium 2.x に必要。v21 は非対応 |
-| Appium | 2.19.0 | |
-| xcuitest driver | 8.4.3 | iOS（macOS 専用） |
-| uiautomator2 driver | 3.10.0 | Android |
-| PaddleOCR | 3.4.0 | `predict()` API を使用 |
-| OpenCV | 4.10.0 (contrib) | テンプレートマッチング |
-| Playwright | 1.41+ | E2E テスト（Chromium） |
-
----
-
-## アーキテクチャ設計記録 (ADR)
-
-`docs/adr/001-universal-ui-detection.md` に全 Phase の設計決定を記録しています。
-
-| Phase | 内容 |
-|-------|------|
-| Step 1-2 | タイトル抽出・タップ候補抽出の座標依存排除 |
-| Step 3 | phash による Settling Wait（アダプティブ静止検知） |
-| Step 4 | スタック時エビデンス自動保存 |
-| Step 5 | 数字除去 MD5 指紋 + `{title}@{fingerprint}` キー方式 |
-| Phase 6 | Web-Crawl Integration（セッション統計・接続マップ） |
-| Phase 7 | ハイブリッド検出（OCR + Template Matching + NMS） |
-| Phase 8 | バックトラッキング検出（`_crawl_impl` 戻り値による遷移判定） |
+| 変数 | デフォルト | 説明 |
+|------|-----------|------|
+| `IOS_BUNDLE_ID` | *(必須)* | ターゲットアプリの Bundle ID |
+| `GAME_TITLE` | *(自動命名)* | ゲームタイトル |
+| `DEVICE_MODE` | `SIMULATOR` | `SIMULATOR` または `MIRROR` |
+| `IOS_USE_SIMULATOR` | `0` | `1` でシミュレータモード |
+| `IOS_SIMULATOR_UDID` | *(自動選択)* | シミュレータ UDID |
+| `CRAWL_DURATION_SEC` | `300` | 最大探索時間（秒） |
+| `CRAWL_MAX_DEPTH` | `3` | DFS 最大深さ |
+| `MIRROR_WINDOW_TITLE` | *(自動検索)* | UxPlay ウィンドウタイトル（部分一致） |
+| `MIRROR_DEVICE_WIDTH` | `393` | デバイス論理幅 pt（iPhone 16） |
+| `MIRROR_DEVICE_HEIGHT` | `852` | デバイス論理高さ pt（iPhone 16） |
+| `DEBUG_DRAW_OPS` | *(未設定)* | `1` でタップ座標マーカー描画 |
+| `DB_HOST` | *(未設定)* | MySQL ホスト（未設定時は SQLite のみ） |
+| `APPIUM_HOST` | `127.0.0.1` | Appium ホスト |
+| `APPIUM_PORT` | `4723` | Appium ポート |
 
 ---
 
-## ライセンス
+## GitHub
 
-MIT License — Copyright (c) 2026 Isao Shinohara
+https://github.com/Isao-Shinohara/LudusCartographer
