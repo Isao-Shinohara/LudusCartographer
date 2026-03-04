@@ -42,7 +42,9 @@ appium driver install xcuitest    # iOS
 appium driver install uiautomator2  # Android
 ```
 
-### 2. ミラーリングモード（USB 不要・推奨）
+### 2. ミラーリングモード（2 通りの接続方法）
+
+#### 方法 A: UxPlay（無線・Wi-Fi）
 
 ```bash
 # 1. UxPlay をインストール・起動
@@ -54,10 +56,32 @@ uxplay          # macOS デスクトップに iPhone 映像が表示される
 # 3. Appium サーバーを起動（別ターミナル）
 PATH="$HOME/.nodebrew/current/bin:$PATH" appium --port 4723
 
-# 4. クローラー起動（ワンコマンド）
+# 4. クローラー起動
 cd crawler
 python main.py "MyApp" --mirror --bundle com.example.myapp
+```
 
+#### 方法 B: QuickTime Player（有線 USB）
+
+> **メリット:** Wi-Fi 環境不要 / 低遅延・安定した映像 / Xcode 不要
+
+```bash
+# 1. iPhone を USB で Mac に接続
+# 2. QuickTime Player を起動 → メニュー「ファイル」→「新規ムービー収録」
+# 3. 録画ボタン横の ▼ をクリック → カメラを「iPhone」に設定
+#    → iPhone の画面が Mac に映し出される（録画不要）
+
+# 4. Appium サーバーを起動（別ターミナル）
+PATH="$HOME/.nodebrew/current/bin:$PATH" appium --port 4723
+
+# 5. クローラー起動（UxPlay と同じコマンド — ウィンドウを自動検出）
+cd crawler
+python main.py "MyApp" --mirror --bundle com.example.myapp
+```
+
+> ウィンドウは UxPlay → QuickTime Player → iPhone の優先順位で自動検出されます。
+
+```bash
 # 探索後にブラウザで管理画面を自動表示
 python main.py "MyApp" --mirror --bundle com.example.myapp --open-web
 ```
@@ -222,15 +246,23 @@ DEBUG_DRAW_OPS=1 python main.py "iOS設定" --bundle com.apple.Preferences
 
 ## トラブルシューティング
 
-### UxPlay のウィンドウが見つからない
+### ミラーリングウィンドウが見つからない
+
+クローラーは UxPlay → QuickTime Player → iPhone → scrcpy の順に自動検出します。
+それでも見つからない場合:
 
 ```bash
-# ウィンドウタイトルを明示指定
+# ウィンドウタイトルを明示指定（部分一致）
 MIRROR_WINDOW_TITLE="UxPlay" python main.py "MyGame" --mirror --bundle ...
+MIRROR_WINDOW_TITLE="QuickTime" python main.py "MyGame" --mirror --bundle ...
 
 # ウィンドウが小さすぎる（OCR 精度低下）→ ウィンドウを大きくする
 # 推奨: 幅 300px × 高さ 600px 以上
 ```
+
+**QuickTime Player 使用時の注意:**
+- 「新規ムービー収録」で開いたウィンドウを最小化しないでください
+- 収録を開始する必要はありません（映像が映っていれば OK）
 
 ### Appium セッションが切れる
 

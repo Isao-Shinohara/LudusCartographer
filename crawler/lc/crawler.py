@@ -112,8 +112,13 @@ class CrawlerConfig:
     max_duration_sec: float = 180.0  # 最大実行時間（秒）
     wait_after_tap:   float = 3.0    # タップ後の画面描画待機（秒）
     wait_after_back:  float = 1.5    # back() 後の待機（秒）
-    min_confidence:   float = 0.6    # OCR 最低信頼スコア
-    icon_threshold:   float = 0.80   # テンプレートマッチング検出閾値 (TM_CCOEFF_NORMED)
+    # --- OCR / 検出しきい値 ---
+    # min_confidence: 0.5 はゲーム UI（テクスチャ混在・斜体フォント）向け。
+    #   システム UI の精度を優先する場合は 0.6 に戻すこと。
+    min_confidence:   float = 0.5    # OCR 最低信頼スコア (ゲーム UI 対応で 0.6→0.5)
+    # icon_threshold: 0.75 はゲームアイコン（アート調ボタン）向け。
+    #   誤検出が増える場合は 0.80 に戻すこと。
+    icon_threshold:   float = 0.75   # テンプレートマッチング検出閾値 (0.80→0.75)
     # ゲームタイトル（SQLite保存時に使用）
     game_title:       str   = "Unknown Game"
     # 動作モード（crawl_summary.json に記録、管理画面で実機/シミュ判別に使用）
@@ -122,7 +127,9 @@ class CrawlerConfig:
     sqlite_db_path:   Optional[str] = None
     # 自己修復パラメーター
     max_heal_retries:     int  = 2      # アプリ復帰最大試行回数
-    anti_stuck_threshold: int  = 2      # スタック検知閾値（同一画面の dead-end 回数）
+    # anti_stuck_threshold: ゲームのローディング画面を考慮して 3 を推奨。
+    #   同一画面で N 回 dead-end になった後にスワイプ/長押しを試みる。
+    anti_stuck_threshold: int  = 3      # スタック検知閾値 (ゲームロード考慮で 2→3)
     smart_backtrack:      bool = True   # フロンティアへのスマートバックトラック有効
     # DB 設定（省略時はメモリのみ）
     db_game_id:       int   = 1

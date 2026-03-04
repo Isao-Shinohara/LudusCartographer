@@ -269,6 +269,26 @@ def _parse_args() -> argparse.Namespace:
         help="DFS 最大深さ (デフォルト: 3)",
     )
     parser.add_argument(
+        "--tap-wait",
+        type=float,
+        metavar="SEC",
+        default=None,
+        help=(
+            "タップ後の描画待機時間 秒 (デフォルト: 4.0 [MIRROR] / 3.0 [SIMULATOR])。"
+            " ゲームのローディング画面が長い場合は 5.0〜6.0 を推奨。"
+        ),
+    )
+    parser.add_argument(
+        "--stuck-threshold",
+        type=int,
+        metavar="N",
+        default=None,
+        help=(
+            "同一画面で N 回 dead-end になった後にスワイプを試みる閾値"
+            " (デフォルト: 3 [MIRROR] / 3 [SIMULATOR])。"
+        ),
+    )
+    parser.add_argument(
         "--open-web",
         action="store_true",
         help=(
@@ -403,16 +423,28 @@ def main() -> None:
         except Exception:
             pass
 
+    # ミラーモード向けデフォルト: ゲームのローディング時間を考慮して待機を長めに設定
+    _default_tap_wait    = 4.0 if is_mirror else 3.0
+    _default_stuck_thr   = 3   # ゲームロード考慮で統一デフォルト
+    tap_wait         = args.tap_wait        if args.tap_wait        is not None else _default_tap_wait
+    stuck_threshold  = args.stuck_threshold if args.stuck_threshold is not None else _default_stuck_thr
+
     crawler_cfg = CrawlerConfig(
-        game_title       = game_title,
-        device_mode      = device_mode,
-        max_duration_sec = duration,
-        max_depth        = max_depth,
-        sqlite_db_path   = str(_sqlite_db) if _sqlite_db.exists() else None,
-        db_host          = db_host,
-        db_name          = os.environ.get("DB_NAME",     "ludus_cartographer"),
-        db_user          = os.environ.get("DB_USER",     "root"),
-        db_password      = os.environ.get("DB_PASSWORD", ""),
+        game_title           = game_title,
+        device_mode          = device_mode,
+        max_duration_sec     = duration,
+        max_depth            = max_depth,
+        wait_after_tap       = tap_wait,
+        anti_stuck_threshold = stuck_threshold,
+        sqlite_db_path       = str(_sqlite_db) if _sqlite_db.exists() else None,
+        db_host              = db_host,
+        db_name              = os.environ.get("DB_NAME",     "ludus_cartographer"),
+        db_user              = os.environ.get("DB_USER",     "root"),
+        db_password          = os.environ.get("DB_PASSWORD", ""),
+    )
+    logger.info(
+        "  タップ待機: %.1f 秒  スタック閾値: %d 回",
+        tap_wait, stuck_threshold,
     )
 
     crawler: "ScreenCrawler | None" = None  # WindowNotFoundError 時の参照用

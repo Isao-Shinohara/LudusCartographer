@@ -153,7 +153,7 @@ class TestWindowNotFoundError:
     def test_get_screenshot_raises_on_initial_not_found(self):
         """初回 get_screenshot() でウィンドウが見つからない → WindowNotFoundError。"""
         driver, _ = self._make_driver()
-        with patch("tools.window_manager.find_mirroring_window", return_value=None):
+        with patch("tools.window_manager.find_mirroring_window_ex", return_value=None):
             with patch("tools.window_manager.bring_window_to_front"):
                 from driver_adapter import BaseDriver
                 with pytest.raises(BaseDriver.WindowNotFoundError, match="見つかりません"):
@@ -164,7 +164,7 @@ class TestWindowNotFoundError:
         driver, _ = self._make_driver()
         rect = (0, 0, 393, 852)
 
-        with patch("tools.window_manager.find_mirroring_window", return_value=rect):
+        with patch("tools.window_manager.find_mirroring_window_ex", return_value=(rect, "UxPlay")):
             with patch("tools.window_manager.bring_window_to_front"):
                 with patch(
                     "tools.window_manager.capture_region",
@@ -172,8 +172,8 @@ class TestWindowNotFoundError:
                 ):
                     # 2回目の find も None を返すよう再設定
                     with patch(
-                        "tools.window_manager.find_mirroring_window",
-                        side_effect=[rect, None],  # 1回目: 初期化, 2回目: 再検索
+                        "tools.window_manager.find_mirroring_window_ex",
+                        side_effect=[(rect, "UxPlay"), None],  # 1回目: 初期化, 2回目: 再検索
                     ):
                         from driver_adapter import BaseDriver
                         with pytest.raises(BaseDriver.WindowNotFoundError):
@@ -219,7 +219,7 @@ class TestWindowNotFoundError:
         driver = MirroringDriver(mock_appium)
         driver._window_rect = (0, 0, 393, 852)
 
-        with patch("tools.window_manager.find_mirroring_window", return_value=None):
+        with patch("tools.window_manager.find_mirroring_window_ex", return_value=None):
             with pytest.raises(BaseDriver.WindowNotFoundError):
                 driver._verify_window_exists()
 
@@ -234,7 +234,7 @@ class TestWindowNotFoundError:
         driver._window_rect = (0, 0, 393, 852)
         new_rect = (100, 200, 393, 852)
 
-        with patch("tools.window_manager.find_mirroring_window", return_value=new_rect):
+        with patch("tools.window_manager.find_mirroring_window_ex", return_value=(new_rect, "UxPlay")):
             driver._verify_window_exists()
 
         assert driver._window_rect == new_rect
@@ -263,7 +263,7 @@ class TestResolutionCheck:
         small_img = np.zeros((200, 100, 3), dtype=np.uint8)
         rect = (0, 0, 100, 200)
 
-        with patch("tools.window_manager.find_mirroring_window", return_value=rect):
+        with patch("tools.window_manager.find_mirroring_window_ex", return_value=(rect, "UxPlay")):
             with patch("tools.window_manager.bring_window_to_front"):
                 with patch("tools.window_manager.capture_region", return_value=small_img):
                     result = driver.get_screenshot()
@@ -278,7 +278,7 @@ class TestResolutionCheck:
         small_img = np.zeros((200, 100, 3), dtype=np.uint8)
         rect = (0, 0, 100, 200)
 
-        with patch("tools.window_manager.find_mirroring_window", return_value=rect):
+        with patch("tools.window_manager.find_mirroring_window_ex", return_value=(rect, "UxPlay")):
             with patch("tools.window_manager.bring_window_to_front"):
                 with patch("tools.window_manager.capture_region", return_value=small_img):
                     with caplog.at_level(logging.WARNING):
@@ -293,7 +293,7 @@ class TestResolutionCheck:
         normal_img = np.zeros((852, 393, 3), dtype=np.uint8)
         rect = (0, 0, 393, 852)
 
-        with patch("tools.window_manager.find_mirroring_window", return_value=rect):
+        with patch("tools.window_manager.find_mirroring_window_ex", return_value=(rect, "UxPlay")):
             with patch("tools.window_manager.bring_window_to_front"):
                 with patch("tools.window_manager.capture_region", return_value=normal_img):
                     result = driver.get_screenshot()
@@ -306,7 +306,7 @@ class TestResolutionCheck:
         normal_img = np.zeros((852, 393, 3), dtype=np.uint8)
         rect = (0, 0, 393, 852)
 
-        with patch("tools.window_manager.find_mirroring_window", return_value=rect):
+        with patch("tools.window_manager.find_mirroring_window_ex", return_value=(rect, "UxPlay")):
             with patch("tools.window_manager.bring_window_to_front") as mock_btf:
                 with patch("tools.window_manager.capture_region", return_value=normal_img):
                     driver.get_screenshot()

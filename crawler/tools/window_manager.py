@@ -48,6 +48,31 @@ def find_mirroring_window(
         NotImplementedError: macOS 以外で呼び出された場合
         ImportError: pyobjc-framework-Quartz がインストールされていない場合
     """
+    result = find_mirroring_window_ex(title_candidates)
+    return result[0] if result is not None else None
+
+
+def find_mirroring_window_ex(
+    title_candidates: list[str],
+) -> Optional[tuple[tuple[int, int, int, int], str]]:
+    """
+    find_mirroring_window() の拡張版。
+
+    ウィンドウ領域とオーナーアプリ名を同時に返す。
+    ソース判別（UxPlay / QuickTime Player 等）が必要なトリミング処理で使用する。
+
+    Args:
+        title_candidates: 検索するタイトルリスト (例: ["UxPlay", "QuickTime Player"])
+                          リスト順に検索し、最初に見つかったウィンドウを返す。
+
+    Returns:
+        ((x, y, width, height), owner_name) のタプル、または見つからない場合は None。
+        owner_name は "UxPlay" / "QuickTime Player" 等の macOS アプリ名。
+
+    Raises:
+        NotImplementedError: macOS 以外で呼び出された場合
+        ImportError: pyobjc-framework-Quartz がインストールされていない場合
+    """
     _require_darwin()
     Quartz = _import_quartz()
 
@@ -65,7 +90,11 @@ def find_mirroring_window(
                 width  = int(bounds.get("Width",  0))
                 height = int(bounds.get("Height", 0))
                 if width > 0 and height > 0:
-                    return (x, y, width, height)
+                    logger.debug(
+                        "[WM] ウィンドウ発見: owner=%r  title=%r  rect=(%d,%d,%d,%d)",
+                        owner, title, x, y, width, height,
+                    )
+                    return ((x, y, width, height), owner)
 
     return None
 

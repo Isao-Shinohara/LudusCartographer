@@ -205,7 +205,7 @@ class TestMirroringDriver:
     def test_get_screenshot_raises_when_no_window(self):
         """ウィンドウが見つからない場合 RuntimeError を送出する。"""
         driver, _ = self._make()
-        with patch("tools.window_manager.find_mirroring_window", return_value=None):
+        with patch("tools.window_manager.find_mirroring_window_ex", return_value=None):
             with pytest.raises(RuntimeError, match="ミラーリングウィンドウが見つかりません"):
                 driver.get_screenshot()
 
@@ -215,7 +215,7 @@ class TestMirroringDriver:
         fake_img = np.zeros((852, 393, 3), dtype=np.uint8)
         rect = (10, 20, 393, 852)
 
-        with patch("tools.window_manager.find_mirroring_window", return_value=rect):
+        with patch("tools.window_manager.find_mirroring_window_ex", return_value=(rect, "UxPlay")):
             with patch("tools.window_manager.bring_window_to_front"):
                 with patch("tools.window_manager.capture_region", return_value=fake_img):
                     result = driver.get_screenshot()
@@ -230,13 +230,13 @@ class TestMirroringDriver:
         fake_img  = np.zeros((100, 100, 3), dtype=np.uint8)
         rect      = (0, 0, 100, 100)
 
-        with patch("tools.window_manager.find_mirroring_window", return_value=rect) as mock_find:
+        with patch("tools.window_manager.find_mirroring_window_ex", return_value=(rect, "UxPlay")) as mock_find:
             with patch("tools.window_manager.bring_window_to_front"):
                 with patch("tools.window_manager.capture_region", return_value=fake_img):
                     driver.get_screenshot()
                     driver.get_screenshot()
 
-        # find_mirroring_window は初回のみ呼ばれる
+        # find_mirroring_window_ex は初回のみ呼ばれる
         mock_find.assert_called_once()
 
     def test_tap_converts_window_coords_to_device_coords(self):
@@ -270,7 +270,7 @@ class TestMirroringDriver:
         driver, _ = self._make(window_title="MyMirror")
         fake_img = np.zeros((100, 100, 3), dtype=np.uint8)
 
-        with patch("tools.window_manager.find_mirroring_window", return_value=(0, 0, 100, 100)) as mock_find:
+        with patch("tools.window_manager.find_mirroring_window_ex", return_value=((0, 0, 100, 100), "UxPlay")) as mock_find:
             with patch("tools.window_manager.bring_window_to_front"):
                 with patch("tools.window_manager.capture_region", return_value=fake_img):
                     driver.get_screenshot()
@@ -283,7 +283,7 @@ class TestMirroringDriver:
         driver, _ = self._make(window_title="")
         fake_img = np.zeros((100, 100, 3), dtype=np.uint8)
 
-        with patch("tools.window_manager.find_mirroring_window", return_value=(0, 0, 100, 100)) as mock_find:
+        with patch("tools.window_manager.find_mirroring_window_ex", return_value=((0, 0, 100, 100), "UxPlay")) as mock_find:
             with patch("tools.window_manager.bring_window_to_front"):
                 with patch("tools.window_manager.capture_region", return_value=fake_img):
                     driver.get_screenshot()

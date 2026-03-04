@@ -206,7 +206,13 @@ class MirroringDriver(BaseDriver):
     """
 
     # キャプチャ対象ウィンドウのタイトル検索候補 (優先順)
-    _WINDOW_TITLE_CANDIDATES: tuple[str, ...] = ("UxPlay", "iPhone", "scrcpy")
+    # 1. UxPlay       — Wi-Fi AirPlay ミラーリング (無線・推奨)
+    # 2. QuickTime Player — USB 有線接続 (低遅延・Xcode 不要)
+    # 3. iPhone       — システム/タイトルバーに "iPhone" が含まれる場合の予備
+    # 4. scrcpy       — Android ミラーリング
+    _WINDOW_TITLE_CANDIDATES: tuple[str, ...] = (
+        "UxPlay", "QuickTime Player", "iPhone", "scrcpy"
+    )
 
     # 解像度チェック閾値 — これ未満は OCR 精度が著しく低下する
     MIN_CAPTURE_WIDTH:  int = 300
@@ -228,6 +234,9 @@ class MirroringDriver(BaseDriver):
         self._device_height   = device_logical_height
         # (x, y, width, height) — 初回 get_screenshot() 時に確定
         self._window_rect: Optional[tuple[int, int, int, int]] = None
+        # キャプチャ対象ウィンドウのオーナーアプリ名 (例: "QuickTime Player")
+        # トリミング処理のソース判別に使用する
+        self._window_source: str = ""
         # screenshot() 呼び出し回数カウンタ（ウィンドウ検証用）
         self._screenshot_count: int = 0
 
@@ -246,7 +255,9 @@ class MirroringDriver(BaseDriver):
             WindowNotFoundError: ウィンドウが見つからない / 消失した場合
         """
         import cv2
-        from tools.window_manager import bring_window_to_front, capture_region, find_mirroring_window
+        from tools.window_manager import (
+            bring_window_to_front, capture_region, find_mirroring_window_ex,
+        )
 
         candidates = (
             [self._window_title] if self._window_title
@@ -255,43 +266,55 @@ class MirroringDriver(BaseDriver):
 
         # 初回: ウィンドウ検索 + 前面表示
         if self._window_rect is None:
-            self._window_rect = find_mirroring_window(candidates)
-            if self._window_rect is None:
+            result = find_mirroring_window_ex(candidates)
+            if result is None:
                 raise BaseDriver.WindowNotFoundError(
-                    "ミラーリングウィンドウが見つかりません。"
-                    " UxPlay または scrcpy が起動しているか確認してください。"
-                    f" 検索タイトル: {candidates}"
+                    "ミラーリングウィンドウが見つかりません。\n"
+                    "  - 無線 (UxPlay): brew install uxplay && uxplay を起動後、\n"
+                    "    iPhone の「コントロールセンター」→「画面ミラーリング」で接続してください。\n"
+                    "  - 有線 (QuickTime Player): QuickTime Player →「新規ムービー収録」\n"
+                    "    でカメラを iPhone に設定してください（USB 接続・Xcode 不要）。\n"
+                    f"  検索タイトル: {candidates}"
                 )
+            self._window_rect, self._window_source = result
             brought = bring_window_to_front(candidates)
             logger.info(
-                f"[MIRROR] ウィンドウ発見 rect={self._window_rect}"
-                f" 前面表示={'成功' if brought else 'スキップ'}"
+                "[MIRROR] ウィンドウ発見: source=%r  rect=%s  前面表示=%s",
+                self._window_source,
+                self._window_rect,
+                "成功" if brought else "スキップ",
             )
 
         # キャプチャ (失敗時は再検索して1回リトライ)
         try:
             img = capture_region(self._window_rect)
         except Exception as e:
-            logger.warning(f"[MIRROR] キャプチャ失敗、ウィンドウを再検索します: {e}")
-            self._window_rect = find_mirroring_window(candidates)
-            if self._window_rect is None:
+            logger.warning("[MIRROR] キャプチャ失敗、ウィンドウを再検索します: %s", e)
+            result = find_mirroring_window_ex(candidates)
+            if result is None:
                 raise BaseDriver.WindowNotFoundError(
-                    "ミラーリングウィンドウが消失しました。"
-                    " UxPlay または scrcpy が終了した可能性があります。"
+                    "ミラーリングウィンドウが消失しました。\n"
+                    "  UxPlay または QuickTime Player が終了した可能性があります。"
                 ) from e
+            self._window_rect, self._window_source = result
             bring_window_to_front(candidates)
             img = capture_region(self._window_rect)
+
+        # QuickTime Player: タイトルバー + コントロールパネルをトリム
+        img = self._crop_for_source(img)
 
         # 解像度チェック: 低すぎる場合は警告 + リサイズ
         h, w = img.shape[:2]
         if w < self.MIN_CAPTURE_WIDTH or h < self.MIN_CAPTURE_HEIGHT:
             logger.warning(
-                f"[MIRROR] キャプチャ解像度が低すぎます: {w}×{h}px"
-                f" (推奨: {self.MIN_CAPTURE_WIDTH}×{self.MIN_CAPTURE_HEIGHT}px 以上)。"
+                "[MIRROR] キャプチャ解像度が低すぎます: %d×%dpx"
+                " (推奨: %d×%dpx 以上)。"
                 " OCR 精度が低下する可能性があります。"
-                " UxPlay ウィンドウを大きくすることを推奨します。"
-                f" デバイス論理サイズ ({self._device_width}×{self._device_height}px)"
-                " にアップスケールします。"
+                " ウィンドウを大きくすることを推奨します。"
+                " デバイス論理サイズ (%d×%dpx) にアップスケールします。",
+                w, h,
+                self.MIN_CAPTURE_WIDTH, self.MIN_CAPTURE_HEIGHT,
+                self._device_width, self._device_height,
             )
             img = cv2.resize(
                 img,
@@ -300,6 +323,49 @@ class MirroringDriver(BaseDriver):
             )
 
         return img
+
+    def _crop_for_source(self, img: "np.ndarray") -> "np.ndarray":
+        """
+        ウィンドウソースに応じて UI クロームを除去し、iPhone 画面領域を切り出す。
+
+        【QuickTime Player の構造】
+          ┌──────────────────────┐
+          │  macOS タイトルバー   │  ← 上部 ~3.5% をトリム
+          ├──────────────────────┤
+          │   iPhone 画面映像     │  ← この部分だけ使う
+          ├──────────────────────┤
+          │  収録コントロール     │  ← 下部 ~5.5% をトリム
+          └──────────────────────┘
+
+        UxPlay / scrcpy はタイトルバーがないためトリム不要。
+
+        Args:
+            img: キャプチャ済み BGR numpy.ndarray
+
+        Returns:
+            トリム後の BGR numpy.ndarray（元画像か切り出し後）
+        """
+        source = self._window_source.lower()
+        if "quicktime" not in source:
+            return img
+
+        h, w = img.shape[:2]
+        # タイトルバー: macOS 標準 ≈ 3.5% (28px at 800px height)
+        # コントロール: QuickTime 録画パネル ≈ 5.5% (44px at 800px height)
+        top    = max(0, min(int(h * 0.035), 40))
+        bottom = max(0, min(int(h * 0.055), 60))
+
+        if h - top - bottom < 100:
+            # 安全チェック: 過剰トリムを防止
+            logger.warning("[MIRROR] QuickTime トリムがウィンドウ高さを超えます — スキップ")
+            return img
+
+        cropped = img[top : h - bottom, :]
+        logger.debug(
+            "[MIRROR] QuickTime トリム適用: top=%dpx  bottom=%dpx  → %d×%dpx",
+            top, bottom, w, h - top - bottom,
+        )
+        return cropped
 
     def tap(self, x: int, y: int) -> None:
         """
@@ -359,24 +425,27 @@ class MirroringDriver(BaseDriver):
         Raises:
             WindowNotFoundError: ウィンドウが消失した場合
         """
-        from tools.window_manager import find_mirroring_window
+        from tools.window_manager import find_mirroring_window_ex
 
         candidates = (
             [self._window_title] if self._window_title
             else list(self._WINDOW_TITLE_CANDIDATES)
         )
-        rect = find_mirroring_window(candidates)
-        if rect is None:
+        result = find_mirroring_window_ex(candidates)
+        if result is None:
             self._window_rect = None  # キャッシュを無効化
             raise BaseDriver.WindowNotFoundError(
-                "ミラーリングウィンドウが消失しました。"
-                " UxPlay または scrcpy が終了した可能性があります。"
+                "ミラーリングウィンドウが消失しました。\n"
+                "  UxPlay または QuickTime Player が終了した可能性があります。"
                 " クロールを中断してデータを保存します。"
             )
+        rect, owner = result
         # ウィンドウが移動した場合のために位置を更新
         if self._window_rect != rect:
-            logger.info(f"[MIRROR] ウィンドウ位置更新: {self._window_rect} → {rect}")
+            logger.info("[MIRROR] ウィンドウ位置更新: %s → %s", self._window_rect, rect)
             self._window_rect = rect
+        if self._window_source != owner:
+            self._window_source = owner
 
     # ----------------------------------------------------------
     # 後方互換: AppiumDriver の全メソッド・属性を透過委譲
