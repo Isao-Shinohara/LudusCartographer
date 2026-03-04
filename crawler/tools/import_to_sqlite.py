@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS lc_sessions (
     screens_found INTEGER DEFAULT 0,
     started_at    TEXT,
     status        TEXT    DEFAULT 'completed',
-    game_title    TEXT    DEFAULT 'Unknown Game'
+    game_title    TEXT    DEFAULT 'Unknown Game',
+    device_mode   TEXT    DEFAULT 'SIMULATOR'
 );
 
 CREATE TABLE IF NOT EXISTS lc_screens (
@@ -57,19 +58,23 @@ def migrate(conn: sqlite3.Connection) -> None:
         )
         conn.commit()
         print("  [migrate] game_title カラムを追加 → 既存セッションを 'iOS設定' に設定")
+    if "device_mode" not in cols:
+        conn.execute("ALTER TABLE lc_sessions ADD COLUMN device_mode TEXT DEFAULT 'SIMULATOR'")
+        conn.commit()
+        print("  [migrate] device_mode カラムを追加 → 既存セッションを 'SIMULATOR' に設定")
 
 
 def seed_test_games(conn: sqlite3.Connection) -> None:
     """異なる game_title を持つテストデータを投入する（重複スキップ）。"""
     cur = conn.cursor()
 
-    # --- カレンダーアプリ ---
+    # --- カレンダーアプリ (Simulator) ---
     cal_sid = "test_calendar_001"
     cur.execute(
         "INSERT OR IGNORE INTO lc_sessions"
-        " (session_id, screens_found, started_at, status, game_title)"
-        " VALUES (?,?,?,?,?)",
-        (cal_sid, 3, "2026-03-04T10:00:00", "completed", "カレンダー"),
+        " (session_id, screens_found, started_at, status, game_title, device_mode)"
+        " VALUES (?,?,?,?,?,?)",
+        (cal_sid, 3, "2026-03-04T10:00:00", "completed", "カレンダー", "SIMULATOR"),
     )
     for fp, title, depth, parent, ocr in [
         ("cal_fp_001", "カレンダー",    0, None,        "予定 今日 明日 週表示 月表示"),
@@ -87,13 +92,13 @@ def seed_test_games(conn: sqlite3.Connection) -> None:
                 (cal_sid, fp, title, depth, parent, ocr, "2026-03-04T10:00:00"),
             )
 
-    # --- マップアプリ ---
+    # --- マップアプリ (Mirror) ---
     map_sid = "test_maps_001"
     cur.execute(
         "INSERT OR IGNORE INTO lc_sessions"
-        " (session_id, screens_found, started_at, status, game_title)"
-        " VALUES (?,?,?,?,?)",
-        (map_sid, 2, "2026-03-04T11:00:00", "completed", "マップ"),
+        " (session_id, screens_found, started_at, status, game_title, device_mode)"
+        " VALUES (?,?,?,?,?,?)",
+        (map_sid, 2, "2026-03-04T11:00:00", "completed", "マップ", "MIRROR"),
     )
     for fp, title, depth, parent, ocr in [
         ("map_fp_001", "マップ",    0, None,        "現在地 検索 経路 お気に入り ルート"),
@@ -111,7 +116,7 @@ def seed_test_games(conn: sqlite3.Connection) -> None:
             )
 
     conn.commit()
-    print("  [seed] カレンダー (3 screens) + マップ (2 screens) を投入")
+    print("  [seed] カレンダー/SIMULATOR (3 screens) + マップ/MIRROR (2 screens) を投入")
 
 
 def import_session(conn: sqlite3.Connection, summary_path: Path, game_title: str = "") -> int:
@@ -123,13 +128,17 @@ def import_session(conn: sqlite3.Connection, summary_path: Path, game_title: str
     if not game_title:
         game_title = data.get("game_title", "Unknown Game")
 
+    # device_mode は JSON から取得 (SIMULATOR / MIRROR)
+    device_mode = data.get("device_mode", "SIMULATOR")
+
     cur = conn.cursor()
     started_at = screens[0]["discovered_at"] if screens else None
 
     cur.execute(
-        "INSERT OR IGNORE INTO lc_sessions (session_id, screens_found, started_at, game_title)"
-        " VALUES (?,?,?,?)",
-        (session_id, len(screens), started_at, game_title),
+        "INSERT OR IGNORE INTO lc_sessions"
+        " (session_id, screens_found, started_at, game_title, device_mode)"
+        " VALUES (?,?,?,?,?)",
+        (session_id, len(screens), started_at, game_title, device_mode),
     )
 
     imported = 0

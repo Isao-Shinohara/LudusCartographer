@@ -177,6 +177,7 @@ class EvidenceRepository
             SELECT id,
                    COALESCE(game_title, session_id) AS game_name,
                    game_title,
+                   COALESCE(device_mode, 'SIMULATOR') AS device_mode,
                    'ios'  AS platform,
                    status,
                    screens_found,

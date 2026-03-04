@@ -24,6 +24,13 @@ import pytest
 # crawler/ をパスに追加
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# tools.window_manager を sys.modules に登録しておく。
+# TestBringWindowToFront が patch.dict(sys.modules, {"Quartz": ...}) 内で
+# importlib.reload() を呼ぶとき、モジュールが事前登録されていないと
+# patch.dict の終了時に sys.modules から除去されてしまい、
+# 後続テストの patch("tools.window_manager.*") が機能しなくなるため。
+import tools.window_manager as _wm_module  # noqa: F401 (side effect: keep in sys.modules)
+
 
 # ============================================================
 # window_manager — bring_window_to_front

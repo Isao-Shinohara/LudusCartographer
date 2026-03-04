@@ -112,12 +112,16 @@ cp crawler/config/.env.example crawler/config/.env
 | 変数 | 必須 | 説明 |
 |------|------|------|
 | `IOS_BUNDLE_ID` | ✅ | ターゲットアプリの Bundle ID (例: `com.apple.Preferences`) |
+| `DEVICE_MODE` | — | `"SIMULATOR"` (デフォルト) または `"MIRROR"` |
 | `IOS_USE_SIMULATOR` | — | `"1"` で iOS Simulator モード |
 | `IOS_SIMULATOR_UDID` | — | シミュレータ UDID (省略時: 自動選択) |
 | `IOS_UDID` | — | 実機 UDID (省略時: 自動検出) |
 | `CRAWL_DURATION_SEC` | — | クロール時間上限 (デフォルト: `180`) |
 | `CRAWL_MAX_DEPTH` | — | DFS 最大深さ (デフォルト: `3`) |
 | `DB_HOST` | — | MySQL ホスト (省略時: DB 保存スキップ) |
+| `MIRROR_WINDOW_TITLE` | — | UxPlay ウィンドウ検索タイトル (デフォルト: 自動検索) |
+| `MIRROR_DEVICE_WIDTH` | — | デバイス論理幅 pt (デフォルト: `393` — iPhone 16) |
+| `MIRROR_DEVICE_HEIGHT` | — | デバイス論理高さ pt (デフォルト: `852` — iPhone 16) |
 
 ### 4. MySQL スキーマ（任意）
 
@@ -141,17 +145,50 @@ PATH="$HOME/.nodebrew/current/bin:$PATH" appium --port 4723
 ```bash
 cd crawler
 
-# iOS Simulator（設定アプリで動作確認）
+# ── iOS Simulator（シミュレータ） ──────────────────────────────────
 IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
   CRAWL_DURATION_SEC=180 CRAWL_MAX_DEPTH=2 \
   venv/bin/python main.py
 
-# iOS 実機（UDID 自動検出）
+# ── 実機ミラーリング (UxPlay) — ワンコマンド ─────────────────────
+# UxPlay と Appium を起動してから実行する（--mirror がセットアップガイドを表示）
+venv/bin/python main.py --mirror \
+  --bundle com.example.mygame \
+  --title  "MyGame" \
+  --duration 300 \
+  --depth    4
+
+# ── 実機ミラーリング（環境変数でも指定可能） ────────────────────
+DEVICE_MODE=MIRROR IOS_BUNDLE_ID=com.example.mygame \
+  GAME_TITLE=MyGame venv/bin/python main.py
+
+# ── iOS 実機 Appium（UDID 自動検出） ─────────────────────────────
 IOS_BUNDLE_ID=com.example.mygame venv/bin/python main.py
 
-# Android（ADB 経由でデバイス自動検出）
+# ── Android（ADB 経由でデバイス自動検出） ────────────────────────
 ANDROID_BUNDLE_ID=com.example.mygame venv/bin/python main.py
 ```
+
+#### ミラーリングモード (`--mirror`) の前提条件
+
+| ステップ | 内容 |
+|----------|------|
+| 1. UxPlay 起動 | `brew install uxplay && uxplay` — iPhone の映像を Mac に表示 |
+| 2. 画面ミラーリング | iPhone「コントロールセンター」→「画面ミラーリング」→ UxPlay を選択 |
+| 3. Appium 起動 | `PATH="$HOME/.nodebrew/current/bin:$PATH" appium --port 4723` |
+| 4. ネットワーク | iPhone と Mac を同じ Wi-Fi に接続 (USB 接続も可) |
+
+> **ウィンドウが見つからない場合**: `MIRROR_WINDOW_TITLE=UxPlay` を環境変数に設定してください。
+
+#### CLI 引数一覧
+
+| 引数 | 説明 |
+|------|------|
+| `--mirror` | ミラーリングモードで起動 (`DEVICE_MODE=MIRROR` / `IOS_USE_SIMULATOR=0` を自動設定) |
+| `--bundle BUNDLE_ID` | Bundle ID を直接指定 (`IOS_BUNDLE_ID` より優先) |
+| `--title GAME_TITLE` | ゲームタイトルを直接指定 |
+| `--duration SEC` | クロール最大時間（秒）|
+| `--depth N` | DFS 最大深さ |
 
 実行ログの見方:
 

@@ -8,7 +8,10 @@ LudusCartographer — クローラー エントリポイント
   # iOS Simulator (デフォルト)
   IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.example.mygame python main.py
 
-  # ミラーリング (UxPlay 使用)
+  # 実機ミラーリング (UxPlay 使用) — ワンコマンド
+  python main.py --mirror --bundle com.example.mygame
+
+  # ミラーリング (環境変数でも指定可能)
   DEVICE_MODE=MIRROR GAME_TITLE=MyGame IOS_BUNDLE_ID=com.example.mygame python main.py
 
   # 探索パラメータ調整
@@ -38,6 +41,7 @@ LudusCartographer — クローラー エントリポイント
 """
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -49,12 +53,109 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent / "config" / ".env")
 
+_MIRROR_SETUP_GUIDE = """\
+  ┌─────────────────────────────────────────────────────┐
+  │          📡  ミラーリング モード セットアップ         │
+  └─────────────────────────────────────────────────────┘
+
+  1. UxPlay をインストールして起動してください:
+       brew install uxplay   (Homebrew)
+       uxplay                # macOS デスクトップに iPhone 映像を表示
+
+  2. iPhone の「コントロールセンター」→「画面ミラーリング」で
+     UxPlay を選択してください。
+
+  3. Appium サーバーを起動してください（別ターミナル）:
+       PATH="$HOME/.nodebrew/current/bin:$PATH" appium --port 4723
+
+  4. iPhone を Wi-Fi で Mac と同じネットワークに接続し、
+     Appium が iPhone に Wi-Fi 経由で接続できることを確認してください。
+     （USB 接続でも可）
+
+  5. ウィンドウが見つからない場合は MIRROR_WINDOW_TITLE を設定:
+       MIRROR_WINDOW_TITLE="UxPlay" python main.py --mirror --bundle ...
+
+  詳細: https://github.com/Isao-Shinohara/LudusCartographer#mirror-mode
+"""
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="LudusCartographer — モバイルアプリ自律クローラー",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用例:
+  # iOS Simulator
+  IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences python main.py
+
+  # 実機ミラーリング (UxPlay) — ワンコマンド
+  python main.py --mirror --bundle com.example.mygame --title MyGame
+
+  # 探索パラメータ指定
+  python main.py --mirror --bundle com.example.mygame --duration 300 --depth 4
+""",
+    )
+    parser.add_argument(
+        "--mirror",
+        action="store_true",
+        help=(
+            "実機ミラーリングモード (UxPlay/scrcpy) で起動。"
+            " DEVICE_MODE=MIRROR / IOS_USE_SIMULATOR=0 を自動設定。"
+        ),
+    )
+    parser.add_argument(
+        "--bundle",
+        metavar="BUNDLE_ID",
+        help="ターゲットアプリの Bundle ID (IOS_BUNDLE_ID 環境変数より優先)",
+    )
+    parser.add_argument(
+        "--title",
+        metavar="GAME_TITLE",
+        help="ゲームタイトル (GAME_TITLE 環境変数より優先)",
+    )
+    parser.add_argument(
+        "--duration",
+        type=int,
+        metavar="SEC",
+        help="クロール最大時間 秒 (デフォルト: 180)",
+    )
+    parser.add_argument(
+        "--depth",
+        type=int,
+        metavar="N",
+        help="DFS 最大深さ (デフォルト: 3)",
+    )
+    # 未知の引数（環境変数由来のフラグ等）を無視して続行
+    args, _ = parser.parse_known_args()
+    return args
+
 
 def main() -> None:
+    args = _parse_args()
+
+    # --mirror フラグ: 環境変数を上書きして MIRROR モードに切り替え
+    if args.mirror:
+        os.environ["DEVICE_MODE"]        = "MIRROR"
+        os.environ["IOS_USE_SIMULATOR"]  = "0"
+        print(_MIRROR_SETUP_GUIDE)
+
+    # CLI 引数が環境変数より優先される
+    if args.bundle:
+        os.environ["IOS_BUNDLE_ID"] = args.bundle
+    if args.title:
+        os.environ["GAME_TITLE"] = args.title
+    if args.duration:
+        os.environ["CRAWL_DURATION_SEC"] = str(args.duration)
+    if args.depth:
+        os.environ["CRAWL_MAX_DEPTH"] = str(args.depth)
+
     bundle_id = os.environ.get("IOS_BUNDLE_ID")
     if not bundle_id:
         print("ERROR: IOS_BUNDLE_ID が設定されていません。")
-        print("  例: IOS_BUNDLE_ID=com.example.mygame python main.py")
+        if args.mirror:
+            print("  例: python main.py --mirror --bundle com.example.mygame")
+        else:
+            print("  例: IOS_BUNDLE_ID=com.example.mygame python main.py")
         sys.exit(1)
 
     game_title  = os.environ.get("GAME_TITLE", bundle_id)  # 未設定時は bundle_id をタイトルとして使う

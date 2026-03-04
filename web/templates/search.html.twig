@@ -348,18 +348,31 @@ const STATUS_ICON = {
     running: '🟢', completed: '✅', failed: '❌', paused: '⏸',
 };
 
+const DEVICE_MODE_CLASS = {
+    MIRROR:    'bg-blue-900/60 text-blue-300',
+    SIMULATOR: 'bg-purple-900/60 text-purple-300',
+};
+const DEVICE_MODE_ICON = {
+    MIRROR:    '📡',
+    SIMULATOR: '🖥',
+};
+
 function sessionRowHtml(s) {
     const cls      = STATUS_CLASS[s.status] || STATUS_CLASS.completed;
     const icon     = STATUS_ICON[s.status]  || '❓';
     const dur      = s.ended_at
         ? `${Math.round((new Date(s.ended_at) - new Date(s.started_at)) / 60000)} 分`
         : '実行中';
-    const gameLabel = s.game_title || s.game_name || '';
+    const gameLabel  = s.game_title || s.game_name || '';
+    const mode       = (s.device_mode || 'SIMULATOR').toUpperCase();
+    const modeCls    = DEVICE_MODE_CLASS[mode]  || DEVICE_MODE_CLASS.SIMULATOR;
+    const modeIcon   = DEVICE_MODE_ICON[mode]   || '🖥';
+    const modeBadge  = `<span class="ml-1.5 px-1.5 py-0.5 rounded text-xs ${modeCls}" title="デバイスモード">${modeIcon} ${esc(mode)}</span>`;
     return `<tr class="border-b border-gray-800 hover:bg-gray-800/40 cursor-pointer"
                 onclick="applySession('${esc(s.session_dir)}')">
         <td class="py-1.5 pr-3 text-gray-400">#${esc(s.id)}</td>
         <td class="py-1.5 pr-3">
-            <span class="text-gray-200 font-medium">${esc(gameLabel)}</span>
+            <span class="text-gray-200 font-medium">${esc(gameLabel)}</span>${modeBadge}
         </td>
         <td class="py-1.5 pr-3">
             <span class="px-1.5 py-0.5 rounded text-xs ${cls}">${icon} ${esc(s.status)}</span>
@@ -403,7 +416,7 @@ async function loadSessions() {
                 <table class="w-full text-xs border-collapse" id="session-table">
                     <thead><tr class="border-b border-gray-700 text-gray-500">
                         <th class="text-left py-1 pr-3">#</th>
-                        <th class="text-left py-1 pr-3">ゲーム</th>
+                        <th class="text-left py-1 pr-3">ゲーム / モード</th>
                         <th class="text-left py-1 pr-3">状態</th>
                         <th class="text-left py-1 pr-3">Fingerprint 数</th>
                         <th class="text-left py-1 pr-3">開始時刻</th>
