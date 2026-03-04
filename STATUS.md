@@ -1,10 +1,10 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-04 (Phase 16 完了 — 最終統合・README 完成・リポジトリ凍結)
+最終更新: 2026-03-04 (Phase 17 完了 — UxPlay / QuickTime Player ハイブリッド対応)
 
 ---
 
-## 現在のフェーズ: Phase 16 完了 — 最終統合・凍結 🎉
+## 現在のフェーズ: Phase 17 完了 — ミラーリング強化・実戦最適化 🎉
 
 ## Phase 16 完了内容 (2026-03-04)
 
@@ -34,7 +34,29 @@
 - **トラブルシューティング**: UxPlay / Appium / OCR 精度問題への対処
 - **アーキテクチャ**: 全ファイル構成 + 証拠記録フォーマット + 環境変数リファレンス
 
-### テスト状況 (Phase 16 = 最終)
+## Phase 17 完了内容 (2026-03-04) — UxPlay / QuickTime ハイブリッド対応
+
+### 実装内容
+
+- **`crawler/tools/window_manager.py`**: `find_mirroring_window_ex()` 追加 — `((x,y,w,h), owner_name)` を返す
+- **`crawler/driver_adapter.py`**:
+  - `_WINDOW_TITLE_CANDIDATES`: UxPlay → QuickTime Player → iPhone → scrcpy の優先順位
+  - `_crop_for_source()`: QuickTime Player 使用時にタイトルバー (top 3.5%) とコントロール (bottom 5.5%) をトリム
+  - `WindowNotFoundError`: 無線 (UxPlay) と有線 (QuickTime) の両接続手順を動的表示
+- **`crawler/lc/crawler.py`**: `min_confidence` 0.5 / `icon_threshold` 0.75 / `anti_stuck_threshold` 3
+- **`crawler/main.py`**: `--tap-wait` / `--stuck-threshold` CLI フラグ、ミラーモード `wait_after_tap=4.0`
+- **`README.md`**: QuickTime Player 有線接続セクション追加 (方法 A: UxPlay / 方法 B: QuickTime)
+- **`tests/test_mirror_quicktime.py`**: 28 新規テスト
+
+### テスト状況 (Phase 17)
+```
+合計 Pytest: 356 passed, 3 skipped (全テストグリーン)
+Playwright E2E: 42/42 passed
+```
+
+---
+
+### テスト状況 (Phase 16)
 ```
 合計 Pytest: 328 passed, 3 skipped (全テストグリーン)
 Playwright E2E: 42/42 passed
