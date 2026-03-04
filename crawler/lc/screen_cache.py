@@ -119,9 +119,16 @@ class ScreenCache:
     # ----------------------------------------------------------
 
     def _load_index(self) -> None:
-        """knowledge_dir/*.json を走査して _index を構築する。"""
+        """knowledge_dir/*.json を走査して _index を構築する。human_solved/ サブディレクトリも対象。"""
+        # root の human-curated エントリ
         for p in self.knowledge_dir.glob("*.json"):
             self._index[p.stem] = p
+        # human_solved エントリ (同一ハッシュがあれば root 優先)
+        hs_dir = self.knowledge_dir / "human_solved"
+        if hs_dir.exists():
+            for p in hs_dir.glob("*.json"):
+                if p.stem not in self._index:
+                    self._index[p.stem] = p
         logger.info(
             "[CACHE] インデックス構築: %d 件  dir=%s",
             len(self._index),
@@ -185,12 +192,17 @@ class ScreenCache:
         title: str,
         actions: list[dict],
         success: bool = True,
+        source: str = "auto",   # "auto" | "human_solved"
     ) -> str:
         """
         スクリーンショットと対応するアクション列を知識ベースに保存する。
 
         同一 pHash が既に存在する場合は上書き更新し、hit_count を引き継ぐ。
         参照スクリーンショットは screenshots/{hash}.png にコピーされる。
+
+        Args:
+            source: "auto" → knowledge_dir 直下に保存。
+                    "human_solved" → knowledge_dir/human_solved/ サブディレクトリに保存。
 
         Returns:
             保存した pHash hex 文字列 (16 文字)
@@ -221,9 +233,16 @@ class ScreenCache:
             "created_at":      datetime.now().isoformat(),
             "hit_count":       hit_count,
             "platform":        self.platform,
+            "source":          source,
         }
 
-        json_path = self.knowledge_dir / f"{hash_str}.json"
+        # human_solved は専用サブディレクトリへ保存
+        save_dir = self.knowledge_dir
+        if source == "human_solved":
+            save_dir = self.knowledge_dir / "human_solved"
+            save_dir.mkdir(exist_ok=True)
+
+        json_path = save_dir / f"{hash_str}.json"
         json_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -231,8 +250,8 @@ class ScreenCache:
         self._index[hash_str] = json_path
 
         logger.info(
-            "[CACHE] 保存: title=%r  hash=%s…  actions=%d件",
-            title, hash_str[:8], len(actions),
+            "[CACHE] 保存: title=%r  hash=%s…  actions=%d件  source=%s",
+            title, hash_str[:8], len(actions), source,
         )
         return hash_str
 

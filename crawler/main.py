@@ -333,6 +333,12 @@ def _parse_args() -> argparse.Namespace:
             " PHP ビルトインサーバーが起動していない場合は自動起動する。"
         ),
     )
+    parser.add_argument(
+        "--teacher-mode",
+        action="store_true",
+        dest="teacher_mode",
+        help="未知の画面で人間に操作を教えてもらう Teacher Mode を有効化",
+    )
     # 未知の引数（環境変数由来のフラグ等）を無視して続行
     args, _ = parser.parse_known_args()
     return args
@@ -508,6 +514,8 @@ def main() -> None:
         or os.environ.get("KNOWLEDGE_BASE_DIR", "games")
     )
 
+    teacher_mode = getattr(args, "teacher_mode", False) or os.environ.get("TEACHER_MODE") == "1"
+
     crawler_cfg = CrawlerConfig(
         game_title           = game_title,
         device_mode          = device_mode,
@@ -521,12 +529,14 @@ def main() -> None:
         db_user              = os.environ.get("DB_USER",     "root"),
         db_password          = os.environ.get("DB_PASSWORD", ""),
         knowledge_base_dir   = knowledge_base_dir,
+        teacher_mode_enabled = teacher_mode,
     )
     logger.info(
         "  タップ待機: %.1f 秒  スタック閾値: %d 回",
         tap_wait, stuck_threshold,
     )
     logger.info("  知識ベース : %s", knowledge_base_dir)
+    logger.info("  Teacher Mode: %s", "有効" if teacher_mode else "無効")
 
     crawler: "ScreenCrawler | None" = None  # WindowNotFoundError 時の参照用
 

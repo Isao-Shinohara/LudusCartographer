@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 
 from .core import AppHealthMonitor, StuckDetector, FrontierTracker
 from .driver import AppiumDriver
+from .human_teacher import HumanTeacher
 from .ocr import run_ocr, find_best, format_results
 from .screen_cache import ScreenCache, CachedSolution
 from .utils import compute_phash, phash_distance
@@ -142,6 +143,8 @@ class CrawlerConfig:
     # 知識ベースのベースディレクトリ (game_title サブディレクトリが自動作成される)
     # 相対パスの場合は crawler/ ルートからの相対として解釈される
     knowledge_base_dir: str = "games"
+    # Teacher Mode: 未知の画面でユーザーに操作を教えてもらう
+    teacher_mode_enabled: bool = False
 
 
 # ============================================================
@@ -227,6 +230,12 @@ class ScreenCrawler:
         # 知識ベース（キャッシュ）
         self._screen_cache: Optional[ScreenCache] = None
         self._init_screen_cache()
+
+        # Teacher Mode
+        self._human_teacher: Optional[HumanTeacher] = None
+        if self.config.teacher_mode_enabled:
+            self._human_teacher = HumanTeacher(auto_open_screenshot=True)
+            logger.info("[TEACHER] Teacher Mode 有効")
 
         # DB 接続（利用可能な場合のみ）
         self._db_conn        = None
@@ -477,7 +486,7 @@ class ScreenCrawler:
             cached = self._screen_cache.lookup(record.screenshot_path)
             if cached is not None:
                 logger.info(
-                    "[CACHE_HIT] %r → キャッシュアクション実行  dist=%d  actions=%d件",
+                    "⚡ [CACHE HIT - Fast Mode] %r  dist=%d  actions=%d件",
                     record.title, cached.distance, len(cached.actions),
                 )
                 hit_ok = self._execute_cached_actions(cached.actions)
@@ -500,6 +509,67 @@ class ScreenCrawler:
                     return True
                 # hit_ok == False: フォールバックして通常タップループへ
                 logger.info("[CACHE] キャッシュアクション失敗 → 通常探索にフォールバック")
+
+        # --- TEACHER_MODE ブランチ (cache miss 時のみ起動) ---
+        # キャッシュヒットして既に return している場合はここに到達しない
+        if self._human_teacher is not None and not self._is_time_up():
+            human_actions = self._human_teacher.ask_for_action(
+                screenshot_path=record.screenshot_path,
+                title=record.title,
+                ocr_results=record.ocr_results,
+            )
+            if human_actions:  # skip → [] → このブランチをスキップして通常 DFS へ
+                before_phash = record.phash or ""
+                if not before_phash:
+                    try:
+                        before_phash = compute_phash(record.screenshot_path)
+                    except Exception:
+                        before_phash = ""
+
+                hit_ok = self._execute_cached_actions(human_actions)
+                if hit_ok and before_phash:
+                    self.driver.wait(self.config.wait_after_tap)
+                    try:
+                        after_shot  = self.driver.screenshot("after_teacher")
+                        after_phash = compute_phash(after_shot)
+                        dist        = phash_distance(before_phash, after_phash)
+                    except Exception:
+                        dist = 0
+
+                    _SCREEN_CHANGE_THRESHOLD = 8
+                    if dist > _SCREEN_CHANGE_THRESHOLD:
+                        print(
+                            f"✅ [HUMAN_LEARNING] 画面変化を確認 (dist={dist}) → 知識ベースに保存しました"
+                        )
+                        logger.info("✅ [HUMAN_LEARNING] dist=%d → human_solved 保存", dist)
+                        if self._screen_cache is not None:
+                            try:
+                                self._screen_cache.save(
+                                    screenshot_path=record.screenshot_path,
+                                    title=record.title,
+                                    actions=human_actions,
+                                    success=True,
+                                    source="human_solved",
+                                )
+                            except Exception as _e:
+                                logger.debug("[TEACHER] save スキップ: %s", _e)
+                        self._stats.taps_total += len(human_actions)
+                        _saved_child_fp = self._pending_child_fp
+                        self._pending_child_fp = None
+                        _did_nav = self._crawl_impl(depth + 1, record.fingerprint)
+                        self._pending_child_fp = _saved_child_fp
+                        if _did_nav and not self._is_time_up():
+                            self.driver.back()
+                            self.driver.wait(self.config.wait_after_back)
+                        self._nav_stack.pop()
+                        return True
+                    else:
+                        print(
+                            f"⚠️  [TEACHER_MISS] 画面が変化しませんでした (dist={dist})。"
+                            "通常探索に切り替えます。"
+                        )
+                        logger.info("⚠️  [TEACHER_MISS] dist=%d → 通常探索へ", dist)
+            # human_actions == [] (skip) または画面変化なし → fall through to 通常 DFS
 
         # --- 各タップ候補を探索 ---
         for i, item in enumerate(record.tappable_items):
