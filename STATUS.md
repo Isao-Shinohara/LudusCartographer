@@ -1,10 +1,48 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-04 (Phase 15 完了 — 自己修復型探索・スマートバックトラック・アンチスタック)
+最終更新: 2026-03-04 (Phase 16 完了 — 最終統合・README 完成・リポジトリ凍結)
 
 ---
 
-## 現在のフェーズ: Phase 15 完了 — 自己修復型探索（セルフヒーリング）
+## 現在のフェーズ: Phase 16 完了 — 最終統合・凍結 🎉
+
+## Phase 16 完了内容 (2026-03-04)
+
+### 探索完了条件の明文化・通知
+
+- **`crawler/main.py`**:
+  - `_ensure_directories()`: 起動時に `storage/` `evidence/` `logs/` `assets/templates/` を自動生成
+  - `_configure_logging()`: `logging.basicConfig` — コンソール + `logs/crawler.log` への二重出力
+  - `_print_session_summary()`: 探索完了後に以下をコンソール表示
+    - 今回の新規発見画面数
+    - プロジェクト累計ユニーク画面数 (SQLite から取得)
+    - 既知画面スキップ数・概算既知率
+  - `_open_web_dashboard()`: `--open-web` フラグでブラウザ自動表示 (PHP サーバーを自動起動)
+  - `print` → `logging.info/warning/error` に完全移行
+
+- **`crawler/tools/import_to_sqlite.py`**: `print` → `logger.info` 移行
+- **`crawler/lc/crawler.py`**: docstring 内 print 例示を `logger.info` に修正
+
+### README.md 完全書き直し
+
+- **イントロ**: USB 不要ミラーリング探索エンジンの紹介
+- **クイックスタート**: ミラーリング / シミュレータ / Web UI の 3 経路
+- **CLI リファレンス**: `--open-web` を含む全オプション一覧
+- **プロジェクト制増分探索**: セッションサマリー表示例・遷移マップ表示例
+- **自己修復機能**: AppHealthMonitor / スマートバックトラック / アンチスタック ログ例
+- **デバッグ機能**: `DEBUG_DRAW_OPS=1` タップ座標オーバーレイ解説
+- **トラブルシューティング**: UxPlay / Appium / OCR 精度問題への対処
+- **アーキテクチャ**: 全ファイル構成 + 証拠記録フォーマット + 環境変数リファレンス
+
+### テスト状況 (Phase 16 = 最終)
+```
+合計 Pytest: 328 passed, 3 skipped (全テストグリーン)
+Playwright E2E: 42/42 passed
+```
+
+---
+
+## Phase 15 完了内容 (2026-03-04) — 自己修復型探索（セルフヒーリング）
 
 ## Phase 15 完了内容 (2026-03-04)
 
