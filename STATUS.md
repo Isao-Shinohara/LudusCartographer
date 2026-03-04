@@ -1,6 +1,42 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-04 (Phase 18 完了 — Android 実機対応)
+最終更新: 2026-03-04 (Phase 4 完了 — 探索強化・Undo/Re-teach・Discovery Tree)
+
+---
+
+## 現在のフェーズ: Phase 4 完了 — 探索強化・Undo/Re-teach・Discovery Tree 🗺️
+
+### Phase 4 完了内容 (2026-03-04)
+
+#### 実装内容
+
+- **`crawler/lc/human_teacher.py`**:
+  - `_parse_input()`: tap に wait_ms オプション追加 (`x,y[,wait_ms]`)
+  - ヘルプ表示更新
+
+- **`crawler/lc/crawler.py`**:
+  - `_failed_cache_hashes: set[str]` — 今セッション中に失敗したキャッシュハッシュを追跡
+  - `_transition_log: list[dict]` — 全遷移エッジ (via: auto/cache/teacher) を記録
+  - CACHE_HIT 後 pHash 検証 → dist ≤ 8 で [CACHE_INVALID] ログ + failed_set に追加 + Teacher Mode 再起動
+  - `_execute_cached_actions()`: tap の `wait_ms` サポート追加
+  - TEACHER_MODE: `child_fp_teacher` を restore 前に取得するバグ修正 + 遷移ログ追加
+  - 通常 DFS ループ: `_transition_log` への遷移記録追加
+  - `_find_record(fp)`: fingerprint → ScreenRecord 検索
+  - `save_discovery_tree(path)`: discovery_tree.json 保存
+  - `render_discovery_tree()`: ASCII ツリー表示 (⚡cache/🧑teacher/🔍auto アイコン付き)
+
+- **`crawler/main.py`**:
+  - セッション終了後に `save_discovery_tree()` + `render_discovery_tree()` を呼ぶ
+
+#### テスト状況 (Phase 4)
+```
+test_phase4.py:          21 passed (新規)
+test_human_teacher.py:   28 passed (変化なし)
+test_screen_cache.py:    16 passed (変化なし)
+3テスト合計:              65 passed
+```
+
+---
 
 ---
 
