@@ -1,6 +1,72 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-04 (Phase 17 完了 — UxPlay / QuickTime Player ハイブリッド対応)
+最終更新: 2026-03-04 (Phase 18 完了 — Android 実機対応)
+
+---
+
+## 現在のフェーズ: Phase 18 完了 — Android 実機 (UiAutomator2) 対応 🤖
+
+### Phase 18 完了内容 (2026-03-04)
+
+#### 背景
+macOS 26 (Darwin 25.3.0) の `pairedsyncd` / `usbmuxd` バグにより iOS USB 接続が不可。
+SIP によりシステムレベル修正も不可能のため、Android 実機 (Galaxy / まどドラ) に切り替え。
+
+#### 実装内容
+
+- **`crawler/driver_factory.py`**: ANDROID モード追加
+  - `_resolve_device_mode()`: `DEVICE_MODE=ANDROID` または `ANDROID_UDID` 設定時に Android モードへ
+  - `_create_android_session()`: `AndroidDeviceConfig` + `android_session()` → `SimulatorDriver` に wrapping
+  - 環境変数: `ANDROID_UDID` / `ANDROID_APP_PACKAGE` / `ANDROID_APP_ACTIVITY` / `ANDROID_DEVICE_NAME`
+
+- **`crawler/main.py`**: Android CLI フラグ追加
+  - `--android`: DEVICE_MODE=ANDROID を設定
+  - `--package <pkg>`: ANDROID_APP_PACKAGE を設定
+  - `--activity <act>`: ANDROID_APP_ACTIVITY を設定
+  - `--android-udid <id>`: ANDROID_UDID を設定 (省略時 adb devices 自動検出)
+
+- **`crawler/lc/driver.py`**: Android adb タップ対応
+  - `tap_coordinate()`: `DEVICE_MODE=ANDROID` 時に `adb -s <udid> shell input tap X Y` を使用
+  - Unity ゲームでは Appium W3C actions より adb input tap が確実に動作
+
+- **`crawler/lc/crawler.py`**: Android `_escape_dead_end()` 対応
+  - Android: `press_keycode(3)` (KEYCODE_HOME) + `activate_app()` で脱出
+  - iOS: 既存の `mobile: pressButton home` を維持
+
+- **`crawler/tools/android_setup.py`** (新規): Android セットアップ確認スクリプト
+  - adb デバイス確認 → まどドラパッケージ確認 → スクリーンショット+OCR → Appium セッションテスト
+
+#### 疎通確認済み
+- Android デバイス UDID: `f6b8cef7`
+- まどドラパッケージ: `com.aniplex.magia.exedra.jp`
+- アクティビティ: `com.google.firebase.MessagingUnityPlayerActivity`
+- `adb shell screencap`: ✅ 1520×720 (landscape) PNG
+- PaddleOCR on Android screenshot: ✅ 動作確認
+- `adb shell input tap`: ✅ Unity ゲームキャンバスで動作確認 (TAP TO START, グラフィック設定 OK)
+
+#### まどドラ探索コマンド
+```bash
+cd ~/Desktop/LudusCartographer/crawler
+PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
+ANDROID_HOME=~/Library/Android/sdk \
+ANDROID_SDK_ROOT=~/Library/Android/sdk \
+PATH="$HOME/.nodebrew/current/bin:$PATH" \
+venv/bin/python main.py "まどドラ" \
+  --android \
+  --package com.aniplex.magia.exedra.jp \
+  --activity com.google.firebase.MessagingUnityPlayerActivity \
+  --android-udid f6b8cef7 \
+  --tap-wait 5.0 \
+  --stuck-threshold 3 \
+  --depth 4 \
+  --duration 600
+```
+
+#### テスト状況 (Phase 18)
+```
+既存テスト: 356 passed, 3 skipped (変化なし)
+Android 疎通: 手動確認済み (Pytest は Appium 実機必須のためスキップ)
+```
 
 ---
 

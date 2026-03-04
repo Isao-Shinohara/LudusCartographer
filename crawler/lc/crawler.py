@@ -992,26 +992,43 @@ class ScreenCrawler:
             False — 脱出失敗
         """
         logger.warning("[DEADEND] root でタップ候補なし — 脱出を試みます")
-        bundle_id = os.environ.get("IOS_BUNDLE_ID", "")
+        is_android = os.environ.get("DEVICE_MODE", "").upper() == "ANDROID"
+        bundle_id = os.environ.get("ANDROID_APP_PACKAGE" if is_android else "IOS_BUNDLE_ID", "")
 
-        # 1. activate_app
+        # 1. activate_app (iOS) / launch_app (Android)
         if bundle_id:
             try:
-                self.driver.driver.activate_app(bundle_id)
+                if is_android:
+                    self.driver.driver.activate_app(bundle_id)
+                else:
+                    self.driver.driver.activate_app(bundle_id)
                 self.driver.wait(2.0)
                 logger.info(f"[DEADEND] activate_app 成功: {bundle_id!r}")
                 return True
             except Exception as e1:
                 logger.debug(f"[DEADEND] activate_app 失敗: {e1}")
 
-        # 2. iOS ホームボタン (XCUITest)
-        try:
-            self.driver.driver.execute_script("mobile: pressButton", {"name": "home"})
-            self.driver.wait(2.0)
-            logger.info("[DEADEND] ホームボタン 押下成功")
-            return True
-        except Exception as e2:
-            logger.debug(f"[DEADEND] ホームボタン失敗: {e2}")
+        if is_android:
+            # 2a. Android: ホームキー (keycode 3) → アプリ再起動
+            try:
+                self.driver.driver.press_keycode(3)  # KEYCODE_HOME
+                self.driver.wait(1.0)
+                if bundle_id:
+                    self.driver.driver.activate_app(bundle_id)
+                    self.driver.wait(2.0)
+                logger.info("[DEADEND] Android ホームキー + アプリ復帰 成功")
+                return True
+            except Exception as e2:
+                logger.debug(f"[DEADEND] Android ホームキー失敗: {e2}")
+        else:
+            # 2b. iOS ホームボタン (XCUITest)
+            try:
+                self.driver.driver.execute_script("mobile: pressButton", {"name": "home"})
+                self.driver.wait(2.0)
+                logger.info("[DEADEND] ホームボタン 押下成功")
+                return True
+            except Exception as e2:
+                logger.debug(f"[DEADEND] ホームボタン失敗: {e2}")
 
         logger.warning("[DEADEND] 脱出失敗 — クロールを継続します")
         return False

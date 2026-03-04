@@ -187,7 +187,17 @@ class AppiumDriver:
         self._driver.save_screenshot(str(before_path))
 
         logger.info(f"[FALLBACK_OCR_TAP] tapping coordinate ({x}, {y})")
-        self._driver.tap([(x, y)])
+
+        # Android: adb input tap の方が Unity ゲームで確実に動作する
+        if os.environ.get("DEVICE_MODE", "").upper() == "ANDROID":
+            import subprocess as _sp
+            udid = os.environ.get("ANDROID_UDID", "")
+            cmd = (["adb", "-s", udid, "input", "tap", str(x), str(y)] if udid
+                   else ["adb", "input", "tap", str(x), str(y)])
+            _sp.run(cmd, check=False, timeout=10)
+            logger.info(f"[ADB_TAP] adb input tap {x} {y}")
+        else:
+            self._driver.tap([(x, y)])
         time.sleep(0.5)
 
         after_path = action_dir / "after.png"

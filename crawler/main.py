@@ -246,9 +246,36 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--android",
+        action="store_true",
+        help=(
+            "Android 実機モード (UiAutomator2) で起動。"
+            " DEVICE_MODE=ANDROID を自動設定。--package と組み合わせて使用。"
+        ),
+    )
+    parser.add_argument(
+        "--package",
+        metavar="PACKAGE_NAME",
+        help="Android アプリのパッケージ名 (ANDROID_APP_PACKAGE 環境変数より優先)",
+    )
+    parser.add_argument(
+        "--activity",
+        metavar="ACTIVITY_NAME",
+        help=(
+            "Android アプリの起動アクティビティ名"
+            " (デフォルト: com.google.firebase.MessagingUnityPlayerActivity)"
+        ),
+    )
+    parser.add_argument(
+        "--android-udid",
+        metavar="UDID",
+        dest="android_udid",
+        help="Android デバイスシリアル (adb devices で確認、省略時は最初の接続端末)",
+    )
+    parser.add_argument(
         "--bundle",
         metavar="BUNDLE_ID",
-        help="ターゲットアプリの Bundle ID (IOS_BUNDLE_ID 環境変数より優先)",
+        help="ターゲットアプリの Bundle ID (iOS 用、IOS_BUNDLE_ID 環境変数より優先)",
     )
     parser.add_argument(
         "--title",
@@ -353,6 +380,28 @@ def main() -> None:
         os.environ["IOS_USE_SIMULATOR"]  = "0"
         logger.info(_MIRROR_SETUP_GUIDE)
 
+    # --android フラグ: Android 実機モードに切り替え
+    if args.android:
+        os.environ["DEVICE_MODE"] = "ANDROID"
+        # UDID: CLI引数 → adb devices の先頭デバイス
+        udid = getattr(args, "android_udid", None) or os.environ.get("ANDROID_UDID", "")
+        if not udid:
+            import subprocess as _sp
+            try:
+                lines = _sp.check_output(["adb", "devices"], text=True).splitlines()
+                for line in lines[1:]:
+                    if "\tdevice" in line:
+                        udid = line.split("\t")[0].strip()
+                        break
+            except Exception:
+                pass
+        if udid:
+            os.environ["ANDROID_UDID"] = udid
+        if args.package:
+            os.environ["ANDROID_APP_PACKAGE"] = args.package
+        if args.activity:
+            os.environ["ANDROID_APP_ACTIVITY"] = args.activity
+
     # CLI 引数が環境変数より優先される
     if args.bundle:
         os.environ["IOS_BUNDLE_ID"] = args.bundle
@@ -361,17 +410,32 @@ def main() -> None:
     if args.depth:
         os.environ["CRAWL_MAX_DEPTH"] = str(args.depth)
 
-    bundle_id = os.environ.get("IOS_BUNDLE_ID")
-    if not bundle_id:
-        logger.error("IOS_BUNDLE_ID が設定されていません。")
-        if args.mirror:
-            logger.error("  例: python main.py --mirror --bundle com.example.mygame")
-        else:
-            logger.error("  例: IOS_BUNDLE_ID=com.example.mygame python main.py")
-        sys.exit(1)
+    # モード判定
+    is_android = os.environ.get("DEVICE_MODE", "").upper() == "ANDROID"
+
+    if is_android:
+        # Android モード: ANDROID_APP_PACKAGE が必須
+        pkg = os.environ.get("ANDROID_APP_PACKAGE", "")
+        if not pkg:
+            logger.error("ANDROID_APP_PACKAGE が設定されていません。")
+            logger.error("  例: python main.py --android --package com.aniplex.magia.exedra.jp")
+            sys.exit(1)
+        # iOS 用 bundle_id のダミーをセット (driver_factory が IOS_BUNDLE_ID を参照する場合の保険)
+        os.environ.setdefault("IOS_BUNDLE_ID", pkg)
+        bundle_id = pkg
+    else:
+        bundle_id = os.environ.get("IOS_BUNDLE_ID")
+        if not bundle_id:
+            logger.error("IOS_BUNDLE_ID が設定されていません。")
+            if args.mirror:
+                logger.error("  例: python main.py --mirror --bundle com.example.mygame")
+            else:
+                logger.error("  例: IOS_BUNDLE_ID=com.example.mygame python main.py")
+            sys.exit(1)
 
     # is_mirror を先に確定してからゲームタイトルを決定する
     is_mirror = os.environ.get("DEVICE_MODE", "").upper() == "MIRROR"
+    # is_android は上で既に確定済み
 
     game_title = _resolve_game_title(
         app_name  = args.app_name,
