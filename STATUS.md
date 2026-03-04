@@ -1,10 +1,70 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-04 (Phase 12 完了 — ミラーリング情報可視化・CLI 洗練)
+最終更新: 2026-03-04 (Phase 14 完了 — 1ゲーム1プロジェクト・増分探索・DEBUG_DRAW_OPS)
 
 ---
 
-## 現在のフェーズ: Phase 12 完了 — ミラーリング情報可視化・CLI 洗練
+## 現在のフェーズ: Phase 14 完了 — 1ゲーム1プロジェクト増分探索
+
+## Phase 14 完了内容 (2026-03-04)
+
+### 1ゲーム1プロジェクト・グローバル pHash 重複排除・デバッグ機能
+
+#### SQLite スキーマ拡張
+- **`tools/import_to_sqlite.py`**:
+  - `lc_projects (id, game_title, created_at)` テーブル追加
+  - `lc_sessions` に `project_id INTEGER` カラム追加
+  - `upsert_project(conn, game_title) -> int`: 冪等なプロジェクト作成
+  - `get_project_phashes(conn, game_title) -> set[str]`: ゲーム全セッションの phash 取得
+  - `import_session()`: `upsert_project()` を呼び `project_id` を設定
+  - `migrate()`: `lc_projects` テーブル作成・`project_id` カラム追加に対応
+
+#### クローラー — 増分探索・デバッグ
+- **`crawler/lc/crawler.py`**:
+  - `CrawlerConfig.sqlite_db_path`: SQLite DB パス（省略可）
+  - `_load_known_phashes()`: 起動時に同一ゲームの既知 pHash を SQLite からロード
+  - `_crawl_impl()`: グローバル pHash チェック — 前回セッション既知画面は `[PHASH_DUP]` でスキップ
+  - `_annotate_screenshot()`: `DEBUG_DRAW_OPS=1` 時に before.png に赤円オーバーレイ
+  - `_escape_dead_end()`: root+タップ候補なし時に `activate_app()` / ホームボタンで脱出
+- **`crawler/main.py`**: `CrawlerConfig` に `sqlite_db_path=storage/ludus.db` を渡す
+
+#### Web UI — プロジェクト全画面一覧
+- **`web/src/EvidenceRepository.php`**: `getProjectScreens()` — fingerprint dedup で全セッション横断の画面一覧
+- **`web/public/api/search.php`**: `get_project_screens` アクション追加
+
+#### テスト — 25 件追加
+- **`tests/test_phase14.py`**: 25件
+  - `TestLcProjectsSchema`: lc_projects テーブル・project_id カラム存在確認
+  - `TestUpsertProject`: 作成・冪等性・別タイトル
+  - `TestGetProjectPhashes`: 空/正常取得/null除外/別ゲーム除外
+  - `TestImportSessionProjectId`: project_id 設定・同ゲーム同 ID
+  - `TestMigrateProjectId`: カラム追加・テーブル作成・冪等
+  - `TestLoadKnownPhashes`: SQLite ロード・DB なし・別ゲーム
+  - `TestAnnotateScreenshot`: 環境変数なし/あり/ファイルなし
+  - `TestEscapeDeadEnd`: activate_app/fallback home/全失敗
+
+### テスト状況 (Phase 14 時点)
+```
+test_phase14.py: 25 passed (新規)
+合計 Pytest: 260 passed, 3 skipped (Appium 実機テストのみ)
+Playwright E2E: 42/42 passed
+```
+
+---
+
+## Phase 13 完了内容 (2026-03-04)
+
+### モードに応じた自動命名と CLI の洗練
+
+- **`crawler/main.py`**: `app_name` 位置引数追加、`-d` 短縮形、5 分デフォルト
+- `_resolve_game_title()`: app_name > --title > GAME_TITLE env > IOS_BUNDLE_ID env > 自動命名
+- 自動命名: Simulator=`TestRun_YYYYMMDD_HHMM` / Mirror=`MirrorRun_YYYYMMDD_HHMM`
+
+---
+
+## Phase 12 完了内容 (2026-03-04)
+
+### ミラーリング情報の可視化と CLI 洗練
 
 ## Phase 12 完了内容 (2026-03-04)
 
