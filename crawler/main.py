@@ -588,6 +588,11 @@ def main() -> None:
                 logger.warning("要調査画面あり:")
                 for s in gaps["unknown_screens"]:
                     logger.warning("  unknown: depth=%d  fp=%s", s.depth, s.fingerprint[:8])
+            # Discovery Tree: JSON 保存 + ASCII 表示
+            if crawler is not None:
+                tree_json_path = summary_path.parent / "discovery_tree.json"
+                crawler.save_discovery_tree(tree_json_path)
+                print(crawler.render_discovery_tree())
 
         # --open-web: ブラウザで管理画面を自動表示
         if args.open_web:

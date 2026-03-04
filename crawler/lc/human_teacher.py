@@ -2,8 +2,10 @@
 human_teacher.py — 未知の画面で人間に操作を教えてもらうターミナル UI
 
 入力コマンド一覧:
-  540,1200          → tap (x=540, y=1200)
-  tap 540,1200      → tap (同上)
+  540,1200            → tap (x=540, y=1200)
+  tap 540,1200        → tap (同上)
+  540,1200,3000       → tap (タップ後 3000ms 待機)
+  tap 540,1200,3000   → tap (同上)
   swipe 300,600,300,200        → swipe (duration=300ms デフォルト)
   swipe 300,600,300,200,500    → swipe (duration=500ms 指定)
   back              → OS 戻る
@@ -77,7 +79,7 @@ class HumanTeacher:
         print(f"   OCR 検出テキスト:\n{ocr_str}")
         print(f"{DIVIDER}")
         print("  入力コマンド:")
-        print("    x,y              タップ  例: 540,1200")
+        print("    x,y[,ms]         タップ（待機時間オプション）  例: 540,1200  または 540,1200,3000")
         print("    swipe x1,y1,x2,y2[,ms]  スワイプ  例: swipe 300,600,300,200,300")
         print("    back             OS 戻る")
         print("    wait 秒数        待機  例: wait 2.0")
@@ -118,9 +120,12 @@ def _parse_input(text: str) -> Optional[list[dict]]:
         duration = int(m.group(5)) if m.group(5) else 300
         return [{"type": "swipe", "x1": x1, "y1": y1, "x2": x2, "y2": y2, "duration": duration}]
 
-    # tap x,y  (または単に "x,y")
-    m = re.match(r"^(?:tap\s+)?(-?\d+)[,\s]+(-?\d+)$", t)
+    # tap x,y[,wait_ms]  (または単に "x,y[,wait_ms]")
+    m = re.match(r"^(?:tap\s+)?(-?\d+)[,\s]+(-?\d+)(?:[,\s]+(\d+))?$", t)
     if m:
-        return [{"type": "tap", "x": int(m.group(1)), "y": int(m.group(2))}]
+        action: dict = {"type": "tap", "x": int(m.group(1)), "y": int(m.group(2))}
+        if m.group(3):
+            action["wait_ms"] = int(m.group(3))
+        return [action]
 
     return None  # 認識不可 → 再入力

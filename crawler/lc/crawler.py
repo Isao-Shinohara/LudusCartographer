@@ -231,6 +231,11 @@ class ScreenCrawler:
         self._screen_cache: Optional[ScreenCache] = None
         self._init_screen_cache()
 
+        # 探索ツリーのエッジ記録
+        self._transition_log: list[dict] = []
+        # 今セッション中に失敗したキャッシュハッシュ（Undo 用）
+        self._failed_cache_hashes: set[str] = set()
+
         # Teacher Mode
         self._human_teacher: Optional[HumanTeacher] = None
         if self.config.teacher_mode_enabled:
@@ -332,6 +337,9 @@ class ScreenCrawler:
                     label = action.get("label", f"cache_tap_{i}")
                     self.driver.tap_ocr_coordinate(x, y, action_name=f"cache_{label}")
                     self.driver.wait_until_stable()
+                    # wait_ms: 通信ボタン等でタップ後に追加待機が必要な場合
+                    if action.get("wait_ms"):
+                        self.driver.wait(action["wait_ms"] / 1000)
 
                 elif action_type == "swipe":
                     x1 = int(action["x1"])
@@ -484,7 +492,12 @@ class ScreenCrawler:
         # --- キャッシュ照合 (CACHE_HIT: 知識ベースのアクションを優先実行) ---
         if self._screen_cache is not None and record.tappable_items:
             cached = self._screen_cache.lookup(record.screenshot_path)
+            # 今セッション中に失敗済みのハッシュはスキップ
+            if cached is not None and cached.hash in self._failed_cache_hashes:
+                logger.info("[CACHE] 失敗済みキャッシュをスキップ: %s…", cached.hash[:8])
+                cached = None
             if cached is not None:
+                before_phash = record.phash or ""
                 logger.info(
                     "⚡ [CACHE HIT - Fast Mode] %r  dist=%d  actions=%d件",
                     record.title, cached.distance, len(cached.actions),
@@ -493,22 +506,54 @@ class ScreenCrawler:
                 self._screen_cache.record_hit(cached.hash)
                 self._stats.taps_total += len(cached.actions)
                 if hit_ok:
-                    _saved_child_fp = self._pending_child_fp
-                    self._pending_child_fp = None
-                    _did_nav = self._crawl_impl(depth + 1, record.fingerprint)
-                    child_fp = self._pending_child_fp
-                    self._pending_child_fp = _saved_child_fp
-                    if child_fp:
-                        self._frontier_tracker.record_tap(
-                            record.fingerprint, f"[CACHE]{cached.title}", child_fp
+                    # pHash で画面変化を確認 (Undo 検知)
+                    screen_changed = True
+                    dist_after = 0
+                    if before_phash:
+                        try:
+                            self.driver.wait(0.8)  # 短い安定待機
+                            after_shot  = self.driver.screenshot("after_cache_verify")
+                            after_phash = compute_phash(after_shot)
+                            dist_after  = phash_distance(before_phash, after_phash)
+                            screen_changed = (dist_after > PHASH_THRESHOLD)
+                        except Exception:
+                            screen_changed = True  # エラー時は変化ありと見なす
+
+                    if screen_changed:
+                        _saved_child_fp = self._pending_child_fp
+                        self._pending_child_fp = None
+                        _did_nav = self._crawl_impl(depth + 1, record.fingerprint)
+                        child_fp = self._pending_child_fp
+                        self._pending_child_fp = _saved_child_fp
+                        if child_fp:
+                            self._frontier_tracker.record_tap(
+                                record.fingerprint, f"[CACHE]{cached.title}", child_fp
+                            )
+                            # 遷移ログに記録
+                            self._transition_log.append({
+                                "from_fp":   record.fingerprint,
+                                "to_fp":     child_fp,
+                                "via":       "cache",
+                                "actions":   cached.actions,
+                                "timestamp": datetime.now().isoformat(),
+                            })
+                        if _did_nav and not self._is_time_up():
+                            self.driver.back()
+                            self.driver.wait(self.config.wait_after_back)
+                        self._nav_stack.pop()
+                        return True
+                    else:
+                        # キャッシュ無効 → 今セッション中はスキップ、Teacher Mode へ
+                        print(f"⚠️  [CACHE_INVALID] キャッシュが効きませんでした (dist={dist_after})"
+                              " → 無効化して再教示へ")
+                        logger.info(
+                            "⚠️  [CACHE_INVALID] dist=%d → hash=%s… を失敗リストに追加",
+                            dist_after, cached.hash[:8],
                         )
-                    if _did_nav and not self._is_time_up():
-                        self.driver.back()
-                        self.driver.wait(self.config.wait_after_back)
-                    self._nav_stack.pop()
-                    return True
-                # hit_ok == False: フォールバックして通常タップループへ
-                logger.info("[CACHE] キャッシュアクション失敗 → 通常探索にフォールバック")
+                        self._failed_cache_hashes.add(cached.hash)
+                        # fall through → TEACHER_MODE / 通常 DFS
+                else:
+                    logger.info("[CACHE] アクション実行失敗 → 通常探索にフォールバック")
 
         # --- TEACHER_MODE ブランチ (cache miss 時のみ起動) ---
         # キャッシュヒットして既に return している場合はここに到達しない
@@ -557,7 +602,16 @@ class ScreenCrawler:
                         _saved_child_fp = self._pending_child_fp
                         self._pending_child_fp = None
                         _did_nav = self._crawl_impl(depth + 1, record.fingerprint)
+                        child_fp_teacher = self._pending_child_fp  # restore 前に取得
                         self._pending_child_fp = _saved_child_fp
+                        if child_fp_teacher:
+                            self._transition_log.append({
+                                "from_fp":   record.fingerprint,
+                                "to_fp":     child_fp_teacher,
+                                "via":       "teacher",
+                                "actions":   human_actions,
+                                "timestamp": datetime.now().isoformat(),
+                            })
                         if _did_nav and not self._is_time_up():
                             self.driver.back()
                             self.driver.wait(self.config.wait_after_back)
@@ -627,6 +681,16 @@ class ScreenCrawler:
                         )
                     except Exception as _ce:
                         logger.debug("[CACHE] save スキップ: %s", _ce)
+                if child_fp:
+                    self._transition_log.append({
+                        "from_fp":   record.fingerprint,
+                        "to_fp":     child_fp,
+                        "via":       "auto",
+                        "label":     text,
+                        "x":         px,
+                        "y":         py,
+                        "timestamp": datetime.now().isoformat(),
+                    })
                 # 遷移先から元の画面に戻る
                 if not self._is_time_up():
                     self.driver.back()
@@ -1712,6 +1776,85 @@ class ScreenCrawler:
                     f"  {rec.fingerprint[:8]}…"
                 )
         lines.append("=" * 60)
+        return "\n".join(lines)
+
+    # ----------------------------------------------------------
+    # 探索ツリー
+    # ----------------------------------------------------------
+
+    def _find_record(self, fp: str) -> Optional[ScreenRecord]:
+        """fingerprint で _visited から ScreenRecord を検索する。"""
+        for key, rec in self._visited.items():
+            if key.endswith(f"@{fp}"):
+                return rec
+        return None
+
+    def save_discovery_tree(self, path: Path) -> None:
+        """探索ツリーを discovery_tree.json に保存する。"""
+        import json as _json
+
+        nodes = {
+            rec.fingerprint: {
+                "title":           rec.title,
+                "depth":           rec.depth,
+                "phash":           rec.phash,
+                "screenshot_path": str(rec.screenshot_path),
+                "tappable_count":  len(rec.tappable_items),
+                "discovered_at":   rec.discovered_at,
+            }
+            for rec in self._visited.values()
+        }
+        data = {
+            "game_title":  self.config.game_title,
+            "session_id":  path.parent.name,
+            "created_at":  datetime.now().isoformat(),
+            "nodes":       nodes,
+            "edges":       self._transition_log,
+        }
+        path.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.info(
+            "[TREE] 探索ツリー保存: %s  (%d ノード, %d エッジ)",
+            path, len(nodes), len(self._transition_log),
+        )
+
+    def render_discovery_tree(self) -> str:
+        """探索ツリーを ASCII テキストで返す。"""
+        children: dict[str, list[tuple[str, str]]] = {}
+        for edge in self._transition_log:
+            from_fp = edge.get("from_fp", "")
+            to_fp   = edge.get("to_fp", "")
+            via     = edge.get("via", "auto")
+            if from_fp and to_fp:
+                children.setdefault(from_fp, []).append((to_fp, via))
+
+        root_rec = next(
+            (r for r in self._visited.values() if r.depth == 0), None
+        )
+        if root_rec is None:
+            return "(探索データなし)"
+
+        VIA_ICON = {"cache": "⚡", "teacher": "🧑", "auto": "🔍"}
+        lines = [f"\n🗺️  Discovery Tree: {self.config.game_title}"]
+
+        def _render(fp: str, prefix: str, is_last: bool) -> None:
+            rec     = self._find_record(fp)
+            title   = rec.title if rec else "unknown"
+            n_items = len(rec.tappable_items) if rec else 0
+            conn    = "└── " if is_last else "├── "
+            lines.append(f"{prefix}{conn}📱 {title!r}  [{n_items}件]  {fp[:8]}…")
+            child_list = children.get(fp, [])
+            new_pfx    = prefix + ("    " if is_last else "│   ")
+            for i, (child_fp, via) in enumerate(child_list):
+                icon    = VIA_ICON.get(via, "•")
+                is_lc   = i == len(child_list) - 1
+                conn2   = "└── " if is_lc else "├── "
+                rec2    = self._find_record(child_fp)
+                title2  = rec2.title if rec2 else "unknown"
+                n2      = len(rec2.tappable_items) if rec2 else 0
+                lines.append(f"{new_pfx}{conn2}{icon} {title2!r}  [{n2}件]  {child_fp[:8]}…")
+                _render(child_fp, new_pfx + ("    " if is_lc else "│   "), True)
+
+        _render(root_rec.fingerprint, "", True)
         return "\n".join(lines)
 
 
