@@ -64,6 +64,19 @@ if ($action === 'get_sessions') {
     exit;
 }
 
+// --- get_project_screens アクション ---
+if ($action === 'get_project_screens') {
+    $limit = min((int)($_GET['limit'] ?? 100), 500);
+    $screens = ($useDb && $repository instanceof EvidenceRepository)
+        ? $repository->getProjectScreens($gameTitle, $limit)
+        : [];
+    echo json_encode(
+        ['screens' => $screens, 'count' => count($screens)],
+        JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+    );
+    exit;
+}
+
 // --- detail アクション ---
 if ($action === 'detail') {
     $id = (int)($_GET['id'] ?? 0);

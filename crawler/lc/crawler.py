@@ -117,6 +117,8 @@ class CrawlerConfig:
     game_title:       str   = "Unknown Game"
     # 動作モード（crawl_summary.json に記録、管理画面で実機/シミュ判別に使用）
     device_mode:      str   = "SIMULATOR"  # "SIMULATOR" または "MIRROR"
+    # SQLite DB パス（グローバル pHash 重複排除・増分探索用）
+    sqlite_db_path:   Optional[str] = None
     # DB 設定（省略時はメモリのみ）
     db_game_id:       int   = 1
     db_host:          str   = ""
@@ -191,6 +193,10 @@ class ScreenCrawler:
         self._icon_templates: dict[str, object] = {}
         self._load_icon_templates()
 
+        # グローバル pHash セット（同一ゲームの過去セッション画面 — 増分探索用）
+        self._known_phashes: set[str] = set()
+        self._load_known_phashes()
+
         # DB 接続（利用可能な場合のみ）
         self._db_conn        = None
         self._crawl_session_id: Optional[int] = None
@@ -247,8 +253,20 @@ class ScreenCrawler:
         if record is None:
             return False
 
-        # --- phash ログ (診断用。iOS 設定の白系画面は phash 距離が 0-2 で差別不能のため
-        #     重複判定には使用せず、テキスト指紋を正とする) ---
+        # --- グローバル pHash 重複チェック（増分探索: 前回セッションで既知の画面をスキップ）---
+        if record.phash and self._known_phashes:
+            min_dist = min(
+                (phash_distance(record.phash, known) for known in self._known_phashes),
+                default=999,
+            )
+            if min_dist < PHASH_THRESHOLD:
+                logger.info(
+                    f"[PHASH_DUP] 前回セッション既知画面 (dist={min_dist}): {record.title!r} — スキップ"
+                )
+                self._stats.screens_skipped += 1
+                return record.fingerprint != parent_fp
+
+        # --- phash ログ (診断用。セッション内での同一性チェック) ---
         if record.phash is not None and self._visited:
             min_dist = min(
                 phash_distance(record.phash, prev.phash)
@@ -289,6 +307,9 @@ class ScreenCrawler:
         if not record.tappable_items:
             logger.warning(f"[CRAWL] ⚠ タップ候補なし: {record.title!r} — エビデンス保存")
             self._save_evidence("no_tappable_items", record.ocr_results, record.title)
+            # root (depth=0) かつタップ候補なし → デッドエンド脱出を試みる
+            if depth == 0:
+                self._escape_dead_end()
 
         # --- 各タップ候補を探索 ---
         for i, item in enumerate(record.tappable_items):
@@ -301,6 +322,9 @@ class ScreenCrawler:
                 f"[CRAWL]  → [{i+1}/{len(record.tappable_items)}]"
                 f" タップ: {text!r}  pixel=({px},{py})"
             )
+
+            # タップ前スクリーンショットにオーバーレイ（DEBUG_DRAW_OPS=1 時）
+            self._annotate_screenshot(record.screenshot_path, px, py, text)
 
             # タップ（ピクセル → ポイント 自動変換）
             self.driver.tap_ocr_coordinate(
@@ -632,6 +656,109 @@ class ScreenCrawler:
             f"chevrons={len(chevron_ys)}  screen={screen_w}×{screen_h}"
         )
         return result
+
+    # ----------------------------------------------------------
+    # グローバル pHash ロード（増分探索）
+    # ----------------------------------------------------------
+
+    def _load_known_phashes(self) -> None:
+        """SQLite DB から同一ゲームの既知 pHash をロードする（増分探索用）。"""
+        db_path = self.config.sqlite_db_path
+        if not db_path or not Path(db_path).exists():
+            return
+        try:
+            import sqlite3 as _sqlite3
+            from tools.import_to_sqlite import get_project_phashes
+            conn = _sqlite3.connect(db_path)
+            self._known_phashes = get_project_phashes(conn, self.config.game_title)
+            conn.close()
+            logger.info(
+                f"[PHASH] 既知 pHash ロード: {len(self._known_phashes)} 件"
+                f"  game_title={self.config.game_title!r}"
+            )
+        except Exception as e:
+            logger.warning(f"[PHASH] pHash ロード失敗 (スキップ): {e}")
+
+    # ----------------------------------------------------------
+    # DEBUG_DRAW_OPS: タップ座標オーバーレイ
+    # ----------------------------------------------------------
+
+    def _annotate_screenshot(
+        self,
+        shot_path: Path,
+        px: int,
+        py: int,
+        action: str = "tap",
+    ) -> None:
+        """
+        DEBUG_DRAW_OPS=1 のとき、スクリーンショットにタップ座標を赤円でオーバーレイする。
+
+        タップ前の before.png に「ここをタップした」を記録する用途。元ファイルを上書き保存する。
+        """
+        if not os.environ.get("DEBUG_DRAW_OPS"):
+            return
+        try:
+            import cv2 as _cv2
+            import numpy as _np
+            img = _cv2.imread(str(shot_path))
+            if img is None:
+                return
+            # 赤半透明円（塗りつぶし）
+            overlay = img.copy()
+            _cv2.circle(overlay, (px, py), 40, (0, 0, 255), -1)
+            _cv2.addWeighted(overlay, 0.4, img, 0.6, 0, img)
+            # 枠線
+            _cv2.circle(img, (px, py), 40, (0, 0, 255), 3)
+            # アクションテキスト（座標右横に表示）
+            _cv2.putText(
+                img, action[:15], (px + 45, py + 10),
+                _cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2,
+            )
+            _cv2.imwrite(str(shot_path), img)
+            logger.debug(f"[DEBUG_DRAW_OPS] タップ描画: ({px},{py}) {action!r}")
+        except Exception as e:
+            logger.debug(f"[DEBUG_DRAW_OPS] 描画スキップ: {e}")
+
+    # ----------------------------------------------------------
+    # デッドエンド脱出（スタック時リカバリ）
+    # ----------------------------------------------------------
+
+    def _escape_dead_end(self) -> bool:
+        """
+        root (depth=0) でタップ候補がない場合に脱出を試みる。
+
+        1. activate_app() でアプリをフォアグラウンドに戻す
+        2. iOS ホームボタン (XCUITest 'mobile: pressButton') を押す
+        3. いずれも失敗したら False を返す
+
+        Returns:
+            True  — 脱出成功
+            False — 脱出失敗
+        """
+        logger.warning("[DEADEND] root でタップ候補なし — 脱出を試みます")
+        bundle_id = os.environ.get("IOS_BUNDLE_ID", "")
+
+        # 1. activate_app
+        if bundle_id:
+            try:
+                self.driver.driver.activate_app(bundle_id)
+                self.driver.wait(2.0)
+                logger.info(f"[DEADEND] activate_app 成功: {bundle_id!r}")
+                return True
+            except Exception as e1:
+                logger.debug(f"[DEADEND] activate_app 失敗: {e1}")
+
+        # 2. iOS ホームボタン (XCUITest)
+        try:
+            self.driver.driver.execute_script("mobile: pressButton", {"name": "home"})
+            self.driver.wait(2.0)
+            logger.info("[DEADEND] ホームボタン 押下成功")
+            return True
+        except Exception as e2:
+            logger.debug(f"[DEADEND] ホームボタン失敗: {e2}")
+
+        logger.warning("[DEADEND] 脱出失敗 — クロールを継続します")
+        return False
 
     # ----------------------------------------------------------
     # アイコン検出（テンプレートマッチング）

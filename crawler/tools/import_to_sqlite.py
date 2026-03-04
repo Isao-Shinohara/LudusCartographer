@@ -15,6 +15,12 @@ import sqlite3
 from pathlib import Path
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS lc_projects (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_title TEXT    UNIQUE NOT NULL,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS lc_sessions (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id    TEXT    UNIQUE NOT NULL,
@@ -22,7 +28,8 @@ CREATE TABLE IF NOT EXISTS lc_sessions (
     started_at    TEXT,
     status        TEXT    DEFAULT 'completed',
     game_title    TEXT    DEFAULT 'Unknown Game',
-    device_mode   TEXT    DEFAULT 'SIMULATOR'
+    device_mode   TEXT    DEFAULT 'SIMULATOR',
+    project_id    INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS lc_screens (
@@ -49,6 +56,19 @@ CREATE TABLE IF NOT EXISTS lc_tappable_items (
 
 def migrate(conn: sqlite3.Connection) -> None:
     """既存 DB に不足カラムを追加するマイグレーション。"""
+    # lc_projects テーブルが存在しない場合は作成する
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "lc_projects" not in tables:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lc_projects (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_title TEXT    UNIQUE NOT NULL,
+                created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.commit()
+        print("  [migrate] lc_projects テーブルを作成")
+
     cols = [r[1] for r in conn.execute("PRAGMA table_info(lc_sessions)")]
     if "game_title" not in cols:
         conn.execute("ALTER TABLE lc_sessions ADD COLUMN game_title TEXT DEFAULT 'Unknown Game'")
@@ -62,6 +82,36 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE lc_sessions ADD COLUMN device_mode TEXT DEFAULT 'SIMULATOR'")
         conn.commit()
         print("  [migrate] device_mode カラムを追加 → 既存セッションを 'SIMULATOR' に設定")
+    if "project_id" not in cols:
+        conn.execute("ALTER TABLE lc_sessions ADD COLUMN project_id INTEGER")
+        conn.commit()
+        print("  [migrate] project_id カラムを追加")
+
+
+def upsert_project(conn: sqlite3.Connection, game_title: str) -> int:
+    """game_title のプロジェクトを取得または作成し、project_id を返す。"""
+    conn.execute(
+        "INSERT OR IGNORE INTO lc_projects (game_title) VALUES (?)",
+        (game_title,),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT id FROM lc_projects WHERE game_title = ?",
+        (game_title,),
+    ).fetchone()
+    return row[0]
+
+
+def get_project_phashes(conn: sqlite3.Connection, game_title: str) -> set:
+    """game_title に属する全セッションの phash セットをロードする（増分探索用）。"""
+    rows = conn.execute(
+        """SELECT DISTINCT s.phash
+           FROM lc_screens s
+           JOIN lc_sessions sess ON sess.session_id = s.session_id
+           WHERE sess.game_title = ? AND s.phash IS NOT NULL""",
+        (game_title,),
+    ).fetchall()
+    return {row[0] for row in rows}
 
 
 def seed_test_games(conn: sqlite3.Connection) -> None:
@@ -131,14 +181,17 @@ def import_session(conn: sqlite3.Connection, summary_path: Path, game_title: str
     # device_mode は JSON から取得 (SIMULATOR / MIRROR)
     device_mode = data.get("device_mode", "SIMULATOR")
 
+    # プロジェクトを upsert して project_id を取得
+    project_id = upsert_project(conn, game_title)
+
     cur = conn.cursor()
     started_at = screens[0]["discovered_at"] if screens else None
 
     cur.execute(
         "INSERT OR IGNORE INTO lc_sessions"
-        " (session_id, screens_found, started_at, game_title, device_mode)"
-        " VALUES (?,?,?,?,?)",
-        (session_id, len(screens), started_at, game_title, device_mode),
+        " (session_id, screens_found, started_at, game_title, device_mode, project_id)"
+        " VALUES (?,?,?,?,?,?)",
+        (session_id, len(screens), started_at, game_title, device_mode, project_id),
     )
 
     imported = 0

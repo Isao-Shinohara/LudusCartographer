@@ -240,11 +240,14 @@ def main() -> None:
     from lc.crawler import CrawlerConfig, ScreenCrawler
     from lc.ocr import find_best, run_ocr
 
+    _sqlite_db = Path(__file__).parent / "storage" / "ludus.db"
+
     crawler_cfg = CrawlerConfig(
         game_title       = game_title,
         device_mode      = device_mode,
         max_duration_sec = duration,
         max_depth        = max_depth,
+        sqlite_db_path   = str(_sqlite_db) if _sqlite_db.exists() else None,
         db_host          = db_host,
         db_name          = os.environ.get("DB_NAME",     "ludus_cartographer"),
         db_user          = os.environ.get("DB_USER",     "root"),

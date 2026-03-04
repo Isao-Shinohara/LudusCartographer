@@ -200,6 +200,35 @@ class EvidenceRepository
         return $stmt->fetchAll();
     }
 
+    /**
+     * game_title に属する全セッションのユニーク画面を返す（fingerprint でデデュープ）。
+     *
+     * 同じ fingerprint が複数セッションに存在する場合は、最初に発見された画面のみ返す。
+     * depth 昇順・発見日時昇順でソートするため、マップ全体の俯瞰に最適。
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getProjectScreens(string $gameTitle, int $limit = 100): array
+    {
+        $stmt = $this->db->prepare(<<<SQL
+            SELECT MIN(s.id) AS id, s.fingerprint,
+                   s.title, MIN(s.depth) AS depth,
+                   s.screenshot_path, s.ocr_text,
+                   MIN(s.discovered_at) AS discovered_at, s.session_id,
+                   COALESCE(sess.game_title, 'Unknown Game') AS game_title
+            FROM lc_screens s
+            LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
+            WHERE sess.game_title = :game_title
+            GROUP BY s.fingerprint
+            ORDER BY MIN(s.depth) ASC, MIN(s.discovered_at) ASC
+            LIMIT :limit
+        SQL);
+        $stmt->bindValue(':game_title', $gameTitle, PDO::PARAM_STR);
+        $stmt->bindValue(':limit',      $limit,     PDO::PARAM_INT);
+        $stmt->execute();
+        return array_map([$this, 'toScreenArray'], $stmt->fetchAll());
+    }
+
     // ------------------------------------------------------------------
     // private helpers
     // ------------------------------------------------------------------
