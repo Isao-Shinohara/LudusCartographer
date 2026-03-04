@@ -5,27 +5,30 @@ LudusCartographer — クローラー エントリポイント
 環境変数を読み込み、iOS Simulator / 実機でアプリを自動探索する。
 
 【使い方】
-  # iOS Simulator (デフォルト)
-  IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.example.mygame python main.py
+  # アプリ名を指定してシミュレータ実行
+  IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences python main.py "iOS設定"
+
+  # アプリ名省略 → モード別に自動命名 (TestRun_YYYYMMDD_HHMM)
+  IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences python main.py
 
   # 実機ミラーリング (UxPlay 使用) — ワンコマンド
+  python main.py --mirror --bundle com.example.mygame "MyGame"
+
+  # 実機ミラーリング・アプリ名省略 → MirrorRun_YYYYMMDD_HHMM
   python main.py --mirror --bundle com.example.mygame
 
-  # ミラーリング (環境変数でも指定可能)
-  DEVICE_MODE=MIRROR GAME_TITLE=MyGame IOS_BUNDLE_ID=com.example.mygame python main.py
-
-  # 探索パラメータ調整
-  CRAWL_DURATION_SEC=300 CRAWL_MAX_DEPTH=3 IOS_USE_SIMULATOR=1 \\
-    IOS_BUNDLE_ID=com.apple.Preferences GAME_TITLE=iOS設定 python main.py
+  # 探索パラメータ調整 (-d は --duration の短縮形)
+  IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
+    python main.py "iOS設定" -d 600 --depth 4
 
 【環境変数】
   IOS_BUNDLE_ID         ターゲットアプリの Bundle ID（必須）
-  GAME_TITLE            ゲームタイトル（省略可 — 未設定時は IOS_BUNDLE_ID を使用）
+  GAME_TITLE            ゲームタイトル（省略可 — 引数/env 未設定時は自動命名）
   DEVICE_MODE           "SIMULATOR" (デフォルト) または "MIRROR"
   IOS_USE_SIMULATOR     "1" でシミュレータモード
   IOS_SIMULATOR_UDID    シミュレータ UDID（省略可 — 自動選択）
   IOS_UDID              実機 UDID（省略可 — 自動検出）
-  CRAWL_DURATION_SEC    クロール最大時間 秒 (デフォルト: 180)
+  CRAWL_DURATION_SEC    クロール最大時間 秒 (デフォルト: 300)
   CRAWL_MAX_DEPTH       DFS 最大深さ (デフォルト: 3)
   DB_HOST               MySQL ホスト（省略可 — 未設定時は DB 保存スキップ）
   DB_NAME               MySQL DB 名 (デフォルト: ludus_cartographer)
@@ -44,7 +47,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 # プロジェクトルートをパスに追加
 sys.path.insert(0, str(Path(__file__).parent))
@@ -79,21 +84,65 @@ _MIRROR_SETUP_GUIDE = """\
 """
 
 
+def _resolve_game_title(
+    app_name: Optional[str],
+    title_opt: Optional[str],
+    is_mirror: bool,
+) -> str:
+    """
+    game_title を以下の優先順位で決定する:
+
+      1. app_name 位置引数 (最優先)
+      2. --title オプション
+      3. GAME_TITLE 環境変数
+      4. IOS_BUNDLE_ID 環境変数（設定されている場合）
+      5. モード別自動命名:
+           Simulator → TestRun_YYYYMMDD_HHMM
+           Mirror    → MirrorRun_YYYYMMDD_HHMM
+    """
+    if app_name:
+        return app_name
+    if title_opt:
+        return title_opt
+    if os.environ.get("GAME_TITLE"):
+        return os.environ["GAME_TITLE"]
+    if os.environ.get("IOS_BUNDLE_ID"):
+        return os.environ["IOS_BUNDLE_ID"]
+    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    return f"MirrorRun_{ts}" if is_mirror else f"TestRun_{ts}"
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="LudusCartographer — モバイルアプリ自律クローラー",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用例:
-  # iOS Simulator
+  # アプリ名を指定して実行 (Simulator)
+  IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences python main.py "iOS設定"
+
+  # アプリ名省略 → TestRun_YYYYMMDD_HHMM で自動命名
   IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences python main.py
 
   # 実機ミラーリング (UxPlay) — ワンコマンド
-  python main.py --mirror --bundle com.example.mygame --title MyGame
+  python main.py --mirror --bundle com.example.mygame "MyGame"
 
-  # 探索パラメータ指定
-  python main.py --mirror --bundle com.example.mygame --duration 300 --depth 4
+  # ミラーリング・名前省略 → MirrorRun_YYYYMMDD_HHMM
+  python main.py --mirror --bundle com.example.mygame
+
+  # 探索パラメータ指定 (-d は --duration の短縮形)
+  python main.py --mirror --bundle com.example.mygame "MyGame" -d 600 --depth 4
 """,
+    )
+    parser.add_argument(
+        "app_name",
+        nargs="?",
+        default=None,
+        metavar="APP_NAME",
+        help=(
+            "アプリ/ゲーム名（省略可）。"
+            " 省略時は IOS_BUNDLE_ID または TestRun_YYYYMMDD_HHMM / MirrorRun_YYYYMMDD_HHMM で自動命名。"
+        ),
     )
     parser.add_argument(
         "--mirror",
@@ -111,13 +160,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--title",
         metavar="GAME_TITLE",
-        help="ゲームタイトル (GAME_TITLE 環境変数より優先)",
+        help="ゲームタイトル (app_name 位置引数より低優先、後方互換用)",
     )
     parser.add_argument(
-        "--duration",
+        "--duration", "-d",
         type=int,
         metavar="SEC",
-        help="クロール最大時間 秒 (デフォルト: 180)",
+        default=None,
+        help="クロール最大時間 秒 (デフォルト: 300 = 5分)",
     )
     parser.add_argument(
         "--depth",
@@ -142,9 +192,7 @@ def main() -> None:
     # CLI 引数が環境変数より優先される
     if args.bundle:
         os.environ["IOS_BUNDLE_ID"] = args.bundle
-    if args.title:
-        os.environ["GAME_TITLE"] = args.title
-    if args.duration:
+    if args.duration is not None:
         os.environ["CRAWL_DURATION_SEC"] = str(args.duration)
     if args.depth:
         os.environ["CRAWL_MAX_DEPTH"] = str(args.depth)
@@ -158,10 +206,18 @@ def main() -> None:
             print("  例: IOS_BUNDLE_ID=com.example.mygame python main.py")
         sys.exit(1)
 
-    game_title  = os.environ.get("GAME_TITLE", bundle_id)  # 未設定時は bundle_id をタイトルとして使う
-    duration    = int(os.environ.get("CRAWL_DURATION_SEC", "180"))
-    max_depth   = int(os.environ.get("CRAWL_MAX_DEPTH",    "3"))
-    db_host     = os.environ.get("DB_HOST", "")
+    # is_mirror を先に確定してからゲームタイトルを決定する
+    is_mirror = os.environ.get("DEVICE_MODE", "").upper() == "MIRROR"
+
+    game_title = _resolve_game_title(
+        app_name  = args.app_name,
+        title_opt = args.title,
+        is_mirror = is_mirror,
+    )
+
+    duration  = int(os.environ.get("CRAWL_DURATION_SEC", "300"))  # デフォルト 5 分
+    max_depth = int(os.environ.get("CRAWL_MAX_DEPTH",    "3"))
+    db_host   = os.environ.get("DB_HOST", "")
 
     # DEVICE_MODE 解決（driver_factory と同じロジック）
     from driver_factory import _resolve_device_mode

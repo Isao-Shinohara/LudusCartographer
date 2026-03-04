@@ -257,7 +257,7 @@ class TestMainMirrorFlag:
 
         with patch.dict(os.environ, base_env, clear=False):
             with patch.object(m, "_parse_args", return_value=argparse.Namespace(
-                mirror=True, bundle=None, title=None, duration=None, depth=None
+                app_name=None, mirror=True, bundle=None, title=None, duration=None, depth=None
             )):
                 with patch("driver_factory.create_driver_session") as mock_ctx:
                     mock_ctx.return_value.__enter__ = lambda *a: __import__(

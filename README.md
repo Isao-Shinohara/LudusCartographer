@@ -145,29 +145,50 @@ PATH="$HOME/.nodebrew/current/bin:$PATH" appium --port 4723
 ```bash
 cd crawler
 
-# ── iOS Simulator（シミュレータ） ──────────────────────────────────
+# ── iOS Simulator — アプリ名を指定 ───────────────────────────────
 IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
-  CRAWL_DURATION_SEC=180 CRAWL_MAX_DEPTH=2 \
+  venv/bin/python main.py "iOS設定"
+
+# ── iOS Simulator — アプリ名省略 → TestRun_YYYYMMDD_HHMM で自動命名
+IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
   venv/bin/python main.py
 
-# ── 実機ミラーリング (UxPlay) — ワンコマンド ─────────────────────
+# ── iOS Simulator — 探索パラメータ指定 (-d は --duration の短縮形)
+IOS_USE_SIMULATOR=1 IOS_BUNDLE_ID=com.apple.Preferences \
+  venv/bin/python main.py "iOS設定" -d 600 --depth 4
+
+# ── 実機ミラーリング (UxPlay) — アプリ名あり ─────────────────────
 # UxPlay と Appium を起動してから実行する（--mirror がセットアップガイドを表示）
 venv/bin/python main.py --mirror \
   --bundle com.example.mygame \
-  --title  "MyGame" \
-  --duration 300 \
-  --depth    4
+  "MyGame" -d 300 --depth 4
+
+# ── 実機ミラーリング — アプリ名省略 → MirrorRun_YYYYMMDD_HHMM で自動命名
+venv/bin/python main.py --mirror --bundle com.example.mygame
 
 # ── 実機ミラーリング（環境変数でも指定可能） ────────────────────
 DEVICE_MODE=MIRROR IOS_BUNDLE_ID=com.example.mygame \
-  GAME_TITLE=MyGame venv/bin/python main.py
+  venv/bin/python main.py "MyGame"
 
 # ── iOS 実機 Appium（UDID 自動検出） ─────────────────────────────
-IOS_BUNDLE_ID=com.example.mygame venv/bin/python main.py
+IOS_BUNDLE_ID=com.example.mygame venv/bin/python main.py "MyGame"
 
 # ── Android（ADB 経由でデバイス自動検出） ────────────────────────
 ANDROID_BUNDLE_ID=com.example.mygame venv/bin/python main.py
 ```
+
+#### ゲーム名の自動命名ルール
+
+`APP_NAME` 位置引数を省略した場合、以下の優先順位で `game_title` が決まります:
+
+| 優先順位 | 条件 | 命名結果 |
+|---------|------|---------|
+| 1 | `APP_NAME` 位置引数を指定 | 指定値をそのまま使用 |
+| 2 | `--title` オプションを指定 | 指定値をそのまま使用 |
+| 3 | `GAME_TITLE` 環境変数が設定済み | 環境変数の値を使用 |
+| 4 | `IOS_BUNDLE_ID` 環境変数が設定済み | Bundle ID をそのまま使用 |
+| 5 | 何も設定なし・Simulator モード | `TestRun_YYYYMMDD_HHMM` |
+| 6 | 何も設定なし・Mirror モード | `MirrorRun_YYYYMMDD_HHMM` |
 
 #### ミラーリングモード (`--mirror`) の前提条件
 
@@ -184,11 +205,12 @@ ANDROID_BUNDLE_ID=com.example.mygame venv/bin/python main.py
 
 | 引数 | 説明 |
 |------|------|
+| `APP_NAME` | アプリ/ゲーム名（位置引数・省略可）。省略時は自動命名 |
 | `--mirror` | ミラーリングモードで起動 (`DEVICE_MODE=MIRROR` / `IOS_USE_SIMULATOR=0` を自動設定) |
 | `--bundle BUNDLE_ID` | Bundle ID を直接指定 (`IOS_BUNDLE_ID` より優先) |
-| `--title GAME_TITLE` | ゲームタイトルを直接指定 |
-| `--duration SEC` | クロール最大時間（秒）|
-| `--depth N` | DFS 最大深さ |
+| `--title GAME_TITLE` | ゲームタイトルを直接指定（後方互換用。`APP_NAME` 位置引数が優先） |
+| `--duration SEC`, `-d SEC` | クロール最大時間（秒）デフォルト: 300 (5分) |
+| `--depth N` | DFS 最大深さ。デフォルト: 3 |
 
 実行ログの見方:
 
