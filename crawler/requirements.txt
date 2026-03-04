@@ -19,6 +19,10 @@ numpy>=1.24.0
 # --- データベース ---
 PyMySQL>=1.1.0                    # MySQL / MariaDB クライアント
 
+# --- スクリーンキャプチャ（ミラーリングモード・macOS）---
+mss>=9.0.0                        # マルチモニター対応スクリーンショット（capture_region）
+pyobjc-framework-Quartz>=9.0      # macOS Quartz API — ウィンドウ検索に使用
+
 # --- 可視化ツール ---
 networkx>=3.0                     # tools/visualize_map.py の遷移グラフ構築
 

@@ -77,24 +77,44 @@ def find_mirroring_window_ex(
     Quartz = _import_quartz()
 
     window_list = _get_window_list(Quartz)
+
+    def _extract_rect(win) -> Optional[tuple[int, int, int, int]]:
+        bounds = win.get("kCGWindowBounds") or {}
+        x      = int(bounds.get("X",      0))
+        y      = int(bounds.get("Y",      0))
+        width  = int(bounds.get("Width",  0))
+        height = int(bounds.get("Height", 0))
+        return (x, y, width, height) if width > 0 and height > 0 else None
+
+    # Pass 1: owner 名が候補と完全一致するウィンドウを優先検索
+    #   → "uxplay" を実行している Terminal など title に候補名が混入するウィンドウを除外
+    for candidate in title_candidates:
+        for win in window_list:
+            owner = (win.get("kCGWindowOwnerName") or "")
+            if owner.lower() == candidate.lower():
+                rect = _extract_rect(win)
+                if rect:
+                    title = (win.get("kCGWindowName") or "")
+                    logger.debug(
+                        "[WM] ウィンドウ発見(owner一致): owner=%r  title=%r  rect=(%d,%d,%d,%d)",
+                        owner, title, *rect,
+                    )
+                    return (rect, owner)
+
+    # Pass 2: owner + title の結合文字列に候補が含まれるウィンドウ（後方互換フォールバック）
     for win in window_list:
         owner = (win.get("kCGWindowOwnerName") or "")
         title = (win.get("kCGWindowName") or "")
         combined = f"{owner} {title}".lower()
-
         for candidate in title_candidates:
             if candidate.lower() in combined:
-                bounds = win.get("kCGWindowBounds") or {}
-                x      = int(bounds.get("X",      0))
-                y      = int(bounds.get("Y",      0))
-                width  = int(bounds.get("Width",  0))
-                height = int(bounds.get("Height", 0))
-                if width > 0 and height > 0:
+                rect = _extract_rect(win)
+                if rect:
                     logger.debug(
-                        "[WM] ウィンドウ発見: owner=%r  title=%r  rect=(%d,%d,%d,%d)",
-                        owner, title, x, y, width, height,
+                        "[WM] ウィンドウ発見(combined一致): owner=%r  title=%r  rect=(%d,%d,%d,%d)",
+                        owner, title, *rect,
                     )
-                    return ((x, y, width, height), owner)
+                    return (rect, owner)
 
     return None
 
