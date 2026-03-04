@@ -765,9 +765,15 @@ class ScreenCrawler:
             logger.warning(f"[UNSTUCK] 打ち切り — ジェスチャーが {self._stuck_detector.get_count(fp)} 回効かず: {fp[:8]}")
             return False
 
-        # デバイス論理サイズの取得（driver から、なければデフォルト）
-        w = int(getattr(self.driver, '_device_width',  None) or 393)
-        h = int(getattr(self.driver, '_device_height', None) or 852)
+        # デバイス論理サイズの取得 (MirroringDriver → _device_width, それ以外 → Appium window/size)
+        w = int(getattr(self.driver, '_device_width',  None) or 0)
+        h = int(getattr(self.driver, '_device_height', None) or 0)
+        if not w or not h:
+            try:
+                size = self.driver.driver.get_window_size()
+                w, h = size["width"], size["height"]
+            except Exception:
+                w, h = 393, 852
 
         try:
             # スワイプ: 画面下 65% → 上 25%（リスト更新・隠れた要素を出す）
@@ -782,10 +788,21 @@ class ScreenCrawler:
             if self._stuck_detector.should_long_press(fp):
                 cx = w // 2 + random.randint(-60, 60)
                 cy = h // 2 + random.randint(-80, 80)
-                self.driver.driver.execute_script(
-                    "mobile: touchAndHold",
-                    {"x": cx, "y": cy, "duration": 1.5},
-                )
+                if os.environ.get("DEVICE_MODE", "").upper() == "ANDROID":
+                    # Android: mobile: longClick (UiAutomator2)
+                    try:
+                        self.driver.driver.execute_script(
+                            "mobile: longClick",
+                            {"x": cx, "y": cy, "duration": 1500},
+                        )
+                    except Exception:
+                        pass
+                else:
+                    # iOS: mobile: touchAndHold (XCUITest)
+                    self.driver.driver.execute_script(
+                        "mobile: touchAndHold",
+                        {"x": cx, "y": cy, "duration": 1.5},
+                    )
                 self.driver.wait(1.5)
                 logger.info(f"[UNSTUCK] 長押し: ({cx},{cy})")
 
