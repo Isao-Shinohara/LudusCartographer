@@ -339,6 +339,18 @@ def _parse_args() -> argparse.Namespace:
         dest="teacher_mode",
         help="未知の画面で人間に操作を教えてもらう Teacher Mode を有効化",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="前回セッションの discovery_tree.json を読み込んで続きから探索する",
+    )
+    parser.add_argument(
+        "--resume-from",
+        metavar="PATH",
+        dest="resume_from",
+        default=None,
+        help="再開元の discovery_tree.json パスを明示指定 (--resume より優先)",
+    )
     # 未知の引数（環境変数由来のフラグ等）を無視して続行
     args, _ = parser.parse_known_args()
     return args
@@ -516,6 +528,26 @@ def main() -> None:
 
     teacher_mode = getattr(args, "teacher_mode", False) or os.environ.get("TEACHER_MODE") == "1"
 
+    # --resume-from 明示 > --resume 自動検出
+    resume_tree_path: Optional[str] = None
+    if getattr(args, "resume_from", None):
+        resume_tree_path = args.resume_from
+    elif getattr(args, "resume", False):
+        # 同一ゲームの最新 discovery_tree.json を自動検出
+        evidence_dir_r = Path(__file__).parent / "evidence"
+        for tree_path in reversed(sorted(evidence_dir_r.glob("*/discovery_tree.json"))):
+            try:
+                import json as _json
+                data = _json.loads(tree_path.read_text(encoding="utf-8"))
+                if data.get("game_title") == game_title:
+                    resume_tree_path = str(tree_path)
+                    logger.info("[RESUME] 前回ツリーを自動検出: %s", tree_path)
+                    break
+            except Exception:
+                continue
+        if not resume_tree_path:
+            logger.warning("[RESUME] 同一ゲームの discovery_tree.json が見つかりません")
+
     crawler_cfg = CrawlerConfig(
         game_title           = game_title,
         device_mode          = device_mode,
@@ -530,6 +562,7 @@ def main() -> None:
         db_password          = os.environ.get("DB_PASSWORD", ""),
         knowledge_base_dir   = knowledge_base_dir,
         teacher_mode_enabled = teacher_mode,
+        resume_tree_path     = resume_tree_path,
     )
     logger.info(
         "  タップ待機: %.1f 秒  スタック閾値: %d 回",
@@ -593,6 +626,10 @@ def main() -> None:
                 tree_json_path = summary_path.parent / "discovery_tree.json"
                 crawler.save_discovery_tree(tree_json_path)
                 print(crawler.render_discovery_tree())
+                # Markdown レポート
+                report_path = summary_path.parent / "discovery_report.md"
+                crawler.save_discovery_report(report_path)
+                logger.info("[REPORT] Markdown レポート: %s", report_path)
 
         # --open-web: ブラウザで管理画面を自動表示
         if args.open_web:

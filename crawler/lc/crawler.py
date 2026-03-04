@@ -145,6 +145,8 @@ class CrawlerConfig:
     knowledge_base_dir: str = "games"
     # Teacher Mode: 未知の画面でユーザーに操作を教えてもらう
     teacher_mode_enabled: bool = False
+    # セッション再開用: 前回の discovery_tree.json パス (省略時は新規セッション)
+    resume_tree_path: Optional[str] = None
 
 
 # ============================================================
@@ -236,6 +238,10 @@ class ScreenCrawler:
         # 今セッション中に失敗したキャッシュハッシュ（Undo 用）
         self._failed_cache_hashes: set[str] = set()
 
+        # セッション再開用: 前回セッション既知 fingerprint セット
+        self._resumed_fingerprints: set[str] = set()
+        self._load_resume_tree()
+
         # Teacher Mode
         self._human_teacher: Optional[HumanTeacher] = None
         if self.config.teacher_mode_enabled:
@@ -304,6 +310,47 @@ class ScreenCrawler:
             knowledge_dir,
             len(self._screen_cache._index),
         )
+
+    # ----------------------------------------------------------
+    # セッション再開
+    # ----------------------------------------------------------
+
+    def _load_resume_tree(self) -> None:
+        """前回セッションの discovery_tree.json を読み込み、既知 fp と遷移ログを復元する。"""
+        path_str = self.config.resume_tree_path
+        if not path_str:
+            return
+        path = Path(path_str)
+        if not path.exists():
+            logger.warning("[RESUME] ファイルが見つかりません: %s", path)
+            return
+        try:
+            import json as _json
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            # 1. 既知 fingerprint を _visited に登録 (dedup 判定に利用)
+            for fp, node in data.get("nodes", {}).items():
+                vkey = f"{node['title']}@{fp}"
+                if vkey not in self._visited:
+                    self._visited[vkey] = ScreenRecord(
+                        fingerprint=fp,
+                        title=node["title"],
+                        screenshot_path=Path(node["screenshot_path"]),
+                        depth=node["depth"],
+                        parent_fp=None,
+                        ocr_results=[],
+                        tappable_items=[],
+                        phash=node.get("phash"),
+                        discovered_at=node.get("discovered_at", ""),
+                    )
+                    self._resumed_fingerprints.add(fp)
+            # 2. 遷移ログを復元 (Discovery Tree の連続性のため)
+            self._transition_log.extend(data.get("edges", []))
+            logger.info(
+                "[RESUME] 前回セッション読み込み完了: %d 画面 / %d エッジ",
+                len(self._resumed_fingerprints), len(data.get("edges", [])),
+            )
+        except Exception as e:
+            logger.warning("[RESUME] 読み込み失敗 (スキップ): %s", e)
 
     # ----------------------------------------------------------
     # キャッシュアクション実行
@@ -441,10 +488,13 @@ class ScreenCrawler:
         _vkey = f"{record.title}@{record.fingerprint}"
         if _vkey in self._visited:
             prev = self._visited[_vkey]
-            logger.info(
-                f"[CRAWL] skip（既訪問）: {record.title!r}"
-                f" (深さ{prev.depth} で既に訪問済み)"
-            )
+            if record.fingerprint in self._resumed_fingerprints:
+                logger.info("[RESUME] 前回セッション既知画面: %r — スキップ", record.title)
+            else:
+                logger.info(
+                    f"[CRAWL] skip（既訪問）: {record.title!r}"
+                    f" (深さ{prev.depth} で既に訪問済み)"
+                )
             self._stats.screens_skipped += 1
             return record.fingerprint != parent_fp
 
@@ -558,10 +608,20 @@ class ScreenCrawler:
         # --- TEACHER_MODE ブランチ (cache miss 時のみ起動) ---
         # キャッシュヒットして既に return している場合はここに到達しない
         if self._human_teacher is not None and not self._is_time_up():
+            # PIL で実際のピクセルサイズを取得
+            screen_size: Optional[tuple[int, int]] = None
+            try:
+                from PIL import Image as _PILImage
+                with _PILImage.open(record.screenshot_path) as _img:
+                    screen_size = _img.size  # (width, height) in pixels
+            except Exception:
+                pass
+
             human_actions = self._human_teacher.ask_for_action(
                 screenshot_path=record.screenshot_path,
                 title=record.title,
                 ocr_results=record.ocr_results,
+                screen_size=screen_size,
             )
             if human_actions:  # skip → [] → このブランチをスキップして通常 DFS へ
                 before_phash = record.phash or ""
@@ -1856,6 +1916,80 @@ class ScreenCrawler:
 
         _render(root_rec.fingerprint, "", True)
         return "\n".join(lines)
+
+    def save_discovery_report(self, path: Path) -> None:
+        """探索結果を人間が読みやすい Markdown 形式で書き出す。"""
+        lines = []
+
+        # --- ヘッダー ---
+        lines += [
+            f"# 🗺️ Discovery Report: {self.config.game_title}",
+            "",
+            f"**生成日時**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  ",
+            f"**セッションID**: {path.parent.name}  ",
+            f"**総画面数**: {len(self._visited)}  ",
+            f"**総エッジ数**: {len(self._transition_log)}  ",
+            "",
+            "---",
+            "",
+        ]
+
+        # --- 発見画面ツリー (Markdown nested list) ---
+        lines += ["## 発見画面ツリー", ""]
+        # _transition_log から children マップ構築
+        children: dict[str, list[tuple[str, str]]] = {}
+        for edge in self._transition_log:
+            f_fp = edge.get("from_fp", "")
+            t_fp = edge.get("to_fp", "")
+            via = edge.get("via", "auto")
+            if f_fp and t_fp:
+                children.setdefault(f_fp, []).append((t_fp, via))
+
+        VIA_ICON = {"cache": "⚡", "teacher": "🧑", "auto": "🔍"}
+        root_rec = next((r for r in self._visited.values() if r.depth == 0), None)
+
+        def _md_render(fp: str, indent: int, seen: set) -> None:
+            if fp in seen:
+                return
+            seen.add(fp)
+            rec = self._find_record(fp)
+            title = rec.title if rec else "unknown"
+            n = len(rec.tappable_items) if rec else 0
+            pfx = "  " * indent
+            lines.append(f"{pfx}- 📱 **{title}** `[{fp[:8]}]` — {n}件タップ候補")
+            for child_fp, via in children.get(fp, []):
+                icon = VIA_ICON.get(via, "•")
+                rec2 = self._find_record(child_fp)
+                t2 = rec2.title if rec2 else "unknown"
+                n2 = len(rec2.tappable_items) if rec2 else 0
+                lines.append(f"{'  ' * (indent+1)}- {icon} **{t2}** `[{child_fp[:8]}]` — {n2}件")
+                _md_render(child_fp, indent + 2, seen)
+
+        if root_rec:
+            _md_render(root_rec.fingerprint, 0, set())
+        else:
+            lines.append("_(データなし)_")
+
+        # --- 画面詳細テーブル ---
+        lines += [
+            "",
+            "---",
+            "",
+            "## 画面詳細",
+            "",
+            "| # | タイトル | 深さ | 指紋 | タップ候補 | 発見日時 |",
+            "|---|---------|------|------|----------|---------|",
+        ]
+        for i, rec in enumerate(sorted(self._visited.values(), key=lambda r: (r.depth, r.title)), 1):
+            dt = rec.discovered_at[:19] if rec.discovered_at else "-"
+            lines.append(
+                f"| {i} | {rec.title} | {rec.depth} | `{rec.fingerprint[:8]}` "
+                f"| {len(rec.tappable_items)}件 | {dt} |"
+            )
+
+        lines += ["", "---", "", "_Generated by LudusCartographer_", ""]
+        path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info("[REPORT] Markdown レポート保存: %s", path)
 
 
 # ============================================================
