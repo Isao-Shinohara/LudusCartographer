@@ -256,16 +256,25 @@ def detect_and_act(ocr: list, state: PilotState,
         # min_area は常に400。空間フィルタ(下記)で誤検出を排除するため過大閾値は不要
         blobs = find_finger_blobs(analysis_path, min_area=400)
         if blobs:
-            # バトル中は「右パネル(x>1050)」または「下部UI(y>H*0.8=576)」のみ有効
-            # 中央エリア(バトルフィールド)のキャラクター肌色は誤検出なので無視
+            # バトル中は中央エリア(バトルフィールド)の肌色は誤検出なので無視
+            # 優先順位: 左キャラカード(x<600,y>550) > 右パネル(x>1050) > 下部UI(y>H*0.8)
             if is_battle_screen:
-                valid_blobs = [(x, y, a) for x, y, a in blobs if x > 1050 or y > H * 0.8]
-                if not valid_blobs:
+                left_char = [(x, y, a) for x, y, a in blobs if x < 600 and y > H * 0.76]
+                right_panel = [(x, y, a) for x, y, a in blobs if x > 1050]
+                bottom_ui = [(x, y, a) for x, y, a in blobs if y > H * 0.8 and x >= 600]
+                if left_char:
+                    # フリーバトル: 左キャラ選択が最優先 (右スキルより先)
+                    blobs = left_char
+                    logger.info("  バトル: 左キャラもや %d個 (最優先)", len(blobs))
+                elif right_panel:
+                    blobs = right_panel
+                    logger.info("  バトル: 右パネルもや %d個", len(blobs))
+                elif bottom_ui:
+                    blobs = bottom_ui
+                    logger.info("  バトル: 下部UIもや %d個", len(blobs))
+                else:
                     logger.info("  バトル中: 有効もやなし(中央は誤検出) → OCR判定へ")
                     blobs = []
-                else:
-                    blobs = valid_blobs
-                    logger.info("  バトル中: 有効もや %d個 (右パネル/下部UI)", len(blobs))
 
         if blobs:
             # 右側行動アイコン (x > 1050) が最優先
