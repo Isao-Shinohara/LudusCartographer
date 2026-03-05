@@ -257,4 +257,34 @@ run.bat ss
 - 右: 無料ガチャ実施中バナー
 - 下部ナビ: 光の間, プレイヤーマッチ, ユニオン, ショップ, ガチャ(NEW), パーティ, クエスト
 
+---
+
+## 11. OCR 座標バイアスと Smart Tap ロジック (2026-03-05 発見)
+
+### 問題: OCR center y は button hitbox center より約 36px 下にずれる
+
+PaddleOCR が返す center 座標は「文字が描かれた矩形の中心」であり、ボタン全体の中心ではない。
+このゲームのボタンはテキストの下部に大きなパディングがあるため、OCR y が hitbox 下方にずれる。
+
+| 項目 | 値 |
+|------|-----|
+| OCR "OK" center y | 633 |
+| 実際の hitbox y 範囲 | 572〜624 |
+| 実際の button center y | 597 |
+| ずれ量 | **−36 px** (OCR より上が正解) |
+
+同パターンは「名前入力 OK」(OCR y=593 → 実 y=560、ずれ=-33px) でも確認済み。
+
+### 対処: `smart_tap_button()` 関数
+
+`crawler/tools/auto_pilot.py` に実装。OCR center 周辺の金色ボタン枠を HSV フィルタで検出し、
+その幾何学的中心 (Geometric Center) をタップ座標として使用する。
+金色ボタンが検出できない場合は定数オフセット (-36px) でフォールバック。
+
+```python
+tap_x, tap_y = smart_tap_button(analysis_path, ocr_cx, ocr_cy, search_r=120)
+```
+
+**新ボタン学習時の原則**: OCR 座標をそのまま使わず、必ず `smart_tap_button()` を経由すること。
+
 _このドキュメントは Claude Code (claude-sonnet-4-6) が自動生成・更新しています。_

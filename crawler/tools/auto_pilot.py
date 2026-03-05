@@ -287,6 +287,85 @@ def find_finger_blobs(img_path: Path, min_area: int = 400) -> list[tuple[int, in
         return []
 
 
+# ─── Smart Tap: 金色ボタン矩形の幾何学的中心を検出 ──────────────────
+# OCR の center y はテキスト領域中心であり、ボタン hitbox 中心より約 36px 下に
+# ずれる傾向がある (テキストのパディング + レイアウト起因)。
+# このオフセットはフォールバックとして使用する。
+_BUTTON_Y_OFFSET = -36  # OCR y → 実 hitbox y (フォールバック用補正量)
+
+
+def smart_tap_button(
+    img_path: Path,
+    ocr_cx: int,
+    ocr_cy: int,
+    search_r: int = 120,
+) -> tuple[int, int]:
+    """OCR テキスト座標周辺から金色ボタン枠を検出し、幾何学的中心を返す。
+
+    検出失敗時は OCR 座標に _BUTTON_Y_OFFSET を加算してフォールバック。
+    返値: (tap_x, tap_y)
+    """
+    try:
+        import cv2
+        import numpy as np
+
+        img_bgr = cv2.imread(str(img_path))
+        if img_bgr is None:
+            raise ValueError("imread failed")
+        h_img, w_img = img_bgr.shape[:2]
+
+        # 探索エリア: OCR 中心から search_r px の矩形
+        x1 = max(0, ocr_cx - search_r)
+        y1 = max(0, ocr_cy - search_r)
+        x2 = min(w_img, ocr_cx + search_r)
+        y2 = min(h_img, ocr_cy + search_r)
+
+        roi = img_bgr[y1:y2, x1:x2]
+        roi_hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+        # 金色ボタン枠の HSV レンジ (実測: RGB≈(190,165,122) → H≈30,S≈80,V≈190)
+        lower_gold = np.array([15, 50, 120], dtype=np.uint8)
+        upper_gold = np.array([42, 190, 235], dtype=np.uint8)
+        mask = cv2.inRange(roi_hsv, lower_gold, upper_gold)
+
+        # モルフォロジー: ノイズ除去 + 枠の繋ぎ合わせ
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        mask = cv2.dilate(mask, kernel, iterations=2)
+        mask = cv2.erode(mask, kernel, iterations=1)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        best_rect = None
+        best_area = 0
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < 200:
+                continue
+            rx, ry, rw, rh = cv2.boundingRect(cnt)
+            # ボタンらしい形状: 横長 or 正方形、かつ適切なサイズ
+            if rw > 30 and rh > 10 and rw >= rh * 0.5:
+                if area > best_area:
+                    best_area = area
+                    best_rect = (rx + x1, ry + y1, rw, rh)
+
+        if best_rect:
+            bx, by, bw, bh = best_rect
+            cx = bx + bw // 2
+            cy = by + bh // 2
+            logger.info("  [SmartTap] 金色ボタン検出 rect=(%d,%d,%d,%d) → center=(%d,%d)",
+                        bx, by, bw, bh, cx, cy)
+            return cx, cy
+
+    except Exception as e:
+        logger.debug("  [SmartTap] エラー: %s", e)
+
+    # フォールバック: OCR 座標に定数オフセット適用
+    fallback_y = ocr_cy + _BUTTON_Y_OFFSET
+    logger.info("  [SmartTap] フォールバック OCR(%d,%d) → (%d,%d) (offset=%d)",
+                ocr_cx, ocr_cy, ocr_cx, fallback_y, _BUTTON_Y_OFFSET)
+    return ocr_cx, fallback_y
+
+
 # ─── OCR テキスト検索ヘルパー ──────────────────────
 def has_any(ocr: list, keywords: list[str], min_conf: float = 0.3) -> Optional[dict]:
     for kw in keywords:
@@ -942,25 +1021,21 @@ def detect_and_act(ocr: list, state: PilotState,
             return "NAME_INPUT_TEXT", 1.5
 
     # ─── 【最優先 #0-b】報酬/強化結果ポップアップを即時処理 (ブロブ誤検出防止) ───
-    # 「以下の内容でよろしいですか」確認ダイアログ → 下部のOKボタンをタップ
-    # (OCRがOKを誤った座標で検出するため、下部エリアに限定して探す)
+    # 「以下の内容でよろしいですか」確認ダイアログ → SmartTap で OK 物理中心をタップ
     confirm_dlg = has_text(ocr, "以下の内容でよろしいですか", min_conf=0.3)
     if confirm_dlg:
-        # y > H*0.6 の領域でOKボタンを探す (ダイアログ下部)
         ok_bottom = next(
             (item for item in ocr
              if "OK" in item.get("text", "") and item["center"][1] > H * 0.6),
             None
         )
         if ok_bottom:
-            cx, cy = ok_bottom["center"]
-            logger.info(">>> 【確認ダイアログ】 OK (%d,%d) タップ", cx, cy)
-            tap_device(cx, cy, state, "CONFIRM_DIALOG_OK")
+            ocr_cx, ocr_cy = ok_bottom["center"]
         else:
-            # フォールバック: OK ボタン推定位置 (ダイアログ右下、キャンセルの右)
-            # 実測: x=1050-1140スキャンで x≈1050-1060 あたりが有効
-            tap_device(1060, 633, state, "CONFIRM_DIALOG_OK_FIXED")
-            logger.info(">>> 【確認ダイアログ】 OK 固定座標 (1060,633) タップ")
+            ocr_cx, ocr_cy = 1060, 633  # フォールバック推定値
+        cx, cy = smart_tap_button(analysis_path, ocr_cx, ocr_cy)
+        logger.info(">>> 【確認ダイアログ】 SmartTap OK (%d,%d)", cx, cy)
+        tap_device(cx, cy, state, "CONFIRM_DIALOG_OK")
         return "CONFIRM_DIALOG_OK", 1.5
 
     # 「タップして次へ」: 報酬獲得画面の次へ進む
@@ -1398,20 +1473,18 @@ def detect_and_act(ocr: list, state: PilotState,
         return "CLOSE", 0.5
 
     # ─── ゲーム内システムダイアログ (画質設定・ダウンロード確認 等) ───
-    # OCR の y 座標は実ヒットゾーンより約 -48px ずれる → 固定 y=575 でタップ
+    # smart_tap_button で金色ボタン枠の幾何学的中心を取得 (OCR ずれを排除)
     sys_dlg_kws = ["画質を設定", "アセット更新", "ダウンロードを開始", "ダウンロードしますか",
-                   "Wi-Fiを使用", "モバイル通信でダウンロード"]
+                   "Wi-Fiを使用", "モバイル通信でダウンロード", "ダウンロードが完了しました"]
     sys_dlg_match = has_any(ocr, sys_dlg_kws, min_conf=0.3)
     if sys_dlg_match:
         ok_item = next((item for item in ocr if "OK" in item.get("text", "")), None)
-        # OCR の y 座標は実ヒットゾーンより約 -48px ずれる
-        ok_y = (ok_item["center"][1] - 48) if ok_item else 575
-        # キャンセル/OKの2ボタン型は右半分にOKがある → x > W*0.5 ならそのまま、それ以外は右側へ
         if ok_item and ok_item["center"][0] > W * 0.5:
-            ok_x = ok_item["center"][0]
+            ocr_ok_x, ocr_ok_y = ok_item["center"]
         else:
-            ok_x = int(W * 0.65)  # 右側固定
-        logger.info(">>> 【システムダイアログ】 '%s' → OK (%d,%d) タップ",
+            ocr_ok_x, ocr_ok_y = int(W * 0.65), 633  # フォールバック推定値
+        ok_x, ok_y = smart_tap_button(analysis_path, ocr_ok_x, ocr_ok_y)
+        logger.info(">>> 【システムダイアログ】 '%s' → SmartTap OK (%d,%d)",
                     sys_dlg_match["text"][:15], ok_x, ok_y)
         tap_device(ok_x, ok_y, state, "SYSTEM_DLG_OK")
         return "SYSTEM_DLG_OK", 2.0
