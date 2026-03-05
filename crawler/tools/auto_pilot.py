@@ -434,10 +434,15 @@ def detect_and_act(ocr: list, state: PilotState,
             "スキルを使用", "スキルを選択", "カードを選択",
             "ましょう", "みましょう", "てみよう",
             "一番上に", "順番に行動", "DEFENDER",
+            # ロール説明ポップアップ
+            "ロールについて", "ATTACKER", "BREAKER", "BUFFER", "DEBUFFER", "HEALER",
+            # バトル説明ポップアップ
+            "STEP1", "STEP2", "バトルシステム", "ブレイクし",
         ])
         if tutorial_popup:
-            cx, cy = tutorial_popup["center"]
-            logger.info(">>> バトルチュートリアル popup '%s' (%d,%d)",
+            # ポップアップは画面中央タップで閉じる
+            cx, cy = int(W * 0.5), int(H * 0.5)
+            logger.info(">>> バトルチュートリアル popup '%s' → 中央 (%d,%d)",
                         tutorial_popup["text"][:10], cx, cy)
             tap_device(cx, cy, state, "BATTLE_TUTORIAL_POPUP")
             return "BATTLE_TUTORIAL", 2.0
