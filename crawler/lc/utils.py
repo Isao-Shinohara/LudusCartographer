@@ -64,6 +64,58 @@ def _format_ios_udid(raw: str) -> str:
 # メイン API
 # ============================================================
 
+def get_android_serial(timeout: int = 5) -> str:
+    """
+    接続中の Android デバイスのシリアルを自動取得する。
+
+    検出の優先順位:
+      1. 環境変数 ANDROID_UDID  (最優先)
+      2. 環境変数 ANDROID_SERIAL
+      3. adb devices から最初のオンラインデバイス (USB / Wi-Fi 両対応)
+
+    Returns:
+        デバイスシリアル文字列 (例: "f6b8cef7", "192.168.10.118:5555")
+
+    Raises:
+        RuntimeError: デバイスが見つからなかった場合
+    """
+    # 1. ANDROID_UDID (auto_pilot.py 等で使用)
+    env_udid = os.environ.get("ANDROID_UDID", "").strip()
+    if env_udid:
+        logger.info(f"[DEVICE] Android serial (ANDROID_UDID): {env_udid}")
+        return env_udid
+
+    # 2. ANDROID_SERIAL
+    env_serial = os.environ.get("ANDROID_SERIAL", "").strip()
+    if env_serial:
+        logger.info(f"[DEVICE] Android serial (ANDROID_SERIAL): {env_serial}")
+        return env_serial
+
+    # 3. adb devices 自動検出
+    serial = _try_adb(timeout)
+    if serial:
+        logger.info(f"[DEVICE] Android detected via adb: {serial}")
+        return serial
+
+    raise RuntimeError(
+        "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "  Android デバイスが見つかりませんでした。\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "  [USB 接続]\n"
+        "    1. USB デバッグを有効にしてデバイスを接続してください。\n"
+        "    2. adb devices でデバイスが 'device' 状態か確認してください。\n"
+        "  [Wi-Fi 接続]\n"
+        "    1. adb tcpip 5555\n"
+        "    2. adb connect <デバイスIP>:5555\n"
+        "    3. adb devices で接続を確認してください。\n"
+        "  [環境変数で手動設定]\n"
+        "    export ANDROID_UDID='シリアルまたはIP:ポート'\n"
+        "    export ANDROID_SERIAL='シリアルまたはIP:ポート'\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    )
+
+
 def get_device_udid(timeout: int = 5) -> str:
     """
     接続中の iOS デバイスの UDID を自動取得する（後方互換 API）。

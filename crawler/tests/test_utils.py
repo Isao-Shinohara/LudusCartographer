@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from lc.utils import (
     get_device_udid,
+    get_android_serial,
     detect_connected_device,
     _try_idevice_id,
     _try_ioreg,
@@ -392,3 +393,86 @@ class TestDiagnoseDeviceConnection:
             report = diagnose_device_connection()
         assert report["adb_serial"] == FAKE_ANDROID_SERIAL
         assert report["platform"] == "android"
+
+
+# ============================================================
+# get_android_serial — Android 専用自動検出 API
+# ============================================================
+
+FAKE_WIFI_SERIAL = "192.168.10.118:5555"
+
+ADB_DEVICES_WIFI = """\
+List of devices attached
+192.168.10.118:5555\tdevice
+"""
+
+ADB_DEVICES_MULTI = """\
+List of devices attached
+f6b8cef7\tdevice
+192.168.10.118:5555\tdevice
+"""
+
+
+class TestGetAndroidSerial:
+
+    def test_android_udid_env_takes_priority(self, monkeypatch):
+        """ANDROID_UDID 環境変数が最優先されること"""
+        monkeypatch.setenv("ANDROID_UDID", FAKE_WIFI_SERIAL)
+        monkeypatch.setenv("ANDROID_SERIAL", FAKE_ANDROID_SERIAL)
+        with patch("subprocess.run") as mock_run:
+            result = get_android_serial()
+            mock_run.assert_not_called()
+        assert result == FAKE_WIFI_SERIAL
+
+    def test_android_serial_env_fallback(self, monkeypatch):
+        """ANDROID_UDID 未設定 → ANDROID_SERIAL にフォールバックすること"""
+        monkeypatch.delenv("ANDROID_UDID", raising=False)
+        monkeypatch.setenv("ANDROID_SERIAL", FAKE_ANDROID_SERIAL)
+        with patch("subprocess.run") as mock_run:
+            result = get_android_serial()
+            mock_run.assert_not_called()
+        assert result == FAKE_ANDROID_SERIAL
+
+    def test_adb_usb_auto_detect(self, monkeypatch):
+        """環境変数未設定 → adb devices から USB デバイスを自動検出すること"""
+        monkeypatch.delenv("ANDROID_UDID", raising=False)
+        monkeypatch.delenv("ANDROID_SERIAL", raising=False)
+        r = MagicMock()
+        r.stdout = ADB_DEVICES_OUTPUT
+        with patch("subprocess.run", return_value=r):
+            result = get_android_serial()
+        assert result == FAKE_ANDROID_SERIAL
+
+    def test_adb_wifi_auto_detect(self, monkeypatch):
+        """環境変数未設定 → adb devices から Wi-Fi デバイスを自動検出すること"""
+        monkeypatch.delenv("ANDROID_UDID", raising=False)
+        monkeypatch.delenv("ANDROID_SERIAL", raising=False)
+        r = MagicMock()
+        r.stdout = ADB_DEVICES_WIFI
+        with patch("subprocess.run", return_value=r):
+            result = get_android_serial()
+        assert result == FAKE_WIFI_SERIAL
+
+    def test_raises_when_no_device(self, monkeypatch):
+        """デバイスなし → RuntimeError を送出すること"""
+        monkeypatch.delenv("ANDROID_UDID", raising=False)
+        monkeypatch.delenv("ANDROID_SERIAL", raising=False)
+        r = MagicMock()
+        r.stdout = "List of devices attached\n"
+        with patch("subprocess.run", return_value=r):
+            with pytest.raises(RuntimeError, match="Android デバイスが見つかりませんでした"):
+                get_android_serial()
+
+    def test_error_message_includes_wifi_instructions(self, monkeypatch):
+        """エラーメッセージに Wi-Fi 接続手順が含まれること"""
+        monkeypatch.delenv("ANDROID_UDID", raising=False)
+        monkeypatch.delenv("ANDROID_SERIAL", raising=False)
+        r = MagicMock()
+        r.stdout = ""
+        with patch("subprocess.run", return_value=r):
+            with pytest.raises(RuntimeError) as exc_info:
+                get_android_serial()
+        msg = str(exc_info.value)
+        assert "Wi-Fi" in msg
+        assert "adb connect" in msg
+        assert "ANDROID_UDID" in msg
