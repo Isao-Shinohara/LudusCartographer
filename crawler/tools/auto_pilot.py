@@ -99,6 +99,11 @@ class PilotState:
     pre_popup_tap_count: int = 0
     # 現在のシーン分類 (BATTLE / ADV / LOADING / MENU / UNKNOWN)
     current_scene: str = "UNKNOWN"
+    # StrategicDecisionEngine: 予測トラッキング
+    last_prediction: str = ""
+    last_prediction_desc: str = ""
+    last_tap_text: str = ""
+    last_action_pre_phash: str = ""
 
 
 # ─── シーン分類 ──────────────────────────────────────
@@ -375,15 +380,18 @@ class AssetManager:
                 "threshold": float(meta.get("threshold", self.DEFAULT_THRESHOLD)),
                 "action": meta.get("action", f"ASSET_{name.upper()}"),
                 "offset": meta.get("offset", [0, 0]),
+                "require_ocr": meta.get("require_ocr", []),
             }
             count += 1
         if count:
             logger.info("[AssetManager] %d テンプレート読込: %s",
                         count, list(self._templates.keys()))
 
-    def match(self, screenshot_path: Path) -> Optional[tuple[int, int, str]]:
+    def match(self, screenshot_path: Path,
+              ocr_texts: Optional[list[str]] = None) -> Optional[tuple[int, int, str]]:
         """
         スクリーンショットと全テンプレートを比較。
+        ocr_texts が渡された場合、require_ocr 条件を満たすテンプレートのみ照合。
         Returns: (tap_x, tap_y, action_name) or None
         """
         import cv2
@@ -395,6 +403,12 @@ class AssetManager:
         best_score = 0.0
         best_result: Optional[tuple[int, int, str]] = None
         for name, data in self._templates.items():
+            # require_ocr チェック: OCRテキストに指定キーワードがない場合はスキップ
+            required = data.get("require_ocr", [])
+            if required and ocr_texts is not None:
+                if not any(kw in t for kw in required for t in ocr_texts):
+                    logger.debug("[Asset] '%s' skip: require_ocr not found in OCR", name)
+                    continue
             tmpl = data["img"]
             if tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
                 continue
@@ -419,10 +433,12 @@ class AssetManager:
                       x1: int, y1: int, x2: int, y2: int,
                       name: str, action: str,
                       offset: tuple[int, int] = (0, 0),
-                      threshold: float = DEFAULT_THRESHOLD) -> bool:
+                      threshold: float = DEFAULT_THRESHOLD,
+                      require_ocr: list[str] | None = None) -> bool:
         """
         スクリーンショットの指定領域を切り抜いてテンプレートとして保存。
         次回起動時から [Asset Match] で高速検出可能になる。
+        require_ocr: このテンプレートを使うのに必要なOCRキーワードリスト
         """
         import cv2, json
         img = cv2.imread(str(screenshot_path))
@@ -434,16 +450,19 @@ class AssetManager:
         out_png = self.TEMPLATES_DIR / f"{name}.png"
         meta_path = self.TEMPLATES_DIR / f"{name}.json"
         cv2.imwrite(str(out_png), crop)
-        meta = {"action": action, "offset": list(offset), "threshold": threshold}
+        meta: dict = {"action": action, "offset": list(offset), "threshold": threshold}
+        if require_ocr:
+            meta["require_ocr"] = require_ocr
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
         # インメモリキャッシュに即時追加
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         self._templates[name] = {
             "img": gray, "threshold": threshold,
             "action": action, "offset": list(offset),
+            "require_ocr": require_ocr or [],
         }
-        logger.info("[Asset] テンプレート自動保存: '%s' (%dx%d) action=%s",
-                    name, crop.shape[1], crop.shape[0], action)
+        logger.info("[Asset] テンプレート自動保存: '%s' (%dx%d) action=%s require_ocr=%s",
+                    name, crop.shape[1], crop.shape[0], action, require_ocr)
         return True
 
     def reload(self) -> None:
@@ -453,6 +472,247 @@ class AssetManager:
 
 # グローバル AssetManager インスタンス (起動時に1回ロード)
 ASSET_MANAGER = AssetManager()
+
+
+# ─── 戦略的意思決定エンジン (StrategicDecisionEngine) ──────────
+class StrategicDecisionEngine:
+    """
+    UIアフォーダンス解析 + 行動予測 + 経験学習エンジン。
+
+    1. find_buttons()     : 視覚的特徴（色・形）からタップ可能領域を抽出
+    2. predict_outcome()  : OCRテキストの意味から結果を予測
+    3. verify_and_learn() : タップ結果を検証し knowledge_base.json に蓄積
+    """
+
+    KNOWLEDGE_PATH = _CRAWLER_ROOT / "storage" / "knowledge_base.json"
+
+    # テキストキーワード → (action_type, 予測説明)
+    PREDICTION_MAP: dict[str, tuple[str, str]] = {
+        # ガチャ・召喚
+        "ガシャ":    ("GACHA_DRAW",     "召喚演出・アイテム獲得シーンが発生する"),
+        "ガチャ":    ("GACHA_DRAW",     "召喚演出・アイテム獲得シーンが発生する"),
+        "召喚":      ("GACHA_DRAW",     "召喚演出が発生する"),
+        "受け取る":  ("RECEIVE_ITEM",   "アイテム受け取り処理が実行される"),
+        "獲得":      ("RECEIVE_ITEM",   "アイテム獲得処理が実行される"),
+        # 進行・スキップ
+        "次へ":      ("SCENE_ADVANCE",  "シーンが遷移してストーリーが進む"),
+        "スキップ":  ("SKIP_STORY",     "ストーリーシーンがスキップされる"),
+        "SKIP":      ("SKIP_STORY",     "ストーリーシーンがスキップされる"),
+        "進む":      ("SCENE_ADVANCE",  "シーンが遷移する"),
+        "TAP TO":    ("SCENE_ADVANCE",  "シーンが進む"),
+        "START":     ("GAME_START",     "ゲームまたはバトルが開始する"),
+        "開始":      ("BATTLE_START",   "バトルまたはクエストが開始する"),
+        "出撃":      ("BATTLE_START",   "クエストが開始しバトル画面へ遷移する"),
+        "戦闘":      ("BATTLE_START",   "クエストが開始しバトル画面へ遷移する"),
+        # バトル
+        "AUTO":      ("AUTO_BATTLE",    "バトルがAUTOモードで自動進行する"),
+        "攻撃":      ("BATTLE_ATTACK",  "戦闘ターンが進行する"),
+        "通常攻撃":  ("NORMAL_ATTACK",  "通常攻撃が実行される"),
+        "必殺技":    ("SPECIAL_ATTACK", "必殺技演出が発生し大ダメージが入る"),
+        "スキル":    ("SKILL_USE",      "スキルが発動する"),
+        # 閉じる・確認
+        "OK":        ("CONFIRM",        "確認ダイアログが閉じてメニューに戻る"),
+        "閉じる":    ("CLOSE_DIALOG",   "ダイアログが閉じる"),
+        "確認":      ("CONFIRM",        "確認処理が実行される"),
+        "完了":      ("COMPLETE",       "処理が完了してメニューに戻る"),
+        "決定":      ("CONFIRM",        "選択が確定される"),
+        "了解":      ("CONFIRM",        "確認ダイアログが閉じる"),
+        "わかった":  ("CONFIRM",        "確認ダイアログが閉じる"),
+        "リザルト":  ("RESULT",         "バトル結果画面が表示される"),
+        "Result":    ("RESULT",         "バトル結果画面が表示される"),
+        # ナビゲーション
+        "ホーム":    ("GO_HOME",        "ホーム画面に戻る"),
+        "メニュー":  ("OPEN_MENU",      "メニューが開く"),
+        "クエスト":  ("OPEN_QUEST",     "クエスト選択画面へ遷移する"),
+        "ショップ":  ("OPEN_SHOP",      "ショップ画面へ遷移する"),
+        "編成":      ("OPEN_FORMATION", "パーティ編成画面へ遷移する"),
+    }
+
+    # ゲームUIの色彩意味論: 色 → タップ優先度
+    COLOR_PRIORITY: dict[str, int] = {
+        "orange": 10,   # 橙: 攻撃・決定（最優先）
+        "red":     9,   # 赤: 攻撃・警告
+        "blue":    7,   # 青: 回復・進む
+        "green":   6,   # 緑: 回復・安全
+        "purple":  5,   # 紫: 魔法・特殊
+        "yellow":  4,   # 黄: 注意・ハイライト
+        "gray":    2,   # 灰: キャンセル・戻る
+        "white":   1,   # 白: 中立
+        "unknown": 0,
+    }
+
+    def __init__(self):
+        self._knowledge: dict = self._load_knowledge()
+
+    def _load_knowledge(self) -> dict:
+        if self.KNOWLEDGE_PATH.exists():
+            try:
+                import json
+                return json.loads(self.KNOWLEDGE_PATH.read_text())
+            except Exception:
+                pass
+        return {"patterns": {}, "stats": {"total_taps": 0, "verified": 0}}
+
+    def _save_knowledge(self) -> None:
+        import json
+        self.KNOWLEDGE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        self.KNOWLEDGE_PATH.write_text(
+            json.dumps(self._knowledge, ensure_ascii=False, indent=2)
+        )
+
+    def _classify_color(self, roi_bgr) -> str:
+        """BGR ROI の主要色をゲームUI色彩設計に基づいて分類。"""
+        import cv2
+        import numpy as np
+        hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+        s = float(np.mean(hsv[:, :, 1]))
+        v = float(np.mean(hsv[:, :, 2]))
+        h = float(np.mean(hsv[:, :, 0]))
+        if s < 40:
+            return "white" if v > 180 else "gray"
+        # OpenCV HSV: H は 0-180
+        if h < 10 or h > 155:
+            return "red"
+        if h < 25:
+            return "orange"
+        if h < 35:
+            return "yellow"
+        if h < 85:
+            return "green"
+        if h < 125:
+            return "blue"
+        return "purple"
+
+    def find_buttons(self, img_path: Path) -> list[dict]:
+        """
+        エッジ検出 + 輪郭抽出でボタン候補領域を検出。
+        矩形・丸みを帯びた角・高コントラスト縁を持つ領域を「タップ可能」と判定。
+        Returns: [{"cx","cy","w","h","color","priority","area"}, ...] 優先度降順
+        """
+        try:
+            import cv2
+            import numpy as np
+            img = cv2.imread(str(img_path))
+            if img is None:
+                return []
+            H, W = img.shape[:2]
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 40, 120)
+            dilated = cv2.dilate(edges, np.ones((5, 5), np.uint8), iterations=2)
+            contours, _ = cv2.findContours(
+                dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+            buttons = []
+            for c in contours:
+                area = cv2.contourArea(c)
+                # ボタンサイズフィルタ: 1000px² ≤ area ≤ 25% 画面
+                if area < 1000 or area > W * H * 0.25:
+                    continue
+                x, y, w, h = cv2.boundingRect(c)
+                asp = w / h if h > 0 else 0
+                # ボタンのアスペクト比: 0.5 〜 12
+                if asp < 0.5 or asp > 12 or w < 40 or h < 20:
+                    continue
+                color = self._classify_color(img[y:y + h, x:x + w])
+                priority = self.COLOR_PRIORITY.get(color, 0)
+                buttons.append({
+                    "x": x, "y": y, "w": w, "h": h,
+                    "cx": x + w // 2, "cy": y + h // 2,
+                    "area": int(area), "color": color, "priority": priority,
+                })
+            buttons.sort(key=lambda b: (b["priority"], b["area"]), reverse=True)
+            return buttons[:20]
+        except Exception as e:
+            logger.debug("[SDE] find_buttons error: %s", e)
+            return []
+
+    def predict_outcome(self, text: str) -> tuple[str, str]:
+        """
+        OCRテキストからタップ後の結果を予測。
+        長いキーワードを優先（"通常攻撃" > "攻撃" など）。
+        Returns: (action_type, description)
+        """
+        # キーワード長の降順でマッチング（長い=具体的なキーワードを優先）
+        for kw, (action_type, desc) in sorted(
+            self.PREDICTION_MAP.items(), key=lambda x: len(x[0]), reverse=True
+        ):
+            if kw in text:
+                return action_type, desc
+        return "UNKNOWN", "未知の操作が実行される"
+
+    def log_prediction(self, text: str, cx: int, cy: int) -> tuple[str, str]:
+        """予測を生成してログ出力。Returns: (action_type, description)"""
+        action_type, desc = self.predict_outcome(text)
+        if action_type != "UNKNOWN":
+            logger.info(
+                "[PREDICTION] Tapping '%s' at (%d,%d) -> Expecting %s: %s",
+                text[:20], cx, cy, action_type, desc,
+            )
+        return action_type, desc
+
+    def verify_and_learn(self, pre_phash: str, post_phash: str,
+                         action_type: str, desc: str, tap_text: str) -> None:
+        """
+        タップ後のphash変化から予測の正否を検証し、knowledge_base.jsonに記録。
+        - phash距離 >= PHASH_THRESHOLD → 画面変化あり = SUCCESS
+        - phash距離 < PHASH_THRESHOLD  → 画面変化なし = NO_CHANGE
+        """
+        if not pre_phash or not post_phash or action_type == "UNKNOWN":
+            return
+        try:
+            dist = phash_distance(pre_phash, post_phash)
+            scene_changed = dist >= PHASH_THRESHOLD
+            key = f"{action_type}:{tap_text[:20]}"
+            stats = self._knowledge["stats"]
+            stats["total_taps"] = stats.get("total_taps", 0) + 1
+            stats["verified"] = stats.get("verified", 0) + 1
+            pat = self._knowledge["patterns"].setdefault(key, {
+                "prediction": action_type, "description": desc,
+                "text": tap_text, "success_count": 0, "failure_count": 0,
+                "last_seen": "",
+            })
+            if scene_changed:
+                pat["success_count"] += 1
+                logger.info("[LEARNING] '%s'→%s ✓ dist=%d (ok=%d)",
+                            tap_text[:15], action_type, dist, pat["success_count"])
+            else:
+                pat["failure_count"] += 1
+                logger.info("[LEARNING] '%s'→%s ✗ dist=%d (fail=%d)",
+                            tap_text[:15], action_type, dist, pat["failure_count"])
+            pat["last_seen"] = datetime.now().isoformat()
+            # 10タップごとに保存
+            if stats["total_taps"] % 10 == 0:
+                self._save_knowledge()
+        except Exception as e:
+            logger.debug("[SDE] verify_and_learn error: %s", e)
+
+    def report_screen_affordances(self, img_path: Path, ocr_results: list) -> None:
+        """
+        現在画面のUIアフォーダンス解析レポートをログ出力。
+        ボタン候補領域を検出し、各領域内のOCRテキストから行動を予測する。
+        """
+        buttons = self.find_buttons(img_path)
+        if not buttons:
+            return
+        logger.info("[SDE] === UIアフォーダンス解析: %d個のボタン候補 ===", len(buttons))
+        for i, btn in enumerate(buttons[:5]):
+            # ボタン領域内のOCRテキストを抽出
+            btn_texts = [
+                r["text"] for r in ocr_results
+                if (btn["x"] <= r["center"][0] <= btn["x"] + btn["w"] and
+                    btn["y"] <= r["center"][1] <= btn["y"] + btn["h"])
+            ]
+            text_str = " ".join(btn_texts) if btn_texts else "(no text)"
+            action_type, _ = self.predict_outcome(text_str)
+            logger.info(
+                "[SDE] #%d (%d,%d) %dx%d color=%s prio=%d '%s' → %s",
+                i + 1, btn["cx"], btn["cy"], btn["w"], btn["h"],
+                btn["color"], btn["priority"], text_str[:20], action_type,
+            )
+
+
+# グローバル StrategicDecisionEngine インスタンス
+STRATEGIC_ENGINE = StrategicDecisionEngine()
 
 
 # ─── 画面判定・アクション ──────────────────────────
@@ -469,7 +729,7 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── 【最優先 #0-a】テンプレートマッチング (Asset Match) — 最速 ~0.1s ───
     if analysis_path is not None:
-        asset_hit = ASSET_MANAGER.match(analysis_path)
+        asset_hit = ASSET_MANAGER.match(analysis_path, ocr_texts=texts)
         if asset_hit:
             cx, cy, action = asset_hit
             logger.info(">>> [Asset Match] '%s' → (%d,%d)", action, cx, cy)
@@ -592,6 +852,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     min(W, cx + half_w), min(H, cy + half_h),
                     name="map_arrow", action="MAP_ARROW_TAP",
                     threshold=0.65,
+                    require_ocr=["矢印をタップ"],
                 )
             return "MAP_ARROW_TAP", 1.0
         else:
@@ -773,7 +1034,13 @@ def detect_and_act(ocr: list, state: PilotState,
                                   "クリア", "CLEAR", "EXP", "経験値", "ランクアップ"])
     if result_match:
         cx, cy = result_match["center"]
-        logger.info(">>> バトル結果 '%s' (%d,%d)", result_match["text"], cx, cy)
+        text = result_match["text"]
+        action_type, desc = STRATEGIC_ENGINE.log_prediction(text, cx, cy)
+        state.last_prediction = action_type
+        state.last_prediction_desc = desc
+        state.last_tap_text = text
+        state.last_action_pre_phash = state.last_phash
+        logger.info(">>> バトル結果 '%s' (%d,%d)", text, cx, cy)
         tap_device(cx, cy, state, "RESULT_TAP")
         return "RESULT_TAP", 1.0
 
@@ -781,8 +1048,14 @@ def detect_and_act(ocr: list, state: PilotState,
     skip_match = has_any(ocr, ["スキップ", "SKIP", "Skip"])
     if skip_match:
         cx, cy = skip_match["center"]
-        logger.info(">>> スキップ '%s' (%d,%d)", skip_match["text"], cx, cy)
-        tap_device(cx, cy, state, f"SKIP '{skip_match['text']}'")
+        text = skip_match["text"]
+        action_type, desc = STRATEGIC_ENGINE.log_prediction(text, cx, cy)
+        state.last_prediction = action_type
+        state.last_prediction_desc = desc
+        state.last_tap_text = text
+        state.last_action_pre_phash = state.last_phash
+        logger.info(">>> スキップ '%s' (%d,%d)", text, cx, cy)
+        tap_device(cx, cy, state, f"SKIP '{text}'")
         return "SKIP", 0.5
 
     # ─── 閉じるボタン ───
@@ -814,8 +1087,14 @@ def detect_and_act(ocr: list, state: PilotState,
                                    "戦闘", "出撃", "クエスト開始", "バトル開始"])
     if confirm_match:
         cx, cy = confirm_match["center"]
-        logger.info(">>> 確認 '%s' (%d,%d)", confirm_match["text"], cx, cy)
-        tap_device(cx, cy, state, f"CONFIRM '{confirm_match['text']}'")
+        text = confirm_match["text"]
+        action_type, desc = STRATEGIC_ENGINE.log_prediction(text, cx, cy)
+        state.last_prediction = action_type
+        state.last_prediction_desc = desc
+        state.last_tap_text = text
+        state.last_action_pre_phash = state.last_phash
+        logger.info(">>> 確認 '%s' (%d,%d)", text, cx, cy)
+        tap_device(cx, cy, state, f"CONFIRM '{text}'")
         return "CONFIRM", 1.0
 
     # ─── ストーリー/会話 (下部テキストボックス) ───
@@ -899,6 +1178,16 @@ def main():
             dist = phash_distance(state.last_phash, cur_phash)
         else:
             dist = 999
+
+        # ── 前回タップの予測を検証 (phash変化で判定) ──
+        if state.last_action_pre_phash and state.last_prediction and cur_phash:
+            STRATEGIC_ENGINE.verify_and_learn(
+                state.last_action_pre_phash, cur_phash,
+                state.last_prediction, state.last_prediction_desc,
+                state.last_tap_text,
+            )
+            state.last_action_pre_phash = ""
+            state.last_prediction = ""
 
         screen_changed = dist >= PHASH_THRESHOLD
 
@@ -990,6 +1279,10 @@ def main():
         logger.info("[%s][iter %d] phash_dist=%d same=%d OCR(%d): %s",
                     scene, i, dist, state.same_phash_count, len(ocr_results), texts[:8])
         state.last_ocr_texts = texts
+
+        # ── UIアフォーダンス解析 (UNKNOWN or 30OCRごと) ──
+        if scene == "UNKNOWN" or state.total_ocr_calls % 30 == 0:
+            STRATEGIC_ENGINE.report_screen_affordances(analysis_path, ocr_results)
 
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         action, wait_sec = detect_and_act(ocr_results, state, analysis_path)
