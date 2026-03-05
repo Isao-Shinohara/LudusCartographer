@@ -82,6 +82,14 @@ def run_ocr(
     scores = r.get("rec_scores", []) or []
     polys  = r.get("rec_polys",  []) or []
 
+    # 画像の実寸取得（OOB座標修正用）
+    try:
+        from PIL import Image as _PILImage
+        with _PILImage.open(str(image_path)) as _img:
+            img_w, img_h = _img.size
+    except Exception:
+        img_w, img_h = None, None
+
     for text, confidence, poly in zip(texts, scores, polys):
         if not text:
             continue
@@ -89,11 +97,23 @@ def run_ocr(
         if conf < min_confidence:
             continue
         box = [list(map(int, point)) for point in poly]
+        center = center_of_box(box)
+
+        # OOB座標修正: PaddleOCR が画像を転置処理した場合、X/Y が入れ替わる
+        # Y > img_h (または X > img_w) の場合は X↔Y を入れ替えて正しい座標に変換
+        if img_w and img_h:
+            cx, cy = center
+            if (cy > img_h or cx > img_w) and cy <= img_w and cx <= img_h:
+                # 転置補正: (X_ocr, Y_ocr) → (Y_ocr, X_ocr)
+                center = [cy, cx]
+                box = [[p[1], p[0]] for p in box]
+                logger.debug("[OCR] OOB補正 '%s': (%d,%d) → (%d,%d)", text, cx, cy, cy, cx)
+
         results.append({
             "text":       text,
             "confidence": conf,
             "box":        box,
-            "center":     center_of_box(box),
+            "center":     center,
         })
 
     logger.debug(f"[OCR] {Path(image_path).name}: {len(results)} 件検出 (lang={lang})")
