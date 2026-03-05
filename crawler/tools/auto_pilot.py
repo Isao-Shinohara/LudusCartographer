@@ -956,7 +956,23 @@ def detect_and_act(ocr: list, state: PilotState,
     # 限界突破/強化完了/レベルアップ系ポップアップ → 右上 × ボタンで閉じる
     close_popup_kws = ["限界突破", "強化完了", "レベルアップ", "称号獲得", "エピソード解放",
                        "ランクアップ", "新しいコンテンツ", "アンロック",
-                       "マギアボックス", "ミッション達成", "デイリーミッション"]
+                       "マギアボックス", "ミッション達成", "デイリーミッション",
+                       "ログインボーナス", "初心者ログイン", "キャンペーン"]
+
+    # カルーセル型チュートリアルポップアップ (「メインクエストをPLAYして」等の複数ページ説明)
+    # 閉じるボタン: ポップアップフレーム右上 (1430, 88) — 実測 2026-03-05
+    carousel_popup_kws = ["メインクエストをPLAY", "ピュエラピクトゥーラ", "POWER UP"]
+    carousel_match = has_any(ocr, carousel_popup_kws)
+    if carousel_match:
+        # 最終ページへ移動 (右ナビゲーション × 6) → フレーム右上 × をタップ
+        for _ in range(6):
+            tap_device(1465, 360, state, "CAROUSEL_NAV_RIGHT")
+            time.sleep(0.3)
+        close_x, close_y = 1430, 88
+        logger.info(">>> 【カルーセルポップアップ】 '%s' → フレーム右上 (%d,%d) タップ",
+                    carousel_match["text"][:10], close_x, close_y)
+        tap_device(close_x, close_y, state, "CAROUSEL_CLOSE")
+        return "CLOSE_POPUP", 2.0
     close_popup = has_any(ocr, close_popup_kws)
     if close_popup:
         close_x = W - 40  # 右上 × ボタン (1520-40=1480)
