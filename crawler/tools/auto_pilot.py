@@ -251,20 +251,31 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
     if analysis_path is not None:
-        # バトル中はスキルカードアイコンとの誤検出を防ぐため min_area を大きく
         is_battle_screen = any(kw in " ".join(texts) for kw in
                                ["AUTO", "通常攻撃", "单体攻撃", "単体攻撃", "必殺技", "BREAK"])
         finger_min_area = 12000 if is_battle_screen else 400
         blobs = find_finger_blobs(analysis_path, min_area=finger_min_area)
         if blobs:
-            # 右側行動アイコン (x > 1050) が存在する場合は最優先
+            # バトル中は「右パネル(x>1050)」または「下部UI(y>H*0.8=576)」のみ有効
+            # 中央エリア(バトルフィールド)のキャラクター肌色は誤検出なので無視
+            if is_battle_screen:
+                valid_blobs = [(x, y, a) for x, y, a in blobs if x > 1050 or y > H * 0.8]
+                if not valid_blobs:
+                    logger.info("  バトル中: 有効もやなし(中央は誤検出) → OCR判定へ")
+                    blobs = []
+                else:
+                    blobs = valid_blobs
+                    logger.info("  バトル中: 有効もや %d個検出", len(blobs))
+
+        if blobs:
+            # 右側行動アイコン (x > 1050) が最優先
             right_blobs = [(x, y, a) for x, y, a in blobs if x > 1050]
             chosen = right_blobs[0] if right_blobs else blobs[0]
             fx, fy, fa = chosen
             if right_blobs and len(blobs) > 1:
                 logger.info("  (右パネル優先: %d個中1個を選択)", len(blobs))
-            # 同じ座標を 5 回以上連続検出 → 誤検出としてスキップして OCR へ
-            blob_pos = (fx // 50, fy // 50)  # 50px グリッドで同一判定
+            # 100px グリッドで同一座標判定 (50pxだとy=399/400で境界越えリセットが発生)
+            blob_pos = (fx // 100, fy // 100)
             if blob_pos == state.last_blob_xy:
                 state.blob_same_count += 1
             else:
@@ -275,7 +286,6 @@ def detect_and_act(ocr: list, state: PilotState,
                             state.blob_same_count, fx, fy)
                 # カウンタはリセットせず、OCR ベース処理に落ちる
             else:
-                # もやがかかったアイコン = そのアイコン自体をタップ
                 logger.info(">>> 【もやアイコン検出】 (%d,%d) area=%.0f count=%d — 直接タップ",
                             fx, fy, fa, state.blob_same_count)
                 tap_device(fx, fy, state, f"MOYA_TAP ({fx},{fy})")
