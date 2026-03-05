@@ -19,6 +19,14 @@ import os
 import subprocess
 import sys
 import time
+
+# ─── SIGSEGV 防止: OpenMP / cv2 スレッド競合対策 ─────────────────
+# OpenMP スレッドの重複を許可 (PaddlePaddle + OpenCV 共存時のSIGSEGV防止)
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+# OpenMP スレッド数を制限してメモリ競合を防ぐ
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+# OpenCV のスレッド数も制限
+os.environ.setdefault("OPENCV_VIDEOIO_PRIORITY_MSMF", "0")
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
