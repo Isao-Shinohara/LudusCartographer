@@ -330,6 +330,18 @@ def detect_and_act(ocr: list, state: PilotState,
             tap_device(cx, cy, state, f"HIGHLIGHT '{kw}'")
             return "HIGHLIGHT_TAP", 2.0
 
+    # ─── ストーリーセリフ進行 (バトル外でセリフが出ている) ───
+    # 「画面をタップ」系の指示 or バトルでもホームでもない日本語テキストが複数ある
+    is_battle_now = any(kw in " ".join(texts) for kw in
+                        ["AUTO", "通常攻撃", "单体攻撃", "単体攻撃", "必殺技", "BREAK"])
+    tap_screen_kws = ["画面をタップ", "タップして進む", "タップで進む", "タップしてください", "TOUCH TO CONTINUE"]
+    tap_screen = has_any(ocr, tap_screen_kws)
+    if tap_screen and not is_battle_now:
+        cx, cy = tap_screen["center"]
+        logger.info(">>> 【画面タップ指示】 '%s' (%d,%d)", tap_screen["text"], cx, cy)
+        tap_device(cx, cy, state, "STORY_TAP_HINT")
+        return "STORY_TAP", 5.0
+
     # ─── ホーム画面検出 ───
     home_indicators = ["光の間", "ショップ", "ガシャ", "ガチャ", "パーティ",
                        "クエスト", "ミッション", "メニュー", "ホーム",
@@ -521,7 +533,7 @@ def detect_and_act(ocr: list, state: PilotState,
         cx, cy = target["center"]
         logger.info(">>> ストーリー送り '%s' (%d,%d)", target["text"][:10], cx, cy)
         tap_device(cx, cy, state, "STORY_TAP")
-        return "STORY_TAP", 2.0
+        return "STORY_TAP", 5.0
 
     # ─── ログインボーナス等 ───
     bonus_match = has_any(ocr, ["ログイン", "ボーナス", "プレゼント", "獲得"])
