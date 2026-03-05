@@ -8,7 +8,7 @@
   "swipe_duration_ms": 3000,
   "repeat_until_change": true,
   "max_repeat": 10,
-  "threshold": 0.65,
+  "threshold": 0.82,
   "require_ocr": [],
-  "note": "チュートリアル指差しアイコン+軌跡 → 軌跡方向へ長ホールドスワイプ（場面変化まで繰り返す）"
+  "note": "threshold=0.82 (旧0.65)で設定メニュー等での誤マッチ防止。本来はチュートリアル移動シーンのみで発火させる。"
 }

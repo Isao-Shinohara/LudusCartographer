@@ -253,10 +253,12 @@ def prepare_analysis_image(img_path: Path, actual_w: int, actual_h: int) -> Path
 
 
 # ─── 指差しアイコン (肌色ブロブ) 検出 ──────────────
-def find_finger_blobs(img_path: Path, min_area: int = 400) -> list[tuple[int, int, float]]:
+def find_finger_blobs(img_path: Path, min_area: int = 400,
+                      max_area: int = 15000) -> list[tuple[int, int, float]]:
     """
     指差しアイコン（肌色）の大きいブロブを検出。
     battle_loop.py と同じ HSV マスク手法。
+    max_area: 金色カード等の大面積誤検出を除外（UI カードは 15000px² 超）
     返値: [(cx, cy, area), ...] 面積降順
     """
     try:
@@ -273,7 +275,7 @@ def find_finger_blobs(img_path: Path, min_area: int = 400) -> list[tuple[int, in
         blobs = []
         for c in contours:
             area = cv2.contourArea(c)
-            if area >= min_area:
+            if area >= min_area and area <= max_area:
                 M = cv2.moments(c)
                 if M["m00"] > 0:
                     cx = int(M["m10"] / M["m00"])
@@ -990,6 +992,15 @@ def detect_and_act(ocr: list, state: PilotState,
     W, H = ANALYSIS_W, ANALYSIS_H
     joined = " ".join(texts)
 
+    # ─── 【最優先 #-2】タイトル画面 設定/サポートメニュー ───
+    # 「動画配信設定」アイコンを誤タップして開く設定ポップアップ → BACK で閉じる
+    _settings_menu_kws = ["サポート", "データ引き継ぎ", "キャッシュクリア", "お問い合わせ"]
+    if has_any(ocr, _settings_menu_kws, min_conf=0.3):
+        logger.info(">>> 【設定メニュー誤起動】 BACK キーで閉じる")
+        import subprocess as _sp
+        _sp.run(["adb", "-s", DEVICE_SERIAL, "shell", "input", "keyevent", "4"], check=False)
+        return "SETTINGS_BACK", 1.5
+
     # ─── 【最優先 #-1】「ご注意」画面 (Google Play 起動時 portrait 注意書き) ───
     # アプリ初回起動時に portrait で表示される法的注意画面。タップで閉じる。
     if has_text(ocr, "ご注意", min_conf=0.3) or (
@@ -1186,11 +1197,20 @@ def detect_and_act(ocr: list, state: PilotState,
         _nav_joined = " ".join(texts)
         # 利用規約画面・同意ダイアログが存在する場合はタイトル画面と区別する
         _is_tos_screen = "利用規約" in _nav_joined or "同意してゲームを始める" in _nav_joined
+        _title_kws_game = ["魔法", "少女", "まどか", "マギカ", "まどかハ", "MADOKA", "MAGICA"]
         is_title_screen = (
             not _is_tos_screen and (
-                any(kw in _nav_joined for kw in ["TAP TO START", "Magia Exedra"]) or
-                ("動画配信" in _nav_joined and any(kw in _nav_joined for kw in ["魔法", "少女", "まどか", "マギカ"])) or
-                ("VID" in _nav_joined and any(kw in _nav_joined for kw in ["魔法", "少女", "まどか", "マギカ"]))
+                any(kw in _nav_joined for kw in ["TAP TO START", "Magia Exedra",
+                                                  "MAGIA EXEDRA", "TAPTOSTART"]) or
+                # 「動画配信設定」「Ver.」はタイトル画面固有の上部 UI
+                (any(kw in _nav_joined for kw in ["動画配信", "勤画配信", "Ver.2", "Ver.2."])
+                 and any(kw in _nav_joined for kw in _title_kws_game + ["PUELLA"])) or
+                ("VID" in _nav_joined and any(kw in _nav_joined for kw in _title_kws_game)) or
+                # フォールバック: ゲームタイトルロゴ文字 + Rank がない + ホームナビがない
+                (any(kw in _nav_joined for kw in ["PUELLA MAGI", "PUELLAHAGI", "PUELLAMAGI",
+                                                   "PUELLA MAGIMADOKA"])
+                 and any(kw in _nav_joined for kw in _title_kws_game)
+                 and not any(kw in _nav_joined for kw in ["クエスト", "ショップ", "ガチャ"]))
             )
         )
         if is_title_screen:
