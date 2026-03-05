@@ -533,7 +533,7 @@ def detect_and_act(ocr: list, state: PilotState,
         cx, cy = target["center"]
         logger.info(">>> ストーリー送り '%s' (%d,%d)", target["text"][:10], cx, cy)
         tap_device(cx, cy, state, "STORY_TAP")
-        return "STORY_TAP", 5.0
+        return "STORY_TAP", 2.0
 
     # ─── ログインボーナス等 ───
     bonus_match = has_any(ocr, ["ログイン", "ボーナス", "プレゼント", "獲得"])
