@@ -710,6 +710,121 @@ class StrategicDecisionEngine:
                 btn["color"], btn["priority"], text_str[:20], action_type,
             )
 
+    # ─── 要素キーワード → (英語名, 検出方法) ───
+    _ELEMENT_MAP: dict[str, tuple[str, str]] = {
+        "矢印":     ("arrow",   "arrow"),
+        "矩形":     ("rect",    "button"),
+        "ボタン":   ("btn",     "button"),
+        "アイコン": ("icon",    "button"),
+        "スキップ": ("skip",    "ocr:スキップ"),
+        "次へ":     ("next",    "ocr:次へ"),
+        "OK":       ("ok",      "ocr:OK"),
+        "閉じる":   ("close",   "ocr:閉じる"),
+        "ホーム":   ("home",    "ocr:ホーム"),
+        "ガチャ":   ("gacha",   "ocr:ガチャ"),
+        "ガシャ":   ("gacha",   "ocr:ガシャ"),
+        "戦闘":     ("battle",  "ocr:戦闘"),
+        "出撃":     ("deploy",  "ocr:出撃"),
+        "クエスト": ("quest",   "ocr:クエスト"),
+    }
+
+    # ─── 役割キーワード → プレフィックス ───
+    _ROLE_MAP: dict[str, str] = {
+        "ボタン": "btn",
+        "アイコン": "icon",
+        "タブ": "tab",
+        "メニュー": "menu",
+        "リスト": "list",
+    }
+
+    def learn_from_instruction(
+        self,
+        instruction: str,
+        screenshot_path: Path,
+        ocr_results: list,
+        asset_manager: "AssetManager",
+    ) -> Optional[str]:
+        """
+        ユーザーの曖昧な指示から UI 要素を自律的に抽出・命名・保存する。
+
+        例:
+            "矢印はボタン"   → 矢印を検出 → "btn_arrow" として保存
+            "スキップはボタン"→ OCRでスキップ検出 → "btn_skip" として保存
+
+        Returns: 保存したテンプレート名 or None
+        """
+        # 役割パース
+        role = "btn"
+        for kw, r in self._ROLE_MAP.items():
+            if kw in instruction:
+                role = r
+                break
+
+        # 要素パース
+        element = "unknown"
+        find_method = "button"
+        for kw, (en_name, method) in self._ELEMENT_MAP.items():
+            if kw in instruction:
+                element = en_name
+                find_method = method
+                break
+
+        name = f"{role}_{element}"
+        W, H = ANALYSIS_W, ANALYSIS_H
+        x1 = y1 = x2 = y2 = 0
+        cx: Optional[int] = None
+
+        if find_method == "arrow":
+            pos = find_3d_arrow(screenshot_path)
+            if pos:
+                cx, cy_val = pos
+                half_w, half_h = 80, 60
+                x1 = max(0, cx - half_w)
+                y1 = max(0, cy_val - half_h)
+                x2 = min(W, cx + half_w)
+                y2 = min(H, cy_val + half_h)
+
+        elif find_method.startswith("ocr:"):
+            ocr_kw = find_method[4:]
+            match = find_best(ocr_results, ocr_kw)
+            if match:
+                cx, _ = match["center"]
+                box = match["box"]
+                xs = [p[0] for p in box]
+                ys = [p[1] for p in box]
+                pad = 10
+                x1 = max(0, min(xs) - pad)
+                y1 = max(0, min(ys) - pad)
+                x2 = min(W, max(xs) + pad)
+                y2 = min(H, max(ys) + pad)
+
+        else:
+            # ボタン検出: find_buttons から最優先候補を使用
+            buttons = self.find_buttons(screenshot_path)
+            if buttons:
+                btn = buttons[0]
+                cx = btn["cx"]
+                x1, y1 = btn["x"], btn["y"]
+                x2, y2 = btn["x"] + btn["w"], btn["y"] + btn["h"]
+
+        if cx is None:
+            logger.warning("[SemanticAsset] '%s' から要素を検出できませんでした", instruction)
+            return None
+
+        saved = asset_manager.save_template(
+            screenshot_path, x1, y1, x2, y2,
+            name=name,
+            action=f"SEMANTIC_{name.upper()}",
+            threshold=0.75,
+        )
+        if saved:
+            logger.info(
+                "[SemanticAsset] '%s' → '%s' 登録完了 (%d,%d)-(%d,%d)",
+                instruction, name, x1, y1, x2, y2,
+            )
+            return name
+        return None
+
 
 # グローバル StrategicDecisionEngine インスタンス
 STRATEGIC_ENGINE = StrategicDecisionEngine()

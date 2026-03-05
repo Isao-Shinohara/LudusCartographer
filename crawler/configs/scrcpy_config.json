@@ -1,0 +1,19 @@
+{
+  "_comment": "scrcpy 標準フラグ — LudusCartographer まどドラ自律操縦用",
+  "device": "192.168.10.118:5555",
+  "flags": {
+    "turn_screen_off": true,
+    "always_on_top": true,
+    "no_audio": true,
+    "max_size": 800,
+    "window_title": "Madodora-Auto"
+  },
+  "command_template": "scrcpy -s {device} -S --always-on-top --no-audio -m {max_size} --window-title '{window_title}'",
+  "tap_interval_min_sec": 1.0,
+  "safety": {
+    "tap_interval_min_sec": 1.0,
+    "max_iterations": 2000,
+    "stall_timeout_sec": 20,
+    "phash_threshold": 5
+  }
+}
