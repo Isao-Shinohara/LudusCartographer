@@ -257,39 +257,29 @@ def detect_and_act(ocr: list, state: PilotState,
         finger_min_area = 12000 if is_battle_screen else 400
         blobs = find_finger_blobs(analysis_path, min_area=finger_min_area)
         if blobs:
-            fx, fy, fa = blobs[0]
-            # 同じ座標を 3 回以上連続検出 → 誤検出としてスキップ
+            # 右側行動アイコン (x > 1050) が存在する場合は最優先
+            right_blobs = [(x, y, a) for x, y, a in blobs if x > 1050]
+            chosen = right_blobs[0] if right_blobs else blobs[0]
+            fx, fy, fa = chosen
+            if right_blobs and len(blobs) > 1:
+                logger.info("  (右パネル優先: %d個中1個を選択)", len(blobs))
+            # 同じ座標を 5 回以上連続検出 → 誤検出としてスキップして OCR へ
             blob_pos = (fx // 50, fy // 50)  # 50px グリッドで同一判定
             if blob_pos == state.last_blob_xy:
                 state.blob_same_count += 1
             else:
                 state.blob_same_count = 0
                 state.last_blob_xy = blob_pos
-            if state.blob_same_count >= 3:
-                logger.info(">>> 指差し同一座標 %d回 → 誤検出スキップ (%d,%d)",
+            if state.blob_same_count >= 5:
+                logger.info(">>> もや同一座標 %d回タップ済み → OCRフォールバック (%d,%d)",
                             state.blob_same_count, fx, fy)
+                # カウンタはリセットせず、OCR ベース処理に落ちる
             else:
-                logger.info(">>> 【指差し検出】 at (%d,%d) area=%.0f (battle=%s)",
-                            fx, fy, fa, is_battle_screen)
-                # 右パネル (x > 1050) → スキルカード
-                if fx > 1050:
-                    logger.info("  → 右パネル指差し: スキルカード (1440,520) タップ")
-                    tap_device(1440, 520, state, "FINGER_SKILL")
-                    time.sleep(0.5)
-                    tap_device(1440, 520, state, "FINGER_SKILL confirm")
-                    return "FINGER_SKILL", 3.0
-                # 左カード (x < 600) → キャラカード
-                elif fx < 600:
-                    card_centers = [130, 310, 490]
-                    closest = min(card_centers, key=lambda cx: abs(cx - fx))
-                    logger.info("  → 左カード指差し: カード(%d,650) タップ", closest)
-                    tap_device(closest, 650, state, f"FINGER_CHAR x={closest}")
-                    return "FINGER_CHAR", 3.0
-                # 中央 → 指差し座標をそのままタップ
-                else:
-                    logger.info("  → 中央指差し: (%d,%d) タップ", fx, fy)
-                    tap_device(fx, fy, state, "FINGER_CENTER")
-                    return "FINGER_CENTER", 2.0
+                # もやがかかったアイコン = そのアイコン自体をタップ
+                logger.info(">>> 【もやアイコン検出】 (%d,%d) area=%.0f count=%d — 直接タップ",
+                            fx, fy, fa, state.blob_same_count)
+                tap_device(fx, fy, state, f"MOYA_TAP ({fx},{fy})")
+                return "MOYA_TAP", 2.0
 
     # ─── 【最優先 #2】ハイライト指示テキスト ───
     tutorial_kws = ["ここをタップ", "タップしてください", "タップして下さい", "タップして"]
