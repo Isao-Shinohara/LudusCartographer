@@ -1,0 +1,14 @@
+{
+  "action": "SWIPE_UP",
+  "swipe_direction": "up",
+  "swipe_from_x": 1050,
+  "swipe_from_y": 580,
+  "swipe_to_x": 1050,
+  "swipe_to_y": 50,
+  "swipe_duration_ms": 3000,
+  "repeat_until_change": true,
+  "max_repeat": 10,
+  "threshold": 0.65,
+  "require_ocr": [],
+  "note": "チュートリアル指差しアイコン+軌跡 → 軌跡方向へ長ホールドスワイプ（場面変化まで繰り返す）"
+}

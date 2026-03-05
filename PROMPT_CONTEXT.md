@@ -48,6 +48,33 @@ scrcpy -s $TARGET_IP -S --always-on-top --no-audio -m 800 --window-title "Madodo
 ANDROID_UDID=$TARGET_IP venv/bin/python -u tools/auto_pilot.py
 ```
 
+### ワンコマンド起動 — Makefile (macOS) / run.bat (Windows)
+
+`crawler/` ディレクトリに配置。IP/PORT/VENV は先頭変数で変更可能。
+
+**macOS (Makefile)**
+
+```bash
+cd crawler
+make connect   # ADB Wi-Fi 再接続（切断復旧）
+make run       # scrcpy + auto_pilot 起動
+make restart   # 停止 → 再接続 → 再起動
+make stop      # 全プロセス停止
+make ss        # スクリーンショット → /tmp/ss.png
+# カスタムIP: make run TARGET_IP=192.168.1.200
+```
+
+**Windows (run.bat)**
+
+```bat
+cd crawler
+run.bat connect
+run.bat run
+run.bat restart
+run.bat stop
+run.bat ss
+```
+
 ---
 
 ## 3. 意思決定ロジックの優先順位
@@ -192,6 +219,7 @@ ANDROID_UDID=$TARGET_IP venv/bin/python -u tools/auto_pilot.py
 |------|--------------|--------------|------|
 | チュートリアル開幕 | 指差しもや | もや座標タップ | |
 | 探索マップ矢印 | "矢印をタップ" | 3D矢印検出 → タップ | require_ocr条件付き |
+| **チュートリアル移動シーン** | **指差しアイコン＋軌跡 (黄金色・アニメ)** | **軌跡方向へ長ホールドスワイプ (3秒+, 場面変化まで繰り返す)** | タップ不可。静止スクショでは方向判別困難。上軌跡=上スワイプ |
 | バトル | 通常攻撃/BREAK | AUTO有効化 → 待機 | |
 | バトル結果 | Result/リザルト | 中央タップ | |
 | キャラ紹介ADV | スキップボタン | スキップ | |

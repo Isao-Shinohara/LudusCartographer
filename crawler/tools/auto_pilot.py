@@ -866,6 +866,17 @@ def detect_and_act(ocr: list, state: PilotState,
         if asset_hit:
             cx, cy, action = asset_hit
             logger.info(">>> [Asset Match] '%s' → (%d,%d)", action, cx, cy)
+            # スワイプ系アクションの処理
+            if action == "SWIPE_UP":
+                tmpl_meta = ASSET_MANAGER._templates.get("tutorial_swipe_pointer", {})
+                sx = tmpl_meta.get("swipe_from_x", cx)
+                sy = tmpl_meta.get("swipe_from_y", H - 50)
+                ex = tmpl_meta.get("swipe_to_x", cx)
+                ey = tmpl_meta.get("swipe_to_y", 50)
+                dur = tmpl_meta.get("swipe_duration_ms", 3000)
+                logger.info(">>> [SWIPE_UP] (%d,%d)→(%d,%d) %dms", sx, sy, ex, ey, dur)
+                swipe(sx, sy, ex, ey, dur)
+                return "SWIPE_UP", 1.5
             tap_device(cx, cy, state, action)
             return action, 0.5
 
@@ -1010,10 +1021,14 @@ def detect_and_act(ocr: list, state: PilotState,
                                ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃", "必殺技", "BREAK", "WAVE", "Turn"])
         # タイトル画面 / ホーム画面検出: ブロブ誤検出を防ぐ
         _nav_joined = " ".join(texts)
+        # 利用規約画面・同意ダイアログが存在する場合はタイトル画面と区別する
+        _is_tos_screen = "利用規約" in _nav_joined or "同意してゲームを始める" in _nav_joined
         is_title_screen = (
-            any(kw in _nav_joined for kw in ["TAP TO START", "Magia Exedra"]) or
-            ("動画配信" in _nav_joined and any(kw in _nav_joined for kw in ["魔法", "少女", "まどか", "マギカ"])) or
-            ("VID" in _nav_joined and any(kw in _nav_joined for kw in ["魔法", "少女", "まどか", "マギカ"]))
+            not _is_tos_screen and (
+                any(kw in _nav_joined for kw in ["TAP TO START", "Magia Exedra"]) or
+                ("動画配信" in _nav_joined and any(kw in _nav_joined for kw in ["魔法", "少女", "まどか", "マギカ"])) or
+                ("VID" in _nav_joined and any(kw in _nav_joined for kw in ["魔法", "少女", "まどか", "マギカ"]))
+            )
         )
         if is_title_screen:
             logger.info("  タイトル画面検出 → TAP TO START (760,628) タップ")
@@ -1050,12 +1065,20 @@ def detect_and_act(ocr: list, state: PilotState,
             tap_device(760, 360, state, "GACHA_RESULT_CENTER_2")
             return "GACHA_OK", 2.0
         # min_area は常に400。空間フィルタ(下記)で誤検出を排除するため過大閾値は不要
-        # ホーム画面はキャラ画像が肌色誤検出になるためブロブ無効化
+        # ホーム画面 / 利用規約ダイアログ / システムダイアログはブロブ誤検出になるためスキップ
+        _is_system_dialog = any(kw in _nav_joined for kw in
+                                ["画質を設定", "高画質", "省エネ", "省工ネ", "データ引き継ぎ",
+                                 "サポート", "お問い合わせ", "キャッシュクリア"])
         if _home_kw_count >= 2:
             logger.info("  ホーム画面検出 (nav×%d) → MOYA_TAP スキップ", _home_kw_count)
             blobs = []
+        elif _is_tos_screen or _is_system_dialog:
+            logger.info("  システムダイアログ/利用規約検出 → MOYA_TAP スキップ")
+            blobs = []
         else:
             blobs = find_finger_blobs(analysis_path, min_area=400)
+            # 画面端の誤検出を除去: y<36px(上端)または x>W-40px(右端最端)はシステムUI
+            blobs = [(x, y, a) for x, y, a in blobs if y > 36 and x < W - 40]
         if blobs:
             # バトル中は中央エリア(バトルフィールド)の肌色は誤検出なので無視
             # 優先順位: 左キャラカード(x<600,y>550) > 右パネル(x>1050) > 下部UI(y>H*0.8)
@@ -1373,6 +1396,40 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.info(">>> 閉じる '%s' (%d,%d)", close_match["text"], cx, cy)
         tap_device(cx, cy, state, f"CLOSE '{close_match['text']}'")
         return "CLOSE", 0.5
+
+    # ─── ゲーム内システムダイアログ (画質設定・ダウンロード確認 等) ───
+    # OCR の y 座標は実ヒットゾーンより約 -48px ずれる → 固定 y=575 でタップ
+    sys_dlg_kws = ["画質を設定", "アセット更新", "ダウンロードを開始", "ダウンロードしますか",
+                   "Wi-Fiを使用", "モバイル通信でダウンロード"]
+    sys_dlg_match = has_any(ocr, sys_dlg_kws, min_conf=0.3)
+    if sys_dlg_match:
+        ok_item = next((item for item in ocr if "OK" in item.get("text", "")), None)
+        # OCR の y 座標は実ヒットゾーンより約 -48px ずれる
+        ok_y = (ok_item["center"][1] - 48) if ok_item else 575
+        # キャンセル/OKの2ボタン型は右半分にOKがある → x > W*0.5 ならそのまま、それ以外は右側へ
+        if ok_item and ok_item["center"][0] > W * 0.5:
+            ok_x = ok_item["center"][0]
+        else:
+            ok_x = int(W * 0.65)  # 右側固定
+        logger.info(">>> 【システムダイアログ】 '%s' → OK (%d,%d) タップ",
+                    sys_dlg_match["text"][:15], ok_x, ok_y)
+        tap_device(ok_x, ok_y, state, "SYSTEM_DLG_OK")
+        return "SYSTEM_DLG_OK", 2.0
+
+    # ─── 利用規約同意ダイアログ ───
+    # 「同意してゲームを始める」ボタンを右下の固定座標または OCR 座標でタップ
+    tos_screen = has_any(ocr, ["同意してゲームを始める", "プライバシーポリシー"], min_conf=0.3)
+    if tos_screen and has_text(ocr, "利用規約", min_conf=0.3):
+        # "始める" または "ゲームを始める" を OCR で探して座標タップ
+        agree_ocr = has_any(ocr, ["始める", "ゲームを始める", "同意してゲームを始める"], min_conf=0.3)
+        if agree_ocr:
+            cx, cy = agree_ocr["center"]
+            logger.info(">>> 【利用規約同意】 '%s' (%d,%d) タップ", agree_ocr["text"][:10], cx, cy)
+            tap_device(cx, cy, state, "AGREE_TOS")
+        else:
+            logger.info(">>> 【利用規約同意】 固定座標 (1100,640) タップ")
+            tap_device(1100, 640, state, "AGREE_TOS")
+        return "AGREE_TOS", 3.0
 
     # ─── 規約同意 ───
     agree_match = has_any(ocr, ["同意", "規約", "利用規約"])
