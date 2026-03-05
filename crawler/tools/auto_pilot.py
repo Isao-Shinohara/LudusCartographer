@@ -261,6 +261,8 @@ def detect_and_act(ocr: list, state: PilotState,
         # 全6ロール — 一覧画面・個別詳細ページ両方に対応
         "ATTACKER", "BREAKER", "BUFFER", "DEBUFFER", "DEFENDER", "HEALER",
         "アタッカー", "ブレイカー", "バッファー", "デバッファー", "ディフェンダー", "ヒーラー",
+        # バトル速度/操作説明ポップアップ
+        "このボタンでバトル", "進行速度を変更", "速度を変更",
     ]
     pre_popup = has_any(ocr, pre_popup_kws)
     if pre_popup:
