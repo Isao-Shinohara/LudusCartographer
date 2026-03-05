@@ -4,7 +4,7 @@
 > このドキュメントは Claude Code が自律的に更新・管理します。
 > 新しいUI資産発見・ロジック改善・ゲーム知見獲得のたびに自動更新 + `git push` します。
 
-最終更新: 2026-03-05 (セッション2)
+最終更新: 2026-03-06 (セッション4)
 
 ---
 
@@ -292,5 +292,68 @@ tap_x, tap_y = smart_tap_button(analysis_path, ocr_cx, ocr_cy, search_r=120)
 ```
 
 **新ボタン学習時の原則**: OCR 座標をそのまま使わず、必ず `smart_tap_button()` を経由すること。
+
+---
+
+## 12. デッドロック解析とWatchdog自動復旧 (2026-03-06 セッション4)
+
+### 発見: 2種類のゲームフリーズ
+
+Unity製ゲームは、起動後「ご注意」画面で2種類のフリーズを起こすことがある:
+
+| タイプ | 原因 | 症状 | 対処 |
+|--------|------|------|------|
+| **タイプA: Unity主スレッドデッドロック** | `pm clear --cache-only` でアセットバンドルが消失 → 再DLで主スレッドがブロック | adb inputが全く届かない。screencapが完全に静止（MD5同一）。CPU 113%。TCPゼロ | **`pm clear`（フルデータクリア）→ am start** |
+| **タイプB: サーバー認証失敗** | `pm clear`後の初回起動でアカウントデータ消失 → サーバー認証に時間がかかる/失敗 | adb inputは届く（MD5が瞬間的に変化）が処理後に「ご注意」に戻る | 繰り返しタップを継続 → 最終的にサーバー認証が成功して通過 |
+
+### 診断手順
+
+```bash
+# 1. screencapのMD5を複数回確認（3秒間隔）
+md5 /tmp/s1.png /tmp/s2.png
+# Same = タイプAまたはタイプB
+# Different = 正常（ゲームが動いている）
+
+# 2. adb input tapが届くか確認
+adb -s $TARGET_IP shell input tap 760 400
+# MD5が変わる → タイプB（タップは届くがサーバー処理が失敗）
+# MD5が変わらない → タイプA（Unityデッドロック）
+
+# 3. ゲームプロセスのTCP接続確認
+adb -s $TARGET_IP shell "cat /proc/net/tcp6" | grep " $(cat /proc/net/tcp6 ... | grep <UID>) " | grep " 01 "
+```
+
+### 「ご注意」画面の正確な操作情報
+
+| 項目 | 値 |
+|------|-----|
+| 「同意してゲームを始める」ボタン | OCR center: **(1023, 585)** in 1520×720 landscape |
+| 「キャンセル」ボタン | OCR center: (491, 584) |
+| 有効なadb input tap座標 | `adb shell input tap 1023 585` |
+| ハンドラ（auto_pilot.py） | `GO_CHUI_AGREE` / `GO_CHUI_FALLBACK` |
+
+### Watchdog実装 (auto_pilot.py 2026-03-06追加)
+
+```python
+WATCHDOG_DEADLOCK_THRESHOLD = 60.0   # 60秒変化なし → デッドロック判定
+WATCHDOG_MAX_SOFT_RECOVERIES = 3     # force-stop再起動最大回数
+WATCHDOG_MAX_TOTAL_RECOVERIES = 5    # 合計5回で諦める
+```
+
+**復旧プロトコル:**
+- 1〜3回目: `am force-stop` → 3秒 → `am start`（ソフト再起動）
+- 4〜5回目: `am force-stop` → `pm clear` → `am start`（ハード初期化）
+- 6回目以降: 停止
+
+**注意:** `pm clear` はアカウントデータを消去するため最終手段として使用。
+`pm clear --cache-only` のみではタイプAが解決しないことを確認済み（フルclearが必要）。
+
+### セッション4での修正履歴
+
+| 修正内容 | ファイル | 概要 |
+|----------|---------|------|
+| 「ご注意」ボタン座標修正 | `auto_pilot.py` | (W//2, H//2)→OCR検出で(1023,585)を正確にタップ |
+| Watchdog追加 | `auto_pilot.py` | 60秒変化なしで自動再起動/pm clearループ |
+| phash変化時刻追跡 | `auto_pilot.py` | `last_screen_change_time`フィールド追加 |
 
 _このドキュメントは Claude Code (claude-sonnet-4-6) が自動生成・更新しています。_

@@ -65,6 +65,15 @@ FORCE_ANALYZE_AFTER = 3     # phash 変化なし連続 N 回 → 強制 OCR — 
 STALL_TIMEOUT = 20.0        # 強制OCRでもタップできず続く秒数 → スタック介入
 BATTLE_WAIT = 1.5           # バトル待機 — 高速化
 DOWNLOAD_WAIT = 10.0
+
+# ─── Watchdog: デッドロック自動復旧 ───
+WATCHDOG_DEADLOCK_THRESHOLD = 60.0   # 60秒以上画面変化なし → デッドロック判定
+WATCHDOG_MAX_SOFT_RECOVERIES = 3     # force-stop再起動の最大回数 (超えたらpm clear)
+WATCHDOG_MAX_TOTAL_RECOVERIES = 5    # 合計5回で諦める
+APP_PACKAGE = "com.aniplex.magia.exedra.jp"
+APP_ACTIVITY = "com.google.firebase.MessagingUnityPlayerActivity"
+# Watchdog免除シーン: これらのシーンでは意図的に待機中なのでWatchdogを発動しない
+WATCHDOG_EXEMPT_ACTIONS = frozenset(["DOWNLOAD_WAIT", "BATTLE_WAIT", "LOADING_WAIT"])
 ADV_RAPID_PHASH_MAX = 25    # ADV高速モード: phash がこれ以下なら OCR スキップ連打
 BLACKOUT_BRIGHTNESS = 20
 
@@ -115,6 +124,11 @@ class PilotState:
     last_action_pre_phash: str = ""
     # ホーム画面からクエスト等への遷移試行回数 (遷移中の誤停止を防ぐ)
     home_nav_count: int = 0
+    # ─── Watchdog ───
+    # 最後に画面変化(phash変化)を検出した時刻
+    last_screen_change_time: float = field(default_factory=time.time)
+    # Watchdog による復旧試行回数
+    watchdog_recovery_count: int = 0
 
 
 # ─── シーン分類 ──────────────────────────────────────
@@ -1002,13 +1016,24 @@ def detect_and_act(ocr: list, state: PilotState,
         return "SETTINGS_BACK", 1.5
 
     # ─── 【最優先 #-1】「ご注意」画面 (Google Play 起動時 portrait 注意書き) ───
-    # アプリ初回起動時に portrait で表示される法的注意画面。タップで閉じる。
+    # アプリ初回起動時に portrait で表示される法的注意画面。
+    # 「同意してゲームを始める」ボタン (右側ゴールドボタン) をOCRで検出してタップ。
     if has_text(ocr, "ご注意", min_conf=0.3) or (
         has_text(ocr, "基本無料", min_conf=0.3) and has_text(ocr, "未成年", min_conf=0.3)
     ):
-        logger.info(">>> 【ご注意画面】 中央タップで閉じる")
-        tap_device(W // 2, H // 2, state, "GO_CHUI_DISMISS")
-        return "NOTICE_DISMISS", 3.0
+        # 「同意」ボタンをOCRで検出（見つかればその座標、なければ右下3分の2地点）
+        agree_btn = (has_text(ocr, "同意してゲーム", min_conf=0.2) or
+                     has_text(ocr, "同意して", min_conf=0.2) or
+                     has_text(ocr, "ゲームを始める", min_conf=0.2))
+        if agree_btn:
+            cx, cy = agree_btn["center"]
+            logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d) → タップ", cx, cy)
+            tap_device(cx, cy, state, "GO_CHUI_AGREE")
+        else:
+            # フォールバック: 右下2/3位置 (同意ボタンは必ず右側にある)
+            logger.info(">>> 【ご注意画面】 同意ボタン未検出 → 右下フォールバック (1023,585)")
+            tap_device(1023, 585, state, "GO_CHUI_FALLBACK")
+        return "NOTICE_DISMISS", 4.0
 
     # ─── 【最優先 #-1b】MAIN STORY ローディング背景 ───
     # タイトル画面TAP後に表示される非インタラクティブなローディング背景。
@@ -1668,6 +1693,58 @@ def detect_and_act(ocr: list, state: PilotState,
     return "WAIT_FOR_CHANGE", 0
 
 
+# ─── Watchdog: デッドロック自動復旧 ─────────────────────
+def watchdog_recover(state: PilotState) -> bool:
+    """
+    Unityメインスレッドのデッドロックを検出した際の自動復旧。
+
+    戦略:
+      1〜3回目: am force-stop → am start (ソフト再起動)
+      4〜5回目: am force-stop → pm clear → am start (ハード初期化)
+      6回目以降: 諦めて False を返す
+
+    Returns: True=復旧試行を実施, False=諦め(mainが終了する)
+    """
+    state.watchdog_recovery_count += 1
+    count = state.watchdog_recovery_count
+
+    if count > WATCHDOG_MAX_TOTAL_RECOVERIES:
+        logger.error("[WATCHDOG] 復旧試行%d回失敗 — 自動走行を停止します", count - 1)
+        return False
+
+    elapsed = time.time() - state.last_screen_change_time
+    if count <= WATCHDOG_MAX_SOFT_RECOVERIES:
+        logger.warning(
+            "[WATCHDOG] デッドロック検出 (画面変化なし %.0f秒) — ソフト再起動 #%d",
+            elapsed, count
+        )
+        adb(f"shell am force-stop {APP_PACKAGE}")
+        time.sleep(3)
+    else:
+        logger.warning(
+            "[WATCHDOG] デッドロック検出 (%.0f秒) — ハード初期化 (pm clear) #%d",
+            elapsed, count
+        )
+        adb(f"shell am force-stop {APP_PACKAGE}")
+        time.sleep(1)
+        adb(f"shell pm clear {APP_PACKAGE}")
+        time.sleep(3)
+
+    # 再起動
+    adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
+    logger.info("[WATCHDOG] am start 実行 — 10秒待機")
+    time.sleep(10)  # 起動＋スプラッシュ待機
+
+    # 状態リセット (デバイス解像度・回数は保持)
+    state.last_phash = ""
+    state.same_phash_count = 0
+    state.stall_start = 0.0
+    state.stall_corner_tried = False
+    state.last_action = "WATCHDOG_RECOVERY"
+    state.last_screen_change_time = time.time()
+    return True
+
+
 # ─── コマンドライン引数 ───────────────────────────────
 def parse_args():
     parser = argparse.ArgumentParser(description="まどドラ自律操縦")
@@ -1746,11 +1823,12 @@ def main():
         screen_changed = dist >= PHASH_THRESHOLD
 
         if screen_changed:
-            # 画面変化あり → カウンタリセット
+            # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
             state.same_phash_count = 0
             state.stall_start = 0.0
             state.stall_corner_tried = False
             state.pre_popup_tap_count = 0  # ポップアップ試行カウンタもリセット
+            state.last_screen_change_time = time.time()  # Watchdog: 最終変化時刻更新
 
             # ── ADV 高速モード: OCR スキップして画面下部を即連打 ──
             # 前回 STORY_TAP かつ phash 変化が小さい（テキスト送り）→ 即タップ
@@ -1769,6 +1847,19 @@ def main():
             # 画面変化なし
             state.same_phash_count += 1
             state.total_ocr_skipped += 1
+
+            # ── Watchdog チェック: 60秒以上変化なし = Unityデッドロック ──
+            watchdog_elapsed = time.time() - state.last_screen_change_time
+            if (watchdog_elapsed >= WATCHDOG_DEADLOCK_THRESHOLD
+                    and state.last_action not in WATCHDOG_EXEMPT_ACTIONS):
+                logger.warning(
+                    "[WATCHDOG] %.0f秒間画面変化なし (last_action=%s) — 自動復旧開始",
+                    watchdog_elapsed, state.last_action
+                )
+                save_evidence(img_path, [], "WATCHDOG_DEADLOCK", state)
+                if not watchdog_recover(state):
+                    return  # 復旧不能 → 終了
+                continue   # 復旧後は次のイテレーションから
 
             # N 回変化なし → 強制 OCR (デッドロック防止の核心)
             if state.same_phash_count >= FORCE_ANALYZE_AFTER:
