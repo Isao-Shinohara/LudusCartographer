@@ -102,27 +102,42 @@ class PilotState:
 
 
 # ─── シーン分類 ──────────────────────────────────────
+# シーン別ポーリング間隔 (ユーザー指定)
+SCENE_INTERVAL = {
+    "BATTLE":  1.0,   # バトル画面: 最速反応
+    "ADV":     1.0,   # アドベンチャー/会話: 最速反応
+    "STORY":   2.0,   # ストーリー(スキップなし): スキップボタン出現を即検知
+    "LOADING": 5.0,   # ロード中: 負荷軽減
+    "MENU":    1.0,   # ホーム/メニュー
+    "UNKNOWN": 1.0,   # 不明
+}
+
 def classify_scene(texts: list[str], last_action: str) -> tuple[str, float]:
     """
     OCR テキストからシーンを分類し (scene_label, poll_interval) を返す。
-    - BATTLE  : バトル画面 (interval 0.3s)
-    - ADV     : アドベンチャー/会話 (interval 0.3s)
-    - LOADING : ロード/ダウンロード (interval 5.0s)
-    - MENU    : ホーム/メニュー (interval 1.0s)
-    - UNKNOWN : 不明 (interval 0.5s)
+    - BATTLE  : バトル画面 — 戦闘固有キーワードあり
+    - ADV     : アドベンチャー — スキップボタンあり or 直前に STORY_TAP
+    - STORY   : ストーリー送り — スキップなし・会話テキストのみ
+    - LOADING : ロード/ダウンロード中
+    - MENU    : ホーム/メニュー画面
+    - UNKNOWN : 判定不能
     """
     joined = " ".join(texts)
     if any(kw in joined for kw in ["ダウンロード", "Loading", "Now Loading", "ロード中", "通信中"]):
-        return "LOADING", 5.0
+        return "LOADING", SCENE_INTERVAL["LOADING"]
     if any(kw in joined for kw in ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃",
                                     "必殺技", "BREAK", "WAVE", "ENEMY TURN", "Turn"]):
-        return "BATTLE", 0.3
+        return "BATTLE", SCENE_INTERVAL["BATTLE"]
     if any(kw in joined for kw in ["クエスト", "ショップ", "ガシャ", "ガチャ",
                                     "ホーム", "メニュー", "お知らせ", "編成", "光の間"]):
-        return "MENU", 1.0
-    if any(kw in joined for kw in ["スキップ", "SKIP"]) or last_action in ("STORY_TAP", "ADV_RAPID_TAP"):
-        return "ADV", 0.3
-    return "UNKNOWN", 0.5
+        return "MENU", SCENE_INTERVAL["MENU"]
+    # ADV = スキップボタンあり（能動的に会話が進む）
+    if any(kw in joined for kw in ["スキップ", "SKIP"]):
+        return "ADV", SCENE_INTERVAL["ADV"]
+    # STORY = 直前アクションが会話送り、またはスキップなし会話テキスト
+    if last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT"):
+        return "STORY", SCENE_INTERVAL["STORY"]
+    return "UNKNOWN", SCENE_INTERVAL["UNKNOWN"]
 
 
 # ─── ADB ユーティリティ ─────────────────────────────
@@ -713,10 +728,7 @@ def main():
 
             else:
                 # まだ待機フェーズ — シーン別インターバル
-                _poll = {
-                    "LOADING": 5.0, "MENU": 1.0,
-                    "BATTLE": 0.3, "ADV": 0.3,
-                }.get(state.current_scene, POLL_INTERVAL)
+                _poll = SCENE_INTERVAL.get(state.current_scene, POLL_INTERVAL)
                 if i % 3 == 0:
                     logger.info("[%s][iter %d] phash_dist=%d same=%d — polling (%.1fs)...",
                                 state.current_scene, i, dist, state.same_phash_count, _poll)
