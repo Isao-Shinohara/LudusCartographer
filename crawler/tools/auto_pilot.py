@@ -137,6 +137,11 @@ def classify_scene(texts: list[str], last_action: str) -> tuple[str, float]:
     # STORY = 直前アクションが会話送り、またはスキップなし会話テキスト
     if last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT"):
         return "STORY", SCENE_INTERVAL["STORY"]
+    # STORY ヒューリスティック: 長い日本語文章 (8文字超 + ひらがな含む) が2件以上
+    story_lines = [t for t in texts if len(t) >= 8 and
+                   any(0x3041 <= ord(c) <= 0x30FF for c in t)]
+    if len(story_lines) >= 2:
+        return "STORY", SCENE_INTERVAL["STORY"]
     return "UNKNOWN", SCENE_INTERVAL["UNKNOWN"]
 
 
@@ -283,6 +288,54 @@ def all_texts(ocr: list) -> list[str]:
     return [r["text"] for r in ocr]
 
 
+# ─── 探索マップ 3D矢印 検出 ──────────────────────────
+def find_3d_arrow(img_path: Path) -> Optional[tuple[int, int]]:
+    """
+    探索マップ上のキャラ頭上に浮かぶ3D矢印（白い曲線矢印）を検出。
+    明るい白色コンターが最大のものを矢印とみなす。
+    Returns: (cx, cy) or None
+    """
+    try:
+        import cv2
+        import numpy as np
+        img = cv2.imread(str(img_path))
+        if img is None:
+            return None
+        # キャラ頭上エリア (y=120-280, x=500-1050)
+        roi_y1, roi_y2 = 120, 280
+        roi_x1, roi_x2 = 500, 1050
+        roi = img[roi_y1:roi_y2, roi_x1:roi_x2]
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        _, bright = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+        contours, _ = cv2.findContours(bright, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+        # サイズフィルタ: 30〜800px² の中からY座標が最も上（小）のものを矢印とみなす
+        # (面積最大だとキャラの衣装/武器を誤検出するため)
+        candidates = [(cv2.contourArea(c), c) for c in contours
+                      if 30 <= cv2.contourArea(c) <= 800]
+        if not candidates:
+            return None
+        # Y座標が最も小さい（画面上部に近い）ものを選択
+        def top_y(pair):
+            c = pair[1]
+            M = cv2.moments(c)
+            return (M["m01"] / M["m00"]) if M["m00"] > 0 else 9999
+        area, best = min(candidates, key=top_y)
+        if area < 30:
+            return None
+        M = cv2.moments(best)
+        if M["m00"] == 0:
+            return None
+        cx = int(M["m10"] / M["m00"]) + roi_x1
+        cy = int(M["m01"] / M["m00"]) + roi_y1
+        logger.debug("[3D_ARROW] area=%.0f center=(%d,%d)", area, cx, cy)
+        return (cx, cy)
+    except Exception as e:
+        logger.debug("find_3d_arrow error: %s", e)
+        return None
+
+
 # ─── 画面判定・アクション ──────────────────────────
 def detect_and_act(ocr: list, state: PilotState,
                    analysis_path: Optional[Path] = None) -> tuple[str, float]:
@@ -392,6 +445,22 @@ def detect_and_act(ocr: list, state: PilotState,
                     state.char_just_selected = True
                     logger.info("  (左キャラ選択完了 → 次は右スキル)")
                 return "MOYA_TAP", 1.0
+
+    # ─── 【最優先 #2-a】探索マップ 3D矢印タップ ───
+    # 「矢印をタップしてください」が出ている場合、3D空間の矢印を検出してタップ
+    arrow_instruction = has_text(ocr, "矢印をタップ", min_conf=0.2)
+    if arrow_instruction and analysis_path is not None:
+        pos = find_3d_arrow(analysis_path)
+        if pos:
+            cx, cy = pos
+            logger.info(">>> 【3D矢印】 探索マップ矢印 (%d,%d) 検出 → タップ", cx, cy)
+            tap_device(cx, cy, state, "MAP_ARROW_TAP")
+            return "MAP_ARROW_TAP", 1.0
+        else:
+            # 自動検出失敗 → キャラ頭上デフォルト座標
+            logger.info(">>> 【3D矢印】 自動検出失敗 → デフォルト (760,210) タップ")
+            tap_device(760, 210, state, "MAP_ARROW_FALLBACK")
+            return "MAP_ARROW_TAP", 1.0
 
     # ─── 【最優先 #2】ハイライト指示テキスト ───
     tutorial_kws = ["ここをタップ", "タップしてください", "タップして下さい", "タップして"]
