@@ -34,7 +34,7 @@ _CRAWLER_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_CRAWLER_ROOT))
 
 from lc.ocr import run_ocr, find_text, find_best, format_results
-from lc.utils import get_android_serial
+from lc.utils import get_android_serial, compute_phash, phash_distance
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,10 +53,12 @@ SCREENSHOT_PATH = "/tmp/lc_autopilot.png"
 REMOTE_PATH = "/sdcard/lc_autopilot.png"
 EVIDENCE_DIR = _CRAWLER_ROOT / "evidence" / f"autopilot_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 MAX_ITERATIONS = 500       # 安全上限
-LOOP_INTERVAL = 3.0        # 各ループの基本間隔 (秒)
+LOOP_INTERVAL = 5.0        # 各ループの基本間隔 (秒)
 BATTLE_WAIT = 5.0          # バトル中の待機間隔 (秒)
-DOWNLOAD_WAIT = 8.0        # ダウンロード中の待機間隔 (秒)
+DOWNLOAD_WAIT = 10.0       # ダウンロード中の待機間隔 (秒)
 LONG_WAIT = 10.0           # ロード画面の待機 (秒)
+PHASH_SAME_THRESHOLD = 8   # phash 距離 < 8 → 同一画面とみなす
+STALL_LIMIT = 3            # 同一画面が続いたら停止して待機する回数
 OCR_LANG = "japan"
 OCR_MIN_CONF = 0.3
 SCREEN_W = 1520            # Android landscape
@@ -67,13 +69,15 @@ SCREEN_H = 720
 class PilotState:
     """操縦状態"""
     iteration: int = 0
-    consecutive_same: int = 0      # 同一画面検出回数
+    consecutive_same: int = 0      # 同一画面検出回数 (phash ベース)
     last_action: str = ""
     last_ocr_texts: list = field(default_factory=list)
+    last_phash: str = ""           # 前回のスクリーンショット phash
     battle_wait_count: int = 0
     auto_activated: bool = False    # 今のバトルでAUTOをオンにしたか
     home_reached: bool = False
     total_taps: int = 0
+    total_ocr_skipped: int = 0     # phash 一致で OCR をスキップした回数
     screenshots_saved: int = 0
 
 
@@ -168,8 +172,9 @@ def detect_and_act(ocr: list, state: PilotState,
     texts_joined = " ".join(texts)
 
     # ─── ホーム画面検出 ───
-    # まどドラのホーム画面要素: ショップ、ガチャ、クエスト、ミッション、メニュー等
-    home_indicators = ["クエスト", "ショップ", "ガチャ", "ミッション", "メニュー", "ホーム",
+    # まどドラのホーム画面要素: フッターに光の間、ショップ、ガシャ、パーティ等
+    home_indicators = ["光の間", "ショップ", "ガシャ", "ガチャ", "パーティ",
+                       "クエスト", "ミッション", "メニュー", "ホーム",
                        "お知らせ", "イベント", "フレンド", "マイページ", "編成"]
     home_count = sum(1 for h in home_indicators if any(h in t for t in texts))
     if home_count >= 3:
@@ -403,21 +408,12 @@ def detect_and_act(ocr: list, state: PilotState,
         state.total_taps += 1
         return "POPUP_DISMISS", 2.0
 
-    # ─── フォールバック: 画面中央タップ ───
-    # 何も検出できない場合は画面をタップ（ストーリー進行やロード画面のタップ待ち）
-    state.consecutive_same += 1
-    if state.consecutive_same >= 3:
-        # 3回同じ状態 → 画面右下をタップ (メニューボタンがある可能性)
-        logger.info(">>> 3回同一画面 — 画面右下タップ試行")
-        tap(screen_w - 100, screen_h - 50, "corner tap")
-        state.total_taps += 1
-        state.consecutive_same = 0
-        return "CORNER_TAP", 3.0
-
-    logger.info(">>> 不明な画面 — 画面中央タップ")
-    tap(screen_w // 2, screen_h // 2, "fallback center tap")
-    state.total_taps += 1
-    return "FALLBACK_TAP", LOOP_INTERVAL
+    # ─── フォールバック: タップ禁止・待機のみ ───
+    # 何も確実なターゲットが見つからない場合はタップせず待機する。
+    # 画面変化は phash 比較でメインループ側が検知する。
+    logger.info(">>> 不明な画面 — タップせず待機 (consecutive_same=%d)",
+                state.consecutive_same)
+    return "WAIT_FOR_CHANGE", LONG_WAIT
 
 
 # ─── メインループ ─────────────────────────────────
@@ -463,7 +459,47 @@ def main():
         if (cur_w, cur_h) != (SCREEN_W, SCREEN_H):
             logger.warning("⚠ 解像度変化: %dx%d → 座標系を自動調整", cur_w, cur_h)
 
-        # 2) OCR 実行
+        # 2) phash 粗解析 — 画面変化の有無を判定
+        try:
+            cur_phash = compute_phash(img_path)
+        except Exception:
+            cur_phash = ""
+
+        if state.last_phash and cur_phash:
+            dist = phash_distance(state.last_phash, cur_phash)
+        else:
+            dist = 999  # 初回は「変化あり」扱い
+
+        screen_changed = dist >= PHASH_SAME_THRESHOLD
+
+        if not screen_changed:
+            # 画面変化なし → OCR スキップ、タップ禁止、5 秒待機
+            state.consecutive_same += 1
+            state.total_ocr_skipped += 1
+
+            if state.consecutive_same >= STALL_LIMIT:
+                logger.info(
+                    "[iter %d] Waiting for visual change... "
+                    "(phash_dist=%d, stalled=%d, ocr_skipped=%d)",
+                    i, dist, state.consecutive_same, state.total_ocr_skipped,
+                )
+                # スタック状態: エビデンスを残して待機 (タップしない)
+                if state.consecutive_same == STALL_LIMIT:
+                    save_evidence(img_path, [], "STALLED", state)
+            else:
+                logger.info(
+                    "[iter %d] No change (phash_dist=%d) — skip OCR, wait %.1fs",
+                    i, dist, LOOP_INTERVAL,
+                )
+            state.last_phash = cur_phash
+            time.sleep(LOOP_INTERVAL)
+            continue
+
+        # 画面が変化した → phash 連続カウントをリセット
+        state.consecutive_same = 0
+        state.last_phash = cur_phash
+
+        # 3) OCR 精査 (画面変化があった時のみ実行)
         try:
             ocr_results = run_ocr(str(img_path), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
         except Exception as e:
@@ -472,16 +508,11 @@ def main():
             continue
 
         texts = all_texts(ocr_results)
-        logger.info("[iter %d] %dx%d OCR: %s", i, cur_w, cur_h, texts[:10])
-
-        # テキストが前回と同じかチェック
-        if texts == state.last_ocr_texts:
-            state.consecutive_same += 1
-        else:
-            state.consecutive_same = 0
+        logger.info("[iter %d] %dx%d phash_dist=%d OCR: %s",
+                    i, cur_w, cur_h, dist, texts[:10])
         state.last_ocr_texts = texts
 
-        # 3) 判定 & アクション実行 (実測解像度を渡す)
+        # 4) 判定 & アクション実行 (実測解像度を渡す)
         action, wait_sec = detect_and_act(ocr_results, state, cur_w, cur_h)
         state.last_action = action
 
@@ -489,19 +520,19 @@ def main():
         if i % 10 == 0 or action in ("HOME_REACHED", "SKIP", "AGREE", "RESULT_TAP"):
             save_evidence(img_path, ocr_results, action, state)
 
-        # 4) ホーム画面到達チェック
+        # 5) ホーム画面到達チェック
         if state.home_reached:
             logger.info("=" * 62)
             logger.info("  ホーム画面に到達しました!")
             logger.info("  総タップ数: %d", state.total_taps)
             logger.info("  総イテレーション: %d", i + 1)
+            logger.info("  OCR スキップ数: %d", state.total_ocr_skipped)
             logger.info("  スクリーンショット保存: %d", state.screenshots_saved)
             logger.info("=" * 62)
-            # 最終スクリーンショットを保存
             save_evidence(img_path, ocr_results, "FINAL_HOME", state)
             return
 
-        # 5) 待機
+        # 6) 待機
         logger.info("  [%s] wait %.1fs", action, wait_sec)
         time.sleep(wait_sec)
 
