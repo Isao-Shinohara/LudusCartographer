@@ -251,6 +251,21 @@ def detect_and_act(ocr: list, state: PilotState,
     texts = all_texts(ocr)
     W, H = ANALYSIS_W, ANALYSIS_H
 
+    # ─── 【最優先 #0】チュートリアルポップアップ (ブロブより優先) ───
+    # バトル説明・ロール説明などのポップアップはブロブ検出前に処理
+    pre_popup_kws = [
+        "ロールについて", "ロールは全部",
+        "STEP1", "STEP2", "バトルシステム", "ブレイクし",
+        "ATTACKER", "HEALER",
+    ]
+    pre_popup = has_any(ocr, pre_popup_kws)
+    if pre_popup:
+        cx, cy = int(W * 0.5), int(H * 0.5)
+        logger.info(">>> 【チュートリアルポップアップ】 '%s' → 中央タップ (%d,%d)",
+                    pre_popup["text"][:10], cx, cy)
+        tap_device(cx, cy, state, "PRE_POPUP_TAP")
+        return "TUTORIAL_POPUP", 2.0
+
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
     if analysis_path is not None:
         # 「AUTO」のみはストーリー画面にも表示されるため除外、戦闘固有キーワードで判定
