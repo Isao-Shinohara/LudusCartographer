@@ -366,6 +366,56 @@ def smart_tap_button(
     return ocr_cx, fallback_y
 
 
+# ─── チュートリアル: 金色ハイライトボタンを全画面スキャンで検出 ──────────────
+def find_golden_highlighted_button(img_path: Path) -> Optional[tuple[int, int]]:
+    """
+    チュートリアル指差しアイコンが指す「金色ハイライトされたボタン/カード」を
+    HSV 色域スキャンで検出する。
+    指の向き（上下左右）に依存しない方向非依存のアプローチ。
+
+    返値: (cx, cy) ― 最大輝度の金色領域の中心座標、検出失敗時は None
+    """
+    try:
+        import cv2
+        import numpy as np
+
+        img_bgr = cv2.imread(str(img_path))
+        if img_bgr is None:
+            return None
+        h_img, w_img = img_bgr.shape[:2]
+
+        hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+
+        # 金色グロー: H=15-42, S=80-220, V=150-255 (より高輝度)
+        lower = np.array([15, 80, 150], dtype=np.uint8)
+        upper = np.array([42, 220, 255], dtype=np.uint8)
+        mask = cv2.inRange(hsv, lower, upper)
+
+        # モルフォロジー: 枠線を繋げて矩形を再現
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+        mask = cv2.dilate(mask, kernel, iterations=3)
+        mask = cv2.erode(mask, kernel, iterations=2)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # 最大面積の輪郭を採用 (小さなノイズを除外)
+        valid = [(cv2.contourArea(c), c) for c in contours if cv2.contourArea(c) > 500]
+        if not valid:
+            return None
+
+        _, best_cnt = max(valid, key=lambda x: x[0])
+        rx, ry, rw, rh = cv2.boundingRect(best_cnt)
+        cx = rx + rw // 2
+        cy = ry + rh // 2
+        logger.info("  [GoldHighlight] 金色ハイライト検出 rect=(%d,%d,%d,%d) → center=(%d,%d)",
+                    rx, ry, rw, rh, cx, cy)
+        return cx, cy
+
+    except Exception as e:
+        logger.debug("  [GoldHighlight] エラー: %s", e)
+        return None
+
+
 # ─── OCR テキスト検索ヘルパー ──────────────────────
 def has_any(ocr: list, keywords: list[str], min_conf: float = 0.3) -> Optional[dict]:
     for kw in keywords:
@@ -940,6 +990,9 @@ def detect_and_act(ocr: list, state: PilotState,
     W, H = ANALYSIS_W, ANALYSIS_H
 
     # ─── 【最優先 #0-a】テンプレートマッチング (Asset Match) — 最速 ~0.1s ───
+    # チュートリアル中は指アイコン検出(TAP_HIGHLIGHTED_NAV/SWIPE_UP)が最高優先。
+    # 指アイコン検出後 → 金色ハイライト要素をタップ。
+    # 次優先: セリフ/ADVテキスト確認 (後続の#0/#3-ADV処理)
     if analysis_path is not None:
         asset_hit = ASSET_MANAGER.match(analysis_path, ocr_texts=texts)
         if asset_hit:
@@ -956,6 +1009,18 @@ def detect_and_act(ocr: list, state: PilotState,
                 logger.info(">>> [SWIPE_UP] (%d,%d)→(%d,%d) %dms", sx, sy, ex, ey, dur)
                 swipe(sx, sy, ex, ey, dur)
                 return "SWIPE_UP", 1.5
+            # チュートリアル指差し: 金色ハイライトされたUI要素を方向非依存で検出→タップ
+            if action == "TAP_HIGHLIGHTED_NAV":
+                gold_pos = find_golden_highlighted_button(analysis_path)
+                if gold_pos:
+                    tap_x, tap_y = gold_pos
+                else:
+                    # フォールバック: 指アイコン直下160px
+                    tap_x, tap_y = smart_tap_button(analysis_path, cx, cy + 160, search_r=160)
+                logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d) → 金色ハイライト(%d,%d)",
+                            cx, cy, tap_x, tap_y)
+                tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
+                return "TAP_HIGHLIGHTED_NAV", 1.5
             tap_device(cx, cy, state, action)
             return action, 0.5
 

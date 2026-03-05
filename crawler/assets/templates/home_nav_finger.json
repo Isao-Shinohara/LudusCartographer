@@ -1,0 +1,7 @@
+{
+  "action": "TAP_HIGHLIGHTED_NAV",
+  "threshold": 0.70,
+  "require_ocr": [],
+  "note": "ホーム画面チュートリアル: 白い指アイコン(下向き) + 金色ハイライトされたナビボタンを示す。検出時は指アイコン直下の金色ボタンをタップすること。",
+  "tap_below_offset_y": 160
+}

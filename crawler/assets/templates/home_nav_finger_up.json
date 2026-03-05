@@ -1,0 +1,6 @@
+{
+  "action": "TAP_HIGHLIGHTED_NAV",
+  "threshold": 0.65,
+  "require_ocr": [],
+  "note": "チュートリアル指差しアイコン(上向き) + 金色ハイライト要素。find_golden_highlighted_button()で実際のタップ先を決定する。"
+}
