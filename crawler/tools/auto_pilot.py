@@ -988,6 +988,29 @@ def detect_and_act(ocr: list, state: PilotState,
     """
     texts = all_texts(ocr)
     W, H = ANALYSIS_W, ANALYSIS_H
+    joined = " ".join(texts)
+
+    # ─── 【最優先 #-1】「ご注意」画面 (Google Play 起動時 portrait 注意書き) ───
+    # アプリ初回起動時に portrait で表示される法的注意画面。タップで閉じる。
+    if has_text(ocr, "ご注意", min_conf=0.3) or (
+        has_text(ocr, "基本無料", min_conf=0.3) and has_text(ocr, "未成年", min_conf=0.3)
+    ):
+        logger.info(">>> 【ご注意画面】 中央タップで閉じる")
+        tap_device(W // 2, H // 2, state, "GO_CHUI_DISMISS")
+        return "NOTICE_DISMISS", 3.0
+
+    # ─── 【最優先 #-1b】MAIN STORY ローディング背景 ───
+    # タイトル画面TAP後に表示される非インタラクティブなローディング背景。
+    # 「Main」カードと「推奨」テキストが同時に存在する場合は待機のみ（タップ不要）。
+    # この画面は自動でホーム画面へ遷移する。
+    _is_main_story_bg = (
+        any("MAIN" in t or "Main" in t for t in texts) and
+        any("推奨" in t or "STORY" in t for t in texts) and
+        not any(kw in joined for kw in ["クエスト", "ショップ", "ガチャ", "ガシャ", "光の間", "パーティ"])
+    )
+    if _is_main_story_bg:
+        logger.info(">>> MAIN STORY ローディング背景 — 自動遷移待ち (10s)")
+        return "MAIN_STORY_LOADING", 10.0
 
     # ─── 【最優先 #0-a】テンプレートマッチング (Asset Match) — 最速 ~0.1s ───
     # チュートリアル中は指アイコン検出(TAP_HIGHLIGHTED_NAV/SWIPE_UP)が最高優先。
@@ -1663,6 +1686,11 @@ def main():
             state.device_h = actual_h
             logger.info("実機解像度: %dx%d (解析基準: %dx%d)",
                         actual_w, actual_h, ANALYSIS_W, ANALYSIS_H)
+        elif (actual_w, actual_h) != (state.device_w, state.device_h):
+            # portrait→landscape 遷移など解像度変化を追跡
+            logger.info("解像度変化: %dx%d → %dx%d", state.device_w, state.device_h, actual_w, actual_h)
+            state.device_w = actual_w
+            state.device_h = actual_h
 
         # ── 2) 暗転検出 ──
         if is_dark_screen(img_path):
