@@ -256,7 +256,9 @@ def detect_and_act(ocr: list, state: PilotState,
     pre_popup_kws = [
         "ロールについて", "ロールは全部",
         "STEP1", "STEP2", "バトルシステム", "ブレイクし",
-        "ATTACKER", "HEALER",
+        # 全6ロール — 一覧画面・個別詳細ページ両方に対応
+        "ATTACKER", "BREAKER", "BUFFER", "DEBUFFER", "DEFENDER", "HEALER",
+        "アタッカー", "ブレイカー", "バッファー", "デバッファー", "ディフェンダー", "ヒーラー",
     ]
     pre_popup = has_any(ocr, pre_popup_kws)
     if pre_popup:
