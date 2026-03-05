@@ -50,8 +50,8 @@ EVIDENCE_DIR = _CRAWLER_ROOT / "evidence" / f"autopilot_{datetime.now().strftime
 # ─── タイミング ───
 MAX_ITERATIONS = 2000      # 安全上限 (1秒サイクルなので長めに)
 POLL_INTERVAL = 1.0        # phash ポーリング間隔 (秒)
-PHASH_THRESHOLD = 8        # phash 距離 >= 8 → 画面変化あり
-PHASH_MINOR_UPPER = 10     # 8 <= dist < 10 → 微小変化 (ロード中等) → OCR スキップ
+PHASH_THRESHOLD = 5        # phash 距離 >= 5 → 画面変化あり (ハイライト演出対応)
+PHASH_MINOR_UPPER = 5      # 微小変化スキップを無効化 (ハイライト演出を見落とさない)
 PHASH_ELEVATED = 15        # WAIT_FOR_CHANGE 後の一時的な閾値引き上げ
 BLACKOUT_BRIGHTNESS = 20   # 平均輝度がこれ以下 → 暗転とみなす
 STALL_TIMEOUT = 30.0       # 同一画面が続く秒数 → スタック介入
@@ -246,6 +246,18 @@ def detect_and_act(ocr: list, state: PilotState) -> tuple[str, float]:
     """
     texts = all_texts(ocr)
     W, H = ANALYSIS_W, ANALYSIS_H
+
+    # ─── 【最優先】ハイライト・チュートリアル指示 ───
+    # 「ここをタップ」「タップしてください」などの指示テキストを最優先で検出
+    tutorial_keywords = ["ここをタップ", "タップしてください", "タップして下さい",
+                         "タップして", "指差し", "ハイライト"]
+    for kw in tutorial_keywords:
+        match = has_text(ocr, kw, min_conf=0.3)
+        if match:
+            cx, cy = match["center"]
+            logger.info(">>> 【最優先】ハイライト指示 '%s' (%d,%d)", kw, cx, cy)
+            tap_device(cx, cy, state, f"HIGHLIGHT '{kw}'")
+            return "HIGHLIGHT_TAP", 2.0
 
     # ─── ホーム画面検出 ───
     home_indicators = ["光の間", "ショップ", "ガシャ", "ガチャ", "パーティ",
@@ -523,13 +535,13 @@ def main():
             state.current_threshold = PHASH_THRESHOLD
             state.elevated_until = 0.0
 
-        # 微小変化 (8 <= dist < 10): ロード中のプログレスバー等 → OCR スキップ
-        if PHASH_THRESHOLD <= dist < PHASH_MINOR_UPPER and active_threshold <= PHASH_THRESHOLD:
+        # 微小変化スキップを無効化（ハイライト演出を見落とさない）
+        # ≒ PHASH_THRESHOLD = PHASH_MINOR_UPPER に設定済みなので、この判定は常に False
+        if False:  # 無効化済み
             state.total_minor_skipped += 1
             state.last_phash = cur_phash
             if state.total_minor_skipped % 5 == 1:
-                logger.info("[iter %d] 微小変化 (phash=%d, %d<=%d<%d) — OCR スキップ, 2s 待機",
-                            i, dist, PHASH_THRESHOLD, dist, PHASH_MINOR_UPPER)
+                logger.info("[iter %d] 微小変化スキップ (無効化済み)")
             time.sleep(2.0)
             continue
 
