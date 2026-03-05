@@ -898,7 +898,7 @@ def detect_and_act(ocr: list, state: PilotState,
         is_gacha_result = new_count >= 3 and not is_battle_screen
         if is_gacha_result:
             logger.info("  ガチャ結果画面検出 (NEW×%d) → もや誤検出スキップ", new_count)
-            # OKボタンをタップして進む
+            # OKボタンをダブルタップして進む (シングルタップでは反応しないゲームの挙動対策)
             ok_match = has_text(ocr, "OK", min_conf=0.5)
             if ok_match:
                 cx, cy = ok_match["center"]
@@ -907,13 +907,17 @@ def detect_and_act(ocr: list, state: PilotState,
                 state.last_prediction_desc = desc
                 state.last_tap_text = "OK"
                 state.last_action_pre_phash = state.last_phash
-                logger.info(">>> 【ガチャ結果】 OK (%d,%d) → タップ", cx, cy)
-                tap_device(cx, cy, state, "GACHA_RESULT_OK")
-                return "GACHA_OK", 1.5
-            # OKがない場合は画面下部をタップ
-            logger.info(">>> 【ガチャ結果】 OCRでOK未検出 → 下部中央タップ")
-            tap_device(760, 693, state, "GACHA_RESULT_FALLBACK")
-            return "GACHA_OK", 1.5
+                logger.info(">>> 【ガチャ結果】 OK (%d,%d) → ダブルタップ", cx, cy)
+                tap_device(cx, cy, state, "GACHA_RESULT_OK_1")
+                time.sleep(0.3)
+                tap_device(cx, cy, state, "GACHA_RESULT_OK_2")
+                return "GACHA_OK", 2.0
+            # OKがない場合は画面中央をダブルタップ (NEW×8の初期表示 = タップで詳細へ)
+            logger.info(">>> 【ガチャ結果初期】 OK未検出 → 画面中央ダブルタップ")
+            tap_device(760, 360, state, "GACHA_RESULT_CENTER_1")
+            time.sleep(0.3)
+            tap_device(760, 360, state, "GACHA_RESULT_CENTER_2")
+            return "GACHA_OK", 2.0
         # min_area は常に400。空間フィルタ(下記)で誤検出を排除するため過大閾値は不要
         blobs = find_finger_blobs(analysis_path, min_area=400)
         if blobs:
