@@ -50,12 +50,13 @@ EVIDENCE_DIR = _CRAWLER_ROOT / "evidence" / f"autopilot_{datetime.now().strftime
 
 # ─── タイミング ───
 MAX_ITERATIONS = 2000
-POLL_INTERVAL = 1.0         # phash ポーリング間隔 (秒)
+POLL_INTERVAL = 0.3         # phash ポーリング間隔 (秒) — 高速化
 PHASH_THRESHOLD = 5         # phash 距離 >= 5 → 画面変化あり
-FORCE_ANALYZE_AFTER = 5     # phash 変化なし連続 N 回 → 強制 OCR (≒5秒)
-STALL_TIMEOUT = 25.0        # 強制OCRでもタップできず続く秒数 → スタック介入
-BATTLE_WAIT = 5.0
+FORCE_ANALYZE_AFTER = 3     # phash 変化なし連続 N 回 → 強制 OCR — 高速化
+STALL_TIMEOUT = 20.0        # 強制OCRでもタップできず続く秒数 → スタック介入
+BATTLE_WAIT = 1.5           # バトル待機 — 高速化
 DOWNLOAD_WAIT = 10.0
+ADV_RAPID_PHASH_MAX = 25    # ADV高速モード: phash がこれ以下なら OCR スキップ連打
 BLACKOUT_BRIGHTNESS = 20
 
 # ─── 解析基準解像度 ───
@@ -96,6 +97,32 @@ class PilotState:
     char_just_selected: bool = False
     # チュートリアルポップアップ連続タップ回数 (高くなると異なる座標を試す)
     pre_popup_tap_count: int = 0
+    # 現在のシーン分類 (BATTLE / ADV / LOADING / MENU / UNKNOWN)
+    current_scene: str = "UNKNOWN"
+
+
+# ─── シーン分類 ──────────────────────────────────────
+def classify_scene(texts: list[str], last_action: str) -> tuple[str, float]:
+    """
+    OCR テキストからシーンを分類し (scene_label, poll_interval) を返す。
+    - BATTLE  : バトル画面 (interval 0.3s)
+    - ADV     : アドベンチャー/会話 (interval 0.3s)
+    - LOADING : ロード/ダウンロード (interval 5.0s)
+    - MENU    : ホーム/メニュー (interval 1.0s)
+    - UNKNOWN : 不明 (interval 0.5s)
+    """
+    joined = " ".join(texts)
+    if any(kw in joined for kw in ["ダウンロード", "Loading", "Now Loading", "ロード中", "通信中"]):
+        return "LOADING", 5.0
+    if any(kw in joined for kw in ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃",
+                                    "必殺技", "BREAK", "WAVE", "ENEMY TURN", "Turn"]):
+        return "BATTLE", 0.3
+    if any(kw in joined for kw in ["クエスト", "ショップ", "ガシャ", "ガチャ",
+                                    "ホーム", "メニュー", "お知らせ", "編成", "光の間"]):
+        return "MENU", 1.0
+    if any(kw in joined for kw in ["スキップ", "SKIP"]) or last_action in ("STORY_TAP", "ADV_RAPID_TAP"):
+        return "ADV", 0.3
+    return "UNKNOWN", 0.5
 
 
 # ─── ADB ユーティリティ ─────────────────────────────
@@ -135,13 +162,13 @@ def tap_device(x: int, y: int, state: PilotState, desc: str = "") -> None:
         real_y = int(y * sy)
     else:
         real_x, real_y = x, y
-    time.sleep(0.3)
+    time.sleep(0.05)
     adb(f"shell input tap {real_x} {real_y}")
     state.total_taps += 1
     if (real_x, real_y) != (x, y):
-        logger.info("  TAP (%d,%d)→device(%d,%d) %s", x, y, real_x, real_y, desc)
+        logger.info("  ACTION_TAKEN TAP (%d,%d)→device(%d,%d) %s", x, y, real_x, real_y, desc)
     else:
-        logger.info("  TAP (%d,%d) %s", x, y, desc)
+        logger.info("  ACTION_TAKEN TAP (%d,%d) %s", x, y, desc)
 
 
 def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> None:
@@ -279,7 +306,7 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.info(">>> 【チュートリアルポップアップ】 '%s' → (%d,%d) (試行%d回目)",
                     pre_popup["text"][:10], cx, cy, state.pre_popup_tap_count)
         tap_device(cx, cy, state, "PRE_POPUP_TAP")
-        return "TUTORIAL_POPUP", 2.0
+        return "TUTORIAL_POPUP", 1.0
 
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
     if analysis_path is not None:
@@ -342,14 +369,14 @@ def detect_and_act(ocr: list, state: PilotState,
                             state.blob_same_count, fx, fy)
                 # カウンタはリセットせず、OCR ベース処理に落ちる
             else:
-                logger.info(">>> 【もやアイコン検出】 (%d,%d) area=%.0f count=%d — 直接タップ",
+                logger.info("FINGER_DETECTED (%d,%d) area=%.0f count=%d",
                             fx, fy, fa, state.blob_same_count)
                 tap_device(fx, fy, state, f"MOYA_TAP ({fx},{fy})")
                 # 左キャラ選択後は char_just_selected フラグをセット
                 if fx < 600 and fy > H * 0.76:
                     state.char_just_selected = True
                     logger.info("  (左キャラ選択完了 → 次は右スキル)")
-                return "MOYA_TAP", 2.0
+                return "MOYA_TAP", 1.0
 
     # ─── 【最優先 #2】ハイライト指示テキスト ───
     tutorial_kws = ["ここをタップ", "タップしてください", "タップして下さい", "タップして"]
@@ -359,7 +386,7 @@ def detect_and_act(ocr: list, state: PilotState,
             cx, cy = match["center"]
             logger.info(">>> 【ハイライト指示】 '%s' (%d,%d)", kw, cx, cy)
             tap_device(cx, cy, state, f"HIGHLIGHT '{kw}'")
-            return "HIGHLIGHT_TAP", 2.0
+            return "HIGHLIGHT_TAP", 0.5
 
     # ─── ストーリーセリフ進行 (バトル外でセリフが出ている) ───
     # 「画面をタップ」系の指示 or バトルでもホームでもない日本語テキストが複数ある
@@ -371,7 +398,7 @@ def detect_and_act(ocr: list, state: PilotState,
         cx, cy = tap_screen["center"]
         logger.info(">>> 【画面タップ指示】 '%s' (%d,%d)", tap_screen["text"], cx, cy)
         tap_device(cx, cy, state, "STORY_TAP_HINT")
-        return "STORY_TAP", 5.0
+        return "STORY_TAP", 0.3
 
     # ─── ホーム画面検出 ───
     home_indicators = ["光の間", "ショップ", "ガシャ", "ガチャ", "パーティ",
@@ -403,13 +430,13 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.info(">>> クエストマップ — 「%s」(%d,%d)", sentu_btn["text"], cx, cy)
         tap_device(cx, cy, state, f"QUEST_START {sentu_btn['text']}")
         state.battle_wait_count = 0
-        return "QUEST_START", 5.0
+        return "QUEST_START", 2.0
     elif stage_num:
         fx, fy = int(W * 0.74), int(H * 0.91)
         logger.info(">>> クエストマップ(固定) (%d,%d)", fx, fy)
         tap_device(fx, fy, state, "QUEST_START_FIXED")
         state.battle_wait_count = 0
-        return "QUEST_START", 5.0
+        return "QUEST_START", 2.0
 
     # ─── バトル画面 ───
     # 「AUTO」「HP」「戦闘」はストーリー画面にも出るため除外、戦闘固有キーワードで判定
@@ -425,7 +452,7 @@ def detect_and_act(ocr: list, state: PilotState,
             bx, by = int(W * 0.888), int(H * 0.667)
             logger.info(">>> バフチュートリアル (%d,%d)", bx, by)
             tap_device(bx, by, state, "BUFF_TUTORIAL")
-            return "BATTLE_TUTORIAL", 2.0
+            return "BATTLE_TUTORIAL", 1.0
 
         # バトルチュートリアル: スキル使用
         skill_tut = has_any(ocr, ["スキルを使ってみましょう", "スキを使ってみ",
@@ -437,7 +464,7 @@ def detect_and_act(ocr: list, state: PilotState,
             tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL")
             time.sleep(0.8)
             tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL confirm")
-            return "BATTLE_TUTORIAL", 3.0
+            return "BATTLE_TUTORIAL", 1.0
 
         # バトルチュートリアル: 必殺技
         hissatsu_tut = has_any(ocr, ["CTDアップ", "必殺技"])
@@ -447,14 +474,14 @@ def detect_and_act(ocr: list, state: PilotState,
             tap_device(hx, hy, state, "HISSATSU_TUTORIAL")
             time.sleep(0.8)
             tap_device(hx, hy, state, "HISSATSU_TUTORIAL confirm")
-            return "BATTLE_TUTORIAL", 3.0
+            return "BATTLE_TUTORIAL", 1.0
 
         # バトルチュートリアル: 攻撃対象変更
         if has_any(ocr, ["攻撃対象を変更", "対象を変更"]):
             ex, ey = int(W * 0.651), int(H * 0.361)
             logger.info(">>> 攻撃対象チュートリアル (%d,%d)", ex, ey)
             tap_device(ex, ey, state, "ATTACK_TARGET_TUTORIAL")
-            return "BATTLE_TUTORIAL", 2.0
+            return "BATTLE_TUTORIAL", 1.0
 
         # バトルチュートリアル: 一般ポップアップ
         tutorial_popup = has_any(ocr, [
@@ -468,16 +495,20 @@ def detect_and_act(ocr: list, state: PilotState,
             "ロールについて", "ATTACKER", "BREAKER", "BUFFER", "DEBUFFER", "HEALER",
             # バトル説明ポップアップ
             "STEP1", "STEP2", "バトルシステム", "ブレイクし",
-            # バトル速度・操作説明ツールチップ (画面中央タップで消える)
-            "このボタンでバトル", "進行速度を変更",
         ])
+        # バトル速度ツールチップは速度ボタン本体 (1409,19) をタップして消す
+        speed_tip = has_any(ocr, ["このボタンでバトル", "進行速度を変更"])
+        if speed_tip:
+            logger.info(">>> 速度ツールチップ → 速度ボタン (1409,19) タップ")
+            tap_device(1409, 19, state, "SPEED_BUTTON_TAP")
+            return "BATTLE_TUTORIAL", 1.0
         if tutorial_popup:
             # ポップアップは画面中央タップで閉じる
             cx, cy = int(W * 0.5), int(H * 0.5)
             logger.info(">>> バトルチュートリアル popup '%s' → 中央 (%d,%d)",
                         tutorial_popup["text"][:10], cx, cy)
             tap_device(cx, cy, state, "BATTLE_TUTORIAL_POPUP")
-            return "BATTLE_TUTORIAL", 2.0
+            return "BATTLE_TUTORIAL", 1.0
 
         # AUTO ボタン
         if not state.auto_activated:
@@ -496,14 +527,14 @@ def detect_and_act(ocr: list, state: PilotState,
                 tap_device(sx, sy, state, "STALL_SKILL")
                 time.sleep(0.8)
                 tap_device(sx, sy, state, "STALL_SKILL confirm")
-                return "BATTLE_STALL", 2.0
+                return "BATTLE_STALL", 1.0
             elif stall_phase == 4:
                 hx, hy = int(W * 0.862), int(H * 0.778)
                 logger.info(">>> バトル停滞 — 必殺技タップ (%d,%d)", hx, hy)
                 tap_device(hx, hy, state, "STALL_HISSATSU")
                 time.sleep(0.8)
                 tap_device(hx, hy, state, "STALL_HISSATSU confirm")
-                return "BATTLE_STALL", 2.0
+                return "BATTLE_STALL", 1.0
 
         logger.info(">>> バトル中 — 待機 (count=%d, auto=%s)",
                     state.battle_wait_count, state.auto_activated)
@@ -522,7 +553,7 @@ def detect_and_act(ocr: list, state: PilotState,
         cx, cy = result_match["center"]
         logger.info(">>> バトル結果 '%s' (%d,%d)", result_match["text"], cx, cy)
         tap_device(cx, cy, state, "RESULT_TAP")
-        return "RESULT_TAP", 3.0
+        return "RESULT_TAP", 1.0
 
     # ─── スキップ ───
     skip_match = has_any(ocr, ["スキップ", "SKIP", "Skip"])
@@ -530,7 +561,7 @@ def detect_and_act(ocr: list, state: PilotState,
         cx, cy = skip_match["center"]
         logger.info(">>> スキップ '%s' (%d,%d)", skip_match["text"], cx, cy)
         tap_device(cx, cy, state, f"SKIP '{skip_match['text']}'")
-        return "SKIP", 3.0
+        return "SKIP", 0.5
 
     # ─── 閉じるボタン ───
     close_match = has_any(ocr, ["閉じる", "Close", "CLOSE", "とじる"])
@@ -538,7 +569,7 @@ def detect_and_act(ocr: list, state: PilotState,
         cx, cy = close_match["center"]
         logger.info(">>> 閉じる '%s' (%d,%d)", close_match["text"], cx, cy)
         tap_device(cx, cy, state, f"CLOSE '{close_match['text']}'")
-        return "CLOSE", 2.0
+        return "CLOSE", 0.5
 
     # ─── 規約同意 ───
     agree_match = has_any(ocr, ["同意", "規約", "利用規約"])
@@ -551,7 +582,7 @@ def detect_and_act(ocr: list, state: PilotState,
         if agree_btn:
             cx, cy = agree_btn["center"]
             tap_device(cx, cy, state, "AGREE")
-        return "AGREE", 3.0
+        return "AGREE", 1.0
 
     # ─── 確認ダイアログ ───
     confirm_match = has_any(ocr, ["OK", "はい", "次へ", "確認", "完了", "決定",
@@ -563,7 +594,7 @@ def detect_and_act(ocr: list, state: PilotState,
         cx, cy = confirm_match["center"]
         logger.info(">>> 確認 '%s' (%d,%d)", confirm_match["text"], cx, cy)
         tap_device(cx, cy, state, f"CONFIRM '{confirm_match['text']}'")
-        return "CONFIRM", 3.0
+        return "CONFIRM", 1.0
 
     # ─── ストーリー/会話 (下部テキストボックス) ───
     lower_texts = [r for r in ocr if r["center"][1] > H * 0.6]
@@ -572,7 +603,7 @@ def detect_and_act(ocr: list, state: PilotState,
         cx, cy = target["center"]
         logger.info(">>> ストーリー送り '%s' (%d,%d)", target["text"][:10], cx, cy)
         tap_device(cx, cy, state, "STORY_TAP")
-        return "STORY_TAP", 2.0
+        return "STORY_TAP", 0.3
 
     # ─── ログインボーナス等 ───
     bonus_match = has_any(ocr, ["ログイン", "ボーナス", "プレゼント", "獲得"])
@@ -580,7 +611,7 @@ def detect_and_act(ocr: list, state: PilotState,
         cx, cy = bonus_match["center"]
         logger.info(">>> ポップアップ '%s' (%d,%d)", bonus_match["text"], cx, cy)
         tap_device(cx, cy, state, "POPUP_TAP")
-        return "POPUP_TAP", 2.0
+        return "POPUP_TAP", 1.0
 
     # ─── フォールバック: 何も見つからない ───
     logger.info(">>> 不明な画面 — WAIT_FOR_CHANGE (OCR %d件)", len(ocr))
@@ -655,24 +686,42 @@ def main():
             state.stall_start = 0.0
             state.stall_corner_tried = False
             state.pre_popup_tap_count = 0  # ポップアップ試行カウンタもリセット
+
+            # ── ADV 高速モード: OCR スキップして画面下部を即連打 ──
+            # 前回 STORY_TAP かつ phash 変化が小さい（テキスト送り）→ 即タップ
+            if (state.last_action == "STORY_TAP" and
+                    PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX):
+                logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
+                time.sleep(0.05)
+                adb(f"shell input tap 760 650")
+                state.total_taps += 1
+                logger.info("  ACTION_TAKEN ADV_RAPID_TAP (760,650)")
+                state.last_phash = cur_phash
+                time.sleep(0.3)
+                continue
+
         else:
             # 画面変化なし
             state.same_phash_count += 1
             state.total_ocr_skipped += 1
 
-            # 5秒以上変化なし → 強制 OCR (デッドロック防止の核心)
+            # N 回変化なし → 強制 OCR (デッドロック防止の核心)
             if state.same_phash_count >= FORCE_ANALYZE_AFTER:
-                logger.info("[iter %d] %d秒変化なし(phash=%d) → 強制 OCR",
-                            i, state.same_phash_count, dist)
+                logger.info("[iter %d] phash_dist=%d same=%d → 強制 OCR",
+                            i, dist, state.same_phash_count)
                 screen_changed = True  # OCR ブロックへ進む
 
             else:
-                # まだ待機フェーズ
-                if i % 5 == 0:
-                    logger.info("[iter %d] phash=%d same=%d — polling...",
-                                i, dist, state.same_phash_count)
+                # まだ待機フェーズ — シーン別インターバル
+                _poll = {
+                    "LOADING": 5.0, "MENU": 1.0,
+                    "BATTLE": 0.3, "ADV": 0.3,
+                }.get(state.current_scene, POLL_INTERVAL)
+                if i % 3 == 0:
+                    logger.info("[%s][iter %d] phash_dist=%d same=%d — polling (%.1fs)...",
+                                state.current_scene, i, dist, state.same_phash_count, _poll)
                 state.last_phash = cur_phash
-                time.sleep(POLL_INTERVAL)
+                time.sleep(_poll)
                 continue
 
             # ── スタック介入 (強制OCRでもタップできず続いた場合) ──
@@ -716,8 +765,11 @@ def main():
             continue
 
         texts = all_texts(ocr_results)
-        logger.info("[iter %d] phash=%d same=%d OCR(%d): %s",
-                    i, dist, state.same_phash_count, len(ocr_results), texts[:8])
+        # ── シーン分類 ──
+        scene, next_interval = classify_scene(texts, state.last_action)
+        state.current_scene = scene
+        logger.info("[%s][iter %d] phash_dist=%d same=%d OCR(%d): %s",
+                    scene, i, dist, state.same_phash_count, len(ocr_results), texts[:8])
         state.last_ocr_texts = texts
 
         # ── 6) 判定 & アクション (finger blob も渡す) ──
@@ -748,7 +800,8 @@ def main():
 
         # ── 8) 待機 ──
         if wait_sec > 0:
-            logger.info("  [%s] wait %.1fs", action, wait_sec)
+            logger.info("  [%s][%s] wait %.1fs | next_check: %.1fs",
+                        scene, action, wait_sec, next_interval)
             time.sleep(wait_sec)
 
     logger.warning("最大イテレーション(%d)に到達。手動確認が必要です。", MAX_ITERATIONS)
