@@ -906,9 +906,10 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> 【確認ダイアログ】 OK (%d,%d) タップ", cx, cy)
             tap_device(cx, cy, state, "CONFIRM_DIALOG_OK")
         else:
-            # フォールバック: 右下固定座標 (OKボタン推定位置)
-            tap_device(W - 100, H - 60, state, "CONFIRM_DIALOG_OK_FIXED")
-            logger.info(">>> 【確認ダイアログ】 OK 固定座標 (%d,%d) タップ", W - 100, H - 60)
+            # フォールバック: OK ボタン推定位置 (ダイアログ右下、キャンセルの右)
+            # 実測: x=1050-1140スキャンで x≈1050-1060 あたりが有効
+            tap_device(1060, 633, state, "CONFIRM_DIALOG_OK_FIXED")
+            logger.info(">>> 【確認ダイアログ】 OK 固定座標 (1060,633) タップ")
         return "CONFIRM_DIALOG_OK", 1.5
 
     # 「タップして次へ」: 報酬獲得画面の次へ進む
@@ -921,7 +922,8 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # 限界突破/強化完了/レベルアップ系ポップアップ → 右上 × ボタンで閉じる
     close_popup_kws = ["限界突破", "強化完了", "レベルアップ", "称号獲得", "エピソード解放",
-                       "ランクアップ", "新しいコンテンツ", "アンロック"]
+                       "ランクアップ", "新しいコンテンツ", "アンロック",
+                       "マギアボックス", "ミッション達成", "デイリーミッション"]
     close_popup = has_any(ocr, close_popup_kws)
     if close_popup:
         close_x = W - 40  # 右上 × ボタン (1520-40=1480)
