@@ -893,6 +893,27 @@ def detect_and_act(ocr: list, state: PilotState,
         # 「AUTO」のみはストーリー画面にも表示されるため除外、戦闘固有キーワードで判定
         is_battle_screen = any(kw in " ".join(texts) for kw in
                                ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃", "必殺技", "BREAK", "WAVE", "Turn"])
+        # ガチャ結果画面検出: "NEW" が 3件以上 → キャラ画像のオレンジ色を誤検出するためブロブ無効化
+        new_count = sum(1 for t in texts if t == "NEW")
+        is_gacha_result = new_count >= 3 and not is_battle_screen
+        if is_gacha_result:
+            logger.info("  ガチャ結果画面検出 (NEW×%d) → もや誤検出スキップ", new_count)
+            # OKボタンをタップして進む
+            ok_match = has_text(ocr, "OK", min_conf=0.5)
+            if ok_match:
+                cx, cy = ok_match["center"]
+                action_type, desc = STRATEGIC_ENGINE.log_prediction("OK", cx, cy)
+                state.last_prediction = action_type
+                state.last_prediction_desc = desc
+                state.last_tap_text = "OK"
+                state.last_action_pre_phash = state.last_phash
+                logger.info(">>> 【ガチャ結果】 OK (%d,%d) → タップ", cx, cy)
+                tap_device(cx, cy, state, "GACHA_RESULT_OK")
+                return "GACHA_OK", 1.5
+            # OKがない場合は画面下部をタップ
+            logger.info(">>> 【ガチャ結果】 OCRでOK未検出 → 下部中央タップ")
+            tap_device(760, 693, state, "GACHA_RESULT_FALLBACK")
+            return "GACHA_OK", 1.5
         # min_area は常に400。空間フィルタ(下記)で誤検出を排除するため過大閾値は不要
         blobs = find_finger_blobs(analysis_path, min_area=400)
         if blobs:
