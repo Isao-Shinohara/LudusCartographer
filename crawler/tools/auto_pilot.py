@@ -51,6 +51,9 @@ EVIDENCE_DIR = _CRAWLER_ROOT / "evidence" / f"autopilot_{datetime.now().strftime
 MAX_ITERATIONS = 2000      # 安全上限 (1秒サイクルなので長めに)
 POLL_INTERVAL = 1.0        # phash ポーリング間隔 (秒)
 PHASH_THRESHOLD = 8        # phash 距離 >= 8 → 画面変化あり
+PHASH_MINOR_UPPER = 10     # 8 <= dist < 10 → 微小変化 (ロード中等) → OCR スキップ
+PHASH_ELEVATED = 15        # WAIT_FOR_CHANGE 後の一時的な閾値引き上げ
+BLACKOUT_BRIGHTNESS = 20   # 平均輝度がこれ以下 → 暗転とみなす
 STALL_TIMEOUT = 30.0       # 同一画面が続く秒数 → スタック介入
 BATTLE_WAIT = 5.0          # バトル AUTO 後の待機 (秒)
 DOWNLOAD_WAIT = 10.0       # ダウンロード中の待機 (秒)
@@ -78,10 +81,15 @@ class PilotState:
     total_taps: int = 0
     total_ocr_calls: int = 0
     total_ocr_skipped: int = 0
+    total_minor_skipped: int = 0   # 微小変化スキップ回数
+    total_blackout_skipped: int = 0  # 暗転スキップ回数
     screenshots_saved: int = 0
     # 実機解像度 (初回スクリーンショットで確定)
     device_w: int = 0
     device_h: int = 0
+    # 動的閾値制御
+    current_threshold: int = PHASH_THRESHOLD  # AI 結果に応じて動的に変化
+    elevated_until: float = 0.0               # 閾値引き上げ期限 (time.time())
 
 
 # ─── ADB ユーティリティ ─────────────────────────────
@@ -153,6 +161,19 @@ def save_evidence(img_path: Path, ocr_results: list, action: str, state: PilotSt
         state.screenshots_saved += 1
     except Exception as e:
         logger.warning("Evidence save failed: %s", e)
+
+
+def is_dark_screen(img_path: Path) -> bool:
+    """画面が暗転（平均輝度 <= BLACKOUT_BRIGHTNESS）かどうかを判定"""
+    try:
+        from PIL import Image
+        with Image.open(img_path) as img:
+            gray = img.convert("L")
+            import numpy as np
+            mean_brightness = np.mean(np.array(gray))
+            return mean_brightness <= BLACKOUT_BRIGHTNESS
+    except Exception:
+        return False
 
 
 def prepare_analysis_image(img_path: Path, actual_w: int, actual_h: int) -> Path:
@@ -472,7 +493,17 @@ def main():
             logger.info("実機解像度: %dx%d (解析基準: %dx%d)",
                         actual_w, actual_h, ANALYSIS_W, ANALYSIS_H)
 
-        # ── 2) phash 粗解析 (1秒ポーリング) ──
+        # ── 2) 暗転検出 ──
+        if is_dark_screen(img_path):
+            state.total_blackout_skipped += 1
+            if state.total_blackout_skipped % 5 == 1:
+                logger.info("[iter %d] 暗転検出 (brightness<=%.0f) — OCR スキップ, 3s 待機",
+                            i, BLACKOUT_BRIGHTNESS)
+            state.last_phash = ""  # 暗転中は phash リセット (復帰後に必ず変化検出)
+            time.sleep(3.0)
+            continue
+
+        # ── 3) phash 粗解析 (1秒ポーリング) ──
         try:
             cur_phash = compute_phash(img_path)
         except Exception:
@@ -483,7 +514,26 @@ def main():
         else:
             dist = 999  # 初回 → 変化あり扱い
 
-        screen_changed = dist >= PHASH_THRESHOLD
+        # 動的閾値: WAIT_FOR_CHANGE 後は一時的に引き上げ
+        active_threshold = state.current_threshold
+        if state.elevated_until and time.time() < state.elevated_until:
+            active_threshold = PHASH_ELEVATED
+        elif state.elevated_until and time.time() >= state.elevated_until:
+            # 引き上げ期限切れ → 通常閾値に復帰
+            state.current_threshold = PHASH_THRESHOLD
+            state.elevated_until = 0.0
+
+        # 微小変化 (8 <= dist < 10): ロード中のプログレスバー等 → OCR スキップ
+        if PHASH_THRESHOLD <= dist < PHASH_MINOR_UPPER and active_threshold <= PHASH_THRESHOLD:
+            state.total_minor_skipped += 1
+            state.last_phash = cur_phash
+            if state.total_minor_skipped % 5 == 1:
+                logger.info("[iter %d] 微小変化 (phash=%d, %d<=%d<%d) — OCR スキップ, 2s 待機",
+                            i, dist, PHASH_THRESHOLD, dist, PHASH_MINOR_UPPER)
+            time.sleep(2.0)
+            continue
+
+        screen_changed = dist >= active_threshold
 
         if not screen_changed:
             # ── 画面変化なし: OCR スキップ、タップ禁止 ──
@@ -514,9 +564,10 @@ def main():
                     stall_elapsed,
                 )
                 save_evidence(img_path, [], "STALL_FATAL", state)
-                logger.info("  総タップ数: %d  OCR実行: %d  OCRスキップ: %d",
+                logger.info("  総タップ数: %d  OCR実行: %d  スキップ: %d  微小: %d  暗転: %d",
                             state.total_taps, state.total_ocr_calls,
-                            state.total_ocr_skipped)
+                            state.total_ocr_skipped, state.total_minor_skipped,
+                            state.total_blackout_skipped)
                 return
 
             if i % 10 == 0:
@@ -531,10 +582,10 @@ def main():
         state.stall_corner_tried = False
         state.last_phash = cur_phash
 
-        # ── 3) 解析用画像の準備 (リサイズ/回転) ──
+        # ── 4) 解析用画像の準備 (リサイズ/回転) ──
         analysis_path = prepare_analysis_image(img_path, actual_w, actual_h)
 
-        # ── 4) OCR 精査 (画面変化時のみ) ──
+        # ── 5) OCR 精査 (画面変化時のみ) ──
         state.total_ocr_calls += 1
         try:
             ocr_results = run_ocr(str(analysis_path), lang=OCR_LANG,
@@ -549,29 +600,43 @@ def main():
                     i, dist, len(ocr_results), texts[:10])
         state.last_ocr_texts = texts
 
-        # ── 5) 判定 & アクション ──
+        # ── 6) 判定 & アクション ──
         action, wait_sec = detect_and_act(ocr_results, state)
         state.last_action = action
+
+        # 動的閾値制御: WAIT_FOR_CHANGE → 閾値を一時的に 15 に引き上げ
+        if action == "WAIT_FOR_CHANGE":
+            state.current_threshold = PHASH_ELEVATED
+            state.elevated_until = time.time() + 15.0  # 15秒間は閾値引き上げ
+            logger.info("  閾値引き上げ: %d → %d (15秒間)",
+                        PHASH_THRESHOLD, PHASH_ELEVATED)
+        elif action not in ("BATTLE_WAIT", "DOWNLOAD_WAIT"):
+            # 確認済みアクション実行 → 閾値を通常に復帰
+            if state.current_threshold != PHASH_THRESHOLD:
+                logger.info("  閾値復帰: %d → %d", state.current_threshold, PHASH_THRESHOLD)
+            state.current_threshold = PHASH_THRESHOLD
+            state.elevated_until = 0.0
 
         # エビデンス保存
         if i % 20 == 0 or action in ("HOME_REACHED", "SKIP", "AGREE",
                                        "RESULT_TAP", "STALL_CORNER"):
             save_evidence(img_path, ocr_results, action, state)
 
-        # ── 6) ホーム画面到達チェック ──
+        # ── 7) ホーム画面到達チェック ──
         if state.home_reached:
             logger.info("=" * 62)
             logger.info("  ホーム画面に到達しました!")
             logger.info("  総タップ数: %d", state.total_taps)
             logger.info("  総イテレーション: %d", i + 1)
-            logger.info("  OCR 実行: %d  スキップ: %d",
-                        state.total_ocr_calls, state.total_ocr_skipped)
+            logger.info("  OCR 実行: %d  スキップ: %d  微小変化: %d  暗転: %d",
+                        state.total_ocr_calls, state.total_ocr_skipped,
+                        state.total_minor_skipped, state.total_blackout_skipped)
             logger.info("  スクリーンショット保存: %d", state.screenshots_saved)
             logger.info("=" * 62)
             save_evidence(img_path, ocr_results, "FINAL_HOME", state)
             return
 
-        # ── 7) 待機 ──
+        # ── 8) 待機 ──
         if wait_sec > 0:
             logger.info("  [%s] wait %.1fs", action, wait_sec)
             time.sleep(wait_sec)
