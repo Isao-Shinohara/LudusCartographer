@@ -89,6 +89,9 @@ class PilotState:
     same_phash_count: int = 0
     # 最後に強制解析を実行した時刻
     last_forced_ocr_at: float = 0.0
+    # 同一位置の指差しブロブ連続検出カウンタ (誤検出抑制)
+    last_blob_xy: tuple = (0, 0)
+    blob_same_count: int = 0
 
 
 # ─── ADB ユーティリティ ─────────────────────────────
@@ -248,29 +251,45 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
     if analysis_path is not None:
-        blobs = find_finger_blobs(analysis_path)
+        # バトル中はスキルカードアイコンとの誤検出を防ぐため min_area を大きく
+        is_battle_screen = any(kw in " ".join(texts) for kw in
+                               ["AUTO", "通常攻撃", "单体攻撃", "単体攻撃", "必殺技", "BREAK"])
+        finger_min_area = 12000 if is_battle_screen else 400
+        blobs = find_finger_blobs(analysis_path, min_area=finger_min_area)
         if blobs:
             fx, fy, fa = blobs[0]
-            logger.info(">>> 【指差し検出】 at (%d,%d) area=%.0f", fx, fy, fa)
-            # 右パネル (x > 1050) → スキルカード
-            if fx > 1050:
-                logger.info("  → 右パネル指差し: スキルカード (1440,520) タップ")
-                tap_device(1440, 520, state, "FINGER_SKILL")
-                time.sleep(0.5)
-                tap_device(1440, 520, state, "FINGER_SKILL confirm")
-                return "FINGER_SKILL", 3.0
-            # 左カード (x < 600) → キャラカード
-            elif fx < 600:
-                card_centers = [130, 310, 490]
-                closest = min(card_centers, key=lambda cx: abs(cx - fx))
-                logger.info("  → 左カード指差し: カード(%d,650) タップ", closest)
-                tap_device(closest, 650, state, f"FINGER_CHAR x={closest}")
-                return "FINGER_CHAR", 3.0
-            # 中央 → 指差し座標をそのままタップ
+            # 同じ座標を 3 回以上連続検出 → 誤検出としてスキップ
+            blob_pos = (fx // 50, fy // 50)  # 50px グリッドで同一判定
+            if blob_pos == state.last_blob_xy:
+                state.blob_same_count += 1
             else:
-                logger.info("  → 中央指差し: (%d,%d) タップ", fx, fy)
-                tap_device(fx, fy, state, "FINGER_CENTER")
-                return "FINGER_CENTER", 2.0
+                state.blob_same_count = 0
+                state.last_blob_xy = blob_pos
+            if state.blob_same_count >= 3:
+                logger.info(">>> 指差し同一座標 %d回 → 誤検出スキップ (%d,%d)",
+                            state.blob_same_count, fx, fy)
+            else:
+                logger.info(">>> 【指差し検出】 at (%d,%d) area=%.0f (battle=%s)",
+                            fx, fy, fa, is_battle_screen)
+                # 右パネル (x > 1050) → スキルカード
+                if fx > 1050:
+                    logger.info("  → 右パネル指差し: スキルカード (1440,520) タップ")
+                    tap_device(1440, 520, state, "FINGER_SKILL")
+                    time.sleep(0.5)
+                    tap_device(1440, 520, state, "FINGER_SKILL confirm")
+                    return "FINGER_SKILL", 3.0
+                # 左カード (x < 600) → キャラカード
+                elif fx < 600:
+                    card_centers = [130, 310, 490]
+                    closest = min(card_centers, key=lambda cx: abs(cx - fx))
+                    logger.info("  → 左カード指差し: カード(%d,650) タップ", closest)
+                    tap_device(closest, 650, state, f"FINGER_CHAR x={closest}")
+                    return "FINGER_CHAR", 3.0
+                # 中央 → 指差し座標をそのままタップ
+                else:
+                    logger.info("  → 中央指差し: (%d,%d) タップ", fx, fy)
+                    tap_device(fx, fy, state, "FINGER_CENTER")
+                    return "FINGER_CENTER", 2.0
 
     # ─── 【最優先 #2】ハイライト指示テキスト ───
     tutorial_kws = ["ここをタップ", "タップしてください", "タップして下さい", "タップして"]
