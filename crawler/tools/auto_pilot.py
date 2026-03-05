@@ -891,6 +891,26 @@ def detect_and_act(ocr: list, state: PilotState,
         return "TUTORIAL_POPUP", 1.0
 
     # ─── 【最優先 #0-b】報酬/強化結果ポップアップを即時処理 (ブロブ誤検出防止) ───
+    # 「以下の内容でよろしいですか」確認ダイアログ → 下部のOKボタンをタップ
+    # (OCRがOKを誤った座標で検出するため、下部エリアに限定して探す)
+    confirm_dlg = has_text(ocr, "以下の内容でよろしいですか", min_conf=0.3)
+    if confirm_dlg:
+        # y > H*0.6 の領域でOKボタンを探す (ダイアログ下部)
+        ok_bottom = next(
+            (item for item in ocr
+             if "OK" in item.get("text", "") and item["center"][1] > H * 0.6),
+            None
+        )
+        if ok_bottom:
+            cx, cy = ok_bottom["center"]
+            logger.info(">>> 【確認ダイアログ】 OK (%d,%d) タップ", cx, cy)
+            tap_device(cx, cy, state, "CONFIRM_DIALOG_OK")
+        else:
+            # フォールバック: 右下固定座標 (OKボタン推定位置)
+            tap_device(W - 100, H - 60, state, "CONFIRM_DIALOG_OK_FIXED")
+            logger.info(">>> 【確認ダイアログ】 OK 固定座標 (%d,%d) タップ", W - 100, H - 60)
+        return "CONFIRM_DIALOG_OK", 1.5
+
     # 「タップして次へ」: 報酬獲得画面の次へ進む
     tap_next = has_text(ocr, "タップして次へ", min_conf=0.3)
     if tap_next:
