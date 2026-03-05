@@ -253,8 +253,9 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
     if analysis_path is not None:
+        # 「AUTO」のみはストーリー画面にも表示されるため除外、戦闘固有キーワードで判定
         is_battle_screen = any(kw in " ".join(texts) for kw in
-                               ["AUTO", "通常攻撃", "单体攻撃", "単体攻撃", "必殺技", "BREAK"])
+                               ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃", "必殺技", "BREAK", "WAVE", "Turn"])
         # min_area は常に400。空間フィルタ(下記)で誤検出を排除するため過大閾値は不要
         blobs = find_finger_blobs(analysis_path, min_area=400)
         if blobs:
@@ -333,7 +334,7 @@ def detect_and_act(ocr: list, state: PilotState,
     # ─── ストーリーセリフ進行 (バトル外でセリフが出ている) ───
     # 「画面をタップ」系の指示 or バトルでもホームでもない日本語テキストが複数ある
     is_battle_now = any(kw in " ".join(texts) for kw in
-                        ["AUTO", "通常攻撃", "单体攻撃", "単体攻撃", "必殺技", "BREAK"])
+                        ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃", "必殺技", "BREAK", "WAVE", "Turn"])
     tap_screen_kws = ["画面をタップ", "タップして進む", "タップで進む", "タップしてください", "TOUCH TO CONTINUE"]
     tap_screen = has_any(ocr, tap_screen_kws)
     if tap_screen and not is_battle_now:
@@ -381,8 +382,9 @@ def detect_and_act(ocr: list, state: PilotState,
         return "QUEST_START", 5.0
 
     # ─── バトル画面 ───
-    battle_keywords = ["AUTO", "通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃",
-                       "BREAK", "HP", "Turn", "WAVE", "戦闘"]
+    # 「AUTO」「HP」「戦闘」はストーリー画面にも出るため除外、戦闘固有キーワードで判定
+    battle_keywords = ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃",
+                       "BREAK", "Turn", "WAVE"]
     battle = has_any(ocr, battle_keywords)
     if battle:
         state.battle_wait_count += 1
