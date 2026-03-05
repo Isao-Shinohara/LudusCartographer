@@ -1,0 +1,7 @@
+{
+  "action": "NAME_INPUT_OK_TAP",
+  "offset": [0, -33],
+  "threshold": 0.75,
+  "require_ocr": ["プレイヤー名を入力"],
+  "note": "名前入力ダイアログのOKボタン - OCRのy座標(593)より実際のヒットゾーンはy=560付近"
+}

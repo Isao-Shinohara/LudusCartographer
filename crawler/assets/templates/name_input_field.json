@@ -1,0 +1,7 @@
+{
+  "action": "NAME_INPUT_FIELD_FOCUS",
+  "offset": [-282, 0],
+  "threshold": 0.70,
+  "require_ocr": ["プレイヤー名を入力"],
+  "note": "名前入力ダイアログのテキストエリア枠 - 検出時はテキスト入力モードへ"
+}

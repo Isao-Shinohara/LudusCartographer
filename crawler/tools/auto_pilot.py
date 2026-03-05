@@ -890,6 +890,39 @@ def detect_and_act(ocr: list, state: PilotState,
         tap_device(cx, cy, state, "PRE_POPUP_TAP")
         return "TUTORIAL_POPUP", 1.0
 
+    # ─── 【最優先 #0-b-extra】プレイヤー名入力ダイアログ ───
+    # 「プレイヤー名を入力してください」→ 名前入力 → OKタップ
+    # 注意: OCR で "OK" の center が y≈593 と検出されるが、
+    #        実際のボタンヒットゾーンはゴールデンエリア y≈555-575 (実測)
+    name_input = has_text(ocr, "プレイヤー名を入力", min_conf=0.3)
+    if name_input:
+        # 入力済みテキストを確認 (プレースホルダー・UI テキスト以外のひらがな/英字)
+        ui_words = {"プレイヤー名を入力してください", "プレイヤー名は", "変更後3日間", "名前入力", "OK"}
+        name_texts = [t for t in texts if t not in ui_words and len(t) >= 2
+                      and not t.startswith("プレイヤー") and "/" not in t]
+        ok_item = next(
+            (item for item in ocr if "OK" in item.get("text", "") and item["center"][1] > H * 0.5),
+            None
+        )
+        if name_texts and ok_item:
+            # 名前入力済み → OKタップ (実測ヒットゾーン y=560、OCR center y=593 より上)
+            cx = ok_item["center"][0]
+            cy = 560  # ゴールデンボタン中心 (ピクセル解析: y=540-580がゴールデン)
+            logger.info(">>> 【名前入力 OK】 入力済み='%s' → (%d,%d) タップ", name_texts[0], cx, cy)
+            tap_device(cx, cy, state, "NAME_INPUT_OK")
+            return "NAME_INPUT_OK", 2.0
+        elif ok_item:
+            # 名前未入力 → テキストフィールドをタップして "MadoDora" 入力 → Enter → OK
+            logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (700,417)")
+            tap_device(700, 417, state, "NAME_INPUT_FOCUS")
+            time.sleep(0.5)
+            import subprocess as _sp
+            _sp.run(["adb", "-s", DEVICE_SERIAL, "shell", "input", "text", "MadoDora"], check=False)
+            time.sleep(0.3)
+            _sp.run(["adb", "-s", DEVICE_SERIAL, "shell", "input", "keyevent", "66"], check=False)
+            logger.info(">>> 【名前入力】 'MadoDora' 入力完了 → OK タップ待ち")
+            return "NAME_INPUT_TEXT", 1.5
+
     # ─── 【最優先 #0-b】報酬/強化結果ポップアップを即時処理 (ブロブ誤検出防止) ───
     # 「以下の内容でよろしいですか」確認ダイアログ → 下部のOKボタンをタップ
     # (OCRがOKを誤った座標で検出するため、下部エリアに限定して探す)
