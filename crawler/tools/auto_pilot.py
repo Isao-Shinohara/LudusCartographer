@@ -92,6 +92,8 @@ class PilotState:
     # 同一位置の指差しブロブ連続検出カウンタ (誤検出抑制)
     last_blob_xy: tuple = (0, 0)
     blob_same_count: int = 0
+    # フリーバトル: 左キャラ選択済みフラグ (True なら次は右スキルを優先)
+    char_just_selected: bool = False
 
 
 # ─── ADB ユーティリティ ─────────────────────────────
@@ -262,8 +264,22 @@ def detect_and_act(ocr: list, state: PilotState,
                 left_char = [(x, y, a) for x, y, a in blobs if x < 600 and y > H * 0.76]
                 right_panel = [(x, y, a) for x, y, a in blobs if x > 1050]
                 bottom_ui = [(x, y, a) for x, y, a in blobs if y > H * 0.8 and x >= 600]
-                if left_char:
-                    # フリーバトル: 左キャラ選択が最優先 (右スキルより先)
+                if state.char_just_selected:
+                    # 左キャラ選択済み → 右スキルを選択 (左キャラ再タップしない)
+                    if right_panel:
+                        blobs = right_panel
+                        state.char_just_selected = False
+                        logger.info("  バトル: キャラ選択後 → 右スキルもや %d個", len(blobs))
+                    elif bottom_ui:
+                        blobs = bottom_ui
+                        state.char_just_selected = False
+                        logger.info("  バトル: キャラ選択後 → 下部UIもや %d個", len(blobs))
+                    else:
+                        # 右スキルがまだ表示されていない → 少し待つ
+                        logger.info("  バトル: キャラ選択後 → 右スキル待ち")
+                        blobs = []
+                elif left_char:
+                    # フリーバトル: 左キャラ選択が最優先
                     blobs = left_char
                     logger.info("  バトル: 左キャラもや %d個 (最優先)", len(blobs))
                 elif right_panel:
@@ -298,6 +314,10 @@ def detect_and_act(ocr: list, state: PilotState,
                 logger.info(">>> 【もやアイコン検出】 (%d,%d) area=%.0f count=%d — 直接タップ",
                             fx, fy, fa, state.blob_same_count)
                 tap_device(fx, fy, state, f"MOYA_TAP ({fx},{fy})")
+                # 左キャラ選択後は char_just_selected フラグをセット
+                if fx < 600 and fy > H * 0.76:
+                    state.char_just_selected = True
+                    logger.info("  (左キャラ選択完了 → 次は右スキル)")
                 return "MOYA_TAP", 2.0
 
     # ─── 【最優先 #2】ハイライト指示テキスト ───
