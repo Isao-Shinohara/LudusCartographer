@@ -1,0 +1,9 @@
+{
+  "action": "MAP_ARROW_TAP",
+  "offset": [
+    0,
+    0
+  ],
+  "threshold": 0.65,
+  "note": "3D探索マップのキャラ頭上矢印 - 3Dなので低閾値で使用"
+}

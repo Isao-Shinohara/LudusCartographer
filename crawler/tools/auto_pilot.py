@@ -336,6 +336,125 @@ def find_3d_arrow(img_path: Path) -> Optional[tuple[int, int]]:
         return None
 
 
+# ─── UI資産ライブラリ (AssetManager) ──────────────
+class AssetManager:
+    """
+    assets/templates/ 内のテンプレート画像を使った高速 UI マッチング。
+
+    ファイル構成:
+      assets/templates/{name}.png   — グレースケールテンプレート画像
+      assets/templates/{name}.json  — メタデータ (threshold, action, offset)
+
+    処理時間: ~0.1s (OCR比: 20-50倍高速)
+    """
+
+    TEMPLATES_DIR = _CRAWLER_ROOT / "assets" / "templates"
+    DEFAULT_THRESHOLD = 0.80
+
+    def __init__(self):
+        self._templates: dict[str, dict] = {}
+        self._load_templates()
+
+    def _load_templates(self) -> None:
+        import cv2, json
+        count = 0
+        for png in sorted(self.TEMPLATES_DIR.glob("*.png")):
+            name = png.stem
+            img = cv2.imread(str(png), cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                continue
+            meta: dict = {}
+            meta_path = png.with_suffix(".json")
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text())
+                except Exception:
+                    pass
+            self._templates[name] = {
+                "img": img,
+                "threshold": float(meta.get("threshold", self.DEFAULT_THRESHOLD)),
+                "action": meta.get("action", f"ASSET_{name.upper()}"),
+                "offset": meta.get("offset", [0, 0]),
+            }
+            count += 1
+        if count:
+            logger.info("[AssetManager] %d テンプレート読込: %s",
+                        count, list(self._templates.keys()))
+
+    def match(self, screenshot_path: Path) -> Optional[tuple[int, int, str]]:
+        """
+        スクリーンショットと全テンプレートを比較。
+        Returns: (tap_x, tap_y, action_name) or None
+        """
+        import cv2
+        if not self._templates:
+            return None
+        img = cv2.imread(str(screenshot_path), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            return None
+        best_score = 0.0
+        best_result: Optional[tuple[int, int, str]] = None
+        for name, data in self._templates.items():
+            tmpl = data["img"]
+            if tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
+                continue
+            try:
+                res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val >= data["threshold"] and max_val > best_score:
+                    best_score = max_val
+                    h, w = tmpl.shape
+                    cx = max_loc[0] + w // 2 + int(data["offset"][0])
+                    cy = max_loc[1] + h // 2 + int(data["offset"][1])
+                    best_result = (cx, cy, data["action"])
+                    logger.debug("[Asset] '%s' score=%.3f at (%d,%d)", name, max_val, cx, cy)
+            except Exception as e:
+                logger.debug("[Asset] match error '%s': %s", name, e)
+        if best_result:
+            cx, cy, action = best_result
+            logger.info("[Asset] HIT: '%s' score=%.3f → (%d,%d)", action, best_score, cx, cy)
+        return best_result
+
+    def save_template(self, screenshot_path: Path,
+                      x1: int, y1: int, x2: int, y2: int,
+                      name: str, action: str,
+                      offset: tuple[int, int] = (0, 0),
+                      threshold: float = DEFAULT_THRESHOLD) -> bool:
+        """
+        スクリーンショットの指定領域を切り抜いてテンプレートとして保存。
+        次回起動時から [Asset Match] で高速検出可能になる。
+        """
+        import cv2, json
+        img = cv2.imread(str(screenshot_path))
+        if img is None:
+            return False
+        crop = img[y1:y2, x1:x2]
+        if crop.size == 0:
+            return False
+        out_png = self.TEMPLATES_DIR / f"{name}.png"
+        meta_path = self.TEMPLATES_DIR / f"{name}.json"
+        cv2.imwrite(str(out_png), crop)
+        meta = {"action": action, "offset": list(offset), "threshold": threshold}
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+        # インメモリキャッシュに即時追加
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        self._templates[name] = {
+            "img": gray, "threshold": threshold,
+            "action": action, "offset": list(offset),
+        }
+        logger.info("[Asset] テンプレート自動保存: '%s' (%dx%d) action=%s",
+                    name, crop.shape[1], crop.shape[0], action)
+        return True
+
+    def reload(self) -> None:
+        self._templates.clear()
+        self._load_templates()
+
+
+# グローバル AssetManager インスタンス (起動時に1回ロード)
+ASSET_MANAGER = AssetManager()
+
+
 # ─── 画面判定・アクション ──────────────────────────
 def detect_and_act(ocr: list, state: PilotState,
                    analysis_path: Optional[Path] = None) -> tuple[str, float]:
@@ -347,6 +466,15 @@ def detect_and_act(ocr: list, state: PilotState,
     """
     texts = all_texts(ocr)
     W, H = ANALYSIS_W, ANALYSIS_H
+
+    # ─── 【最優先 #0-a】テンプレートマッチング (Asset Match) — 最速 ~0.1s ───
+    if analysis_path is not None:
+        asset_hit = ASSET_MANAGER.match(analysis_path)
+        if asset_hit:
+            cx, cy, action = asset_hit
+            logger.info(">>> [Asset Match] '%s' → (%d,%d)", action, cx, cy)
+            tap_device(cx, cy, state, action)
+            return action, 0.5
 
     # ─── 【最優先 #0】チュートリアルポップアップ (ブロブより優先) ───
     # バトル説明・ロール説明などのポップアップはブロブ検出前に処理
@@ -455,6 +583,16 @@ def detect_and_act(ocr: list, state: PilotState,
             cx, cy = pos
             logger.info(">>> 【3D矢印】 探索マップ矢印 (%d,%d) 検出 → タップ", cx, cy)
             tap_device(cx, cy, state, "MAP_ARROW_TAP")
+            # [Auto Save] 初回検出時にテンプレートとして保存
+            if "map_arrow" not in ASSET_MANAGER._templates:
+                half_w, half_h = 70, 50
+                ASSET_MANAGER.save_template(
+                    analysis_path,
+                    max(0, cx - half_w), max(0, cy - half_h),
+                    min(W, cx + half_w), min(H, cy + half_h),
+                    name="map_arrow", action="MAP_ARROW_TAP",
+                    threshold=0.65,
+                )
             return "MAP_ARROW_TAP", 1.0
         else:
             # 自動検出失敗 → キャラ頭上デフォルト座標
