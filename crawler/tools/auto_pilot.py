@@ -253,8 +253,8 @@ def detect_and_act(ocr: list, state: PilotState,
     if analysis_path is not None:
         is_battle_screen = any(kw in " ".join(texts) for kw in
                                ["AUTO", "通常攻撃", "单体攻撃", "単体攻撃", "必殺技", "BREAK"])
-        finger_min_area = 12000 if is_battle_screen else 400
-        blobs = find_finger_blobs(analysis_path, min_area=finger_min_area)
+        # min_area は常に400。空間フィルタ(下記)で誤検出を排除するため過大閾値は不要
+        blobs = find_finger_blobs(analysis_path, min_area=400)
         if blobs:
             # バトル中は「右パネル(x>1050)」または「下部UI(y>H*0.8=576)」のみ有効
             # 中央エリア(バトルフィールド)のキャラクター肌色は誤検出なので無視
@@ -265,7 +265,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     blobs = []
                 else:
                     blobs = valid_blobs
-                    logger.info("  バトル中: 有効もや %d個検出", len(blobs))
+                    logger.info("  バトル中: 有効もや %d個 (右パネル/下部UI)", len(blobs))
 
         if blobs:
             # 右側行動アイコン (x > 1050) が最優先
