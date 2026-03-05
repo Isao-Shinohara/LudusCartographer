@@ -94,6 +94,8 @@ class PilotState:
     blob_same_count: int = 0
     # フリーバトル: 左キャラ選択済みフラグ (True なら次は右スキルを優先)
     char_just_selected: bool = False
+    # チュートリアルポップアップ連続タップ回数 (高くなると異なる座標を試す)
+    pre_popup_tap_count: int = 0
 
 
 # ─── ADB ユーティリティ ─────────────────────────────
@@ -262,9 +264,20 @@ def detect_and_act(ocr: list, state: PilotState,
     ]
     pre_popup = has_any(ocr, pre_popup_kws)
     if pre_popup:
-        cx, cy = int(W * 0.5), int(H * 0.5)
-        logger.info(">>> 【チュートリアルポップアップ】 '%s' → 中央タップ (%d,%d)",
-                    pre_popup["text"][:10], cx, cy)
+        state.pre_popup_tap_count += 1
+        # 同じポップアップが続く場合は異なる座標を試す
+        # 通常: 中央、3回目: 右下(閉じるボタン候補)、5回目: 右上
+        tap_candidates = [
+            (int(W * 0.5), int(H * 0.5)),    # 中央
+            (int(W * 0.5), int(H * 0.5)),    # 中央(2回目)
+            (int(W * 0.92), int(H * 0.9)),   # 右下
+            (int(W * 0.5), int(H * 0.5)),    # 中央(4回目)
+            (int(W * 0.92), int(H * 0.1)),   # 右上(×ボタン)
+        ]
+        idx = min(state.pre_popup_tap_count - 1, len(tap_candidates) - 1)
+        cx, cy = tap_candidates[idx]
+        logger.info(">>> 【チュートリアルポップアップ】 '%s' → (%d,%d) (試行%d回目)",
+                    pre_popup["text"][:10], cx, cy, state.pre_popup_tap_count)
         tap_device(cx, cy, state, "PRE_POPUP_TAP")
         return "TUTORIAL_POPUP", 2.0
 
@@ -639,6 +652,7 @@ def main():
             state.same_phash_count = 0
             state.stall_start = 0.0
             state.stall_corner_tried = False
+            state.pre_popup_tap_count = 0  # ポップアップ試行カウンタもリセット
         else:
             # 画面変化なし
             state.same_phash_count += 1
