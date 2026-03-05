@@ -1,21 +1,14 @@
 #!/usr/bin/env python3
 """
-auto_pilot.py — まどドラ自律操縦スクリプト
+auto_pilot.py — まどドラ自律操縦スクリプト (低燃費版)
 
-チュートリアルからホーム画面到達まで、画面のOCR結果に基づいて
-自動的にタップ/待機を繰り返す。
+1秒 phash ポーリング → 画面変化時のみ OCR → 確実なターゲットのみタップ。
+ブラインド中央タップは一切行わない。
 
 使い方:
     cd crawler
     PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
     venv/bin/python tools/auto_pilot.py
-
-ルール:
-    - バトル中: AUTOボタンを確認し、勝利まで待機
-    - ストーリー: Skip/画面タップで飛ばす
-    - ダウンロード: 完了まで待機
-    - チュートリアル: 案内に従ってタップ
-    - ホーム画面到達で終了
 """
 from __future__ import annotations
 
@@ -49,41 +42,51 @@ try:
 except RuntimeError as e:
     logger.error(str(e))
     sys.exit(1)
+
 SCREENSHOT_PATH = "/tmp/lc_autopilot.png"
 REMOTE_PATH = "/sdcard/lc_autopilot.png"
 EVIDENCE_DIR = _CRAWLER_ROOT / "evidence" / f"autopilot_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-MAX_ITERATIONS = 500       # 安全上限
-LOOP_INTERVAL = 5.0        # 各ループの基本間隔 (秒)
-BATTLE_WAIT = 5.0          # バトル中の待機間隔 (秒)
-DOWNLOAD_WAIT = 10.0       # ダウンロード中の待機間隔 (秒)
-LONG_WAIT = 10.0           # ロード画面の待機 (秒)
-PHASH_SAME_THRESHOLD = 8   # phash 距離 < 8 → 同一画面とみなす
-STALL_LIMIT = 3            # 同一画面が続いたら停止して待機する回数
+
+# ─── タイミング ───
+MAX_ITERATIONS = 2000      # 安全上限 (1秒サイクルなので長めに)
+POLL_INTERVAL = 1.0        # phash ポーリング間隔 (秒)
+PHASH_THRESHOLD = 8        # phash 距離 >= 8 → 画面変化あり
+STALL_TIMEOUT = 30.0       # 同一画面が続く秒数 → スタック介入
+BATTLE_WAIT = 5.0          # バトル AUTO 後の待機 (秒)
+DOWNLOAD_WAIT = 10.0       # ダウンロード中の待機 (秒)
+
+# ─── 解析基準解像度 (すべての比率計算のベース) ───
+ANALYSIS_W = 1520
+ANALYSIS_H = 720
+
 OCR_LANG = "japan"
 OCR_MIN_CONF = 0.3
-SCREEN_W = 1520            # Android landscape
-SCREEN_H = 720
 
 
 @dataclass
 class PilotState:
     """操縦状態"""
     iteration: int = 0
-    consecutive_same: int = 0      # 同一画面検出回数 (phash ベース)
+    last_phash: str = ""
+    stall_start: float = 0.0       # スタック開始時刻 (time.time())
+    stall_corner_tried: bool = False  # スタック時の角タップ試行済みフラグ
     last_action: str = ""
     last_ocr_texts: list = field(default_factory=list)
-    last_phash: str = ""           # 前回のスクリーンショット phash
     battle_wait_count: int = 0
-    auto_activated: bool = False    # 今のバトルでAUTOをオンにしたか
+    auto_activated: bool = False
     home_reached: bool = False
     total_taps: int = 0
-    total_ocr_skipped: int = 0     # phash 一致で OCR をスキップした回数
+    total_ocr_calls: int = 0
+    total_ocr_skipped: int = 0
     screenshots_saved: int = 0
+    # 実機解像度 (初回スクリーンショットで確定)
+    device_w: int = 0
+    device_h: int = 0
 
 
 # ─── ADB ユーティリティ ─────────────────────────────
 def adb(cmd: str) -> str:
-    """adb -s <serial> shell <cmd> を実行"""
+    """adb -s <serial> <cmd> を実行"""
     full = f"adb -s {DEVICE_SERIAL} {cmd}"
     try:
         result = subprocess.run(
@@ -96,7 +99,7 @@ def adb(cmd: str) -> str:
 
 
 def take_screenshot() -> tuple[Path, int, int]:
-    """スクリーンショットを取得してローカルに保存。(path, width, height) を返す"""
+    """スクリーンショットを取得。(path, width, height) を返す"""
     adb(f"shell screencap -p {REMOTE_PATH}")
     subprocess.run(
         f"adb -s {DEVICE_SERIAL} pull {REMOTE_PATH} {SCREENSHOT_PATH}",
@@ -108,15 +111,29 @@ def take_screenshot() -> tuple[Path, int, int]:
         with Image.open(path) as img:
             w, h = img.size
     except Exception:
-        w, h = SCREEN_W, SCREEN_H
+        w, h = ANALYSIS_W, ANALYSIS_H
     return path, w, h
 
 
-def tap(x: int, y: int, desc: str = "") -> None:
-    """指定座標をタップ (UI安定待機0.5秒後)"""
+def tap_device(x: int, y: int, state: PilotState, desc: str = "") -> None:
+    """
+    実機座標でタップ。解析座標 (ANALYSIS_W x ANALYSIS_H) から
+    実機座標への自動スケーリングを行う。
+    """
+    if state.device_w and state.device_h:
+        sx = state.device_w / ANALYSIS_W
+        sy = state.device_h / ANALYSIS_H
+        real_x = int(x * sx)
+        real_y = int(y * sy)
+    else:
+        real_x, real_y = x, y
     time.sleep(0.5)
-    adb(f"shell input tap {x} {y}")
-    logger.info("  TAP (%d, %d) %s", x, y, desc)
+    adb(f"shell input tap {real_x} {real_y}")
+    state.total_taps += 1
+    if (real_x, real_y) != (x, y):
+        logger.info("  TAP (%d,%d) → device (%d,%d) %s", x, y, real_x, real_y, desc)
+    else:
+        logger.info("  TAP (%d,%d) %s", x, y, desc)
 
 
 def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> None:
@@ -136,6 +153,44 @@ def save_evidence(img_path: Path, ocr_results: list, action: str, state: PilotSt
         state.screenshots_saved += 1
     except Exception as e:
         logger.warning("Evidence save failed: %s", e)
+
+
+def prepare_analysis_image(img_path: Path, actual_w: int, actual_h: int) -> Path:
+    """
+    解析用画像を準備する。ポートレートならランドスケープに回転し、
+    ANALYSIS_W x ANALYSIS_H にリサイズする。
+    元画像と同じならそのまま返す。
+    """
+    from PIL import Image
+    needs_transform = False
+
+    # ポートレート検出 (w < h だがランドスケープが期待される場合)
+    if actual_w < actual_h:
+        needs_transform = True
+
+    # 解像度が基準と異なる場合
+    if (actual_w, actual_h) != (ANALYSIS_W, ANALYSIS_H) and \
+       (actual_h, actual_w) != (ANALYSIS_W, ANALYSIS_H):
+        needs_transform = True
+
+    if not needs_transform:
+        return img_path
+
+    analysis_path = Path("/tmp/lc_autopilot_analysis.png")
+    img = Image.open(img_path)
+
+    # ポートレート → ランドスケープに回転
+    if img.width < img.height:
+        img = img.rotate(90, expand=True)
+        logger.debug("Portrait → Landscape rotation applied")
+
+    # リサイズ
+    if img.size != (ANALYSIS_W, ANALYSIS_H):
+        img = img.resize((ANALYSIS_W, ANALYSIS_H), Image.LANCZOS)
+        logger.debug("Resized to %dx%d for analysis", ANALYSIS_W, ANALYSIS_H)
+
+    img.save(analysis_path)
+    return analysis_path
 
 
 # ─── OCR テキスト検索ヘルパー ──────────────────────
@@ -159,20 +214,19 @@ def all_texts(ocr: list) -> list[str]:
 
 
 # ─── 画面判定・アクション ──────────────────────────
-def detect_and_act(ocr: list, state: PilotState,
-                   screen_w: int = SCREEN_W, screen_h: int = SCREEN_H) -> tuple[str, float]:
+def detect_and_act(ocr: list, state: PilotState) -> tuple[str, float]:
     """
-    OCR結果を分析し、適切なアクションを実行する。
-    screen_w/screen_h は今回のスクリーンショット実測値を使用する。
+    OCR結果を分析し、確実なターゲットが見つかった場合のみタップする。
+    座標はすべて解析基準 (ANALYSIS_W x ANALYSIS_H) で計算し、
+    tap_device() が実機座標へスケーリングする。
 
     Returns:
         (action_name, wait_seconds)
     """
     texts = all_texts(ocr)
-    texts_joined = " ".join(texts)
+    W, H = ANALYSIS_W, ANALYSIS_H
 
     # ─── ホーム画面検出 ───
-    # まどドラのホーム画面要素: フッターに光の間、ショップ、ガシャ、パーティ等
     home_indicators = ["光の間", "ショップ", "ガシャ", "ガチャ", "パーティ",
                        "クエスト", "ミッション", "メニュー", "ホーム",
                        "お知らせ", "イベント", "フレンド", "マイページ", "編成"]
@@ -183,36 +237,30 @@ def detect_and_act(ocr: list, state: PilotState,
         return "HOME_REACHED", 0
 
     # ─── ダウンロード/ロード中 ───
-    dl = has_any(ocr, ["ダウンロード", "追加データ", "Loading", "ロード中", "通信中", "Now Loading"])
+    dl = has_any(ocr, ["ダウンロード", "追加データ", "Loading", "ロード中",
+                       "通信中", "Now Loading"])
     if dl:
         logger.info(">>> ダウンロード/ロード中: '%s' — 待機", dl["text"])
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
 
-    # ─── クエストマップ/ステージ選択画面 ───
-    # ステージ番号 (1-1, 1-2 等) + Main が同時に見えたらクエストマップ
+    # ─── クエストマップ/ステージ選択 ───
     stage_num = has_any(ocr, ["1-1", "1-2", "1-3", "2-1", "2-2", "2-3",
                                "3-1", "3-2", "4-1", "4-2", "Main"])
     sentu_btn = has_text(ocr, "戦闘") or has_text(ocr, "出撃")
-    # 「探索」ボタン=戦闘ボタン付近の別検出 / 右下エリア(y>500)のみ対象
     if not sentu_btn:
         expl = has_text(ocr, "探索")
-        if expl and expl["center"][1] > 500:
+        if expl and expl["center"][1] > H * 0.6:
             sentu_btn = expl
     if stage_num and sentu_btn:
         cx, cy = sentu_btn["center"]
-        logger.info(">>> クエストマップ — 「%s」ボタンをタップ (%d,%d)",
-                    sentu_btn["text"], cx, cy)
-        tap(cx, cy, f"QUEST_START {sentu_btn['text']}")
-        state.total_taps += 1
+        logger.info(">>> クエストマップ — 「%s」をタップ (%d,%d)", sentu_btn["text"], cx, cy)
+        tap_device(cx, cy, state, f"QUEST_START {sentu_btn['text']}")
         state.battle_wait_count = 0
         return "QUEST_START", 5.0
     elif stage_num and not sentu_btn:
-        # 戦闘ボタンがOCRで見つからない場合は右下固定座標をタップ
-        fx = int(screen_w * 0.74)  # 1520 * 0.74 ≈ 1125
-        fy = int(screen_h * 0.91)  # 720 * 0.91 ≈ 655
-        logger.info(">>> クエストマップ(戦闘ボタン未検出) — 固定座標 (%d,%d) タップ", fx, fy)
-        tap(fx, fy, "QUEST_START_FIXED")
-        state.total_taps += 1
+        fx, fy = int(W * 0.74), int(H * 0.91)
+        logger.info(">>> クエストマップ(ボタン未検出) — 固定座標 (%d,%d)", fx, fy)
+        tap_device(fx, fy, state, "QUEST_START_FIXED")
         state.battle_wait_count = 0
         return "QUEST_START", 5.0
 
@@ -222,54 +270,46 @@ def detect_and_act(ocr: list, state: PilotState,
     battle = has_any(ocr, battle_keywords)
     if battle:
         state.battle_wait_count += 1
-        # チュートリアルポップアップ(行動説明テキスト)がある場合はタップして閉じる
-        # 「攻撃対象を変更」= 敵をタップする操作チュートリアル → 指差し先の敵をタップ
-        # 「スキルを使ってみましょう」= 戦闘スキルカードをタップするチュートリアル
-        # 「バフ効果」説明 → ハイライトされたスキルカード（右寄り）をタップ
+
+        # バトルチュートリアル: バフ効果
         buff_tut = has_any(ocr, ["バフ効果を発生", "支援するバフ", "CRTアップ", "バフ効果"])
         if buff_tut and has_text(ocr, "ことができます"):
-            bx = int(screen_w * 0.888)  # ≈ 1350
-            by = int(screen_h * 0.667)  # ≈ 480
-            logger.info(">>> バフ効果チュートリアル — CRTカードをタップ (%d,%d)", bx, by)
-            tap(bx, by, "BUFF_TUTORIAL_TAP")
-            state.total_taps += 1
+            bx, by = int(W * 0.888), int(H * 0.667)
+            logger.info(">>> バフチュートリアル — CRTカード (%d,%d)", bx, by)
+            tap_device(bx, by, state, "BUFF_TUTORIAL")
             return "BATTLE_TUTORIAL", 2.0
+
+        # バトルチュートリアル: スキル使用
         skill_tut = has_any(ocr, ["スキルを使ってみましょう", "スキを使ってみ",
                                    "戦闘スキルを使", "戦闘スキを使",
                                    "スキルを使用してみ", "使ってみましょう"])
         if skill_tut:
-            # 戦闘スキルカードは右端ボタン: 約 (1440, 520) / 1520x720
-            # ※ カードは1回目タップで拡大表示 → 2回目で実行
-            sx = int(screen_w * 0.947)  # ≈ 1440
-            sy = int(screen_h * 0.722)  # ≈ 520
-            logger.info(">>> スキルチュートリアル — 戦闘スキルカードをタップ (%d,%d)", sx, sy)
-            tap(sx, sy, "SKILL_CARD_TUTORIAL")
+            sx, sy = int(W * 0.947), int(H * 0.722)
+            logger.info(">>> スキルチュートリアル (%d,%d)", sx, sy)
+            tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL")
             time.sleep(0.8)
-            tap(sx, sy, "SKILL_CARD_TUTORIAL confirm")
-            state.total_taps += 2
+            tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL confirm")
             return "BATTLE_TUTORIAL", 3.0
-        # 必殺技チュートリアル: CTDアップバフカード + 必殺技 が表示される
+
+        # バトルチュートリアル: 必殺技
         hissatsu_tut = has_any(ocr, ["CTDアップ", "必殺技"])
         if hissatsu_tut:
-            # 必殺技カードの固定座標: 約 (1310, 560) / 1520x720
-            hx = int(screen_w * 0.862)  # ≈ 1310
-            hy = int(screen_h * 0.778)  # ≈ 560
-            logger.info(">>> 必殺技チュートリアル — 必殺技カードをタップ (%d,%d)", hx, hy)
-            tap(hx, hy, "HISSATSU_TUTORIAL")
+            hx, hy = int(W * 0.862), int(H * 0.778)
+            logger.info(">>> 必殺技チュートリアル (%d,%d)", hx, hy)
+            tap_device(hx, hy, state, "HISSATSU_TUTORIAL")
             time.sleep(0.8)
-            tap(hx, hy, "HISSATSU_TUTORIAL confirm")
-            state.total_taps += 2
+            tap_device(hx, hy, state, "HISSATSU_TUTORIAL confirm")
             return "BATTLE_TUTORIAL", 3.0
+
+        # バトルチュートリアル: 攻撃対象変更
         attack_target_tut = has_any(ocr, ["攻撃対象を変更", "対象を変更"])
         if attack_target_tut:
-            # 指差しアイコンがある敵の位置 (ゴールドハイライトボックス内の敵)
-            # スクリーンショット実測値: 敵 ≈ (990, 260), 指差し ≈ (1000, 410) / 1520x720
-            ex = int(screen_w * 0.651)  # ≈ 990
-            ey = int(screen_h * 0.361)  # ≈ 260
-            logger.info(">>> 攻撃対象チュートリアル — 指差し先の敵をタップ (%d,%d)", ex, ey)
-            tap(ex, ey, "ATTACK_TARGET_TUTORIAL")
-            state.total_taps += 1
+            ex, ey = int(W * 0.651), int(H * 0.361)
+            logger.info(">>> 攻撃対象チュートリアル (%d,%d)", ex, ey)
+            tap_device(ex, ey, state, "ATTACK_TARGET_TUTORIAL")
             return "BATTLE_TUTORIAL", 2.0
+
+        # バトルチュートリアル: 一般ポップアップ (説明テキスト)
         tutorial_popup = has_any(ocr, ["タイムライン", "表示されている", "行動してい",
                                         "ここをタップ", "タップしてください",
                                         "ことができます", "することができ",
@@ -277,99 +317,87 @@ def detect_and_act(ocr: list, state: PilotState,
                                         "ましょう", "みましょう", "てみよう",
                                         "一番上に", "順番に行動"])
         if tutorial_popup:
-            logger.info(">>> バトルチュートリアルポップアップ — 中央タップ")
-            tap(screen_w // 2, screen_h // 2, "battle tutorial dismiss")
-            state.total_taps += 1
+            # ポップアップ内テキストの座標をタップ (中央ではなくテキスト自体)
+            cx, cy = tutorial_popup["center"]
+            logger.info(">>> バトルチュートリアルポップアップ — テキスト座標タップ (%d,%d)", cx, cy)
+            tap_device(cx, cy, state, "BATTLE_TUTORIAL_POPUP")
             return "BATTLE_TUTORIAL", 2.0
-        # AUTOボタンをタップ（まだオンにしていない場合のみ）
-        # 座標はスクリーンショット実測値: 上部バー右側 (1285, 65) / 1520x720
-        AUTO_BTN_X = int(screen_w * 0.845)  # ≈ 1285
-        AUTO_BTN_Y = int(screen_h * 0.090)  # ≈ 65
+
+        # AUTO ボタン
         if not state.auto_activated:
-            tap(AUTO_BTN_X, AUTO_BTN_Y, "AUTO ON (fixed coord)")
-            state.total_taps += 1
+            ax, ay = int(W * 0.845), int(H * 0.090)
+            logger.info(">>> AUTO タップ (%d,%d)", ax, ay)
+            tap_device(ax, ay, state, "AUTO_ON")
             state.auto_activated = True
-            logger.info(">>> バトル中 — AUTO タップ (固定座標 %d,%d)", AUTO_BTN_X, AUTO_BTN_Y)
             return "BATTLE_AUTO", BATTLE_WAIT
 
-        # 長時間待機でバトルが進まない → ハイライト候補を順番にタップ試行
-        # フェーズ0: 戦闘スキル, フェーズ4: 必殺技, フェーズ8: 中央タップ (チュートリアルテキスト解除)
+        # バトル停滞時: ハイライト候補を順番にタップ試行
         if state.battle_wait_count > 8:
-            stall_phase = (state.battle_wait_count - 8) % 12
+            stall_phase = (state.battle_wait_count - 8) % 8
             if stall_phase == 0:
-                sx = int(screen_w * 0.947)  # ≈ 1440
-                sy = int(screen_h * 0.722)  # ≈ 520
-                logger.info(">>> バトル停滞[phase0] — 戦闘スキルタップ (%d,%d)", sx, sy)
-                tap(sx, sy, "STALL_SKILL")
+                sx, sy = int(W * 0.947), int(H * 0.722)
+                logger.info(">>> バトル停滞 — スキルタップ試行 (%d,%d)", sx, sy)
+                tap_device(sx, sy, state, "STALL_SKILL")
                 time.sleep(0.8)
-                tap(sx, sy, "STALL_SKILL confirm")
-                state.total_taps += 2
+                tap_device(sx, sy, state, "STALL_SKILL confirm")
                 return "BATTLE_STALL", 2.0
             elif stall_phase == 4:
-                hx = int(screen_w * 0.862)  # ≈ 1310
-                hy = int(screen_h * 0.778)  # ≈ 560
-                logger.info(">>> バトル停滞[phase4] — 必殺技タップ (%d,%d)", hx, hy)
-                tap(hx, hy, "STALL_HISSATSU")
+                hx, hy = int(W * 0.862), int(H * 0.778)
+                logger.info(">>> バトル停滞 — 必殺技タップ試行 (%d,%d)", hx, hy)
+                tap_device(hx, hy, state, "STALL_HISSATSU")
                 time.sleep(0.8)
-                tap(hx, hy, "STALL_HISSATSU confirm")
-                state.total_taps += 2
+                tap_device(hx, hy, state, "STALL_HISSATSU confirm")
                 return "BATTLE_STALL", 2.0
-            elif stall_phase == 8:
-                logger.info(">>> バトル停滞[phase8] — 中央タップ (チュートリアルテキスト解除)")
-                tap(screen_w // 2, screen_h // 2, "STALL_CENTER")
-                state.total_taps += 1
-                return "BATTLE_STALL", 2.0
-        logger.info(">>> バトル中 — 待機 (count=%d, auto=%s)", state.battle_wait_count, state.auto_activated)
+
+        logger.info(">>> バトル中 — 待機 (count=%d, auto=%s)",
+                    state.battle_wait_count, state.auto_activated)
         return "BATTLE_WAIT", BATTLE_WAIT
 
-    # バトル待機カウントをリセット (バトル画面でなくなった)
+    # バトル終了検出
     if state.battle_wait_count > 0:
         logger.info(">>> バトル終了検出 (wait_count was %d)", state.battle_wait_count)
         state.battle_wait_count = 0
-        state.auto_activated = False  # 次のバトル用にリセット
+        state.auto_activated = False
 
-    # ─── バトル結果/リザルト ─── (「初回報酬」=クエストマップ表示なので除外)
+    # ─── バトル結果/リザルト ───
     result_match = has_any(ocr, ["リザルト", "Result", "RESULT", "勝利", "Victory",
                                   "クリア", "CLEAR", "EXP", "経験値", "ランクアップ"])
     if result_match:
-        logger.info(">>> バトル結果: '%s' — タップして進む", result_match["text"])
-        tap(screen_w // 2, screen_h // 2, "result screen tap")
-        state.total_taps += 1
+        cx, cy = result_match["center"]
+        logger.info(">>> バトル結果: '%s' — 座標タップ (%d,%d)", result_match["text"], cx, cy)
+        tap_device(cx, cy, state, "RESULT_TAP")
         return "RESULT_TAP", 3.0
 
-    # ─── スキップ可能なシーン ───
+    # ─── スキップ ───
     skip_match = has_any(ocr, ["スキップ", "SKIP", "Skip"])
     if skip_match:
         cx, cy = skip_match["center"]
-        tap(cx, cy, f"SKIP '{skip_match['text']}'")
-        state.total_taps += 1
-        logger.info(">>> スキップボタンをタップ")
+        logger.info(">>> スキップ '%s' (%d,%d)", skip_match["text"], cx, cy)
+        tap_device(cx, cy, state, f"SKIP '{skip_match['text']}'")
         return "SKIP", 3.0
 
-    # ─── 「閉じる」ボタン ───
+    # ─── 閉じるボタン ───
     close_match = has_any(ocr, ["閉じる", "Close", "CLOSE", "とじる"])
     if close_match:
         cx, cy = close_match["center"]
-        tap(cx, cy, f"CLOSE '{close_match['text']}'")
-        state.total_taps += 1
+        logger.info(">>> 閉じる '%s' (%d,%d)", close_match["text"], cx, cy)
+        tap_device(cx, cy, state, f"CLOSE '{close_match['text']}'")
         return "CLOSE", 2.0
 
-    # ─── 規約同意画面 ───
+    # ─── 規約同意 ───
     agree_match = has_any(ocr, ["同意", "規約", "利用規約"])
     if agree_match:
-        # 規約は3回スワイプしてから同意タップ
-        logger.info(">>> 規約画面 — スクロールしてから同意")
+        logger.info(">>> 規約画面 — スクロール→同意")
         for _ in range(3):
             swipe(700, 500, 700, 200, 500)
             time.sleep(0.8)
         agree_btn = has_any(ocr, ["同意"])
         if agree_btn:
             cx, cy = agree_btn["center"]
-            tap(cx, cy, "AGREE")
-            state.total_taps += 1
+            tap_device(cx, cy, state, "AGREE")
         return "AGREE", 3.0
 
-    # ─── 確認ダイアログ (OK/はい/次へ/確認/完了/決定) ───
+    # ─── 確認ダイアログ (OK/はい/次へ 等) ───
     confirm_match = has_any(ocr, ["OK", "はい", "次へ", "確認", "完了", "決定",
                                    "受け取る", "受取", "了解", "わかった",
                                    "進む", "START", "開始", "タップ",
@@ -377,89 +405,74 @@ def detect_and_act(ocr: list, state: PilotState,
                                    "戦闘", "出撃", "クエスト開始", "バトル開始"])
     if confirm_match:
         cx, cy = confirm_match["center"]
-        tap(cx, cy, f"CONFIRM '{confirm_match['text']}'")
-        state.total_taps += 1
+        logger.info(">>> 確認 '%s' (%d,%d)", confirm_match["text"], cx, cy)
+        tap_device(cx, cy, state, f"CONFIRM '{confirm_match['text']}'")
         return "CONFIRM", 3.0
 
-    # ─── ストーリー/会話画面（テキストボックスが下部にある） ───
-    # 画面下半分にテキストがある場合はストーリーと判断してタップ
-    lower_texts = [r for r in ocr if r["center"][1] > screen_h * 0.6]
+    # ─── ストーリー/会話 (下部テキストボックス) ───
+    lower_texts = [r for r in ocr if r["center"][1] > H * 0.6]
     if lower_texts and len(ocr) <= 15:
-        # 少量のテキストが下部にある = 会話画面の可能性
-        logger.info(">>> ストーリー/会話画面の可能性 — 画面タップ")
-        tap(screen_w // 2, screen_h // 2, "story tap")
-        state.total_taps += 1
+        # 送りアイコン (▼) または最下部のテキストをタップ
+        target = lower_texts[-1]  # 最下部のテキスト
+        cx, cy = target["center"]
+        logger.info(">>> ストーリー送り — '%s' (%d,%d)", target["text"][:10], cx, cy)
+        tap_device(cx, cy, state, "STORY_TAP")
         return "STORY_TAP", 2.0
 
-    # ─── チュートリアル矢印/ハイライト ───
+    # ─── チュートリアル指示テキスト ───
     tutorial_match = has_any(ocr, ["チュートリアル", "Tutorial", "ここをタップ",
                                     "タップしてください", "タップして"])
     if tutorial_match:
         cx, cy = tutorial_match["center"]
-        tap(cx, cy, f"TUTORIAL '{tutorial_match['text']}'")
-        state.total_taps += 1
+        logger.info(">>> チュートリアル '%s' (%d,%d)", tutorial_match["text"], cx, cy)
+        tap_device(cx, cy, state, f"TUTORIAL '{tutorial_match['text']}'")
         return "TUTORIAL", 3.0
 
-    # ─── ログインボーナス等のポップアップ ───
+    # ─── ログインボーナス等 ───
     bonus_match = has_any(ocr, ["ログイン", "ボーナス", "プレゼント", "獲得"])
     if bonus_match:
-        # 画面中央タップで閉じる
-        tap(screen_w // 2, screen_h // 2, "popup dismiss")
-        state.total_taps += 1
-        return "POPUP_DISMISS", 2.0
+        cx, cy = bonus_match["center"]
+        logger.info(">>> ポップアップ '%s' (%d,%d)", bonus_match["text"], cx, cy)
+        tap_device(cx, cy, state, "POPUP_TAP")
+        return "POPUP_TAP", 2.0
 
-    # ─── フォールバック: タップ禁止・待機のみ ───
-    # 何も確実なターゲットが見つからない場合はタップせず待機する。
-    # 画面変化は phash 比較でメインループ側が検知する。
-    logger.info(">>> 不明な画面 — タップせず待機 (consecutive_same=%d)",
-                state.consecutive_same)
-    return "WAIT_FOR_CHANGE", LONG_WAIT
+    # ─── フォールバック: タップ禁止 ───
+    # 確実なターゲットが見つからない → タップせず待機。
+    # スタック検知はメインループ側の phash + 30秒タイマーが処理する。
+    logger.info(">>> 不明な画面 — Waiting for changes... (タップなし)")
+    return "WAIT_FOR_CHANGE", 0
 
 
 # ─── メインループ ─────────────────────────────────
-def verify_scale() -> None:
-    """スクリーンショット解像度とデバイス解像度を照合してスケールを確認"""
-    try:
-        from PIL import Image
-        tmp = Path("/tmp/lc_scale_check.png")
-        adb(f"shell screencap -p /sdcard/lc_scale_check.png")
-        subprocess.run(f"adb -s {DEVICE_SERIAL} pull /sdcard/lc_scale_check.png {tmp}",
-                       shell=True, capture_output=True, timeout=10)
-        img = Image.open(tmp)
-        w, h = img.size
-        logger.info("解像度照合: screenshot=%dx%d, SCREEN_W=%d, SCREEN_H=%d",
-                    w, h, SCREEN_W, SCREEN_H)
-        if (w, h) != (SCREEN_W, SCREEN_H):
-            logger.warning("⚠ 解像度ミスマッチ! OCR座標がズレる可能性あり")
-        else:
-            logger.info("✓ 解像度一致 — スケール係数 1.0 (補正不要)")
-    except Exception as e:
-        logger.warning("スケール検証スキップ: %s", e)
-
-
 def main():
     logger.info("=" * 62)
-    logger.info("  まどドラ自律操縦 — Auto Pilot 開始")
+    logger.info("  まどドラ自律操縦 — Auto Pilot (低燃費版)")
     logger.info("  デバイス: %s", DEVICE_SERIAL)
+    logger.info("  ポーリング: %.1fs  スタックタイムアウト: %.0fs",
+                POLL_INTERVAL, STALL_TIMEOUT)
     logger.info("=" * 62)
 
-    verify_scale()
     state = PilotState()
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
     for i in range(MAX_ITERATIONS):
         state.iteration = i
 
-        # 1) スクリーンショット取得 (実測解像度も取得)
-        img_path, cur_w, cur_h = take_screenshot()
+        # ── 1) スクリーンショット取得 ──
+        img_path, actual_w, actual_h = take_screenshot()
         if not img_path.exists():
             logger.warning("Screenshot failed, retrying...")
             time.sleep(2)
             continue
-        if (cur_w, cur_h) != (SCREEN_W, SCREEN_H):
-            logger.warning("⚠ 解像度変化: %dx%d → 座標系を自動調整", cur_w, cur_h)
 
-        # 2) phash 粗解析 — 画面変化の有無を判定
+        # 初回: 実機解像度を記録
+        if not state.device_w:
+            state.device_w = actual_w
+            state.device_h = actual_h
+            logger.info("実機解像度: %dx%d (解析基準: %dx%d)",
+                        actual_w, actual_h, ANALYSIS_W, ANALYSIS_H)
+
+        # ── 2) phash 粗解析 (1秒ポーリング) ──
         try:
             cur_phash = compute_phash(img_path)
         except Exception:
@@ -468,73 +481,101 @@ def main():
         if state.last_phash and cur_phash:
             dist = phash_distance(state.last_phash, cur_phash)
         else:
-            dist = 999  # 初回は「変化あり」扱い
+            dist = 999  # 初回 → 変化あり扱い
 
-        screen_changed = dist >= PHASH_SAME_THRESHOLD
+        screen_changed = dist >= PHASH_THRESHOLD
 
         if not screen_changed:
-            # 画面変化なし → OCR スキップ、タップ禁止、5 秒待機
-            state.consecutive_same += 1
+            # ── 画面変化なし: OCR スキップ、タップ禁止 ──
             state.total_ocr_skipped += 1
+            if state.stall_start == 0:
+                state.stall_start = time.time()
+            stall_elapsed = time.time() - state.stall_start
 
-            if state.consecutive_same >= STALL_LIMIT:
-                logger.info(
-                    "[iter %d] Waiting for visual change... "
-                    "(phash_dist=%d, stalled=%d, ocr_skipped=%d)",
-                    i, dist, state.consecutive_same, state.total_ocr_skipped,
+            # 30秒スタック → 右上×ボタンをタップ試行 (1回だけ)
+            if stall_elapsed >= STALL_TIMEOUT and not state.stall_corner_tried:
+                logger.warning(
+                    ">>> %.0f秒スタック — 右上×ボタン試行 (%d,%d)",
+                    stall_elapsed, actual_w - 40, 40,
                 )
-                # スタック状態: エビデンスを残して待機 (タップしない)
-                if state.consecutive_same == STALL_LIMIT:
-                    save_evidence(img_path, [], "STALLED", state)
-            else:
-                logger.info(
-                    "[iter %d] No change (phash_dist=%d) — skip OCR, wait %.1fs",
-                    i, dist, LOOP_INTERVAL,
+                save_evidence(img_path, [], "STALL_CORNER", state)
+                time.sleep(0.5)
+                adb(f"shell input tap {actual_w - 40} 40")
+                state.total_taps += 1
+                state.stall_corner_tried = True
+                state.last_phash = ""  # 次ループで強制的に変化検出
+                time.sleep(2)
+                continue
+
+            # 角タップ後もさらに30秒スタック → 停止して報告
+            if stall_elapsed >= STALL_TIMEOUT * 2 and state.stall_corner_tried:
+                logger.error(
+                    ">>> %.0f秒スタック解消不能 — 停止して手動確認を要求",
+                    stall_elapsed,
                 )
+                save_evidence(img_path, [], "STALL_FATAL", state)
+                logger.info("  総タップ数: %d  OCR実行: %d  OCRスキップ: %d",
+                            state.total_taps, state.total_ocr_calls,
+                            state.total_ocr_skipped)
+                return
+
+            if i % 10 == 0:
+                logger.info("[iter %d] No change (phash=%d, stall=%.0fs) — polling...",
+                            i, dist, stall_elapsed)
             state.last_phash = cur_phash
-            time.sleep(LOOP_INTERVAL)
+            time.sleep(POLL_INTERVAL)
             continue
 
-        # 画面が変化した → phash 連続カウントをリセット
-        state.consecutive_same = 0
+        # ── 画面が変化した! → スタックタイマーリセット ──
+        state.stall_start = 0.0
+        state.stall_corner_tried = False
         state.last_phash = cur_phash
 
-        # 3) OCR 精査 (画面変化があった時のみ実行)
+        # ── 3) 解析用画像の準備 (リサイズ/回転) ──
+        analysis_path = prepare_analysis_image(img_path, actual_w, actual_h)
+
+        # ── 4) OCR 精査 (画面変化時のみ) ──
+        state.total_ocr_calls += 1
         try:
-            ocr_results = run_ocr(str(img_path), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
+            ocr_results = run_ocr(str(analysis_path), lang=OCR_LANG,
+                                  min_confidence=OCR_MIN_CONF)
         except Exception as e:
             logger.error("OCR failed: %s", e)
             time.sleep(3)
             continue
 
         texts = all_texts(ocr_results)
-        logger.info("[iter %d] %dx%d phash_dist=%d OCR: %s",
-                    i, cur_w, cur_h, dist, texts[:10])
+        logger.info("[iter %d] phash_dist=%d OCR(%d): %s",
+                    i, dist, len(ocr_results), texts[:10])
         state.last_ocr_texts = texts
 
-        # 4) 判定 & アクション実行 (実測解像度を渡す)
-        action, wait_sec = detect_and_act(ocr_results, state, cur_w, cur_h)
+        # ── 5) 判定 & アクション ──
+        action, wait_sec = detect_and_act(ocr_results, state)
         state.last_action = action
 
-        # エビデンス保存 (10回に1回 + 重要アクション)
-        if i % 10 == 0 or action in ("HOME_REACHED", "SKIP", "AGREE", "RESULT_TAP"):
+        # エビデンス保存
+        if i % 20 == 0 or action in ("HOME_REACHED", "SKIP", "AGREE",
+                                       "RESULT_TAP", "STALL_CORNER"):
             save_evidence(img_path, ocr_results, action, state)
 
-        # 5) ホーム画面到達チェック
+        # ── 6) ホーム画面到達チェック ──
         if state.home_reached:
             logger.info("=" * 62)
             logger.info("  ホーム画面に到達しました!")
             logger.info("  総タップ数: %d", state.total_taps)
             logger.info("  総イテレーション: %d", i + 1)
-            logger.info("  OCR スキップ数: %d", state.total_ocr_skipped)
+            logger.info("  OCR 実行: %d  スキップ: %d",
+                        state.total_ocr_calls, state.total_ocr_skipped)
             logger.info("  スクリーンショット保存: %d", state.screenshots_saved)
             logger.info("=" * 62)
             save_evidence(img_path, ocr_results, "FINAL_HOME", state)
             return
 
-        # 6) 待機
-        logger.info("  [%s] wait %.1fs", action, wait_sec)
-        time.sleep(wait_sec)
+        # ── 7) 待機 ──
+        if wait_sec > 0:
+            logger.info("  [%s] wait %.1fs", action, wait_sec)
+            time.sleep(wait_sec)
+        # wait_sec == 0 → 即座に次のポーリングへ (WAIT_FOR_CHANGE)
 
     logger.warning("最大イテレーション(%d)に到達。手動確認が必要です。", MAX_ITERATIONS)
 
