@@ -12,6 +12,7 @@ auto_pilot.py — まどドラ自律操縦スクリプト (低燃費版)
 """
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import subprocess
@@ -90,6 +91,8 @@ class PilotState:
     # 動的閾値制御
     current_threshold: int = PHASH_THRESHOLD  # AI 結果に応じて動的に変化
     elevated_until: float = 0.0               # 閾値引き上げ期限 (time.time())
+    # 強制解析用
+    same_phash_count: int = 0                 # phash が変わらない連続回数
 
 
 # ─── ADB ユーティリティ ─────────────────────────────
@@ -476,10 +479,19 @@ def detect_and_act(ocr: list, state: PilotState) -> tuple[str, float]:
     return "WAIT_FOR_CHANGE", 0
 
 
+# ─── コマンドライン引数 ───────────────────────────────
+def parse_args():
+    parser = argparse.ArgumentParser(description="まどドラ自律操縦")
+    parser.add_argument("--force-analyze", action="store_true",
+                        help="強制解析モード: 同じ画面が3回以上続いたら強制 OCR")
+    return parser.parse_args()
+
+
 # ─── メインループ ─────────────────────────────────
-def main():
+def main(force_analyze=False):
     logger.info("=" * 62)
-    logger.info("  まどドラ自律操縦 — Auto Pilot (低燃費版)")
+    logger.info("  まどドラ自律操縦 — Auto Pilot (低燃費版%s)",
+                " [強制解析モード]" if force_analyze else "")
     logger.info("  デバイス: %s", DEVICE_SERIAL)
     logger.info("  ポーリング: %.1fs  スタックタイムアウト: %.0fs",
                 POLL_INTERVAL, STALL_TIMEOUT)
@@ -548,11 +560,20 @@ def main():
         screen_changed = dist >= active_threshold
 
         if not screen_changed:
-            # ── 画面変化なし: OCR スキップ、タップ禁止 ──
-            state.total_ocr_skipped += 1
-            if state.stall_start == 0:
-                state.stall_start = time.time()
-            stall_elapsed = time.time() - state.stall_start
+            # ── 強制解析モード: 同じ画面が3回以上続いたら強制 OCR ──
+            if force_analyze:
+                state.same_phash_count += 1
+                if state.same_phash_count >= 3 and state.same_phash_count % 3 == 0:
+                    logger.info("[iter %d] 強制解析モード: 同じ画面 %d回 → 強制 OCR 実行",
+                                i, state.same_phash_count)
+                    screen_changed = True  # 強制的に OCR を実行
+
+            if not screen_changed:
+                # ── 画面変化なし: OCR スキップ、タップ禁止 ──
+                state.total_ocr_skipped += 1
+                if state.stall_start == 0:
+                    state.stall_start = time.time()
+                stall_elapsed = time.time() - state.stall_start
 
             # 30秒スタック → 右上×ボタンをタップ試行 (1回だけ)
             if stall_elapsed >= STALL_TIMEOUT and not state.stall_corner_tried:
@@ -593,6 +614,7 @@ def main():
         state.stall_start = 0.0
         state.stall_corner_tried = False
         state.last_phash = cur_phash
+        state.same_phash_count = 0  # 強制解析カウンタをリセット
 
         # ── 4) 解析用画像の準備 (リサイズ/回転) ──
         analysis_path = prepare_analysis_image(img_path, actual_w, actual_h)
@@ -658,4 +680,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(force_analyze=args.force_analyze)
