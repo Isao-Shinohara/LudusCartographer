@@ -5,8 +5,9 @@
     0
   ],
   "threshold": 0.8,
-  "require_ocr": [
-    "NEW"
+  "require_ocr_all": [
+    "NEW",
+    "OK"
   ],
-  "note": "ガチャ結果画面のOKボタン - NEWが3件以上の時のみ使用"
+  "note": "ガチャ結果画面のOKボタン - NEW(複数)とOKが同時にOCRに存在する時のみ使用"
 }

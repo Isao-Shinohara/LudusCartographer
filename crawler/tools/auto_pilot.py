@@ -392,6 +392,7 @@ class AssetManager:
                 "action": meta.get("action", f"ASSET_{name.upper()}"),
                 "offset": meta.get("offset", [0, 0]),
                 "require_ocr": meta.get("require_ocr", []),
+                "require_ocr_all": meta.get("require_ocr_all", []),
             }
             count += 1
         if count:
@@ -414,11 +415,17 @@ class AssetManager:
         best_score = 0.0
         best_result: Optional[tuple[int, int, str]] = None
         for name, data in self._templates.items():
-            # require_ocr チェック: OCRテキストに指定キーワードがない場合はスキップ
+            # require_ocr チェック: いずれか1つのキーワードがOCRにあればOK (OR条件)
             required = data.get("require_ocr", [])
             if required and ocr_texts is not None:
                 if not any(kw in t for kw in required for t in ocr_texts):
                     logger.debug("[Asset] '%s' skip: require_ocr not found in OCR", name)
+                    continue
+            # require_ocr_all チェック: すべてのキーワードがOCRに存在しなければスキップ (AND条件)
+            required_all = data.get("require_ocr_all", [])
+            if required_all and ocr_texts is not None:
+                if not all(any(kw in t for t in ocr_texts) for kw in required_all):
+                    logger.debug("[Asset] '%s' skip: require_ocr_all not all found in OCR", name)
                     continue
             tmpl = data["img"]
             if tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
@@ -1001,6 +1008,22 @@ def detect_and_act(ocr: list, state: PilotState,
         # 「AUTO」のみはストーリー画面にも表示されるため除外、戦闘固有キーワードで判定
         is_battle_screen = any(kw in " ".join(texts) for kw in
                                ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃", "必殺技", "BREAK", "WAVE", "Turn"])
+        # タイトル画面 / ホーム画面検出: ブロブ誤検出を防ぐ
+        _nav_joined = " ".join(texts)
+        is_title_screen = (
+            any(kw in _nav_joined for kw in ["TAP TO START", "Magia Exedra"]) or
+            ("動画配信" in _nav_joined and any(kw in _nav_joined for kw in ["魔法", "少女", "まどか", "マギカ"])) or
+            ("VID" in _nav_joined and any(kw in _nav_joined for kw in ["魔法", "少女", "まどか", "マギカ"]))
+        )
+        if is_title_screen:
+            logger.info("  タイトル画面検出 → TAP TO START (760,628) タップ")
+            tap_device(760, 628, state, "TITLE_TAP_START")
+            return "TITLE_TAP", 3.0
+        # ホーム画面検出: ホームナビキーワードが2個以上 → キャラ画像のブロブ誤検出をスキップ
+        _home_nav_kws = ["クエスト", "ショップ", "ガチャ", "ガシャ", "ユニオン",
+                         "光の間", "パーティ", "プレイヤーマッチ", "お知らせ",
+                         "イベント", "マイページ", "編成", "MAGIA EXEDRA"]
+        _home_kw_count = sum(1 for h in _home_nav_kws if any(h in t for t in texts))
         # ガチャ結果画面検出: "NEW" が 3件以上 → キャラ画像のオレンジ色を誤検出するためブロブ無効化
         new_count = sum(1 for t in texts if t == "NEW")
         is_gacha_result = new_count >= 3 and not is_battle_screen
@@ -1027,7 +1050,12 @@ def detect_and_act(ocr: list, state: PilotState,
             tap_device(760, 360, state, "GACHA_RESULT_CENTER_2")
             return "GACHA_OK", 2.0
         # min_area は常に400。空間フィルタ(下記)で誤検出を排除するため過大閾値は不要
-        blobs = find_finger_blobs(analysis_path, min_area=400)
+        # ホーム画面はキャラ画像が肌色誤検出になるためブロブ無効化
+        if _home_kw_count >= 2:
+            logger.info("  ホーム画面検出 (nav×%d) → MOYA_TAP スキップ", _home_kw_count)
+            blobs = []
+        else:
+            blobs = find_finger_blobs(analysis_path, min_area=400)
         if blobs:
             # バトル中は中央エリア(バトルフィールド)の肌色は誤検出なので無視
             # 優先順位: 左キャラカード(x<600,y>550) > 右パネル(x>1050) > 下部UI(y>H*0.8)
