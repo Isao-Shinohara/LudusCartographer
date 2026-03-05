@@ -113,6 +113,8 @@ class PilotState:
     last_prediction_desc: str = ""
     last_tap_text: str = ""
     last_action_pre_phash: str = ""
+    # ホーム画面からクエスト等への遷移試行回数 (遷移中の誤停止を防ぐ)
+    home_nav_count: int = 0
 
 
 # ─── シーン分類 ──────────────────────────────────────
@@ -888,6 +890,41 @@ def detect_and_act(ocr: list, state: PilotState,
         tap_device(cx, cy, state, "PRE_POPUP_TAP")
         return "TUTORIAL_POPUP", 1.0
 
+    # ─── 【最優先 #0-b】報酬/強化結果ポップアップを即時処理 (ブロブ誤検出防止) ───
+    # 「タップして次へ」: 報酬獲得画面の次へ進む
+    tap_next = has_text(ocr, "タップして次へ", min_conf=0.3)
+    if tap_next:
+        cx, cy = tap_next["center"]
+        logger.info(">>> 【報酬/次へ】 'タップして次へ' (%d,%d) タップ", cx, cy)
+        tap_device(cx, cy, state, "REWARD_NEXT")
+        return "REWARD_NEXT", 1.0
+
+    # 限界突破/強化完了/レベルアップ系ポップアップ → 右上 × ボタンで閉じる
+    close_popup_kws = ["限界突破", "強化完了", "レベルアップ", "称号獲得", "エピソード解放",
+                       "ランクアップ", "新しいコンテンツ", "アンロック"]
+    close_popup = has_any(ocr, close_popup_kws)
+    if close_popup:
+        close_x = W - 40  # 右上 × ボタン (1520-40=1480)
+        close_y = 40
+        logger.info(">>> 【%s ポップアップ】 → × (%d,%d) タップ", close_popup["text"][:6], close_x, close_y)
+        tap_device(close_x, close_y, state, f"CLOSE_POPUP_{close_popup['text'][:6]}")
+        return "CLOSE_POPUP", 1.5
+
+    # 「〜してみましょう」型チュートリアルガイド + ブロブスタック → × で閉じる
+    # 例: "今回は自動編成をしてみましょう。" が表示されたまま動かない場合
+    if state.blob_same_count >= 5:
+        tutorial_guide = (has_text(ocr, "てみましょう", min_conf=0.3) or
+                          has_text(ocr, "しましょう", min_conf=0.3))
+        is_battle_guide = any(kw in " ".join(texts) for kw in ["通常攻撃", "BREAK", "WAVE"])
+        if tutorial_guide and not is_battle_guide:
+            close_x = W - 40  # 右上 × ボタン (1480, 40)
+            close_y = 40
+            logger.info(">>> 【チュートリアルガイド スタック】 '%s' → × (%d,%d) タップ",
+                        tutorial_guide["text"][:10], close_x, close_y)
+            tap_device(close_x, close_y, state, "TUTORIAL_GUIDE_CLOSE")
+            state.blob_same_count = 0
+            return "CLOSE_POPUP", 1.5
+
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
     if analysis_path is not None:
         # 「AUTO」のみはストーリー画面にも表示されるため除外、戦闘固有キーワードで判定
@@ -962,13 +999,17 @@ def detect_and_act(ocr: list, state: PilotState,
             fx, fy, fa = chosen
             if right_blobs and len(blobs) > 1:
                 logger.info("  (右パネル優先: %d個中1個を選択)", len(blobs))
-            # 100px グリッドで同一座標判定 (50pxだとy=399/400で境界越えリセットが発生)
-            blob_pos = (fx // 100, fy // 100)
-            if blob_pos == state.last_blob_xy:
+            # 50px 近接判定: アニメーション中のブロブ (±20px移動) でもカウントが継続する
+            if state.last_blob_xy == (0, 0):
+                # 初回検出: 基準座標を設定してカウントを0にリセット
+                state.last_blob_xy = (fx, fy)
+                state.blob_same_count = 0
+            elif abs(fx - state.last_blob_xy[0]) <= 50 and abs(fy - state.last_blob_xy[1]) <= 50:
                 state.blob_same_count += 1
+                state.last_blob_xy = (fx, fy)  # 追跡: 次回比較基準を更新
             else:
                 state.blob_same_count = 0
-                state.last_blob_xy = blob_pos
+                state.last_blob_xy = (fx, fy)
             if state.blob_same_count >= 5:
                 logger.info(">>> もや同一座標 %d回タップ済み → OCRフォールバック (%d,%d)",
                             state.blob_same_count, fx, fy)
@@ -1024,7 +1065,8 @@ def detect_and_act(ocr: list, state: PilotState,
     # 「画面をタップ」系の指示 or バトルでもホームでもない日本語テキストが複数ある
     is_battle_now = any(kw in " ".join(texts) for kw in
                         ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃", "必殺技", "BREAK", "WAVE", "Turn"])
-    tap_screen_kws = ["画面をタップ", "タップして進む", "タップで進む", "タップしてください", "TOUCH TO CONTINUE"]
+    tap_screen_kws = ["画面をタップ", "タップして進む", "タップで進む", "タップしてください",
+                      "タップして次へ", "TOUCH TO CONTINUE"]
     tap_screen = has_any(ocr, tap_screen_kws)
     if tap_screen and not is_battle_now:
         cx, cy = tap_screen["center"]
@@ -1038,8 +1080,26 @@ def detect_and_act(ocr: list, state: PilotState,
                        "お知らせ", "イベント", "フレンド", "マイページ", "編成"]
     home_count = sum(1 for h in home_indicators if any(h in t for t in texts))
     if home_count >= 3:
-        logger.info(">>> ホーム画面検出! (%d個)", home_count)
         state.home_reached = True
+        # チュートリアルポインタが同一座標でスタックしている → クエスト探索へ移行
+        if state.blob_same_count >= 5:
+            logger.info(">>> ホーム画面 + もやスタック → クエストへナビゲート")
+            state.blob_same_count = 0  # リセット: 次回はまたブロブ検出を試みる
+            state.home_nav_count += 1
+            quest_btn = has_text(ocr, "クエスト", min_conf=0.3)
+            if quest_btn:
+                cx, cy = quest_btn["center"]
+                logger.info(">>> クエストボタン (%d,%d) タップ", cx, cy)
+                tap_device(cx, cy, state, "QUEST_FROM_HOME")
+                return "QUEST_FROM_HOME", 3.0
+            # OCR未検出 → 右下固定座標 (1520×720 画面での位置)
+            tap_device(1337, 707, state, "QUEST_FIXED")
+            return "QUEST_FROM_HOME", 3.0
+        # クエストへの遷移を試みた後、まだホーム画面が表示されている → 遷移待ち
+        if state.home_nav_count > 0:
+            logger.info(">>> ホーム画面 + 遷移試行 %d回目 → 画面変化待ち", state.home_nav_count)
+            return "HOME_NAV_WAIT", 2.0
+        logger.info(">>> ホーム画面検出! (%d個) チュートリアル誘導中...", home_count)
         return "HOME_REACHED", 0
 
     # ─── ダウンロード/ロード中 ───
@@ -1233,7 +1293,10 @@ def detect_and_act(ocr: list, state: PilotState,
                                    "受け取る", "受取", "了解", "わかった",
                                    "進む", "START", "開始",
                                    "TAP TO START", "TOUCH", "始める",
-                                   "戦闘", "出撃", "クエスト開始", "バトル開始"])
+                                   "戦闘", "出撃", "クエスト開始", "バトル開始",
+                                   # チュートリアルで案内されるボタン名
+                                   "自動編成", "一括受取", "強化", "合成", "強化素材",
+                                   "クエスト", "探索開始", "バトル"])
     if confirm_match:
         cx, cy = confirm_match["center"]
         text = confirm_match["text"]
@@ -1448,9 +1511,10 @@ def main():
             save_evidence(img_path, ocr_results, action, state)
 
         # ── 7) ホーム到達チェック ──
-        if state.home_reached:
+        # "HOME_REACHED" が返った時のみ停止 (QUEST_FROM_HOME 等の遷移中は続行)
+        if action == "HOME_REACHED":
             logger.info("=" * 62)
-            logger.info("  ホーム画面に到達しました!")
+            logger.info("  ホーム画面に到達しました! (チュートリアル完了)")
             logger.info("  総タップ: %d  イテレーション: %d", state.total_taps, i + 1)
             logger.info("  OCR実行: %d  スキップ: %d  暗転: %d",
                         state.total_ocr_calls, state.total_ocr_skipped,
