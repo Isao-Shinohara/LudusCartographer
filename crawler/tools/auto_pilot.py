@@ -4017,12 +4017,15 @@ def main():
                 _bottom_ui = [b for b in _rapid_blobs if b[1] > _H * 0.8 and b[0] >= 600]
 
                 if state.char_just_selected:
-                    # キャラ選択済み → 右スキル or 下部UI
-                    _targets = _right_panel or _bottom_ui
-                    if _targets:
-                        _tb = max(_targets, key=lambda b: b[2])  # area 最大
+                    # キャラ選択済み → 右スキル (x>1050) 優先
+                    if _right_panel:
+                        _tb = max(_right_panel, key=lambda b: b[2])
                         _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - 35)
                         _rapid_action = "BATTLE_RAPID_MOYA_P2"
+                    else:
+                        # 通常攻撃ボタン固定座標フォールバック (右端の円形アイコン)
+                        _rapid_tx, _rapid_ty = 1410, 630
+                        _rapid_action = "BATTLE_RAPID_NORMATK_P2"
                 elif _left_char:
                     _tb = max(_left_char, key=lambda b: b[2])
                     _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - 35)
