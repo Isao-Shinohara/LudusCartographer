@@ -61,6 +61,40 @@ sentu_btn = has_text(ocr, "戦闘") or has_text(ocr, "出撃") or has_text(ocr, 
 
 ---
 
+## ダイアログ・ファースト ロジック (2026-03-06実装)
+
+### 優先順位: Dialog > Icon > Text
+
+```
+#0-DIALOG  (枠形状ベース) → detect_dialog_frame_and_nav()
+#0-aa      (HSV金色ポインター) → GoldSwipe
+#0         (OCRキーワードバックアップ) → pre_popup
+#1以降     (指アイコン・バトル・ストーリー等)
+```
+
+### detect_dialog_frame_and_nav() アルゴリズム
+
+1. **HSV金色枠検出** (H=12-55, S=50-255, V=140-255): 幅>280px かつ 高さ>160px の大矩形を探す
+2. **× 検出**: 矩形内の右上ROI でCanny+HoughLinesP (±45°ライン交差) → 輝度フォールバック
+3. **▷ 検出**: 矩形内の右端ROI でCanny+HoughLinesP (逆V形状) → 輝度フォールバック
+4. **フォールバック**: 枠あり→枠下部中央 ("bottom")、OCRキーワードのみ→固定▷座標
+5. Returns: `("close", cx, cy)` | `("next", cx, cy)` | `("bottom", cx, cy)` | `None`
+
+### _DIALOG_FIRST_KWS (frozenset)
+
+全ダイアログOCRキーワードをモジュールレベル定数で一元管理。
+- pre_popup チェック
+- SWIPE_UP safety net
+- #0-DIALOG 副トリガー
+の3箇所で共有。**追加するときは必ずここだけ変更する。**
+
+### ルール
+- ダイアログ検出中は **指アイコン・金枠探索を完全スキップ** (即 return)
+- SWIPE_UP はダイアログキーワード検出時に自動スキップ (safety net)
+- 各ブロック末に必ず `return` — fallthrough 禁止
+
+---
+
 ## 二段階ターゲット検知ロジック (2026-03-06実装)
 
 ### 概要
@@ -69,10 +103,11 @@ sentu_btn = has_text(ocr, "戦闘") or has_text(ocr, "出撃") or has_text(ocr, 
 ### 実装
 
 1. **find_finger_blobs()**: 7-tuple `(cx, cy, area, bx, by, bw, bh)` を返す
-2. **find_gold_frame_near()**: 指アイコン近傍 200px 以内の金枠(HSV H=15-50)を検索
+2. **find_gold_frame_near()**: 指アイコン近傍 **150px** 以内の金枠(HSV H=15-50)を検索 (旧200px)
 3. **タップ優先順位**:
    - 金枠あり → 金枠中心 `(frame_cx, frame_cy)` をタップ
    - 金枠なし → 指矩形の上端10%（指先位置）をタップ
+4. **ホームチュートリアル**: `right_half_only=False` で左半分のボタン(ショップ等)も検出
 
 ### debug_latest_tap.png の描画内容
 - 青枠: 指アイコン bbox
