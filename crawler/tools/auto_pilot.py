@@ -1726,6 +1726,16 @@ def detect_and_act(ocr: list, state: PilotState,
             time.sleep(0.3)
             tap_device(760, 360, state, "GACHA_RESULT_CENTER_2")
             return "GACHA_OK", 2.0
+        # ─── バトルResultリザルト画面 ───────────────────────────────────────
+        # "Result" + "次へ" が見えている間は FINGER+GOLD_FRAME より「次へ」を優先
+        if has_text(ocr, "Result") and (has_text(ocr, "次へ") or has_text(ocr, "NEXT")):
+            _nxt = has_text(ocr, "次へ") or has_text(ocr, "NEXT")
+            if _nxt:
+                _nx, _ny = _nxt["center"]
+                logger.info(">>> 【バトルResult】 次へ (%d,%d) タップ", _nx, _ny)
+                tap_device(_nx, _ny, state, "RESULT_NEXT")
+                return "RESULT_TAP", 1.0
+
         # min_area は常に400。空間フィルタ(下記)で誤検出を排除するため過大閾値は不要
         # ホーム画面 / 利用規約ダイアログ / システムダイアログはブロブ誤検出になるためスキップ
         _is_system_dialog = any(kw in _nav_joined for kw in
