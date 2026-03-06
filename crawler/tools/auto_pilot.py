@@ -1456,26 +1456,36 @@ def detect_and_act(ocr: list, state: PilotState,
     if analysis_path is not None:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:
-            _dir, _sx, _fy, _ty, _dur = _gold
-            _base_ph_gs = compute_phash(analysis_path)
-            for _gs_retry in range(2):
-                if _dir == "UP":
-                    logger.info(">>> [GoldSwipe] SWIPE_UP (%d,%d)→(%d,%d) %dms (試行%d)",
-                                _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
-                    swipe(_sx, _fy, _sx, _ty, _dur, state=state)
-                else:
-                    logger.info(">>> [GoldSwipe] SWIPE_DOWN (%d,%d)→(%d,%d) %dms (試行%d)",
-                                _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
-                    swipe(_sx, _fy, _sx, _ty, _dur, state=state)
-                time.sleep(1.0)
-                _new_ss, _, _, _ = take_screenshot()
-                _new_ph = compute_phash(_new_ss)
-                if _base_ph_gs and _new_ph and phash_distance(_base_ph_gs, _new_ph) >= PHASH_THRESHOLD:
-                    break  # 変化検知 → 成功
-                _base_ph_gs = _new_ph
-                # 座標を少しずらして再試行 (+40px x方向)
-                _sx += 40
-            return "GOLD_SWIPE_UP" if _dir == "UP" else "GOLD_SWIPE_DOWN", BATTLE_WAIT
+            # 連続スワイプ上限チェック: 6回超えたら GoldSwipe をスキップして他の処理へ
+            if state.gold_swipe_count > 6:
+                logger.warning(
+                    "[GoldSwipe] detect_and_act: 連続 %d 回 → スキップ (別アクション探索)",
+                    state.gold_swipe_count,
+                )
+                state.gold_swipe_count = 0
+            else:
+                _dir, _sx, _fy, _ty, _dur = _gold
+                state.gold_swipe_count += 1
+                _base_ph_gs = compute_phash(analysis_path)
+                for _gs_retry in range(2):
+                    if _dir == "UP":
+                        logger.info(">>> [GoldSwipe] SWIPE_UP (%d,%d)→(%d,%d) %dms (試行%d)",
+                                    _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
+                        swipe(_sx, _fy, _sx, _ty, _dur, state=state)
+                    else:
+                        logger.info(">>> [GoldSwipe] SWIPE_DOWN (%d,%d)→(%d,%d) %dms (試行%d)",
+                                    _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
+                        swipe(_sx, _fy, _sx, _ty, _dur, state=state)
+                    time.sleep(1.0)
+                    _new_ss, _, _, _ = take_screenshot()
+                    _new_ph = compute_phash(_new_ss)
+                    if _base_ph_gs and _new_ph and phash_distance(_base_ph_gs, _new_ph) >= PHASH_THRESHOLD:
+                        state.gold_swipe_count = 0  # 画面変化 → リセット
+                        break  # 変化検知 → 成功
+                    _base_ph_gs = _new_ph
+                    # 座標を少しずらして再試行 (+40px x方向)
+                    _sx += 40
+                return "GOLD_SWIPE_UP" if _dir == "UP" else "GOLD_SWIPE_DOWN", BATTLE_WAIT
 
     # ─── 【最優先 #0-ab】HSV金枠ボタン検出 → 中心タップ (Type B) ───
     # バトルチュートリアルで指アイコンが金枠ハイライトボタンを指している場面。
