@@ -186,7 +186,7 @@ class PilotState:
 # ─── シーン分類 ──────────────────────────────────────
 # シーン別ポーリング間隔 (ユーザー指定)
 SCENE_INTERVAL = {
-    "BATTLE":  1.0,   # バトル画面: 最速反応
+    "BATTLE":  0.5,   # バトル画面: 爆速反応 (旧1.0→0.5)
     "ADV":     1.0,   # アドベンチャー/会話: 最速反応
     "STORY":   0.5,   # ストーリー(スキップなし): 爆速化 (旧2.0→0.5)
     "LOADING": 5.0,   # ロード中: 負荷軽減
@@ -2256,10 +2256,12 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info("[GLOW_SM P1] 左キャラ発光(%d,%d)→tap(%d,%d) [#0前ガード]",
                         _pl["cx"], _pl["cy"], _pl_x, _pl_y)
             tap_device(_pl_x, _pl_y, state, "GLOW_LEFT_CHAR")
+            time.sleep(0.3)
+            tap_device(_pl_x, _pl_y, state, "GLOW_LEFT_CHAR")  # ダブルタップ(追いタップ)
             state.character_selected = True
             state.char_just_selected = True
             state.finger_detections += 1
-            return "GLOW_LEFT_CHAR", 1.0
+            return "GLOW_LEFT_CHAR", 0.3
         # P2: 右スキル発光 (キャラ選択済み) → DIALOG_CLOSE より前にタップ
         if state.character_selected and _pre_right:
             _prg = max(_pre_right, key=lambda g: g["area"])
@@ -2270,7 +2272,7 @@ def detect_and_act(ocr: list, state: PilotState,
             state.character_selected = False
             state.char_just_selected = False
             state.finger_detections += 1
-            return "GLOW_RIGHT_SKILL", 1.0
+            return "GLOW_RIGHT_SKILL", 0.3
         # P3: キャラ選択済み + 発光なし → 通常攻撃をOCRで直接タップ
         if state.character_selected and not _pre_right:
             _pre_na = has_text(ocr, "通常攻撃", min_conf=0.3)
@@ -2282,7 +2284,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     tap_device(_pnx, _pny, state, "NORMATK_TAP")
                     state.character_selected = False
                     state.char_just_selected = False
-                    return "NORMATK_TAP", 1.0
+                    return "NORMATK_TAP", 0.3
 
     # ─── 【最優先 #0-DIALOG】ダイアログ・ファースト (枠形状+Canny) ────────────
     # 主トリガー: HSV金色枠の大矩形検出 (形状ベース)
@@ -2636,10 +2638,12 @@ def detect_and_act(ocr: list, state: PilotState,
             _gl_x, _gl_y = _gl["cx"], max(1, _gl["cy"] - 35)
             logger.info("[GLOW_SM P1] 左キャラ発光(%d,%d) → tap(%d,%d)", _gl["cx"], _gl["cy"], _gl_x, _gl_y)
             tap_device(_gl_x, _gl_y, state, "GLOW_LEFT_CHAR")
+            time.sleep(0.3)
+            tap_device(_gl_x, _gl_y, state, "GLOW_LEFT_CHAR")  # ダブルタップ(追いタップ)
             state.character_selected = True
             state.char_just_selected = True
             state.finger_detections += 1
-            return "GLOW_LEFT_CHAR", 1.0
+            return "GLOW_LEFT_CHAR", 0.3
 
         # Priority 2: 右スキル発光検出 (キャラ選択済み)
         elif state.character_selected and _gsm_right:
@@ -2650,7 +2654,7 @@ def detect_and_act(ocr: list, state: PilotState,
             state.character_selected = False
             state.char_just_selected = False
             state.finger_detections += 1
-            return "GLOW_RIGHT_SKILL", 1.0
+            return "GLOW_RIGHT_SKILL", 0.3
 
         # Priority 3: 発光なし + character_selected → 通常攻撃 OCR フォールバック
         elif state.character_selected and not _gsm_right:
@@ -2663,7 +2667,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     tap_device(_na_x, _na_y, state, "NORMATK_TAP")
                     state.character_selected = False
                     state.char_just_selected = False
-                    return "NORMATK_TAP", 1.0
+                    return "NORMATK_TAP", 0.3
 
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
     if analysis_path is not None:
@@ -3697,6 +3701,8 @@ def main():
                 _dev_w, _dev_h, ANALYSIS_W, ANALYSIS_H,
                 _dev_w / ANALYSIS_W, _dev_h / ANALYSIS_H)
 
+    logger.info("[TOKEN_SAVE] 節約モード稼働中。バトル発光検知で OCR スキップ → 爆速モードで進行します")
+
     for i in range(MAX_ITERATIONS):
         state.iteration = i
         _loop_t0 = time.time()  # [PERF] ループ開始時刻
@@ -3942,6 +3948,55 @@ def main():
         # ── 4) 解析用画像の準備 ──
         state.last_phash = cur_phash
         analysis_path = prepare_analysis_image(img_path, actual_w, actual_h)
+
+        # ── 4.3) BATTLE_RAPID: 発光検知即タップ → OCR 完全スキップ ──
+        # detect_guide_glow() は OpenCV のみ (10-50ms) で OCR (6-8s) の 40-50 倍高速
+        if state.current_scene == "BATTLE" and analysis_path is not None:
+            _rapid_glows = detect_guide_glow(analysis_path, W, H, footer_ratio=0.30)
+            _rapid_left = [g for g in _rapid_glows if g["side"] == "left"]
+            _rapid_right = [g for g in _rapid_glows if g["side"] == "right"]
+
+            # P1: 左キャラ発光 (キャラ未選択) → ダブルタップ
+            if not state.character_selected and _rapid_left:
+                _rl = max(_rapid_left, key=lambda g: g["area"])
+                _rl_x, _rl_y = _rl["cx"], max(1, _rl["cy"] - 35)
+                logger.info("[BATTLE_RAPID P1] 左キャラ発光(%d,%d)→tap(%d,%d) ダブルタップ",
+                            _rl["cx"], _rl["cy"], _rl_x, _rl_y)
+                tap_device(_rl_x, _rl_y, state, "BATTLE_RAPID_P1")
+                time.sleep(0.3)
+                tap_device(_rl_x, _rl_y, state, "BATTLE_RAPID_P1")  # 追いタップ
+                state.character_selected = True
+                state.char_just_selected = True
+                state.finger_detections += 1
+                state.last_action = "BATTLE_RAPID_P1"
+                state.stall_start = 0.0
+                state.stall_corner_tried = False
+                state.same_phash_count = 0
+                time.sleep(0.15)
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                logger.info("  [PERF] Loop %.0fms (BATTLE_RAPID)", _fms)
+                continue  # OCR スキップ
+
+            # P2: 右スキル発光 (キャラ選択済み) → シングルタップ
+            if state.character_selected and _rapid_right:
+                _rr = max(_rapid_right, key=lambda g: g["area"])
+                _rr_x, _rr_y = _rr["cx"], max(1, _rr["cy"] - 35)
+                logger.info("[BATTLE_RAPID P2] 右スキル発光(%d,%d)→tap(%d,%d)",
+                            _rr["cx"], _rr["cy"], _rr_x, _rr_y)
+                tap_device(_rr_x, _rr_y, state, "BATTLE_RAPID_P2")
+                state.character_selected = False
+                state.char_just_selected = False
+                state.finger_detections += 1
+                state.last_action = "BATTLE_RAPID_P2"
+                state.stall_start = 0.0
+                state.stall_corner_tried = False
+                state.same_phash_count = 0
+                time.sleep(0.15)
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                logger.info("  [PERF] Loop %.0fms (BATTLE_RAPID)", _fms)
+                continue  # OCR スキップ
 
         # ── 4.5) BATTLE 高速パス: OCR 前テンプレートマッチング ──
         # BATTLE シーンで GoldBtn/GoldSwipe が見つかれば OCR (6-8s) をスキップ
