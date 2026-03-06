@@ -1922,7 +1922,12 @@ def detect_and_act(ocr: list, state: PilotState,
     # ─── クエストマップ/ステージ選択 ───
     stage_num = has_any(ocr, ["1-1", "1-2", "1-3", "2-1", "2-2", "2-3",
                                "3-1", "3-2", "4-1", "4-2", "Main"])
-    sentu_btn = has_text(ocr, "戦闘") or has_text(ocr, "出撃") or has_text(ocr, "挑戦")
+    sentu_btn = None
+    for _skw in ["戦闘", "出撃", "挑戦"]:
+        _sb = has_text(ocr, _skw)
+        if _sb and _sb["center"][1] > H * 0.5:
+            sentu_btn = _sb
+            break
     if not sentu_btn:
         expl = has_text(ocr, "探索")
         if expl and expl["center"][1] > H * 0.6:
