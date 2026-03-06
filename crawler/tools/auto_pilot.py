@@ -1043,7 +1043,14 @@ def detect_and_act(ocr: list, state: PilotState,
             # フォールバック: 右下2/3位置 (同意ボタンは必ず右側にある)
             logger.info(">>> 【ご注意画面】 同意ボタン未検出 → 右下フォールバック (1023,585)")
             tap_device(1023, 585, state, "GO_CHUI_FALLBACK")
-        return "NOTICE_DISMISS", 4.0
+        # ─── 忍耐モード: Unity 初期化に最低 120 秒を保証 ───
+        # 同意タップ後、Unityメインスレッドの内部初期化が完了するまで
+        # 一切の操作をせず待機する。Watchdog は NOTICE_DISMISS が
+        # WATCHDOG_EXEMPT_ACTIONS に含まれるため自動的に一時停止される。
+        logger.info(
+            ">>> 【忍耐モード】 Unity 初期化待ち — 120秒間 無操作待機 (Watchdog停止中)"
+        )
+        return "NOTICE_DISMISS", 120.0
 
     # ─── 【最優先 #-1b】MAIN STORY ローディング背景 ───
     # タイトル画面TAP後に表示される非インタラクティブなローディング背景。
@@ -1708,10 +1715,9 @@ def watchdog_recover(state: PilotState) -> bool:
     """
     Unityメインスレッドのデッドロックを検出した際の自動復旧。
 
-    戦略:
-      1〜3回目: am force-stop → am start (ソフト再起動)
-      4〜5回目: am force-stop → pm clear → am start (ハード初期化)
-      6回目以降: 諦めて False を返す
+    戦略 (pm clear は一切使用しない — BAN リスク排除):
+      1〜3回目: am force-stop → am start (ソフト再起動のみ)
+      4回目以降: 諦めて False を返す (人間に委譲)
 
     Returns: True=復旧試行を実施, False=諦め(mainが終了する)
     """
@@ -1773,6 +1779,25 @@ def main():
 
     state = PilotState()
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ─── scrcpy Stay Awake: システムスリープを完全に防止 ───
+    # -S: 画面オフのまま mirroring / --stay-awake: デバイスをスリープさせない
+    # --always-on-top: ウィンドウを最前面に固定 / -m 800: 解像度を抑えてCPU節約
+    _scrcpy_proc = None
+    try:
+        _scrcpy_proc = subprocess.Popen(
+            ["scrcpy", "-s", DEVICE_SERIAL, "-S", "--stay-awake",
+             "--always-on-top", "--no-audio", "-m", "800"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        logger.info("[SCRCPY] Stay Awake バックグラウンド起動 PID=%d (device=%s)",
+                    _scrcpy_proc.pid, DEVICE_SERIAL)
+    except FileNotFoundError:
+        logger.warning("[SCRCPY] scrcpy が見つかりません — Stay Awake なしで続行 "
+                       "(brew install scrcpy で導入可能)")
+    except Exception as _e:
+        logger.warning("[SCRCPY] 起動失敗: %s — Stay Awake なしで続行", _e)
 
     for i in range(MAX_ITERATIONS):
         state.iteration = i
@@ -1968,6 +1993,9 @@ def main():
                         state.total_blackout_skipped)
             logger.info("=" * 62)
             save_evidence(img_path, ocr_results, "FINAL_HOME", state)
+            if _scrcpy_proc and _scrcpy_proc.poll() is None:
+                _scrcpy_proc.terminate()
+                logger.info("[SCRCPY] 終了 PID=%d", _scrcpy_proc.pid)
             return
 
         # ── 8) 待機 ──
@@ -1982,6 +2010,11 @@ def main():
             gc.collect()
 
     logger.warning("最大イテレーション(%d)に到達。手動確認が必要です。", MAX_ITERATIONS)
+
+    # scrcpy プロセスを終了
+    if _scrcpy_proc and _scrcpy_proc.poll() is None:
+        _scrcpy_proc.terminate()
+        logger.info("[SCRCPY] 終了 PID=%d", _scrcpy_proc.pid)
 
 
 if __name__ == "__main__":
