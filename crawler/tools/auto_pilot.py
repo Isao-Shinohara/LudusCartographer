@@ -2557,6 +2557,8 @@ def generate_and_copy_report(state: PilotState, reason: str) -> None:
 
 
 # ─── BATTLE 高速パス: OCR 前テンプレートマッチング ──────────────────
+_BATTLE_UI_KWS = frozenset(["通常攻撃", "単体攻撃", "WAVE", "Turn", "ターン", "必殺技"])
+
 def _battle_fast_check(analysis_path: Path,
                        state: "PilotState") -> tuple[str, float]:
     """
@@ -2565,7 +2567,12 @@ def _battle_fast_check(analysis_path: Path,
     見つからなければ ("", 0.0) を返して通常 OCR フローへ移行する。
     """
     # 1. GoldSwipe (Type A) — チュートリアル移動シーン
-    gs = detect_tutorial_gold_swipe(analysis_path)
+    # 前回OCRでバトルUIキーワード(通常攻撃/WAVE/Turn等)を確認済みならSPゲージ誤検出の
+    # 可能性が高いためスキップ
+    _confirmed_battle_ui = any(kw in state.last_ocr_texts for kw in _BATTLE_UI_KWS)
+    if _confirmed_battle_ui:
+        logger.debug("[FAST] バトルUI確認済み → GoldSwipe スキップ (SPゲージ誤検出防止)")
+    gs = None if _confirmed_battle_ui else detect_tutorial_gold_swipe(analysis_path)
     if gs:
         _dir, _sx, _fy, _ty, _dur = gs
         logger.info("[FAST] GoldSwipe %s → swipe (%d,%d)→(%d,%d) %dms",
