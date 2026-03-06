@@ -77,6 +77,7 @@ WATCHDOG_EXEMPT_ACTIONS = frozenset([
     "DOWNLOAD_WAIT", "BATTLE_WAIT", "LOADING_WAIT",
     "NOTICE_DISMISS", "GO_CHUI_AGREE", "GO_CHUI_FALLBACK",  # ご注意: 初期化待ち
     "MAIN_STORY_LOADING",  # MAIN STORY ローディング背景: 自動遷移待ち
+    "GOLD_SWIPE_UP", "GOLD_SWIPE_DOWN", "GOLD_SWIPE_LEFT", "GOLD_SWIPE_RIGHT",  # チュートリアル移動
 ])
 ADV_RAPID_PHASH_MAX = 25    # ADV高速モード: phash がこれ以下なら OCR スキップ連打
 BLACKOUT_BRIGHTNESS = 20
@@ -309,6 +310,105 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
     except Exception as e:
         logger.debug("find_finger_blobs error: %s", e)
         return []
+
+
+# ─── HSV金色チュートリアルポインター検出 → ホールドスワイプ ─────────────
+def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, int, int]]:
+    """
+    HSVフィルタで金色チュートリアルポインター（手アイコン+軌跡）を検出し
+    スワイプ方向と座標を返す。
+
+    ユーザー指定HSV: Hue~30-50, Sat~100-250, Val~200-255
+    OpenCV HSV では H は 0-180 (標準360°の半分)なのでH=15-50を使用。
+
+    縦長領域(h>=w*2.5) のみ有効 (ボタン等との誤検出防止)。
+    手アイコン(幅広部)が上半分 → SWIPE_UP、下半分 → SWIPE_DOWN。
+
+    デバッグ画像: crawler/templates/debug/gold_detect_HHMMSS.png に自動保存。
+
+    Returns: (direction, swipe_x, from_y, to_y, duration_ms) or None
+    """
+    try:
+        import cv2
+        import numpy as np
+
+        img = cv2.imread(str(img_path))
+        if img is None:
+            return None
+        H_img, W_img = img.shape[:2]
+
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        # 金色 (手アイコン+軌跡): H=15-50, S=60-255, V=180-255
+        lower_gold = np.array([15, 60, 180], dtype=np.uint8)
+        upper_gold = np.array([50, 255, 255], dtype=np.uint8)
+        mask = cv2.inRange(hsv, lower_gold, upper_gold)
+
+        # モルフォロジー: 小ノイズ除去 → 拡張で手+軌跡を繋ぐ
+        k3 = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k3)
+        k7 = np.ones((7, 7), np.uint8)
+        mask = cv2.dilate(mask, k7, iterations=2)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+
+        # 最大輪郭を選択
+        largest = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest)
+
+        # 面積フィルタ: 2000~100000px (ポインター想定範囲)
+        if area < 2000 or area > 100000:
+            return None
+
+        x_bb, y_bb, w_bb, h_bb = cv2.boundingRect(largest)
+
+        # アスペクト比チェック: 縦長(h>=w*2.0)のみ有効 (ボタン等との誤検出防止)
+        if h_bb < w_bb * 2.0:
+            return None
+
+        cx_bb = x_bb + w_bb // 2
+
+        # ── デバッグ画像保存 ──
+        debug_dir = _CRAWLER_ROOT / "templates" / "debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%H%M%S")
+        vis = img.copy()
+        cv2.rectangle(vis, (x_bb, y_bb), (x_bb + w_bb, y_bb + h_bb), (0, 0, 255), 3)
+        cv2.putText(vis, f"GoldSwipe area={int(area)} h/w={h_bb/max(w_bb,1):.1f}",
+                    (x_bb, max(0, y_bb - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        cv2.imwrite(str(debug_dir / f"gold_detect_{ts}.png"), vis)
+
+        # ── 方向判定: 上半分 vs 下半分のゴールドピクセル面積で判断 ──
+        # 手アイコン(幅広・濃い)が多い方が「手」の端 → その逆方向へスワイプ
+        mask_roi = mask[y_bb:y_bb + h_bb, x_bb:x_bb + w_bb]
+        mid_y = h_bb // 2
+        upper_area = int(np.sum(mask_roi[:mid_y] > 0))
+        lower_area = int(np.sum(mask_roi[mid_y:] > 0))
+
+        # 上半分が大きい → 手が上 → SWIPE_UP
+        if upper_area >= lower_area:
+            direction = "UP"
+            from_y = min(H_img - 60, y_bb + h_bb + 100)
+            to_y   = max(50, y_bb - 80)
+        else:
+            direction = "DOWN"
+            from_y = max(50, y_bb - 80)
+            to_y   = min(H_img - 60, y_bb + h_bb + 100)
+
+        logger.info(
+            "[GoldSwipe] 検出OK: area=%d bbox=(%d,%d,%d,%d) h/w=%.1f "
+            "upper=%d lower=%d → %s  swipe_x=%d from_y=%d to_y=%d",
+            area, x_bb, y_bb, w_bb, h_bb, h_bb / max(w_bb, 1),
+            upper_area, lower_area, direction, cx_bb, from_y, to_y,
+        )
+        return direction, cx_bb, from_y, to_y, 3000
+
+    except ImportError:
+        return None
+    except Exception as e:
+        logger.debug("detect_tutorial_gold_swipe error: %s", e)
+        return None
 
 
 # ─── Smart Tap: 金色ボタン矩形の幾何学的中心を検出 ──────────────────
@@ -1100,6 +1200,22 @@ def detect_and_act(ocr: list, state: PilotState,
     if _is_main_story_bg:
         logger.info(">>> MAIN STORY ローディング背景 — 自動遷移待ち (10s)")
         return "MAIN_STORY_LOADING", 10.0
+
+    # ─── 【最優先 #0-aa】HSV金色ポインター検出 → ホールドスワイプ ───
+    # テンプレートマッチングより先に実行。縦長金色領域(h/w>=2.0)のみ有効。
+    # チュートリアル3D移動シーン(チェッカー床/階段/廊下)で発火。
+    if analysis_path is not None:
+        _gold = detect_tutorial_gold_swipe(analysis_path)
+        if _gold:
+            _dir, _sx, _fy, _ty, _dur = _gold
+            if _dir == "UP":
+                logger.info(">>> [GoldSwipe] SWIPE_UP (%d,%d)→(%d,%d) %dms", _sx, _fy, _sx, _ty, _dur)
+                swipe(_sx, _fy, _sx, _ty, _dur)
+                return "GOLD_SWIPE_UP", 1.5
+            elif _dir == "DOWN":
+                logger.info(">>> [GoldSwipe] SWIPE_DOWN (%d,%d)→(%d,%d) %dms", _sx, _fy, _sx, _ty, _dur)
+                swipe(_sx, _fy, _sx, _ty, _dur)
+                return "GOLD_SWIPE_DOWN", 1.5
 
     # ─── 【最優先 #0-a】テンプレートマッチング (Asset Match) — 最速 ~0.1s ───
     # チュートリアル中は指アイコン検出(TAP_HIGHLIGHTED_NAV/SWIPE_UP)が最高優先。

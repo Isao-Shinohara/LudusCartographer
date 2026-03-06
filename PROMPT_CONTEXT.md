@@ -400,4 +400,41 @@ return "ACTION", 3.0             # 最大リトライ後は主ループに返す
 - `adb input tap X Y`: X=0-1519, Y=0-719 (landscape座標)
 - `prepare_analysis_image`: 回転不要 (物理↔ADB変換はOSが処理)
 
+### 【チュートリアル移動】金色ポインター HSV検出 + ホールドスワイプ (2026-03-06)
+
+チュートリアル3D移動シーン（チェッカー床・階段・廊下）では、
+金色の手アイコン＋縦長軌跡が表示される。これをHSVフィルタで検出してスワイプ。
+
+#### 検出仕様: `detect_tutorial_gold_swipe(img_path)` in `auto_pilot.py`
+
+| パラメータ | 値 |
+|-----------|-----|
+| HSV範囲 | H=15-50, S=60-255, V=180-255 (OpenCV 0-180スケール) |
+| 最小面積 | 2000 px² |
+| 最大面積 | 100000 px² |
+| アスペクト比条件 | h/w >= 2.0 (縦長のみ有効、ボタン誤検出防止) |
+| 方向判定 | 上半分 vs 下半分のゴールドピクセル量を比較: 上>下 → SWIPE_UP |
+| スワイプ時間 | 3000ms (ホールド重要) |
+| デバッグ保存 | `crawler/templates/debug/gold_detect_HHMMSS.png` |
+
+#### 呼び出し位置
+
+`detect_and_act()` 内の最優先ブロック `#0-aa` (テンプレートマッチング `#0-a` より上位):
+
+```python
+_gold = detect_tutorial_gold_swipe(analysis_path)
+if _gold:
+    _dir, _sx, _fy, _ty, _dur = _gold
+    # SWIPE_UP / SWIPE_DOWN に分岐
+    swipe(_sx, _fy, _sx, _ty, _dur)
+    return "GOLD_SWIPE_UP", 1.5
+```
+
+#### 動作確認済みシーン (2026-03-06)
+- チェッカー床シーン: 手アイコン位置 (約1100, 280) / 軌跡は下方向 → SWIPE_UP
+- 階段シーン: 連続上スワイプで突破
+- 廊下シーン: 上スワイプで扉に進入
+
+**Watchdog免除:** `GOLD_SWIPE_UP/DOWN/LEFT/RIGHT` は `WATCHDOG_EXEMPT_ACTIONS` に追加済み。
+
 _このドキュメントは Claude Code (claude-sonnet-4-6) が自動生成・更新しています。_
