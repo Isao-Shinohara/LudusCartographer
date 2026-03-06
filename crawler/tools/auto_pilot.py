@@ -1667,7 +1667,9 @@ def detect_and_act(ocr: list, state: PilotState,
                 tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
                 return "TAP_HIGHLIGHTED_NAV", 1.5
             tap_device(cx, cy, state, action)
-            return action, 0.5
+            # GACHA_OK: 演出終了待ち (演出中はタップが無視されるため長めに待つ)
+            _asset_wait = 5.0 if action == "GACHA_OK" else 0.5
+            return action, _asset_wait
 
     # ─── 【最優先 #0】チュートリアルポップアップ (ブロブより優先) ───
     # バトル説明・ロール説明などのポップアップはブロブ検出前に処理
