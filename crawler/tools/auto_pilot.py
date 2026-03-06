@@ -363,8 +363,10 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
 
         x_bb, y_bb, w_bb, h_bb = cv2.boundingRect(largest)
 
-        # アスペクト比チェック: 縦長(h>=w*2.0)のみ有効 (ボタン等との誤検出防止)
-        if h_bb < w_bb * 2.0:
+        # アスペクト比チェック: 縦長(h>=w*3.5)のみ有効
+        # 2.0→3.5に引き上げ: キャラカード金装飾(h/w≈2.0-2.5)や金枠ボタン(h/w≈1.0)との誤検出防止
+        # さらに幅制限: w>100px の太いものはボタン/カード → スワイプポインターは細い
+        if h_bb < w_bb * 3.5 or w_bb > 100:
             return None
 
         cx_bb = x_bb + w_bb // 2
@@ -408,6 +410,98 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
         return None
     except Exception as e:
         logger.debug("detect_tutorial_gold_swipe error: %s", e)
+        return None
+
+
+# ─── Type B: 金枠ハイライトボタン検出 → 中心タップ ─────────────────────
+def detect_tutorial_gold_button_tap(img_path: Path,
+                                    right_half_only: bool = True
+                                    ) -> Optional[tuple[int, int]]:
+    """
+    チュートリアルバトルで指アイコンが指し示す「金枠ハイライトボタン」を検出し
+    タップ座標（ボタン中心）を返す。
+
+    条件:
+    - アスペクト比 0.5~2.0 (正方形〜縦長のボタン形状)
+    - 面積 8000~150000px² (ボタン相当の大きさ)
+    - 幅 100px以上 (細い軌跡線は除外)
+    - right_half_only=True の場合: x中心 > W/2 のみ有効 (右側ボタン優先)
+
+    デバッグ画像: crawler/templates/tutorial/gold_btn_HHMMSS.png に自動保存。
+    Returns: (tap_x, tap_y) or None
+    """
+    try:
+        import cv2
+        import numpy as np
+
+        img = cv2.imread(str(img_path))
+        if img is None:
+            return None
+        H_img, W_img = img.shape[:2]
+
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        lower_gold = np.array([15, 60, 180], dtype=np.uint8)
+        upper_gold = np.array([50, 255, 255], dtype=np.uint8)
+        mask = cv2.inRange(hsv, lower_gold, upper_gold)
+
+        # モルフォロジー: 枠線の隙間を埋めて矩形を繋ぐ
+        k7 = np.ones((7, 7), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k7)
+        mask = cv2.dilate(mask, k7, iterations=2)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+
+        # ボタン候補: アスペクト比0.5~2.0 かつ面積8000~150000 かつ幅100px以上
+        candidates = []
+        for c in contours:
+            area = cv2.contourArea(c)
+            if area < 8000 or area > 150000:
+                continue
+            x, y, w, h = cv2.boundingRect(c)
+            if w < 100:
+                continue
+            aspect = h / max(w, 1)
+            if 0.5 <= aspect <= 2.0:
+                cx = x + w // 2
+                cy = y + h // 2
+                # 右半分のみフィルタ
+                if right_half_only and cx < W_img * 0.5:
+                    continue
+                candidates.append((cx, cy, area, x, y, w, h))
+
+        if not candidates:
+            return None
+
+        # 最大面積のボタン候補を選択
+        best = max(candidates, key=lambda c: c[2])
+        tap_x, tap_y, area_b, x_b, y_b, w_b, h_b = best
+
+        # ── デバッグ/テンプレート保存 ──
+        tut_dir = _CRAWLER_ROOT / "templates" / "tutorial"
+        tut_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%H%M%S")
+        vis = img.copy()
+        cv2.rectangle(vis, (x_b, y_b), (x_b + w_b, y_b + h_b), (255, 0, 0), 3)
+        cv2.circle(vis, (tap_x, tap_y), 12, (0, 255, 255), -1)
+        cv2.putText(vis, f"GoldBtn area={int(area_b)} asp={h_b/max(w_b,1):.1f}",
+                    (x_b, max(0, y_b - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+        cv2.imwrite(str(tut_dir / f"gold_btn_{ts}.png"), vis)
+
+        # テンプレート画像 (ボタン部分のROI) も保存 (後日 AssetManager で使えるように)
+        roi = img[y_b:y_b + h_b, x_b:x_b + w_b]
+        if roi.size > 0:
+            cv2.imwrite(str(tut_dir / f"gold_btn_roi_{ts}.png"), roi)
+
+        logger.info("[GoldBtn] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f → tap(%d,%d)",
+                    area_b, x_b, y_b, w_b, h_b, h_b / max(w_b, 1), tap_x, tap_y)
+        return tap_x, tap_y
+
+    except ImportError:
+        return None
+    except Exception as e:
+        logger.debug("detect_tutorial_gold_button_tap error: %s", e)
         return None
 
 
@@ -1201,21 +1295,55 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.info(">>> MAIN STORY ローディング背景 — 自動遷移待ち (10s)")
         return "MAIN_STORY_LOADING", 10.0
 
-    # ─── 【最優先 #0-aa】HSV金色ポインター検出 → ホールドスワイプ ───
-    # テンプレートマッチングより先に実行。縦長金色領域(h/w>=2.0)のみ有効。
+    # ─── 【最優先 #0-aa】HSV金色ポインター検出 → ホールドスワイプ (Type A) ───
+    # 縦長金色領域 h/w>=3.5 かつ幅<=100px のみ有効 (ボタン/カード誤検出防止)。
     # チュートリアル3D移動シーン(チェッカー床/階段/廊下)で発火。
+    # phash監視: スワイプ後2s待機 → 変化なければ再実行 (最大2回)
     if analysis_path is not None:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:
             _dir, _sx, _fy, _ty, _dur = _gold
-            if _dir == "UP":
-                logger.info(">>> [GoldSwipe] SWIPE_UP (%d,%d)→(%d,%d) %dms", _sx, _fy, _sx, _ty, _dur)
-                swipe(_sx, _fy, _sx, _ty, _dur)
-                return "GOLD_SWIPE_UP", 1.5
-            elif _dir == "DOWN":
-                logger.info(">>> [GoldSwipe] SWIPE_DOWN (%d,%d)→(%d,%d) %dms", _sx, _fy, _sx, _ty, _dur)
-                swipe(_sx, _fy, _sx, _ty, _dur)
-                return "GOLD_SWIPE_DOWN", 1.5
+            _base_ph_gs = compute_phash(analysis_path)
+            for _gs_retry in range(2):
+                if _dir == "UP":
+                    logger.info(">>> [GoldSwipe] SWIPE_UP (%d,%d)→(%d,%d) %dms (試行%d)",
+                                _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
+                    swipe(_sx, _fy, _sx, _ty, _dur)
+                else:
+                    logger.info(">>> [GoldSwipe] SWIPE_DOWN (%d,%d)→(%d,%d) %dms (試行%d)",
+                                _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
+                    swipe(_sx, _fy, _sx, _ty, _dur)
+                time.sleep(2.0)
+                _new_ss, _, _ = take_screenshot()
+                _new_ph = compute_phash(_new_ss)
+                if _base_ph_gs and _new_ph and phash_distance(_base_ph_gs, _new_ph) >= PHASH_THRESHOLD:
+                    break  # 変化検知 → 成功
+                _base_ph_gs = _new_ph
+                # 座標を少しずらして再試行 (+40px x方向)
+                _sx += 40
+            return "GOLD_SWIPE_UP" if _dir == "UP" else "GOLD_SWIPE_DOWN", 1.5
+
+    # ─── 【最優先 #0-ab】HSV金枠ボタン検出 → 中心タップ (Type B) ───
+    # バトルチュートリアルで指アイコンが金枠ハイライトボタンを指している場面。
+    # OCR が "隣接攻撃" "必殺技" を検出し、かつ右半分に金枠ボタンがある場合に発火。
+    _battle_tut_kws = ["隣接攻撃", "必殺技", "巫殺技", "ATTACKER", "通常攻撃"]
+    _is_battle_tut_context = any(kw in joined for kw in _battle_tut_kws)
+    if analysis_path is not None and _is_battle_tut_context:
+        _gold_btn = detect_tutorial_gold_button_tap(analysis_path, right_half_only=True)
+        if _gold_btn:
+            _bx, _by = _gold_btn
+            logger.info(">>> [GoldBtn] 金枠ボタン検出 → tap(%d,%d)", _bx, _by)
+            _base_ph_gb = compute_phash(analysis_path)
+            tap_device(_bx, _by, state, "GOLD_BTN_TAP")
+            time.sleep(2.0)
+            _new_ss_gb, _, _ = take_screenshot()
+            _new_ph_gb = compute_phash(_new_ss_gb)
+            if (not _base_ph_gb or not _new_ph_gb or
+                    phash_distance(_base_ph_gb, _new_ph_gb) < PHASH_THRESHOLD):
+                # 変化なし → Y方向に+30pxずらして再試行
+                logger.info(">>> [GoldBtn] phash変化なし → +30px 再タップ (%d,%d)", _bx, _by + 30)
+                tap_device(_bx, _by + 30, state, "GOLD_BTN_TAP_RETRY")
+            return "GOLD_BTN_TAP", 1.5
 
     # ─── 【最優先 #0-a】テンプレートマッチング (Asset Match) — 最速 ~0.1s ───
     # チュートリアル中は指アイコン検出(TAP_HIGHLIGHTED_NAV/SWIPE_UP)が最高優先。

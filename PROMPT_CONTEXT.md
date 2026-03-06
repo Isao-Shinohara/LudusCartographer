@@ -437,4 +437,56 @@ if _gold:
 
 **Watchdog免除:** `GOLD_SWIPE_UP/DOWN/LEFT/RIGHT` は `WATCHDOG_EXEMPT_ACTIONS` に追加済み。
 
+#### 誤検出防止の重要パラメータ
+
+| パラメータ | 値 | 理由 |
+|-----------|-----|------|
+| アスペクト比閾値 | h/w >= 3.5 | キャラカード金装飾(h/w≈2.0-2.5)を除外 |
+| 最大幅 | w <= 100px | ボタン枠(w≈150px+)を除外 |
+
+### 【チュートリアルバトル】金枠ハイライトボタン タップ (Type B)
+
+バトルチュートリアルで必殺技/隣接攻撃ボタンが金枠でハイライトされる場面。
+
+#### 検出仕様: `detect_tutorial_gold_button_tap(img_path)` in `auto_pilot.py`
+
+| パラメータ | 値 |
+|-----------|-----|
+| HSV範囲 | 同上 (H=15-50, S=60-255, V=180-255) |
+| 最小面積 | 8000 px² |
+| アスペクト比 | 0.5~2.0 (正方形〜縦長のボタン形状) |
+| 最小幅 | 100px (細い軌跡線を除外) |
+| 位置フィルタ | 右半分のみ (x中心 > W/2) |
+| デバッグ保存 | `crawler/templates/tutorial/gold_btn_HHMMSS.png` |
+
+#### 呼び出し位置 (#0-ab)
+
+`detect_and_act()` 内 `#0-ab` ブロック (GoldSwipe #0-aa の直後):
+
+```python
+# OCRに必殺技/隣接攻撃などのバトルキーワードがある場合のみ発火
+if _is_battle_tut_context:
+    _gold_btn = detect_tutorial_gold_button_tap(analysis_path)
+    if _gold_btn:
+        tap + phash確認 + 必要なら+30pxリトライ
+```
+
+#### phash監視付きリトライ (両Type共通)
+
+```python
+# タップ/スワイプ後2s待機 → phash変化確認 → 変化なし → 座標微調整して再試行
+time.sleep(2.0)
+if phash_distance(before, after) < PHASH_THRESHOLD:
+    # 変化なし → 再タップ (+30px y方向 or +40px x方向)
+```
+
+#### 動作確認済みシーン (2026-03-06)
+
+| シーン | Type | 動作 |
+|-------|------|------|
+| チェッカー床移動 | A (Swipe) | SWIPE_UP (x≈1065, 670→50, 3000ms) |
+| 階段上り | A (Swipe) | SWIPE_UP 連続 |
+| 必殺技チュートリアル | B (Button) | gold_btn tap + phash確認 |
+| 隣接攻撃チュートリアル | B (Button) | gold_btn tap (右半分) |
+
 _このドキュメントは Claude Code (claude-sonnet-4-6) が自動生成・更新しています。_
