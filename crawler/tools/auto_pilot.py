@@ -133,6 +133,9 @@ class PilotState:
     last_screen_change_time: float = field(default_factory=time.time)
     # Watchdog による復旧試行回数
     watchdog_recovery_count: int = 0
+    # ─── ダウンロード進捗ログ ───
+    # 最後にダウンロード進捗をログ出力した時刻
+    last_download_progress_log: float = 0.0
 
 
 # ─── シーン分類 ──────────────────────────────────────
@@ -1451,9 +1454,16 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── ダウンロード/ロード中 ───
     dl = has_any(ocr, ["ダウンロード", "追加データ", "Loading", "ロード中",
-                       "通信中", "Now Loading"])
+                       "通信中", "Now Loading", "Download", "Downloading"])
+    # 進捗バー: %, GB, MB を含む文字列も進捗画面と判定 (英語ダウンロード画面対応)
+    if not dl:
+        _progress_texts = [t for t in texts if "%" in t or "MB" in t or "GB" in t]
+        if _progress_texts:
+            logger.info(">>> ダウンロード進捗テキスト検出: %s", _progress_texts[:3])
+            # has_any 互換の形式で返す
+            dl = {"text": _progress_texts[0], "center": (0, 0), "confidence": 0.5, "box": []}
     if dl:
-        logger.info(">>> ロード中: '%s' — 待機", dl["text"])
+        logger.info(">>> ロード/ダウンロード中: '%s' — 待機 (Watchdog免除)", dl["text"])
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
 
     # ─── クエストマップ/ステージ選択 ───
@@ -1757,6 +1767,79 @@ def watchdog_recover(state: PilotState) -> bool:
     return True
 
 
+# ─── レポート生成 + クリップボードコピー ────────────────
+def generate_and_copy_report(state: PilotState, reason: str) -> None:
+    """
+    ホーム到達またはエラー停止時に状況レポートを生成し pbcopy でコピー。
+    Gemini へのペースト用。
+    """
+    # Git コミット情報
+    try:
+        commit_id = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True,
+            cwd=str(_CRAWLER_ROOT.parent), timeout=5,
+        ).stdout.strip()
+    except Exception:
+        commit_id = "unknown"
+
+    last_ocr_preview = ", ".join(state.last_ocr_texts[:6]) if state.last_ocr_texts else "(なし)"
+    report_lines = [
+        "=" * 64,
+        "# まどドラ自律操縦レポート (auto_pilot.py)",
+        f"停止理由: {reason}",
+        f"日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        "## 修正/確認したファイルと定数",
+        "- `crawler/tools/auto_pilot.py`",
+        f"  - WATCHDOG_DEADLOCK_THRESHOLD: {WATCHDOG_DEADLOCK_THRESHOLD} 秒",
+        f"  - WATCHDOG_MAX_TOTAL_RECOVERIES: {WATCHDOG_MAX_TOTAL_RECOVERIES}",
+        f"  - WATCHDOG_EXEMPT_ACTIONS: {', '.join(sorted(WATCHDOG_EXEMPT_ACTIONS))}",
+        f"  - NOTICE_DISMISS (ご注意後Unity初期化待ち): 120 秒",
+        f"  - DOWNLOAD_WAIT: {DOWNLOAD_WAIT} 秒/ループ (無限忍耐・Watchdog免除)",
+        f"  - ダウンロード検出キーワード: ダウンロード/Download/Downloading/%/MB/GB",
+        "",
+        "## 現在の画面状況",
+        f"- 最終アクション : {state.last_action}",
+        f"- 現在シーン    : {state.current_scene}",
+        f"- 最終OCRテキスト: {last_ocr_preview}",
+        f"- ホーム到達    : {state.home_reached}",
+        "",
+        "## 実行統計",
+        f"- イテレーション       : {state.iteration}",
+        f"- 総タップ数           : {state.total_taps}",
+        f"- OCR実行回数          : {state.total_ocr_calls}",
+        f"- OCRスキップ          : {state.total_ocr_skipped}",
+        f"- 暗転スキップ         : {state.total_blackout_skipped}",
+        f"- Watchdog復旧試行     : {state.watchdog_recovery_count}",
+        f"- エビデンス保存数     : {state.screenshots_saved}",
+        "",
+        "## 最新コミット",
+        f"- commit: {commit_id}",
+        f"- GitHub: https://github.com/Isao-Shinohara/LudusCartographer/commit/{commit_id}",
+        "=" * 64,
+    ]
+    report = "\n".join(report_lines)
+
+    try:
+        storage_dir = _CRAWLER_ROOT / "storage"
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        report_path = storage_dir / "auto_pilot_report.md"
+        report_path.write_text(report, encoding="utf-8")
+        # pbcopy でクリップボードにコピー
+        subprocess.run(
+            ["bash", "-c", f"cat '{report_path}' | pbcopy"],
+            check=False, timeout=5,
+        )
+        logger.info("[REPORT] レポート保存: %s", report_path)
+        logger.info("[REPORT] クリップボードにコピー完了 — Gemini にペーストしてください")
+    except Exception as e:
+        logger.error("[REPORT] コピー失敗: %s", e)
+
+    print("\n" + report)
+    print("\n>>> 報告をクリップボードにコピーしました。Geminiにペーストしてください。")
+
+
 # ─── コマンドライン引数 ───────────────────────────────
 def parse_args():
     parser = argparse.ArgumentParser(description="まどドラ自律操縦")
@@ -1897,6 +1980,9 @@ def main():
                     )
                     save_evidence(img_path, [], "WATCHDOG_DEADLOCK", state)
                     if not watchdog_recover(state):
+                        generate_and_copy_report(
+                            state, f"Watchdog復旧不能 (elapsed={watchdog_elapsed:.0f}秒, count={state.watchdog_recovery_count})"
+                        )
                         return  # 復旧不能 → 終了
                     continue   # 復旧後は次のイテレーションから
 
@@ -1939,6 +2025,7 @@ def main():
                 logger.info("  総タップ: %d  OCR実行: %d  スキップ: %d  暗転: %d",
                             state.total_taps, state.total_ocr_calls,
                             state.total_ocr_skipped, state.total_blackout_skipped)
+                generate_and_copy_report(state, f"スタック解消不能 (elapsed={stall_elapsed:.0f}秒)")
                 return
 
         # ── 4) 解析用画像の準備 ──
@@ -1978,6 +2065,17 @@ def main():
             state.stall_corner_tried = False
             state.same_phash_count = 0
 
+        # ── ダウンロード進捗ログ (30秒ごとに生存確認) ──
+        if action == "DOWNLOAD_WAIT":
+            _now = time.time()
+            if _now - state.last_download_progress_log >= 30.0:
+                _prog = [t for t in texts if "%" in t or "MB" in t or "GB" in t]
+                logger.info(
+                    "[DOWNLOAD_PROGRESS] 進捗数値: %s | OCR全体: %s",
+                    _prog if _prog else "(数値なし)", texts[:6],
+                )
+                state.last_download_progress_log = _now
+
         # エビデンス保存
         if i % 20 == 0 or action in ("HOME_REACHED", "SKIP", "AGREE", "RESULT_TAP"):
             save_evidence(img_path, ocr_results, action, state)
@@ -1996,6 +2094,7 @@ def main():
             if _scrcpy_proc and _scrcpy_proc.poll() is None:
                 _scrcpy_proc.terminate()
                 logger.info("[SCRCPY] 終了 PID=%d", _scrcpy_proc.pid)
+            generate_and_copy_report(state, "ホーム画面到達 (チュートリアル完了)")
             return
 
         # ── 8) 待機 ──
@@ -2010,6 +2109,7 @@ def main():
             gc.collect()
 
     logger.warning("最大イテレーション(%d)に到達。手動確認が必要です。", MAX_ITERATIONS)
+    generate_and_copy_report(state, f"最大イテレーション({MAX_ITERATIONS})到達")
 
     # scrcpy プロセスを終了
     if _scrcpy_proc and _scrcpy_proc.poll() is None:
