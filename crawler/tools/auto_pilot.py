@@ -220,8 +220,20 @@ def tap_device(x: int, y: int, state: PilotState, desc: str = "") -> None:
         real_y = int(y * sy)
     else:
         real_x, real_y = x, y
+    # ─── 赤ドット描画: 解析画像にタップ位置を可視化 ───
+    try:
+        import cv2 as _cv2
+        _analysis_img = Path("/tmp/lc_autopilot_analysis.png")
+        _src = _analysis_img if _analysis_img.exists() else Path("/tmp/lc_screenshot.png")
+        if _src.exists():
+            _dbg = _cv2.imread(str(_src))
+            if _dbg is not None:
+                _cv2.circle(_dbg, (x, y), 10, (0, 0, 255), -1)  # 解析座標に赤円
+                _cv2.imwrite("/tmp/debug_tap_target.png", _dbg)
+                logger.info("  [DEBUG_TAP] Target=(%d,%d) → /tmp/debug_tap_target.png", x, y)
+    except Exception:
+        pass
     time.sleep(0.05)
-    # [DEBUG] タップ前に座標情報をログ出力
     logger.info(
         "  [DEBUG] TAP: 解析座標=(%d,%d) → デバイス座標=(%d,%d) | %s",
         x, y, real_x, real_y, desc
@@ -230,9 +242,17 @@ def tap_device(x: int, y: int, state: PilotState, desc: str = "") -> None:
     state.total_taps += 1
 
 
-def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> None:
-    adb(f"shell input swipe {x1} {y1} {x2} {y2} {duration_ms}")
-    logger.info("  SWIPE (%d,%d)->(%d,%d) %dms", x1, y1, x2, y2, duration_ms)
+def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300,
+          state: "PilotState | None" = None) -> None:
+    if state and state.device_w and state.device_h:
+        sx = state.device_w / ANALYSIS_W
+        sy = state.device_h / ANALYSIS_H
+        rx1, ry1 = int(x1 * sx), int(y1 * sy)
+        rx2, ry2 = int(x2 * sx), int(y2 * sy)
+    else:
+        rx1, ry1, rx2, ry2 = x1, y1, x2, y2
+    adb(f"shell input swipe {rx1} {ry1} {rx2} {ry2} {duration_ms}")
+    logger.info("  SWIPE (%d,%d)->(%d,%d) %dms", rx1, ry1, rx2, ry2, duration_ms)
 
 
 def save_evidence(img_path: Path, ocr_results: list, action: str, state: PilotState) -> None:
@@ -506,8 +526,6 @@ def detect_tutorial_gold_button_tap(img_path: Path,
 
 
 # ─── Smart Tap: 金色ボタン矩形の幾何学的中心を検出 ──────────────────
-# フォールバックはOCR座標をそのまま使用する（マジックナンバーオフセット廃止）
-_BUTTON_Y_OFFSET = 0  # オフセット廃止: OCR中心をそのままhitboxとして使う
 
 
 def smart_tap_button(
@@ -581,12 +599,12 @@ def smart_tap_button(
     except Exception as e:
         logger.debug("  [SmartTap] エラー: %s", e)
 
-    # フォールバック: OCR 座標をそのまま使用 (オフセットなし)
+    # フォールバック: OCR 座標をそのまま使用（数学的中心点）
     logger.info(
-        "  [SmartTap] HSV検出失敗 → フォールバック OCR中心=(%d,%d) をそのままタップ (offset=%d)",
-        ocr_cx, ocr_cy, _BUTTON_Y_OFFSET
+        "  [SmartTap] HSV検出失敗 → フォールバック OCR中心=(%d,%d) をそのままタップ",
+        ocr_cx, ocr_cy
     )
-    return ocr_cx, ocr_cy + _BUTTON_Y_OFFSET
+    return ocr_cx, ocr_cy
 
 
 # ─── チュートリアル: 金色ハイライトボタンを全画面スキャンで検出 ──────────────
@@ -1308,11 +1326,11 @@ def detect_and_act(ocr: list, state: PilotState,
                 if _dir == "UP":
                     logger.info(">>> [GoldSwipe] SWIPE_UP (%d,%d)→(%d,%d) %dms (試行%d)",
                                 _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
-                    swipe(_sx, _fy, _sx, _ty, _dur)
+                    swipe(_sx, _fy, _sx, _ty, _dur, state=state)
                 else:
                     logger.info(">>> [GoldSwipe] SWIPE_DOWN (%d,%d)→(%d,%d) %dms (試行%d)",
                                 _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
-                    swipe(_sx, _fy, _sx, _ty, _dur)
+                    swipe(_sx, _fy, _sx, _ty, _dur, state=state)
                 time.sleep(2.0)
                 _new_ss, _, _ = take_screenshot()
                 _new_ph = compute_phash(_new_ss)
@@ -1363,7 +1381,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 ey = tmpl_meta.get("swipe_to_y", 50)
                 dur = tmpl_meta.get("swipe_duration_ms", 3000)
                 logger.info(">>> [SWIPE_UP] (%d,%d)→(%d,%d) %dms", sx, sy, ex, ey, dur)
-                swipe(sx, sy, ex, ey, dur)
+                swipe(sx, sy, ex, ey, dur, state=state)
                 return "SWIPE_UP", 1.5
             # チュートリアル指差し: 金色ハイライトされたUI要素を方向非依存で検出→タップ
             if action == "TAP_HIGHLIGHTED_NAV":
@@ -1954,7 +1972,7 @@ def detect_and_act(ocr: list, state: PilotState,
     if agree_match:
         logger.info(">>> 規約画面 — スクロール→同意")
         for _ in range(3):
-            swipe(700, 500, 700, 200, 500)
+            swipe(700, 500, 700, 200, 500, state=state)
             time.sleep(0.8)
         agree_btn = has_any(ocr, ["同意"])
         if agree_btn:
