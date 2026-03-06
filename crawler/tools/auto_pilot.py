@@ -1453,7 +1453,10 @@ def detect_and_act(ocr: list, state: PilotState,
     # 縦長金色領域 h/w>=3.5 かつ幅<=100px のみ有効 (ボタン/カード誤検出防止)。
     # チュートリアル3D移動シーン(チェッカー床/階段/廊下)で発火。
     # phash監視: スワイプ後2s待機 → 変化なければ再実行 (最大2回)
-    if analysis_path is not None:
+    # バトルUI（通常攻撃・単体攻撃・WAVE・Turn）が見えるとき はバトル中なのでスキップ
+    _battle_ui_kws = ["通常攻撃", "単体攻撃", "WAVE", "Turn", "ターン"]
+    _is_battle_ui = any(kw in joined for kw in _battle_ui_kws)
+    if analysis_path is not None and not _is_battle_ui:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:
             # 連続スワイプ上限チェック: 6回超えたら GoldSwipe をスキップして他の処理へ
