@@ -214,7 +214,9 @@ def take_screenshot() -> tuple[Path, int, int]:
     return path, w, h
 
 
-def tap_device(x: int, y: int, state: PilotState, desc: str = "") -> None:
+def tap_device(x: int, y: int, state: PilotState, desc: str = "",
+               finger_box: Optional[tuple] = None,
+               gold_box: Optional[tuple] = None) -> None:
     if state.device_w and state.device_h:
         sx = state.device_w / ANALYSIS_W
         sy = state.device_h / ANALYSIS_H
@@ -222,12 +224,21 @@ def tap_device(x: int, y: int, state: PilotState, desc: str = "") -> None:
         real_y = int(y * sy)
     else:
         real_x, real_y = x, y
-    # ─── 赤ドット描画: state.last_screen (メモリ上) を使用 ───
+    # ─── デバッグオーバーレイ描画 ───
+    # 青枠: 指アイコン検出領域 / 緑枠: 金枠検出領域 / 赤ドット: 実際のタップ点
     try:
         import cv2 as _cv2
         if state.last_screen is not None:
             _dbg = state.last_screen.copy()
-            _cv2.circle(_dbg, (x, y), 10, (0, 0, 255), -1)  # 解析座標(x,y)に赤円
+            if finger_box is not None:
+                fbx, fby, fbw, fbh = finger_box
+                _cv2.rectangle(_dbg, (fbx, fby), (fbx + fbw, fby + fbh),
+                                (255, 0, 0), 2)  # 青枠: 指アイコン
+            if gold_box is not None:
+                gbx, gby, gbw, gbh = gold_box
+                _cv2.rectangle(_dbg, (gbx, gby), (gbx + gbw, gby + gbh),
+                                (0, 255, 0), 2)  # 緑枠: 金枠
+            _cv2.circle(_dbg, (x, y), 10, (0, 0, 255), -1)  # 赤ドット: タップ点
             _out = str(Path(__file__).parent.parent / "debug_latest_tap.png")
             _cv2.imwrite(_out, _dbg)
             logger.info("  [DEBUG_TAP] Target=(%d,%d) → %s", x, y, _out)
@@ -297,12 +308,12 @@ def prepare_analysis_image(img_path: Path, actual_w: int, actual_h: int) -> Path
 
 # ─── 指差しアイコン (肌色ブロブ) 検出 ──────────────
 def find_finger_blobs(img_path: Path, min_area: int = 400,
-                      max_area: int = 15000) -> list[tuple[int, int, float]]:
+                      max_area: int = 15000) -> list[tuple[int, int, float, int, int, int, int]]:
     """
     指差しアイコン（肌色）の大きいブロブを検出。
     battle_loop.py と同じ HSV マスク手法。
     max_area: 金色カード等の大面積誤検出を除外（UI カードは 15000px² 超）
-    返値: [(cx, cy, area), ...] 面積降順
+    返値: [(cx, cy, area, bbox_x, bbox_y, bbox_w, bbox_h), ...] 面積降順
     """
     try:
         import cv2
@@ -323,13 +334,66 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
                 if M["m00"] > 0:
                     cx = int(M["m10"] / M["m00"])
                     cy = int(M["m01"] / M["m00"])
-                    blobs.append((cx, cy, area))
+                    bx, by, bw, bh = cv2.boundingRect(c)
+                    blobs.append((cx, cy, area, bx, by, bw, bh))
         return sorted(blobs, key=lambda b: b[2], reverse=True)
     except ImportError:
         return []
     except Exception as e:
         logger.debug("find_finger_blobs error: %s", e)
         return []
+
+
+def find_gold_frame_near(img_path: Path, cx: int, cy: int,
+                         search_radius: int = 200) -> Optional[tuple[int, int, int, int]]:
+    """
+    指アイコン中心(cx,cy)の近傍200px以内で金枠（装飾ボタン枠）を検索。
+    スワイプポインター（縦長細い）は除外し、ボタン形状の金枠を返す。
+    Returns: (frame_cx, frame_cy, frame_w, frame_h) or None
+    """
+    try:
+        import cv2
+        import numpy as np
+        img = cv2.imread(str(img_path))
+        if img is None:
+            return None
+        H_img, W_img = img.shape[:2]
+        x1 = max(0, cx - search_radius)
+        y1 = max(0, cy - search_radius)
+        x2 = min(W_img, cx + search_radius)
+        y2 = min(H_img, cy + search_radius)
+        roi = img[y1:y2, x1:x2]
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        lower_gold = np.array([15, 60, 180], dtype=np.uint8)
+        upper_gold = np.array([50, 255, 255], dtype=np.uint8)
+        mask = cv2.inRange(hsv, lower_gold, upper_gold)
+        k5 = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k5)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        best = None
+        best_area = 0
+        for c in contours:
+            area = cv2.contourArea(c)
+            if area < 3000:
+                continue
+            x, y, w, h = cv2.boundingRect(c)
+            if w < 60:
+                continue
+            aspect = w / max(h, 1)
+            if not (0.3 < aspect < 4.0):
+                continue
+            # スワイプポインター（縦長細い: h>w*3.5 かつ w<100）は除外
+            if h > w * 3.5 and w < 100:
+                continue
+            if area > best_area:
+                best_area = area
+                frame_cx = x1 + x + w // 2
+                frame_cy = y1 + y + h // 2
+                best = (frame_cx, frame_cy, w, h)
+        return best
+    except Exception as e:
+        logger.debug("find_gold_frame_near error: %s", e)
+        return None
 
 
 # ─── HSV金色チュートリアルポインター検出 → ホールドスワイプ ─────────────
@@ -1603,14 +1667,14 @@ def detect_and_act(ocr: list, state: PilotState,
         else:
             blobs = find_finger_blobs(analysis_path, min_area=400)
             # 画面端の誤検出を除去: y<36px(上端)または x>W-40px(右端最端)はシステムUI
-            blobs = [(x, y, a) for x, y, a in blobs if y > 36 and x < W - 40]
+            blobs = [b for b in blobs if b[1] > 36 and b[0] < W - 40]
         if blobs:
             # バトル中は中央エリア(バトルフィールド)の肌色は誤検出なので無視
             # 優先順位: 左キャラカード(x<600,y>550) > 右パネル(x>1050) > 下部UI(y>H*0.8)
             if is_battle_screen:
-                left_char = [(x, y, a) for x, y, a in blobs if x < 600 and y > H * 0.76]
-                right_panel = [(x, y, a) for x, y, a in blobs if x > 1050]
-                bottom_ui = [(x, y, a) for x, y, a in blobs if y > H * 0.8 and x >= 600]
+                left_char = [b for b in blobs if b[0] < 600 and b[1] > H * 0.76]
+                right_panel = [b for b in blobs if b[0] > 1050]
+                bottom_ui = [b for b in blobs if b[1] > H * 0.8 and b[0] >= 600]
                 if state.char_just_selected:
                     # 左キャラ選択済み → 右スキルを選択 (左キャラ再タップしない)
                     if right_panel:
@@ -1640,12 +1704,37 @@ def detect_and_act(ocr: list, state: PilotState,
                     blobs = []
 
         if blobs:
-            # 右側行動アイコン (x > 1050) が最優先
-            right_blobs = [(x, y, a) for x, y, a in blobs if x > 1050]
-            chosen = right_blobs[0] if right_blobs else blobs[0]
-            fx, fy, fa = chosen
-            if right_blobs and len(blobs) > 1:
-                logger.info("  (右パネル優先: %d個中1個を選択)", len(blobs))
+            # ── 2段階ターゲット選択 ──────────────────────────────
+            # Step1: 金枠が見つかる blobs を優先（真のGUIガイド要素）
+            # Step2: 金枠なし blobs は右側優先フォールバック
+            _blob_with_gold = None
+            _blob_gold_frame = None
+            _blob_fallback = None
+            for _b in blobs:
+                _bx0, _by0 = _b[0], _b[1]
+                _gf = find_gold_frame_near(analysis_path, _bx0, _by0, search_radius=200)
+                if _gf is not None:
+                    # 金枠が見つかった最初のblobを使用
+                    if _blob_with_gold is None:
+                        _blob_with_gold = _b
+                        _blob_gold_frame = _gf
+                if _blob_fallback is None and _b[0] > 1050:
+                    _blob_fallback = _b  # 右側優先フォールバック
+            if _blob_fallback is None and blobs:
+                _blob_fallback = blobs[0]
+
+            if _blob_with_gold is not None:
+                chosen = _blob_with_gold
+                _gold_frame = _blob_gold_frame
+                logger.info("  (金枠ありblob優先: %d個中1個)", len(blobs))
+            else:
+                chosen = _blob_fallback
+                _gold_frame = None
+                if len(blobs) > 1:
+                    logger.info("  (金枠なし → 右パネル優先: %d個中1個を選択)", len(blobs))
+            # ────────────────────────────────────────────────────
+            fx, fy, fa = chosen[0], chosen[1], chosen[2]
+            f_bx, f_by, f_bw, f_bh = chosen[3], chosen[4], chosen[5], chosen[6]
             # 50px 近接判定: アニメーション中のブロブ (±20px移動) でもカウントが継続する
             if state.last_blob_xy == (0, 0):
                 # 初回検出: 基準座標を設定してカウントを0にリセット
@@ -1662,9 +1751,25 @@ def detect_and_act(ocr: list, state: PilotState,
                             state.blob_same_count, fx, fy)
                 # カウンタはリセットせず、OCR ベース処理に落ちる
             else:
-                logger.info("FINGER_DETECTED (%d,%d) area=%.0f count=%d",
-                            fx, fy, fa, state.blob_same_count)
-                tap_device(fx, fy, state, f"MOYA_TAP ({fx},{fy})")
+                # ── Step3: タップ座標決定 ──
+                # 金枠あり → 金枠の中心点を射抜く
+                # 金枠なし → 矩形上端から10%の位置（指先）
+                if _gold_frame is not None:
+                    gfx, gfy, gfw, gfh = _gold_frame
+                    tap_x, tap_y = gfx, gfy
+                    _gbox = (gfx - gfw // 2, gfy - gfh // 2, gfw, gfh)
+                    logger.info("FINGER+GOLD_FRAME (%d,%d) → tap_center(%d,%d) frame=%dx%d",
+                                fx, fy, tap_x, tap_y, gfw, gfh)
+                else:
+                    # 指アイコン矩形の上端10%をタップ (指先位置)
+                    tap_x = fx
+                    tap_y = f_by + max(1, int(f_bh * 0.1))
+                    _gbox = None
+                    logger.info("FINGER_DETECTED (%d,%d) area=%.0f → tip(%d,%d) count=%d",
+                                fx, fy, fa, tap_x, tap_y, state.blob_same_count)
+                tap_device(tap_x, tap_y, state, f"MOYA_TAP ({tap_x},{tap_y})",
+                           finger_box=(f_bx, f_by, f_bw, f_bh),
+                           gold_box=_gbox)
                 # 左キャラ選択後は char_just_selected フラグをセット
                 if fx < 600 and fy > H * 0.76:
                     state.char_just_selected = True
