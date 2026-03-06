@@ -308,6 +308,53 @@ Returns: `(field_cx, field_cy)` or `None`
 
 ---
 
+## Rule 7: ROIベースの座標計算プロトコル (2026-03-06確定)
+
+### 問題: レターボックス（黒帯）による座標ズレ
+
+このゲームは 1520×720 の解析フレーム内にレターボックスを持つ。
+実測値: 左=193px, 右=201px, 上=88px, 下=88px → ゲーム描画領域 = 1126×544
+
+比率ベースの座標計算（例: `int(ANALYSIS_W * 0.91) = 1383`）をそのまま使うと
+黒帯エリアをタップしてしまい、ボタンが押せない。
+
+### 座標変換の使い分け
+
+| 座標の出所 | 変換方法 |
+|-----------|---------|
+| **OCR 検出座標** | 変換不要 (既にスクリーンショット実座標) |
+| **テンプレートマッチング座標** | 変換不要 (既に実座標) |
+| **比率計算座標** `int(W * ratio)` | **`roi_to_device()` で変換必須** |
+
+### 変換式
+
+```python
+# 変更前 (黒帯を無視した誤り)
+tap_x = int(ANALYSIS_W * 0.91)   # = 1383 → 黒帯に入る!
+
+# 変更後 (ROIベース)
+roi = state.game_roi  # (roi_x, roi_y, roi_w, roi_h)
+tap_x, tap_y = roi_to_device(int(ANALYSIS_W * 0.91), int(ANALYSIS_H * 0.49), roi)
+# = (roi_x + roi_w * 0.91, roi_y + roi_h * 0.49) = (1217, 353) → ゲーム内!
+```
+
+### 実装
+
+```python
+# detect_game_roi(img) — 毎ループ呼び出し、state.game_roi に保存
+roi = detect_game_roi(state.last_screen)  # → (193, 88, 1126, 544)
+
+# roi_to_device(ax, ay, roi) — 比率座標 → 実機座標
+# real_x = (ax / ANALYSIS_W) * roi_w + roi_x
+# real_y = (ay / ANALYSIS_H) * roi_h + roi_y
+```
+
+### 適用箇所
+- `detect_dialog_frame_and_nav()` の全フォールバック座標
+- `tap_device()` で ratio-based 座標を渡す箇所すべて
+
+---
+
 ## 設定メニュー誤検出防止 (2026-03-06実装)
 
 ストーリー文脈（1-1/AUTO/第1幕など）が OCR に含まれる場合は SETTINGS_BACK を発火しない。

@@ -166,6 +166,9 @@ class PilotState:
     gold_swipe_count: int = 0
     # ─── デバッグ: 最新スクリーンショット (numpy ndarray) ───
     last_screen: object = None  # cv2.imread 結果を格納 (型ヒント省略でdataclass互換)
+    # ─── ROI: ゲーム描画領域 (レターボックス除外) ───
+    # detect_game_roi() で更新: (roi_x, roi_y, roi_w, roi_h)
+    game_roi: tuple = (0, 0, ANALYSIS_W, ANALYSIS_H)
     # ─── アナリティクス: 主要検知カウンタ ───
     dialog_detections: int = 0   # ダイアログ検知成功 (DIALOG_CLOSE/NEXT)
     finger_detections: int = 0   # 指アイコン検知成功 (MOYA_TAP)
@@ -228,6 +231,65 @@ def adb(cmd: str) -> str:
     except subprocess.TimeoutExpired:
         logger.warning("adb timeout: %s", cmd)
         return ""
+
+
+def detect_game_roi(img) -> tuple[int, int, int, int]:
+    """
+    スクリーンショットの黒帯（レターボックス）を検出し、純粋なゲーム描画領域を返す。
+
+    アルゴリズム:
+      1. グレースケール変換し、輝度 > 12 の「非黒」ピクセルを検出
+      2. 列合計 / 行合計から黒帯の始終端を特定
+      3. ROI サイズが全体の50%未満の場合はフォールバック (全画面)
+
+    Returns: (roi_x, roi_y, roi_w, roi_h) in analysis image pixel coordinates
+    """
+    try:
+        import cv2 as _cv2r
+        import numpy as _npr
+        gray = _cv2r.cvtColor(img, _cv2r.COLOR_BGR2GRAY)
+        _H, _W = img.shape[:2]
+        # 列/行ごとの輝度ピクセル数
+        col_bright = (_npr.array(gray, dtype=_npr.int32) > 12).sum(axis=0)
+        row_bright = (_npr.array(gray, dtype=_npr.int32) > 12).sum(axis=1)
+        # 各辺の黒帯を検出 (ノイズ耐性: min 3px 以上の明るい列/行)
+        x0 = next((x for x in range(_W) if col_bright[x] > 3), 0)
+        x1 = next((x for x in range(_W - 1, -1, -1) if col_bright[x] > 3), _W - 1)
+        y0 = next((y for y in range(_H) if row_bright[y] > 3), 0)
+        y1 = next((y for y in range(_H - 1, -1, -1) if row_bright[y] > 3), _H - 1)
+        roi_w = x1 - x0 + 1
+        roi_h = y1 - y0 + 1
+        # 全黒画面 or ROI が異常に小さい場合は全画面を返す
+        if roi_w < _W * 0.5 or roi_h < _H * 0.5:
+            return 0, 0, _W, _H
+        return x0, y0, roi_w, roi_h
+    except Exception:
+        return 0, 0, ANALYSIS_W, ANALYSIS_H
+
+
+def roi_to_device(ax: int, ay: int, roi: tuple) -> tuple[int, int]:
+    """
+    解析座標（比率ベース・ANALYSIS_W×ANALYSIS_H 空間）を
+    ROI オフセットを考慮した実機タップ座標に変換する。
+
+    formula:
+        real_x = (ax / ANALYSIS_W) * roi_w + roi_x
+        real_y = (ay / ANALYSIS_H) * roi_h + roi_y
+
+    使用場面:
+      - ratio-based 座標 (int(ANALYSIS_W * 0.91) など) → 必ず本関数で変換
+      - OCR / テンプレートマッチング座標 → 既に実機座標のため変換不要
+
+    Args:
+        ax, ay : 解析空間 (0..ANALYSIS_W, 0..ANALYSIS_H) の座標
+        roi    : detect_game_roi() の戻り値 (roi_x, roi_y, roi_w, roi_h)
+    Returns: (device_x, device_y)
+    """
+    roi_x, roi_y, roi_w, roi_h = roi
+    return (
+        int(ax / ANALYSIS_W * roi_w) + roi_x,
+        int(ay / ANALYSIS_H * roi_h) + roi_y,
+    )
 
 
 def get_device_resolution() -> tuple[int, int]:
@@ -638,6 +700,7 @@ def save_tutorial_dialog_templates(img_path: Path, W: int = 1520, H: int = 720) 
 def detect_dialog_frame_and_nav(
     img_path: Path, W: int = 1520, H: int = 720,
     ocr_texts: Optional[list] = None,
+    roi: Optional[tuple] = None,
 ) -> Optional[tuple]:
     """
     ダイアログ枠（形状）を視覚的に検出し、その内部/周辺で ×(閉じる)/▷(次へ) を探す。
@@ -794,8 +857,10 @@ def detect_dialog_frame_and_nav(
                 return ("close", _rx1c + _cp[0], _ry1c + _cp[1])
             # 輝度フォールバック
             if _cv.countNonZero(_cv.threshold(_gray_c, 155, 255, _cv.THRESH_BINARY)[1]) >= 25:
-                logger.debug("[Dialog×] 輝度FB: (%d,%d)", int(_W * 0.975), int(_H * 0.055))
-                return ("close", int(_W * 0.975), int(_H * 0.055))
+                _r = roi if roi else (0, 0, _W, _H)
+                _cx_fb, _cy_fb = roi_to_device(int(ANALYSIS_W * 0.94), int(ANALYSIS_H * 0.055), _r)
+                logger.debug("[Dialog×] 輝度FB(ROI補正): (%d,%d)", _cx_fb, _cy_fb)
+                return ("close", _cx_fb, _cy_fb)
 
         # ── ▷ ボタン (スクリーン右エッジ) ────────────────────────────────
         if _DIALOG_NEXT_TEMPLATE.exists():
@@ -821,8 +886,10 @@ def detect_dialog_frame_and_nav(
                 logger.debug("[Dialog▷] Canny検出: (%d,%d)", _rx1n + _np_tip[0], _ry1n + _np_tip[1])
                 return ("next", _rx1n + _np_tip[0], _ry1n + _np_tip[1])
             if _cv.countNonZero(_cv.threshold(_gray_n, 140, 255, _cv.THRESH_BINARY)[1]) >= 20:
-                logger.debug("[Dialog▷] 輝度FB: (%d,%d)", int(_W * 0.91), int(_H * 0.49))
-                return ("next", int(_W * 0.91), int(_H * 0.49))
+                _r = roi if roi else (0, 0, _W, _H)
+                _nx_fb, _ny_fb = roi_to_device(int(ANALYSIS_W * 0.91), int(ANALYSIS_H * 0.49), _r)
+                logger.debug("[Dialog▷] 輝度FB(ROI補正): (%d,%d)", _nx_fb, _ny_fb)
+                return ("next", _nx_fb, _ny_fb)
 
         # ── フォールバック: 固定座標 ▷ ──────────────────────────────────
         if _frame_detected:
@@ -832,8 +899,10 @@ def detect_dialog_frame_and_nav(
             logger.debug("[Dialog] 枠下部フォールバック: (%d,%d)", _fb_x, _fb_y)
             return ("bottom", _fb_x, _fb_y)
 
-        # OCR キーワードのみで枠未検出 → 固定座標 ▷
-        return ("next", int(_W * 0.91), int(_H * 0.49))
+        # OCR キーワードのみで枠未検出 → ROI 補正済み固定座標 ▷
+        _r = roi if roi else (0, 0, _W, _H)
+        _nx_ocr, _ny_ocr = roi_to_device(int(ANALYSIS_W * 0.91), int(ANALYSIS_H * 0.49), _r)
+        return ("next", _nx_ocr, _ny_ocr)
 
     except Exception as _e:
         logger.debug("detect_dialog_frame_and_nav error: %s", _e)
@@ -855,8 +924,9 @@ def process_paging_dialog(
 
     Returns: "DIALOG_CLOSED" | "DIALOG_PAGING_TIMEOUT"
     """
+    _roi = state.game_roi
     for _page in range(max_pages):
-        _dlg = detect_dialog_frame_and_nav(analysis_path, W, H)
+        _dlg = detect_dialog_frame_and_nav(analysis_path, W, H, roi=_roi)
         if _dlg is None:
             logger.info("[PAGING] ダイアログ消失 (page=%d) → 完了", _page)
             state.dialog_detections += 1
@@ -1925,7 +1995,7 @@ def detect_and_act(ocr: list, state: PilotState,
     # ダイアログ検出中は指アイコン・金枠探索を完全スキップ (即 return)
     if analysis_path is not None:
         _dlg = detect_dialog_frame_and_nav(
-            analysis_path, W, H, ocr_texts=texts
+            analysis_path, W, H, ocr_texts=texts, roi=state.game_roi
         )
         if _dlg is not None:
             _dlg_type, _dlg_x, _dlg_y = _dlg
@@ -3143,10 +3213,20 @@ def main():
         if _ss_retries > 0:
             logger.info("[SCREENSHOT] 破損リトライ %d回 (累計: %d回)",
                         _ss_retries, state.screenshot_retry_count)
-        # メモリ上に最新画像を保持 (デバッグ用赤ドット描画に使用)
+        # メモリ上に最新画像を保持 + ROI更新
         try:
             import cv2 as _cv2_main
             state.last_screen = _cv2_main.imread(str(img_path))
+            if state.last_screen is not None:
+                _new_roi = detect_game_roi(state.last_screen)
+                # 非黒画面のときのみ ROI を更新 (暗転中は前の ROI を維持)
+                if _new_roi[2] >= ANALYSIS_W * 0.5:
+                    if _new_roi != state.game_roi:
+                        logger.info("[ROI] ゲーム描画領域更新: x=%d y=%d w=%d h=%d (黒帯: L=%d R=%d T=%d B=%d)",
+                                    _new_roi[0], _new_roi[1], _new_roi[2], _new_roi[3],
+                                    _new_roi[0], ANALYSIS_W - _new_roi[0] - _new_roi[2],
+                                    _new_roi[1], ANALYSIS_H - _new_roi[1] - _new_roi[3])
+                        state.game_roi = _new_roi
         except Exception:
             state.last_screen = None
 
