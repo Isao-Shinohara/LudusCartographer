@@ -1297,8 +1297,14 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── 【最優先 #-2】タイトル画面 設定/サポートメニュー ───
     # 「動画配信設定」アイコンを誤タップして開く設定ポップアップ → BACK で閉じる
+    # ただし、ストーリー/バトル/マップシーン中は「サポート」がセリフに含まれるため除外
     _settings_menu_kws = ["サポート", "データ引き継ぎ", "キャッシュクリア", "お問い合わせ"]
-    if has_any(ocr, _settings_menu_kws, min_conf=0.3):
+    _story_context_kws = ["1-1", "1-2", "第1幕", "第1階層", "第2幕", "WAVE", "AUTO", "1-3", "2-1"]
+    _in_story_ctx = any(kw in joined for kw in _story_context_kws)
+    # 設定メニューはストーリーコンテキスト外かつ2つ以上のキーワードが揃った時のみ判定
+    _settings_hits = sum(1 for kw in _settings_menu_kws
+                         if has_text(ocr, kw, min_conf=0.3) is not None)
+    if not _in_story_ctx and _settings_hits >= 1:
         logger.info(">>> 【設定メニュー誤起動】 BACK キーで閉じる")
         import subprocess as _sp
         _sp.run(["adb", "-s", DEVICE_SERIAL, "shell", "input", "keyevent", "4"], check=False)
