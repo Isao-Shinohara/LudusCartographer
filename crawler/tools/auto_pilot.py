@@ -1889,7 +1889,14 @@ def detect_and_act(ocr: list, state: PilotState,
         return "RESULT_TAP", 1.0
 
     # ─── スキップ ───
+    # OCRがSKIPを'SK'と短縮検出するケースも考慮: 右上エリア(x>1000, y<100)に限定
     skip_match = has_any(ocr, ["スキップ", "SKIP", "Skip"])
+    if not skip_match:
+        _sk_match = has_any(ocr, ["SK", "Sk"])
+        if _sk_match:
+            _sk_cx, _sk_cy = _sk_match["center"]
+            if _sk_cx > 1000 and _sk_cy < 100:
+                skip_match = _sk_match
     if skip_match:
         cx, cy = skip_match["center"]
         text = skip_match["text"]
@@ -2141,24 +2148,30 @@ def main():
     state = PilotState()
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ─── scrcpy Stay Awake: システムスリープを完全に防止 ───
-    # -S: 画面オフのまま mirroring / --stay-awake: デバイスをスリープさせない
-    # --always-on-top: ウィンドウを最前面に固定 / -m 800: 解像度を抑えてCPU節約
+    # ─── scrcpy Stay Awake: 二重起動防止 + システムスリープ防止 ───
+    # pgrep で既存プロセスを確認し、なければ新規起動する（増殖防止）
     _scrcpy_proc = None
-    try:
-        _scrcpy_proc = subprocess.Popen(
-            ["scrcpy", "-s", DEVICE_SERIAL, "-S", "--stay-awake",
-             "--always-on-top", "--no-audio", "-m", "800"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        logger.info("[SCRCPY] Stay Awake バックグラウンド起動 PID=%d (device=%s)",
-                    _scrcpy_proc.pid, DEVICE_SERIAL)
-    except FileNotFoundError:
-        logger.warning("[SCRCPY] scrcpy が見つかりません — Stay Awake なしで続行 "
-                       "(brew install scrcpy で導入可能)")
-    except Exception as _e:
-        logger.warning("[SCRCPY] 起動失敗: %s — Stay Awake なしで続行", _e)
+    _existing_scrcpy = subprocess.run(
+        ["pgrep", "-x", "scrcpy"], capture_output=True, text=True
+    )
+    if _existing_scrcpy.returncode == 0:
+        logger.info("[SCRCPY] 既存プロセス検出 (PID=%s) — 新規起動をスキップ",
+                    _existing_scrcpy.stdout.strip().replace("\n", ","))
+    else:
+        try:
+            _scrcpy_proc = subprocess.Popen(
+                ["scrcpy", "-s", DEVICE_SERIAL, "-S", "--stay-awake",
+                 "--always-on-top", "--no-audio", "-m", "800"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info("[SCRCPY] Stay Awake バックグラウンド起動 PID=%d (device=%s)",
+                        _scrcpy_proc.pid, DEVICE_SERIAL)
+        except FileNotFoundError:
+            logger.warning("[SCRCPY] scrcpy が見つかりません — Stay Awake なしで続行 "
+                           "(brew install scrcpy で導入可能)")
+        except Exception as _e:
+            logger.warning("[SCRCPY] 起動失敗: %s — Stay Awake なしで続行", _e)
 
     for i in range(MAX_ITERATIONS):
         state.iteration = i
