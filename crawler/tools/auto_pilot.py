@@ -3952,7 +3952,7 @@ def main():
         # ── 4.3) BATTLE_RAPID: 発光検知即タップ → OCR 完全スキップ ──
         # detect_guide_glow() は OpenCV のみ (10-50ms) で OCR (6-8s) の 40-50 倍高速
         if state.current_scene == "BATTLE" and analysis_path is not None:
-            _rapid_glows = detect_guide_glow(analysis_path, W, H, footer_ratio=0.30)
+            _rapid_glows = detect_guide_glow(analysis_path, ANALYSIS_W, ANALYSIS_H, footer_ratio=0.30)
             _rapid_left = [g for g in _rapid_glows if g["side"] == "left"]
             _rapid_right = [g for g in _rapid_glows if g["side"] == "right"]
 
