@@ -532,10 +532,7 @@ def detect_tutorial_dialog_nav(img_path: Path,
                 logger.debug("[DialogNav] ▷ 矢印検出 (template): (%d,%d)", *_r2)
                 return ("next", _r2[0], _r2[1])
 
-        # 3. テンプレートなし → フォールバック: 固定座標を返す
-        #    × ボタンは常に右上 (W*0.98, H*0.056) ≈ (1490, 40)
-        #    ▷ 矢印は右エッジ (W*0.91, H*0.49) ≈ (1383, 353)
-        # テンプレートが存在しないため判断できない → None を返し呼び出し側に委ねる
+        # 3. テンプレートなし → 判断できないため None を返し、呼び出し側のシーケンスに委ねる
         return None
 
     except Exception as _e:
@@ -1679,6 +1676,9 @@ def detect_and_act(ocr: list, state: PilotState,
         # 全6ロール — 一覧画面・個別詳細ページ両方に対応
         "ATTACKER", "BREAKER", "BUFFER", "DEBUFFER", "DEFENDER", "HEALER",
         "アタッカー", "ブレイカー", "バッファー", "デバッファー", "ディフェンダー", "ヒーラー",
+        # パーティ/編成チュートリアルポップアップ (複数ページ ▷/× 矢印ナビ)
+        "ポートレイト", "キオクを最大", "ポジションを", "前衛", "後衛",
+        "各キオク", "パーティを組", "チームを組",
     ]
     pre_popup = has_any(ocr, pre_popup_kws)
     if pre_popup:
