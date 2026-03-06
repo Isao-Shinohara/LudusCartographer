@@ -146,7 +146,7 @@ class PilotState:
 SCENE_INTERVAL = {
     "BATTLE":  1.0,   # バトル画面: 最速反応
     "ADV":     1.0,   # アドベンチャー/会話: 最速反応
-    "STORY":   2.0,   # ストーリー(スキップなし): スキップボタン出現を即検知
+    "STORY":   0.8,   # ストーリー(スキップなし): 高速化 (旧2.0→0.8)
     "LOADING": 5.0,   # ロード中: 負荷軽減
     "MENU":    1.0,   # ホーム/メニュー
     "UNKNOWN": 1.0,   # 不明
@@ -394,6 +394,42 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
     except Exception as e:
         logger.debug("find_gold_frame_near error: %s", e)
         return None
+
+
+def detect_adv_advance_icon(img_path: Path,
+                             roi_x: int = 1330, roi_y: int = 610,
+                             roi_w: int = 170, roi_h: int = 90,
+                             min_bright: int = 20) -> bool:
+    """
+    ADV送り待ちアイコン（◆/▼）を検出。
+    テキストボックス右下 ROI 内に孤立した明るい小クラスターを探す。
+
+    ROI デフォルト: x=1330-1500, y=610-700 (landscape 1520x720)
+    明るい白/淡色ピクセル: HSV V>210, S<60 が min_bright 個以上 → True
+    """
+    try:
+        _img = cv2.imread(str(img_path))
+        if _img is None:
+            return False
+        _H, _W = _img.shape[:2]
+        _x1 = max(0, roi_x)
+        _y1 = max(0, roi_y)
+        _x2 = min(_W, roi_x + roi_w)
+        _y2 = min(_H, roi_y + roi_h)
+        if _x2 <= _x1 or _y2 <= _y1:
+            return False
+        _roi = _img[_y1:_y2, _x1:_x2]
+        _hsv = cv2.cvtColor(_roi, cv2.COLOR_BGR2HSV)
+        _mask = cv2.inRange(_hsv, (0, 0, 210), (180, 60, 255))
+        _bright = int(cv2.countNonZero(_mask))
+        if _bright >= min_bright:
+            logger.debug("[ADV_ADVANCE] 明るいピクセル %d 個 @ ROI(%d,%d,%d,%d)",
+                         _bright, roi_x, roi_y, roi_w, roi_h)
+            return True
+        return False
+    except Exception as _e:
+        logger.debug("detect_adv_advance_icon error: %s", _e)
+        return False
 
 
 # ─── HSV金色チュートリアルポインター検出 → ホールドスワイプ ─────────────
@@ -1886,7 +1922,7 @@ def detect_and_act(ocr: list, state: PilotState,
     # ─── クエストマップ/ステージ選択 ───
     stage_num = has_any(ocr, ["1-1", "1-2", "1-3", "2-1", "2-2", "2-3",
                                "3-1", "3-2", "4-1", "4-2", "Main"])
-    sentu_btn = has_text(ocr, "戦闘") or has_text(ocr, "出撃")
+    sentu_btn = has_text(ocr, "戦闘") or has_text(ocr, "出撃") or has_text(ocr, "挑戦")
     if not sentu_btn:
         expl = has_text(ocr, "探索")
         if expl and expl["center"][1] > H * 0.6:
@@ -2476,6 +2512,17 @@ def main():
                 if i % 3 == 0:
                     logger.info("[%s][iter %d] phash_dist=%d same=%d — polling (%.1fs)...",
                                 state.current_scene, i, dist, state.same_phash_count, _poll)
+                # ── ADV送り待ちアイコン検知: phash 安定中でも即タップ ──
+                if state.current_scene in ("STORY", "ADV"):
+                    if detect_adv_advance_icon(img_path):
+                        logger.info("[ADV_ADVANCE][iter %d] 送り待ちアイコン検出 → 即タップ", i)
+                        adb(f"shell input tap 760 650")
+                        state.total_taps += 1
+                        state.last_phash = ""
+                        state.same_phash_count = 0
+                        state.stall_start = 0.0
+                        time.sleep(0.5)
+                        continue
                 state.last_phash = cur_phash
                 time.sleep(_poll)
                 continue
