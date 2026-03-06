@@ -1741,6 +1741,16 @@ def detect_and_act(ocr: list, state: PilotState,
             time.sleep(0.3)
             tap_device(760, 360, state, "GACHA_RESULT_CENTER_2")
             return "GACHA_OK", 2.0
+        # ─── ADV選択肢「はい」「いいえ」など ─────────────────────────────
+        # 選択肢ボタンはブロブ検出より優先タップ (ブロブが選択肢を隠す場合がある)
+        _adv_choice_kws = ["はい", "いいえ", "わかった", "了解", "OK"]
+        _adv_choice = has_any(ocr, _adv_choice_kws)
+        if _adv_choice:
+            _ac_x, _ac_y = _adv_choice["center"]
+            logger.info(">>> 【ADV選択肢】 '%s' (%d,%d) タップ", _adv_choice["text"], _ac_x, _ac_y)
+            tap_device(_ac_x, _ac_y, state, f"ADV_CHOICE '{_adv_choice['text']}'")
+            return "ADV_CHOICE", 1.0
+
         # ─── バトルResultリザルト画面 ───────────────────────────────────────
         # "次へ" + Resultコンテキスト(EXP/Lv.1/リザルト)が見えている間は優先タップ
         # ※ OCRが "Result" を "kesuit" 等と誤読する場合も EXP/Lv.1 で補完
