@@ -144,6 +144,8 @@ class PilotState:
     blob_same_count: int = 0
     # フリーバトル: 左キャラ選択済みフラグ (True なら次は右スキルを優先)
     char_just_selected: bool = False
+    # 発光SMバトル: キャラ選択済みフラグ (GLOW State Machine 用)
+    character_selected: bool = False
     # チュートリアルポップアップ連続タップ回数 (高くなると異なる座標を試す)
     pre_popup_tap_count: int = 0
     # 現在のシーン分類 (BATTLE / ADV / LOADING / MENU / UNKNOWN)
@@ -615,6 +617,68 @@ def create_finger_mask_image(img_path: Path, cx: int, cy: int, half: int = 175) 
     except Exception as _e_hm:
         logger.debug("create_finger_mask_image error: %s", _e_hm)
         return img_path
+
+
+def detect_guide_glow(img_path: Path, W: int, H: int,
+                      footer_ratio: float = 0.30,
+                      min_area: int = 800) -> list[dict]:
+    """
+    チュートリアルガイドの「発光（モヤ）エフェクト」をフッター領域で検知する。
+    フッター = 画面下部 footer_ratio (デフォルト30%) に限定。
+    白〜金色の高輝度ブロブを検出し、左側(left)/右側(right)を分類して返す。
+    返値: [{"cx":int,"cy":int,"area":float,"side":"left"|"right",
+            "bx":int,"by":int,"bw":int,"bh":int}, ...] 面積降順
+    """
+    try:
+        import cv2
+        import numpy as _np_gw
+        _img_gw = cv2.imread(str(img_path))
+        if _img_gw is None:
+            return []
+        _Hg, _Wg = _img_gw.shape[:2]
+        _footer_y = int(_Hg * (1.0 - footer_ratio))
+        _footer = _img_gw[_footer_y:_Hg, 0:_Wg]
+        if _footer.size == 0:
+            return []
+        _hsv_gw = cv2.cvtColor(_footer, cv2.COLOR_BGR2HSV)
+        # 白発光: 低彩度・高輝度 (白いハイライト/ハロー)
+        _mask_w = cv2.inRange(_hsv_gw,
+                              _np_gw.array([0, 0, 215], dtype=_np_gw.uint8),
+                              _np_gw.array([180, 65, 255], dtype=_np_gw.uint8))
+        # 金発光: 金/黄色系・高輝度 (ゴールドハイライト)
+        _mask_g = cv2.inRange(_hsv_gw,
+                              _np_gw.array([15, 50, 195], dtype=_np_gw.uint8),
+                              _np_gw.array([50, 210, 255], dtype=_np_gw.uint8))
+        _mask_gw = cv2.bitwise_or(_mask_w, _mask_g)
+        # ノイズ除去: 小さいスポット・HPバー等の細線を排除
+        _kern = _np_gw.ones((4, 4), _np_gw.uint8)
+        _mask_gw = cv2.morphologyEx(_mask_gw, cv2.MORPH_OPEN, _kern)
+        _cnts_gw, _ = cv2.findContours(_mask_gw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        _glows = []
+        for _c_gw in _cnts_gw:
+            _a_gw = cv2.contourArea(_c_gw)
+            if _a_gw < min_area:
+                continue
+            # HPバー等の細長いブロブを除外: アスペクト比 > 8 はバー状
+            _bx_gw, _by_gw, _bw_gw, _bh_gw = cv2.boundingRect(_c_gw)
+            _asp_gw = _bw_gw / _bh_gw if _bh_gw > 0 else 1.0
+            if _asp_gw > 8.0 or _asp_gw < 0.12:
+                continue
+            _M_gw = cv2.moments(_c_gw)
+            if _M_gw["m00"] <= 0:
+                continue
+            _cx_gw = int(_M_gw["m10"] / _M_gw["m00"])
+            _cy_gw = int(_M_gw["m01"] / _M_gw["m00"]) + _footer_y
+            _by_abs = _by_gw + _footer_y
+            _side = "left" if _cx_gw < _Wg // 2 else "right"
+            _glows.append({
+                "cx": _cx_gw, "cy": _cy_gw, "area": _a_gw, "side": _side,
+                "bx": _bx_gw, "by": _by_abs, "bw": _bw_gw, "bh": _bh_gw,
+            })
+        return sorted(_glows, key=lambda g: g["area"], reverse=True)
+    except Exception as _e_gw:
+        logger.debug("detect_guide_glow error: %s", _e_gw)
+        return []
 
 
 def find_gold_frame_near(img_path: Path, cx: int, cy: int,
@@ -2157,6 +2221,37 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.info(">>> MAIN STORY ローディング背景 — 自動遷移待ち (10s)")
         return "MAIN_STORY_LOADING", 10.0
 
+    # ─── 【最優先 #0-PRE】バトル発光SM ガード ─────────────────────────────────
+    # DIALOG_CLOSE が「通常攻撃」等のバトルアクションを踏み越えるのを防ぐ。
+    # キャラ選択済み(character_selected=True) かつバトル画面 → 発光SM優先で右スキル/通常攻撃へ。
+    _is_battle_early = any(kw in " ".join(texts) for kw in
+                           ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃", "BREAK", "WAVE", "Turn"])
+    if _is_battle_early and state.character_selected and analysis_path is not None:
+        _pre_glows = detect_guide_glow(analysis_path, W, H, footer_ratio=0.30)
+        _pre_right = [g for g in _pre_glows if g["side"] == "right"]
+        if _pre_right:
+            _prg = max(_pre_right, key=lambda g: g["area"])
+            _prg_x, _prg_y = _prg["cx"], max(1, _prg["cy"] - 35)
+            logger.info("[GLOW_SM P2] 右発光(%d,%d)→tap(%d,%d) [#0前ガード]",
+                        _prg["cx"], _prg["cy"], _prg_x, _prg_y)
+            tap_device(_prg_x, _prg_y, state, "GLOW_RIGHT_SKILL")
+            state.character_selected = False
+            state.char_just_selected = False
+            state.finger_detections += 1
+            return "GLOW_RIGHT_SKILL", 1.0
+        else:
+            # 発光なし → 通常攻撃をOCRで直接タップ (DIALOG_CLOSEより優先)
+            _pre_na = has_text(ocr, "通常攻撃", min_conf=0.3)
+            if _pre_na:
+                _pnx, _pny = _pre_na["center"]
+                if _pnx > W * 0.5 and _pny > H * 0.5:
+                    _pny = max(1, _pny - 35)
+                    logger.info("[GLOW_SM P3] 通常攻撃OCR(%d,%d) → tap [#0前ガード]", _pnx, _pny)
+                    tap_device(_pnx, _pny, state, "NORMATK_TAP")
+                    state.character_selected = False
+                    state.char_just_selected = False
+                    return "NORMATK_TAP", 1.0
+
     # ─── 【最優先 #0-DIALOG】ダイアログ・ファースト (枠形状+Canny) ────────────
     # 主トリガー: HSV金色枠の大矩形検出 (形状ベース)
     # 副トリガー: OCR キーワード補助 (枠検出失敗時フォールバック)
@@ -2474,6 +2569,54 @@ def detect_and_act(ocr: list, state: PilotState,
             state.blob_same_count = 0
             return "CLOSE_POPUP", 1.5
 
+    # ─── 【最優先 #1-pre】バトル発光 State Machine (フッター下部30%限定) ─────────
+    # 優先度 1: 左キャラ発光 → タップ → character_selected=True
+    # 優先度 2: 右スキル発光 (character_selected=True) → タップ
+    # 優先度 3: 発光なし + character_selected → 通常攻撃 OCR フォールバック
+    if _is_battle_early and analysis_path is not None:
+        _gsm_glows = detect_guide_glow(analysis_path, W, H, footer_ratio=0.30)
+        _gsm_left = [g for g in _gsm_glows if g["side"] == "left"]
+        _gsm_right = [g for g in _gsm_glows if g["side"] == "right"]
+        if _gsm_glows:
+            logger.info("[GLOW_SM] フッター発光: 左%d個(最大%.0f) 右%d個(最大%.0f)",
+                        len(_gsm_left), _gsm_left[0]["area"] if _gsm_left else 0,
+                        len(_gsm_right), _gsm_right[0]["area"] if _gsm_right else 0)
+
+        # Priority 1: 左キャラ発光検出 (キャラ未選択時)
+        if not state.character_selected and _gsm_left:
+            _gl = max(_gsm_left, key=lambda g: g["area"])
+            _gl_x, _gl_y = _gl["cx"], max(1, _gl["cy"] - 35)
+            logger.info("[GLOW_SM P1] 左キャラ発光(%d,%d) → tap(%d,%d)", _gl["cx"], _gl["cy"], _gl_x, _gl_y)
+            tap_device(_gl_x, _gl_y, state, "GLOW_LEFT_CHAR")
+            state.character_selected = True
+            state.char_just_selected = True
+            state.finger_detections += 1
+            return "GLOW_LEFT_CHAR", 1.0
+
+        # Priority 2: 右スキル発光検出 (キャラ選択済み)
+        elif state.character_selected and _gsm_right:
+            _gr = max(_gsm_right, key=lambda g: g["area"])
+            _gr_x, _gr_y = _gr["cx"], max(1, _gr["cy"] - 35)
+            logger.info("[GLOW_SM P2] 右スキル発光(%d,%d) → tap(%d,%d)", _gr["cx"], _gr["cy"], _gr_x, _gr_y)
+            tap_device(_gr_x, _gr_y, state, "GLOW_RIGHT_SKILL")
+            state.character_selected = False
+            state.char_just_selected = False
+            state.finger_detections += 1
+            return "GLOW_RIGHT_SKILL", 1.0
+
+        # Priority 3: 発光なし + character_selected → 通常攻撃 OCR フォールバック
+        elif state.character_selected and not _gsm_right:
+            _na_item = has_text(ocr, "通常攻撃", min_conf=0.3)
+            if _na_item:
+                _na_x, _na_y = _na_item["center"]
+                if _na_x > W * 0.5 and _na_y > H * 0.5:
+                    _na_y = max(1, _na_y - 35)
+                    logger.info("[GLOW_SM P3] 通常攻撃OCR(%d,%d) → tap (発光なしフォールバック)", _na_x, _na_y)
+                    tap_device(_na_x, _na_y, state, "NORMATK_TAP")
+                    state.character_selected = False
+                    state.char_just_selected = False
+                    return "NORMATK_TAP", 1.0
+
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
     if analysis_path is not None:
         # 「AUTO」のみはストーリー画面にも表示されるため除外、戦闘固有キーワードで判定
@@ -2785,9 +2928,10 @@ def detect_and_act(ocr: list, state: PilotState,
                 state.finger_detections += 1
                 if _gold_frame is not None:
                     state.gold_detections += 1
-                # 左キャラ選択後は char_just_selected フラグをセット
+                # 左キャラ選択後は char_just_selected / character_selected フラグをセット
                 if fx < 600 and fy > H * 0.76:
                     state.char_just_selected = True
+                    state.character_selected = True  # GLOW SM 用にも同期
                     logger.info("  (左キャラ選択完了 → 次は右スキル)")
                 return "MOYA_TAP", 1.0
 
