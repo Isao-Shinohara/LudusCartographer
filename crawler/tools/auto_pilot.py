@@ -139,6 +139,8 @@ class PilotState:
     last_download_progress_log: float = 0.0
     # ─── スクリーンショット破損リトライ統計 ───
     screenshot_retry_count: int = 0  # SIGSEGV防止リトライ発生回数
+    # GoldSwipe連続検出カウンタ (N回超えたらOCRへフォールバック)
+    gold_swipe_count: int = 0
     # ─── デバッグ: 最新スクリーンショット (numpy ndarray) ───
     last_screen: object = None  # cv2.imread 結果を格納 (型ヒント省略でdataclass互換)
 
@@ -2630,15 +2632,37 @@ def main():
         if state.current_scene == "BATTLE":
             _fast_action, _fast_wait = _battle_fast_check(analysis_path, state)
             if _fast_action:
-                state.last_action = _fast_action
-                state.stall_start = 0.0
-                state.stall_corner_tried = False
-                state.same_phash_count = 0
-                if _fast_wait > 0:
-                    logger.info("  [FAST][%s] wait %.1fs (OCR skip)", _fast_action, _fast_wait)
-                    time.sleep(_fast_wait)
-                logger.info("  [PERF] Loop %.2fs (FAST_PATH)", time.time() - _loop_t0)
-                continue  # OCR スキップ
+                # GoldSwipe 連続回数制限: 6回超えたら OCR へフォールバック
+                if "GOLD_SWIPE" in _fast_action:
+                    state.gold_swipe_count += 1
+                    if state.gold_swipe_count > 6:
+                        logger.warning(
+                            "[GoldSwipe] 連続 %d 回 → OCR フォールバック (ループ脱出)",
+                            state.gold_swipe_count,
+                        )
+                        state.gold_swipe_count = 0
+                        # FAST_PATH をスキップして通常 OCR へ
+                    else:
+                        state.last_action = _fast_action
+                        state.stall_start = 0.0
+                        state.stall_corner_tried = False
+                        state.same_phash_count = 0
+                        if _fast_wait > 0:
+                            logger.info("  [FAST][%s] wait %.1fs (OCR skip)", _fast_action, _fast_wait)
+                            time.sleep(_fast_wait)
+                        logger.info("  [PERF] Loop %.2fs (FAST_PATH)", time.time() - _loop_t0)
+                        continue  # OCR スキップ
+                else:
+                    state.gold_swipe_count = 0  # GoldSwipe 以外でカウンタリセット
+                    state.last_action = _fast_action
+                    state.stall_start = 0.0
+                    state.stall_corner_tried = False
+                    state.same_phash_count = 0
+                    if _fast_wait > 0:
+                        logger.info("  [FAST][%s] wait %.1fs (OCR skip)", _fast_action, _fast_wait)
+                        time.sleep(_fast_wait)
+                    logger.info("  [PERF] Loop %.2fs (FAST_PATH)", time.time() - _loop_t0)
+                    continue  # OCR スキップ
 
         # ── 5) OCR 精査 ──
         state.total_ocr_calls += 1
