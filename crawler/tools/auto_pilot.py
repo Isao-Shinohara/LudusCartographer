@@ -198,20 +198,41 @@ def adb(cmd: str) -> str:
         return ""
 
 
-def take_screenshot() -> tuple[Path, int, int]:
-    adb(f"shell screencap -p {REMOTE_PATH}")
-    subprocess.run(
-        f"adb -s {DEVICE_SERIAL} pull {REMOTE_PATH} {SCREENSHOT_PATH}",
-        shell=True, capture_output=True, timeout=10,
-    )
+def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Path, int, int]:
+    """
+    スクリーンショット取得。破損PNG によるSIGSEGV防止のためリトライ付き。
+
+    - retries: 破損検出時の再試行回数
+    - min_bytes: 正常PNGの最小ファイルサイズ (50KB未満は破損と判定)
+    """
     path = Path(SCREENSHOT_PATH)
-    try:
-        from PIL import Image
-        with Image.open(path) as img:
-            w, h = img.size
-    except Exception:
-        w, h = ANALYSIS_W, ANALYSIS_H
-    return path, w, h
+    for _attempt in range(retries):
+        adb(f"shell screencap -p {REMOTE_PATH}")
+        subprocess.run(
+            f"adb -s {DEVICE_SERIAL} pull {REMOTE_PATH} {SCREENSHOT_PATH}",
+            shell=True, capture_output=True, timeout=10,
+        )
+        # ── 整合性チェック1: ファイルサイズ ──
+        _fsize = path.stat().st_size if path.exists() else 0
+        if _fsize < min_bytes:
+            logger.warning("[SCREENSHOT] 破損疑い: size=%d bytes (attempt %d/%d) — 再取得",
+                           _fsize, _attempt + 1, retries)
+            time.sleep(0.5)
+            continue
+        # ── 整合性チェック2: OpenCV で読み込み確認 ──
+        import cv2 as _cv2_chk
+        _test = _cv2_chk.imread(str(path))
+        if _test is None:
+            logger.warning("[SCREENSHOT] cv2.imread 失敗 (attempt %d/%d) — 再取得",
+                           _attempt + 1, retries)
+            time.sleep(0.5)
+            continue
+        # 正常
+        _h, _w = _test.shape[:2]
+        return path, _w, _h
+    # 全リトライ失敗: デフォルト値で続行 (クラッシュさせない)
+    logger.error("[SCREENSHOT] %d回リトライ後も取得失敗 — デフォルト解像度で続行", retries)
+    return path, ANALYSIS_W, ANALYSIS_H
 
 
 def tap_device(x: int, y: int, state: PilotState, desc: str = "",
