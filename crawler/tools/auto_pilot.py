@@ -2086,6 +2086,30 @@ def detect_and_act(ocr: list, state: PilotState,
     home_count = sum(1 for h in home_indicators if any(h in t for t in texts))
     if home_count >= 3:
         state.home_reached = True
+        # ── 指アイコン or 金枠がある場合 → まだホームチュートリアル中 ──
+        # 「ホーム画面かつ指アイコン+金枠がない」状態が本当のチュートリアル終了
+        _home_blobs = find_finger_blobs(analysis_path) if analysis_path else []
+        _home_gold = detect_tutorial_gold_button_tap(analysis_path) if analysis_path else None
+        if _home_blobs or _home_gold:
+            # 指アイコン+金枠が存在 → ガイドに従いタップして続行
+            _tap_target = None
+            if _home_blobs:
+                _chosen_blob = max(_home_blobs, key=lambda b: b[2])  # area最大
+                _bx, _by = _chosen_blob[0], _chosen_blob[1]
+                # 金枠があれば金枠中心を優先
+                _gf = find_gold_frame_near(analysis_path, _bx, _by) if analysis_path else None
+                if _gf:
+                    _tap_target = (_gf[0], _gf[1])  # (frame_cx, frame_cy)
+                else:
+                    # blob tuple: (cx, cy, area, bx, by, bw, bh) → 指先は bx+bw/2, by+bh*0.1
+                    _tip_y = _chosen_blob[4] + int(_chosen_blob[6] * 0.1)
+                    _tap_target = (_chosen_blob[3] + _chosen_blob[5] // 2, _tip_y)
+            elif _home_gold:
+                _tap_target = _home_gold
+            if _tap_target:
+                logger.info(">>> ホームチュートリアル継続: 指/金枠 → (%d,%d) タップ", *_tap_target)
+                tap_device(_tap_target[0], _tap_target[1], state, "HOME_TUTORIAL_TAP")
+                return "HOME_TUTORIAL_TAP", 1.5
         # チュートリアルポインタが同一座標でスタックしている → クエスト探索へ移行
         if state.blob_same_count >= 5:
             logger.info(">>> ホーム画面 + もやスタック → クエストへナビゲート")
@@ -2104,7 +2128,8 @@ def detect_and_act(ocr: list, state: PilotState,
         if state.home_nav_count > 0:
             logger.info(">>> ホーム画面 + 遷移試行 %d回目 → 画面変化待ち", state.home_nav_count)
             return "HOME_NAV_WAIT", 2.0
-        logger.info(">>> ホーム画面検出! (%d個) チュートリアル誘導中...", home_count)
+        # 指アイコンも金枠もない → 真のチュートリアル終了
+        logger.info(">>> ホーム画面検出! (%d個) 指/金枠なし → チュートリアル完了!", home_count)
         return "HOME_REACHED", 0
 
     # ─── ダウンロード/ロード中 ───
