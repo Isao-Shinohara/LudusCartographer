@@ -1649,10 +1649,8 @@ def detect_and_act(ocr: list, state: PilotState,
                     "マギアボックス", "最大24時間", "A-Qップ", "素材が溜", "プレイヤーLv",
                     "ポジションを", "チームを組",
                 ]
-                if any(kw in joined for kw in _popup_guard_kws):
-                    logger.info(">>> [SWIPE_UP] ポップアップキーワード検出 → スキップ (pre_popupへ委譲)")
-                    # fall through to pre_popup check
-                else:
+                _swipe_skip = any(kw in joined for kw in _popup_guard_kws)
+                if not _swipe_skip:
                     tmpl_meta = ASSET_MANAGER._templates.get("tutorial_swipe_pointer", {})
                     sx = tmpl_meta.get("swipe_from_x", cx)
                     sy = tmpl_meta.get("swipe_from_y", H - 50)
@@ -1662,6 +1660,8 @@ def detect_and_act(ocr: list, state: PilotState,
                     logger.info(">>> [SWIPE_UP] (%d,%d)→(%d,%d) %dms", sx, sy, ex, ey, dur)
                     swipe(sx, sy, ex, ey, dur, state=state)
                     return "SWIPE_UP", 1.5
+                else:
+                    logger.info(">>> [SWIPE_UP] ポップアップキーワード検出 → スキップ (pre_popupへ委譲)")
             # チュートリアル指差し: 金色ハイライトされたUI要素を方向非依存で検出→タップ
             if action == "TAP_HIGHLIGHTED_NAV":
                 gold_pos = find_golden_highlighted_button(analysis_path)
@@ -1674,10 +1674,14 @@ def detect_and_act(ocr: list, state: PilotState,
                             cx, cy, tap_x, tap_y)
                 tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
                 return "TAP_HIGHLIGHTED_NAV", 1.5
-            tap_device(cx, cy, state, action)
-            # GACHA_OK: 演出終了待ち (演出中はタップが無視されるため長めに待つ)
-            _asset_wait = 5.0 if action == "GACHA_OK" else 0.5
-            return action, _asset_wait
+            # SWIPE_UP がポップアップガードでスキップされた場合は pre_popup に委譲
+            if action == "SWIPE_UP" and _swipe_skip:
+                pass  # fall through to pre_popup check below
+            else:
+                tap_device(cx, cy, state, action)
+                # GACHA_OK: 演出終了待ち (演出中はタップが無視されるため長めに待つ)
+                _asset_wait = 5.0 if action == "GACHA_OK" else 0.5
+                return action, _asset_wait
 
     # ─── 【最優先 #0】チュートリアルポップアップ (ブロブより優先) ───
     # バトル説明・ロール説明などのポップアップはブロブ検出前に処理
