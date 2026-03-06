@@ -63,7 +63,7 @@ POLL_INTERVAL = 0.3         # phash ポーリング間隔 (秒) — 高速化
 PHASH_THRESHOLD = 5         # phash 距離 >= 5 → 画面変化あり
 FORCE_ANALYZE_AFTER = 3     # phash 変化なし連続 N 回 → 強制 OCR — 高速化
 STALL_TIMEOUT = 20.0        # 強制OCRでもタップできず続く秒数 → スタック介入
-BATTLE_WAIT = 1.5           # バトル待機 — 高速化
+BATTLE_WAIT = 0.8           # バトル待機 — 高速化 (旧1.5)
 DOWNLOAD_WAIT = 10.0
 
 # ─── Watchdog: デッドロック自動復旧 ───
@@ -1273,9 +1273,9 @@ def detect_and_act(ocr: list, state: PilotState,
             _tap_y = cy
             tap_device(_tap_x, _tap_y, state,
                        f"GO_CHUI_AGREE_R{_retry_i}({'OCR' if agree_btn else 'FB'})")
-            logger.info(">>> 【ご注意→phash監視】 #%d タップ(%d,%d) → 2s待機",
+            logger.info(">>> 【ご注意→phash監視】 #%d タップ(%d,%d) → 1s待機",
                         _retry_i + 1, _tap_x, _tap_y)
-            time.sleep(2.0)
+            time.sleep(1.0)
             _new_ss, _, _ = take_screenshot()
             _new_ph = compute_phash(_new_ss)
             if _base_ph and _new_ph:
@@ -1331,7 +1331,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     logger.info(">>> [GoldSwipe] SWIPE_DOWN (%d,%d)→(%d,%d) %dms (試行%d)",
                                 _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
                     swipe(_sx, _fy, _sx, _ty, _dur, state=state)
-                time.sleep(2.0)
+                time.sleep(1.0)
                 _new_ss, _, _ = take_screenshot()
                 _new_ph = compute_phash(_new_ss)
                 if _base_ph_gs and _new_ph and phash_distance(_base_ph_gs, _new_ph) >= PHASH_THRESHOLD:
@@ -1339,7 +1339,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 _base_ph_gs = _new_ph
                 # 座標を少しずらして再試行 (+40px x方向)
                 _sx += 40
-            return "GOLD_SWIPE_UP" if _dir == "UP" else "GOLD_SWIPE_DOWN", 1.5
+            return "GOLD_SWIPE_UP" if _dir == "UP" else "GOLD_SWIPE_DOWN", BATTLE_WAIT
 
     # ─── 【最優先 #0-ab】HSV金枠ボタン検出 → 中心タップ (Type B) ───
     # バトルチュートリアルで指アイコンが金枠ハイライトボタンを指している場面。
@@ -1353,7 +1353,7 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> [GoldBtn] 金枠ボタン検出 → tap(%d,%d)", _bx, _by)
             _base_ph_gb = compute_phash(analysis_path)
             tap_device(_bx, _by, state, "GOLD_BTN_TAP")
-            time.sleep(2.0)
+            time.sleep(1.0)
             _new_ss_gb, _, _ = take_screenshot()
             _new_ph_gb = compute_phash(_new_ss_gb)
             if (not _base_ph_gb or not _new_ph_gb or
@@ -1361,7 +1361,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 # 変化なし → Y方向に+30pxずらして再試行
                 logger.info(">>> [GoldBtn] phash変化なし → +30px 再タップ (%d,%d)", _bx, _by + 30)
                 tap_device(_bx, _by + 30, state, "GOLD_BTN_TAP_RETRY")
-            return "GOLD_BTN_TAP", 1.5
+            return "GOLD_BTN_TAP", BATTLE_WAIT
 
     # ─── 【最優先 #0-a】テンプレートマッチング (Asset Match) — 最速 ~0.1s ───
     # チュートリアル中は指アイコン検出(TAP_HIGHLIGHTED_NAV/SWIPE_UP)が最高優先。
@@ -2149,6 +2149,34 @@ def generate_and_copy_report(state: PilotState, reason: str) -> None:
     print("\n>>> 報告をクリップボードにコピーしました。Geminiにペーストしてください。")
 
 
+# ─── BATTLE 高速パス: OCR 前テンプレートマッチング ──────────────────
+def _battle_fast_check(analysis_path: Path,
+                       state: "PilotState") -> tuple[str, float]:
+    """
+    BATTLE シーン専用 OCR 前高速判定。
+    OpenCV のみで GoldSwipe / GoldBtn を検出し、見つかれば即タップして (action, wait) を返す。
+    見つからなければ ("", 0.0) を返して通常 OCR フローへ移行する。
+    """
+    # 1. GoldSwipe (Type A) — チュートリアル移動シーン
+    gs = detect_tutorial_gold_swipe(analysis_path)
+    if gs:
+        _dir, _sx, _fy, _ty, _dur = gs
+        logger.info("[FAST] GoldSwipe %s → swipe (%d,%d)→(%d,%d) %dms",
+                    _dir, _sx, _fy, _sx, _ty, _dur)
+        swipe(_sx, _fy, _sx, _ty, _dur, state=state)
+        return ("GOLD_SWIPE_UP" if _dir == "UP" else "GOLD_SWIPE_DOWN"), BATTLE_WAIT
+
+    # 2. GoldBtn (Type B) — バトルチュートリアルボタン (右半分)
+    gb = detect_tutorial_gold_button_tap(analysis_path, right_half_only=True)
+    if gb:
+        gx, gy = gb
+        logger.info("[FAST] GoldBtn → tap(%d,%d)", gx, gy)
+        tap_device(gx, gy, state, "GOLD_BTN_TAP")
+        return "GOLD_BTN_TAP", BATTLE_WAIT
+
+    return "", 0.0
+
+
 # ─── コマンドライン引数 ───────────────────────────────
 def parse_args():
     parser = argparse.ArgumentParser(description="まどドラ自律操縦")
@@ -2199,12 +2227,13 @@ def main():
 
     for i in range(MAX_ITERATIONS):
         state.iteration = i
+        _loop_t0 = time.time()  # [PERF] ループ開始時刻
 
         # ── 1) スクリーンショット取得 ──
         img_path, actual_w, actual_h = take_screenshot()
         if not img_path.exists():
             logger.warning("Screenshot failed, retrying...")
-            time.sleep(2)
+            time.sleep(1)
             continue
         # メモリ上に最新画像を保持 (デバッグ用赤ドット描画に使用)
         try:
@@ -2231,7 +2260,7 @@ def main():
                 logger.info("[iter %d] 暗転 — 3s 待機", i)
             state.last_phash = ""
             state.same_phash_count = 0
-            time.sleep(3.0)
+            time.sleep(2.0)
             continue
 
         # ── 3) phash 粗解析 ──
@@ -2256,6 +2285,18 @@ def main():
             state.last_prediction = ""
 
         screen_changed = dist >= PHASH_THRESHOLD
+
+        # ── 動的しきい値: Gold UI アクション後はアニメーション変化でも即解析 ──
+        # GoldBtn/MOYA_TAP 後に微小な phash 変化(アニメーション)があっても
+        # OCR をスキップせず即時解析して次のアクションを実行する。
+        _GOLD_UI_ACTIONS = frozenset([
+            "GOLD_BTN_TAP", "MOYA_TAP", "BATTLE_TUTORIAL", "SKILL_CARD_TUTORIAL",
+            "HISSATSU_TUTORIAL", "BUFF_TUTORIAL", "GOLD_SWIPE_UP", "GOLD_SWIPE_DOWN",
+        ])
+        if not screen_changed and state.last_action in _GOLD_UI_ACTIONS and dist >= 1:
+            screen_changed = True
+            state.same_phash_count = 0
+            logger.debug("  [DYN_PHASH] %s 後 dist=%d → 即解析", state.last_action, dist)
 
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
@@ -2337,7 +2378,7 @@ def main():
                 state.stall_corner_tried = True
                 state.last_phash = ""
                 state.same_phash_count = 0
-                time.sleep(2)
+                time.sleep(1)
                 continue
 
             if stall_elapsed >= STALL_TIMEOUT * 2 and state.stall_corner_tried:
@@ -2353,6 +2394,21 @@ def main():
         state.last_phash = cur_phash
         analysis_path = prepare_analysis_image(img_path, actual_w, actual_h)
 
+        # ── 4.5) BATTLE 高速パス: OCR 前テンプレートマッチング ──
+        # BATTLE シーンで GoldBtn/GoldSwipe が見つかれば OCR (6-8s) をスキップ
+        if state.current_scene == "BATTLE":
+            _fast_action, _fast_wait = _battle_fast_check(analysis_path, state)
+            if _fast_action:
+                state.last_action = _fast_action
+                state.stall_start = 0.0
+                state.stall_corner_tried = False
+                state.same_phash_count = 0
+                if _fast_wait > 0:
+                    logger.info("  [FAST][%s] wait %.1fs (OCR skip)", _fast_action, _fast_wait)
+                    time.sleep(_fast_wait)
+                logger.info("  [PERF] Loop %.2fs (FAST_PATH)", time.time() - _loop_t0)
+                continue  # OCR スキップ
+
         # ── 5) OCR 精査 ──
         state.total_ocr_calls += 1
         try:
@@ -2361,7 +2417,7 @@ def main():
         except Exception as e:
             logger.error("OCR failed: %s", e)
             state.last_phash = ""  # 次回も確実に解析
-            time.sleep(2)
+            time.sleep(1)
             continue
 
         texts = all_texts(ocr_results)
@@ -2423,6 +2479,8 @@ def main():
             logger.info("  [%s][%s] wait %.1fs | next_check: %.1fs",
                         scene, action, wait_sec, next_interval)
             time.sleep(wait_sec)
+
+        logger.info("  [PERF] Loop %.2fs (OCR)", time.time() - _loop_t0)
 
         # ── 9) メモリ解放 (SIGSEGV防止) ──
         # cv2 オブジェクトを毎イテレーション解放してメモリ断片化を防ぐ
