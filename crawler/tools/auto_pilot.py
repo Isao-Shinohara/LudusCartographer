@@ -1174,7 +1174,7 @@ def process_paging_dialog(
                     _no_close_streak = 0
         except Exception:
             pass
-        if _no_close_streak >= 2:
+        if _no_close_streak >= 8:
             # × ボタンが画面右上に存在しない → 枠外 or 下部中央を叩いて強制脱出
             _esc_x, _esc_y = W // 2, H - 60
             logger.info(
@@ -1188,7 +1188,7 @@ def process_paging_dialog(
         tap_device(_dx, _dy, state, "PAGING_NEXT")
         logger.info("[PAGING] ▷タップ (page=%d/%d)", _page + 1, max_pages)
         state.dialog_detections += 1
-        time.sleep(0.8)
+        time.sleep(0.4)
         # 次ページのスクリーンショットを取得して解析
         _img_path, _aw, _ah, _ = take_screenshot()
         analysis_path = prepare_analysis_image(_img_path, _aw, _ah)
@@ -2288,18 +2288,19 @@ def detect_and_act(ocr: list, state: PilotState,
             state.char_just_selected = False
             state.finger_detections += 1
             return "GLOW_RIGHT_SKILL", 0.3
-        # P3: キャラ選択済み + 発光なし → 通常攻撃をOCRで直接タップ
+        # P3: キャラ選択済み + 発光なし → 通常攻撃/单体攻撃をOCRで直接タップ
         if state.character_selected and not _pre_right:
-            _pre_na = has_text(ocr, "通常攻撃", min_conf=0.3)
+            _pre_na = has_any(ocr, ["通常攻撃", "单体攻撃", "単体攻撃"])
             if _pre_na:
                 _pnx, _pny = _pre_na["center"]
                 if _pnx > W * 0.5 and _pny > H * 0.5:
                     _pny = max(1, _pny - 35)
-                    logger.info("[GLOW_SM P3] 通常攻撃OCR(%d,%d) → tap [#0前ガード]", _pnx, _pny)
+                    logger.info("[GLOW_SM P3] 攻撃ボタンOCR '%s'(%d,%d) → tap [#0前ガード]",
+                                _pre_na["text"], _pnx, _pny)
                     tap_device(_pnx, _pny, state, "NORMATK_TAP")
                     state.character_selected = False
                     state.char_just_selected = False
-                    return "NORMATK_TAP", 0.3
+                    return "NORMATK_TAP", 1.0
 
     # ─── 【最優先 #0-DIALOG】ダイアログ・ファースト (枠形状+Canny) ────────────
     # 主トリガー: HSV金色枠の大矩形検出 (形状ベース)
@@ -2456,7 +2457,8 @@ def detect_and_act(ocr: list, state: PilotState,
                     logger.info(">>> [SWIPE_UP] ダイアログKW検出 → スキップ (#0-DIALOGへ)  ← safety net")
                     # ここに到達した場合は #0-DIALOG が None を返した異常ケース
                     # 固定座標でダイアログ ▷ をタップして続行
-                    tap_device(int(W * 0.91), int(H * 0.49), state, "DIALOG_NEXT_FALLBACK")
+                    _dnf_x, _dnf_y = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)
+                    tap_device(_dnf_x, _dnf_y, state, "DIALOG_NEXT_FALLBACK")
                     return "DIALOG_NEXT_FALLBACK", 1.0
             # チュートリアル指差し: 金色ハイライトされたUI要素を方向非依存で検出→タップ
             if action == "TAP_HIGHLIGHTED_NAV":
@@ -2555,8 +2557,9 @@ def detect_and_act(ocr: list, state: PilotState,
             return "NAME_INPUT_OK", 2.0
         elif ok_item:
             # 名前未入力 → テキストフィールドをタップして "MadoDora" 入力 → Enter → OK
-            logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (700,417)")
-            tap_device(700, 417, state, "NAME_INPUT_FOCUS")
+            _nf_x, _nf_y = roi_to_device(int(W * 0.46), int(H * 0.58), state.game_roi)
+            logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d)", _nf_x, _nf_y)
+            tap_device(_nf_x, _nf_y, state, "NAME_INPUT_FOCUS")
             time.sleep(0.5)
             import subprocess as _sp
             _sp.run(["adb", "-s", DEVICE_SERIAL, "shell", "input", "text", "MadoDora"], check=False)
@@ -2603,10 +2606,11 @@ def detect_and_act(ocr: list, state: PilotState,
     carousel_match = has_any(ocr, carousel_popup_kws)
     if carousel_match:
         # 最終ページへ移動 (右ナビゲーション × 6) → フレーム右上 × をタップ
+        _cn_x, _cn_y = roi_to_device(int(W * 0.96), int(H * 0.5), state.game_roi)
         for _ in range(6):
-            tap_device(1465, 360, state, "CAROUSEL_NAV_RIGHT")
+            tap_device(_cn_x, _cn_y, state, "CAROUSEL_NAV_RIGHT")
             time.sleep(0.3)
-        close_x, close_y = 1430, 88
+        close_x, close_y = roi_to_device(int(W * 0.94), int(H * 0.12), state.game_roi)
         logger.info(">>> 【カルーセルポップアップ】 '%s' → フレーム右上 (%d,%d) タップ",
                     carousel_match["text"][:10], close_x, close_y)
         tap_device(close_x, close_y, state, "CAROUSEL_CLOSE")
@@ -2671,18 +2675,19 @@ def detect_and_act(ocr: list, state: PilotState,
             state.finger_detections += 1
             return "GLOW_RIGHT_SKILL", 0.3
 
-        # Priority 3: 発光なし + character_selected → 通常攻撃 OCR フォールバック
+        # Priority 3: 発光なし + character_selected → 通常攻撃/单体攻撃 OCR フォールバック
         elif state.character_selected and not _gsm_right:
-            _na_item = has_text(ocr, "通常攻撃", min_conf=0.3)
+            _na_item = has_any(ocr, ["通常攻撃", "单体攻撃", "単体攻撃"])
             if _na_item:
                 _na_x, _na_y = _na_item["center"]
                 if _na_x > W * 0.5 and _na_y > H * 0.5:
                     _na_y = max(1, _na_y - 35)
-                    logger.info("[GLOW_SM P3] 通常攻撃OCR(%d,%d) → tap (発光なしフォールバック)", _na_x, _na_y)
+                    logger.info("[GLOW_SM P3] 攻撃ボタンOCR '%s'(%d,%d) → tap (発光なしフォールバック)",
+                                _na_item["text"], _na_x, _na_y)
                     tap_device(_na_x, _na_y, state, "NORMATK_TAP")
                     state.character_selected = False
                     state.char_just_selected = False
-                    return "NORMATK_TAP", 0.3
+                    return "NORMATK_TAP", 1.0
 
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
     if analysis_path is not None:
@@ -2713,7 +2718,8 @@ def detect_and_act(ocr: list, state: PilotState,
         )
         if is_title_screen:
             logger.info("  タイトル画面検出 → TAP TO START (760,628) タップ")
-            tap_device(760, 628, state, "TITLE_TAP_START")
+            _tt_x, _tt_y = roi_to_device(int(W * 0.5), int(H * 0.87), state.game_roi)
+            tap_device(_tt_x, _tt_y, state, "TITLE_TAP_START")
             return "TITLE_TAP", 3.0
         # ホーム画面検出: ホームナビキーワードが2個以上 → キャラ画像のブロブ誤検出をスキップ
         _home_nav_kws = ["クエスト", "ショップ", "ガチャ", "ガシャ", "ユニオン",
@@ -2740,10 +2746,11 @@ def detect_and_act(ocr: list, state: PilotState,
                 tap_device(cx, cy, state, "GACHA_RESULT_OK_2")
                 return "GACHA_OK", 2.0
             # OKがない場合は画面中央をダブルタップ (NEW×8の初期表示 = タップで詳細へ)
-            logger.info(">>> 【ガチャ結果初期】 OK未検出 → 画面中央ダブルタップ")
-            tap_device(760, 360, state, "GACHA_RESULT_CENTER_1")
+            _gc_x, _gc_y = roi_to_device(int(W * 0.5), int(H * 0.5), state.game_roi)
+            logger.info(">>> 【ガチャ結果初期】 OK未検出 → 画面中央ダブルタップ (%d,%d)", _gc_x, _gc_y)
+            tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_1")
             time.sleep(0.3)
-            tap_device(760, 360, state, "GACHA_RESULT_CENTER_2")
+            tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_2")
             return "GACHA_OK", 2.0
         # ─── ADV選択肢「はい」「いいえ」など ─────────────────────────────
         # 選択肢ボタンはブロブ検出より優先タップ (ブロブが選択肢を隠す場合がある)
@@ -3025,8 +3032,9 @@ def detect_and_act(ocr: list, state: PilotState,
             return "MAP_ARROW_TAP", 1.0
         else:
             # 自動検出失敗 → キャラ頭上デフォルト座標
-            logger.info(">>> 【3D矢印】 自動検出失敗 → デフォルト (760,210) タップ")
-            tap_device(760, 210, state, "MAP_ARROW_FALLBACK")
+            _ma_x, _ma_y = roi_to_device(int(W * 0.5), int(H * 0.29), state.game_roi)
+            logger.info(">>> 【3D矢印】 自動検出失敗 → デフォルト (%d,%d) タップ", _ma_x, _ma_y)
+            tap_device(_ma_x, _ma_y, state, "MAP_ARROW_FALLBACK")
             return "MAP_ARROW_TAP", 1.0
 
     # ─── 【最優先 #2】ハイライト指示テキスト ───
@@ -3096,7 +3104,8 @@ def detect_and_act(ocr: list, state: PilotState,
                 tap_device(cx, cy, state, "QUEST_FROM_HOME")
                 return "QUEST_FROM_HOME", 3.0
             # OCR未検出 → 右下固定座標 (1520×720 画面での位置)
-            tap_device(1337, 707, state, "QUEST_FIXED")
+            _qf_x, _qf_y = roi_to_device(int(W * 0.88), int(H * 0.96), state.game_roi)
+            tap_device(_qf_x, _qf_y, state, "QUEST_FIXED")
             return "QUEST_FROM_HOME", 3.0
         # クエストへの遷移を試みた後、まだホーム画面が表示されている → 遷移待ち
         if state.home_nav_count > 0:
@@ -3149,7 +3158,7 @@ def detect_and_act(ocr: list, state: PilotState,
         state.battle_wait_count = 0
         return "QUEST_START", 2.0
     elif stage_num:
-        fx, fy = int(W * 0.74), int(H * 0.91)
+        fx, fy = roi_to_device(int(W * 0.74), int(H * 0.91), state.game_roi)
         logger.info(">>> クエストマップ(固定) (%d,%d)", fx, fy)
         tap_device(fx, fy, state, "QUEST_START_FIXED")
         state.battle_wait_count = 0
@@ -3167,7 +3176,7 @@ def detect_and_act(ocr: list, state: PilotState,
         # バトルチュートリアル: バフ効果
         buff_tut = has_any(ocr, ["バフ効果を発生", "支援するバフ", "CRTアップ", "バフ効果"])
         if buff_tut and has_text(ocr, "ことができます"):
-            bx, by = int(W * 0.888), int(H * 0.667)
+            bx, by = roi_to_device(int(W * 0.888), int(H * 0.667), state.game_roi)
             logger.info(">>> バフチュートリアル (%d,%d)", bx, by)
             tap_device(bx, by, state, "BUFF_TUTORIAL")
             return "BATTLE_TUTORIAL", 1.0
@@ -3177,7 +3186,7 @@ def detect_and_act(ocr: list, state: PilotState,
                                    "戦闘スキルを使", "戦闘スキを使",
                                    "スキルを使用してみ", "使ってみましょう"])
         if skill_tut:
-            sx, sy = int(W * 0.947), int(H * 0.722)
+            sx, sy = roi_to_device(int(W * 0.947), int(H * 0.722), state.game_roi)
             logger.info(">>> スキルチュートリアル (%d,%d)", sx, sy)
             tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL")
             time.sleep(0.8)
@@ -3187,7 +3196,7 @@ def detect_and_act(ocr: list, state: PilotState,
         # バトルチュートリアル: 必殺技
         hissatsu_tut = has_any(ocr, ["CTDアップ", "必殺技"])
         if hissatsu_tut:
-            hx, hy = int(W * 0.862), int(H * 0.778)
+            hx, hy = roi_to_device(int(W * 0.862), int(H * 0.778), state.game_roi)
             logger.info(">>> 必殺技チュートリアル (%d,%d)", hx, hy)
             tap_device(hx, hy, state, "HISSATSU_TUTORIAL")
             time.sleep(0.8)
@@ -3196,7 +3205,7 @@ def detect_and_act(ocr: list, state: PilotState,
 
         # バトルチュートリアル: 攻撃対象変更
         if has_any(ocr, ["攻撃対象を変更", "対象を変更"]):
-            ex, ey = int(W * 0.651), int(H * 0.361)
+            ex, ey = roi_to_device(int(W * 0.651), int(H * 0.361), state.game_roi)
             logger.info(">>> 攻撃対象チュートリアル (%d,%d)", ex, ey)
             tap_device(ex, ey, state, "ATTACK_TARGET_TUTORIAL")
             return "BATTLE_TUTORIAL", 1.0
@@ -3217,8 +3226,9 @@ def detect_and_act(ocr: list, state: PilotState,
         # バトル速度ツールチップは速度ボタン本体 (1409,19) をタップして消す
         speed_tip = has_any(ocr, ["このボタンでバトル", "進行速度を変更"])
         if speed_tip:
-            logger.info(">>> 速度ツールチップ → 速度ボタン (1409,19) タップ")
-            tap_device(1409, 19, state, "SPEED_BUTTON_TAP")
+            _sp_x, _sp_y = roi_to_device(int(W * 0.927), int(H * 0.026), state.game_roi)
+            logger.info(">>> 速度ツールチップ → 速度ボタン (%d,%d) タップ", _sp_x, _sp_y)
+            tap_device(_sp_x, _sp_y, state, "SPEED_BUTTON_TAP")
             return "BATTLE_TUTORIAL", 1.0
         if tutorial_popup:
             # ── テンプレートマッチングで ▷/× を優先検出 ──
@@ -3231,8 +3241,8 @@ def detect_and_act(ocr: list, state: PilotState,
                 return "BATTLE_TUTORIAL", 1.0
             # フォールバック: ▷ 矢印 → × ボタンのシーケンス
             state.pre_popup_tap_count += 1
-            _arr_b = (int(W * 0.91), int(H * 0.49))
-            _cls_b = (int(W * 0.98), int(H * 0.056))
+            _arr_b = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)
+            _cls_b = roi_to_device(int(W * 0.98), int(H * 0.056), state.game_roi)
             _btl_candidates = [_arr_b, _arr_b, _arr_b, _arr_b, _cls_b, _cls_b]
             _bidx = min(state.pre_popup_tap_count - 1, len(_btl_candidates) - 1)
             cx, cy = _btl_candidates[_bidx]
@@ -3244,7 +3254,7 @@ def detect_and_act(ocr: list, state: PilotState,
 
         # AUTO ボタン
         if not state.auto_activated:
-            ax, ay = int(W * 0.845), int(H * 0.090)
+            ax, ay = roi_to_device(int(W * 0.845), int(H * 0.090), state.game_roi)
             logger.info(">>> AUTO タップ (%d,%d)", ax, ay)
             tap_device(ax, ay, state, "AUTO_ON")
             state.auto_activated = True
@@ -3254,14 +3264,14 @@ def detect_and_act(ocr: list, state: PilotState,
         if state.battle_wait_count > 8:
             stall_phase = (state.battle_wait_count - 8) % 12
             if stall_phase == 0:
-                sx, sy = int(W * 0.947), int(H * 0.722)
+                sx, sy = roi_to_device(int(W * 0.947), int(H * 0.722), state.game_roi)
                 logger.info(">>> バトル停滞 — スキルタップ (%d,%d)", sx, sy)
                 tap_device(sx, sy, state, "STALL_SKILL")
                 time.sleep(0.8)
                 tap_device(sx, sy, state, "STALL_SKILL confirm")
                 return "BATTLE_STALL", 1.0
             elif stall_phase == 4:
-                hx, hy = int(W * 0.862), int(H * 0.778)
+                hx, hy = roi_to_device(int(W * 0.862), int(H * 0.778), state.game_roi)
                 logger.info(">>> バトル停滞 — 必殺技タップ (%d,%d)", hx, hy)
                 tap_device(hx, hy, state, "STALL_HISSATSU")
                 time.sleep(0.8)
@@ -3270,7 +3280,7 @@ def detect_and_act(ocr: list, state: PilotState,
             elif stall_phase == 8:
                 # 探索バトル: 左パネルのキャラカードを再タップ (char_just_selected リセット)
                 state.char_just_selected = False
-                lx, ly = int(W * 0.141), int(H * 0.875)  # 左カード中央 ≈(215,630)
+                lx, ly = roi_to_device(int(W * 0.141), int(H * 0.875), state.game_roi)
                 logger.info(">>> バトル停滞 — 左カード再タップ (%d,%d)", lx, ly)
                 tap_device(lx, ly, state, "STALL_LEFT_CARD")
                 return "BATTLE_STALL", 1.0
@@ -3379,8 +3389,9 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> 【利用規約同意】 '%s' (%d,%d) タップ", agree_ocr["text"][:10], cx, cy)
             tap_device(cx, cy, state, "AGREE_TOS")
         else:
-            logger.info(">>> 【利用規約同意】 固定座標 (1100,640) タップ")
-            tap_device(1100, 640, state, "AGREE_TOS")
+            _tos_x, _tos_y = roi_to_device(int(W * 0.72), int(H * 0.89), state.game_roi)
+            logger.info(">>> 【利用規約同意】 固定座標 (%d,%d) タップ", _tos_x, _tos_y)
+            tap_device(_tos_x, _tos_y, state, "AGREE_TOS")
         return "AGREE_TOS", 3.0
 
     # ─── 規約同意 ───
@@ -3856,16 +3867,17 @@ def main():
             # ── ADV 高速モード: OCR スキップして画面下部を即連打 ──
             # 前回 STORY_TAP かつ phash 変化が小さい（テキスト送り）→ 即タップ
             # MENU シーンはホームチュートリアル中の可能性があるため除外（指/金枠をOCRで確認）
-            if (state.last_action == "STORY_TAP" and
+            if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT") and
                     PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
                     state.current_scene != "MENU"):
                 logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
-                time.sleep(0.05)
-                adb(f"shell input tap 760 650")
+                time.sleep(0.1)
+                _adv_x, _adv_y = roi_to_device(int(W * 0.5), int(H * 0.9), state.game_roi)
+                adb(f"shell input tap {_adv_x} {_adv_y}")
                 state.total_taps += 1
-                logger.info("  ACTION_TAKEN ADV_RAPID_TAP (760,650)")
+                logger.info("  ACTION_TAKEN ADV_RAPID_TAP (%d,%d)", _adv_x, _adv_y)
                 state.last_phash = cur_phash
-                time.sleep(0.3)
+                time.sleep(1.0)
                 continue
 
         else:
@@ -3941,7 +3953,8 @@ def main():
                 if state.current_scene in ("STORY", "ADV"):
                     if detect_adv_advance_icon(img_path):
                         logger.info("[ADV_ADVANCE][iter %d] 送り待ちアイコン検出 → 即タップ", i)
-                        adb(f"shell input tap 760 650")
+                        _aa_x, _aa_y = roi_to_device(int(W * 0.5), int(H * 0.9), state.game_roi)
+                        adb(f"shell input tap {_aa_x} {_aa_y}")
                         state.total_taps += 1
                         state.last_phash = ""
                         state.same_phash_count = 0
@@ -3961,7 +3974,8 @@ def main():
                 logger.warning(">>> %.0f秒スタック — 右上×ボタン試行", stall_elapsed)
                 save_evidence(img_path, [], "STALL_CORNER", state)
                 time.sleep(0.3)
-                adb(f"shell input tap {actual_w - 40} 40")
+                _sc_x, _sc_y = roi_to_device(int(W * 0.97), int(H * 0.06), state.game_roi)
+                adb(f"shell input tap {_sc_x} {_sc_y}")
                 state.total_taps += 1
                 state.stall_corner_tried = True
                 state.last_phash = ""
@@ -3982,17 +3996,48 @@ def main():
         state.last_phash = cur_phash
         analysis_path = prepare_analysis_image(img_path, actual_w, actual_h)
 
+        # ── 4.2) RESULT_RAPID: リザルト/報酬画面で GLOW 検知 → 0.2s 連打で突破 ──
+        # 安全弁: phash 大変化 (dist>30) = シーン遷移 → OCR で再評価
+        _result_rapid_ok = (
+            state.last_action in ("RESULT_TAP", "RESULT_NEXT", "RESULT_RAPID")
+            and analysis_path is not None
+            and dist <= 30
+        )
+        if _result_rapid_ok:
+            _result_glows = detect_guide_glow(analysis_path, ANALYSIS_W, ANALYSIS_H, footer_ratio=0.10)
+            if _result_glows:
+                _rg = max(_result_glows, key=lambda g: g["area"])
+                _rgx, _rgy = _rg["cx"], _rg["cy"]
+                logger.info("[RESULT_RAPID] glow(%d,%d) → 即タップ", _rgx, _rgy)
+                tap_device(_rgx, _rgy, state, "RESULT_RAPID")
+            else:
+                _rc_x, _rc_y = roi_to_device(int(W * 0.5), int(H * 0.5), state.game_roi)
+                logger.info("[RESULT_RAPID] no glow → center tap (%d,%d)", _rc_x, _rc_y)
+                tap_device(_rc_x, _rc_y, state, "RESULT_RAPID")
+            state.last_action = "RESULT_RAPID"
+            state.stall_start = 0.0
+            state.same_phash_count = 0
+            time.sleep(1.0)
+            _fms = (time.time() - _loop_t0) * 1000
+            state.total_loop_ms += _fms
+            logger.info("  [PERF] Loop %.0fms (RESULT_RAPID)", _fms)
+            continue
+
         # ── 4.3) BATTLE_RAPID: 発光/MOYA 検知即タップ → OCR 完全スキップ ──
         # detect_guide_glow() + find_finger_blobs() は OpenCV のみ (10-50ms)
         # OCR (6-8s) の 40-50 倍高速
-        if state.current_scene == "BATTLE" and analysis_path is not None:
+        # ※ 強制 OCR (phash 静止 → ダイアログ可能性) 時は RAPID をスキップして OCR に回す
+        _force_ocr_override = (dist <= 2 and state.same_phash_count >= FORCE_ANALYZE_AFTER)
+        if (state.current_scene == "BATTLE" and analysis_path is not None
+                and not _force_ocr_override):
             _rapid_tx = _rapid_ty = 0
             _rapid_action = ""
             _rapid_double = False
 
             # ── Phase A: GLOW 検知 (HSV 発光) ──
             _rapid_glows = detect_guide_glow(analysis_path, ANALYSIS_W, ANALYSIS_H, footer_ratio=0.30)
-            _rapid_left_g = [g for g in _rapid_glows if g["side"] == "left"]
+            # 左パネル (x<150) のアイコン発光を除外 — 実キャラ位置は x≈200-500
+            _rapid_left_g = [g for g in _rapid_glows if g["side"] == "left" and g["cx"] >= 150]
             _rapid_right_g = [g for g in _rapid_glows if g["side"] == "right"]
 
             if not state.character_selected and _rapid_left_g:
@@ -4023,8 +4068,8 @@ def main():
                         _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - 35)
                         _rapid_action = "BATTLE_RAPID_MOYA_P2"
                     else:
-                        # 通常攻撃ボタン固定座標フォールバック (右端の円形アイコン)
-                        _rapid_tx, _rapid_ty = 1410, 630
+                        # 通常攻撃ボタン: OCR検出位置ベース座標 (1372, 631)
+                        _rapid_tx, _rapid_ty = 1372, 631
                         _rapid_action = "BATTLE_RAPID_NORMATK_P2"
                 elif _left_char:
                     _tb = max(_left_char, key=lambda b: b[2])
@@ -4043,7 +4088,7 @@ def main():
                             " ダブルタップ" if _rapid_double else "")
                 tap_device(_rapid_tx, _rapid_ty, state, _rapid_action)
                 if _rapid_double:
-                    time.sleep(0.3)
+                    time.sleep(0.5)
                     tap_device(_rapid_tx, _rapid_ty, state, _rapid_action)
                 # 状態更新
                 if "P1" in _rapid_action:
@@ -4057,7 +4102,7 @@ def main():
                 state.stall_start = 0.0
                 state.stall_corner_tried = False
                 state.same_phash_count = 0
-                time.sleep(0.15)
+                time.sleep(1.0)
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
                 logger.info("  [PERF] Loop %.0fms (BATTLE_RAPID)", _fms)
@@ -4065,7 +4110,8 @@ def main():
 
         # ── 4.5) BATTLE 高速パス: OCR 前テンプレートマッチング ──
         # BATTLE シーンで GoldBtn/GoldSwipe が見つかれば OCR (6-8s) をスキップ
-        if state.current_scene == "BATTLE":
+        # ※ 強制 OCR 時はスキップ (ダイアログ検出を優先)
+        if state.current_scene == "BATTLE" and not _force_ocr_override:
             _fast_action, _fast_wait = _battle_fast_check(analysis_path, state)
             if _fast_action:
                 # GoldSwipe 連続回数制限: 6回超えたら OCR へフォールバック
