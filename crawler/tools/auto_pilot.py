@@ -2499,6 +2499,15 @@ def main():
             state.same_phash_count = 0
             logger.debug("  [DYN_PHASH] %s 後 dist=%d → 即解析", state.last_action, dist)
 
+        # ── AUTO バトル中: dist>=1 でもウォッチドッグタイマーをリセット ──
+        # バトルアニメーションは phash_dist=1-4 の微小変化が続くため、
+        # PHASH_THRESHOLD=5 を超えなくてもバトルは進行中なのでウォッチドッグを抑制。
+        if (not screen_changed and dist >= 1
+                and state.last_action in ("BATTLE_WAIT", "BATTLE_AUTO", "BATTLE_STALL")
+                and state.auto_activated):
+            state.last_screen_change_time = time.time()
+            state.stall_start = 0.0
+
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
             state.same_phash_count = 0
