@@ -3949,46 +3949,75 @@ def main():
         state.last_phash = cur_phash
         analysis_path = prepare_analysis_image(img_path, actual_w, actual_h)
 
-        # ── 4.3) BATTLE_RAPID: 発光検知即タップ → OCR 完全スキップ ──
-        # detect_guide_glow() は OpenCV のみ (10-50ms) で OCR (6-8s) の 40-50 倍高速
+        # ── 4.3) BATTLE_RAPID: 発光/MOYA 検知即タップ → OCR 完全スキップ ──
+        # detect_guide_glow() + find_finger_blobs() は OpenCV のみ (10-50ms)
+        # OCR (6-8s) の 40-50 倍高速
         if state.current_scene == "BATTLE" and analysis_path is not None:
+            _rapid_tx = _rapid_ty = 0
+            _rapid_action = ""
+            _rapid_double = False
+
+            # ── Phase A: GLOW 検知 (HSV 発光) ──
             _rapid_glows = detect_guide_glow(analysis_path, ANALYSIS_W, ANALYSIS_H, footer_ratio=0.30)
-            _rapid_left = [g for g in _rapid_glows if g["side"] == "left"]
-            _rapid_right = [g for g in _rapid_glows if g["side"] == "right"]
+            _rapid_left_g = [g for g in _rapid_glows if g["side"] == "left"]
+            _rapid_right_g = [g for g in _rapid_glows if g["side"] == "right"]
 
-            # P1: 左キャラ発光 (キャラ未選択) → ダブルタップ
-            if not state.character_selected and _rapid_left:
-                _rl = max(_rapid_left, key=lambda g: g["area"])
-                _rl_x, _rl_y = _rl["cx"], max(1, _rl["cy"] - 35)
-                logger.info("[BATTLE_RAPID P1] 左キャラ発光(%d,%d)→tap(%d,%d) ダブルタップ",
-                            _rl["cx"], _rl["cy"], _rl_x, _rl_y)
-                tap_device(_rl_x, _rl_y, state, "BATTLE_RAPID_P1")
-                time.sleep(0.3)
-                tap_device(_rl_x, _rl_y, state, "BATTLE_RAPID_P1")  # 追いタップ
-                state.character_selected = True
-                state.char_just_selected = True
-                state.finger_detections += 1
-                state.last_action = "BATTLE_RAPID_P1"
-                state.stall_start = 0.0
-                state.stall_corner_tried = False
-                state.same_phash_count = 0
-                time.sleep(0.15)
-                _fms = (time.time() - _loop_t0) * 1000
-                state.total_loop_ms += _fms
-                logger.info("  [PERF] Loop %.0fms (BATTLE_RAPID)", _fms)
-                continue  # OCR スキップ
+            if not state.character_selected and _rapid_left_g:
+                _rl = max(_rapid_left_g, key=lambda g: g["area"])
+                _rapid_tx, _rapid_ty = _rl["cx"], max(1, _rl["cy"] - 35)
+                _rapid_action = "BATTLE_RAPID_GLOW_P1"
+                _rapid_double = True
+            elif state.character_selected and _rapid_right_g:
+                _rr = max(_rapid_right_g, key=lambda g: g["area"])
+                _rapid_tx, _rapid_ty = _rr["cx"], max(1, _rr["cy"] - 35)
+                _rapid_action = "BATTLE_RAPID_GLOW_P2"
 
-            # P2: 右スキル発光 (キャラ選択済み) → シングルタップ
-            if state.character_selected and _rapid_right:
-                _rr = max(_rapid_right, key=lambda g: g["area"])
-                _rr_x, _rr_y = _rr["cx"], max(1, _rr["cy"] - 35)
-                logger.info("[BATTLE_RAPID P2] 右スキル発光(%d,%d)→tap(%d,%d)",
-                            _rr["cx"], _rr["cy"], _rr_x, _rr_y)
-                tap_device(_rr_x, _rr_y, state, "BATTLE_RAPID_P2")
-                state.character_selected = False
-                state.char_just_selected = False
+            # ── Phase B: MOYA 検知 (肌色ブロブ) — GLOW 未検出時のフォールバック ──
+            if not _rapid_action:
+                _rapid_blobs = find_finger_blobs(analysis_path, min_area=200, dark_mode=True)
+                # 画面端の誤検出を除去
+                _rapid_blobs = [b for b in _rapid_blobs
+                                if b[1] > 36 and b[0] < ANALYSIS_W - 40]
+                _H = ANALYSIS_H
+                _left_char = [b for b in _rapid_blobs if b[0] < 600 and b[1] > _H * 0.76]
+                _right_panel = [b for b in _rapid_blobs if b[0] > 1050 and b[1] > _H * 0.45]
+                _bottom_ui = [b for b in _rapid_blobs if b[1] > _H * 0.8 and b[0] >= 600]
+
+                if state.char_just_selected:
+                    # キャラ選択済み → 右スキル or 下部UI
+                    _targets = _right_panel or _bottom_ui
+                    if _targets:
+                        _tb = max(_targets, key=lambda b: b[2])  # area 最大
+                        _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - 35)
+                        _rapid_action = "BATTLE_RAPID_MOYA_P2"
+                elif _left_char:
+                    _tb = max(_left_char, key=lambda b: b[2])
+                    _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - 35)
+                    _rapid_action = "BATTLE_RAPID_MOYA_P1"
+                    _rapid_double = True
+                elif _right_panel:
+                    _tb = max(_right_panel, key=lambda b: b[2])
+                    _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - 35)
+                    _rapid_action = "BATTLE_RAPID_MOYA_P2"
+
+            # ── 共通タップ実行 ──
+            if _rapid_action:
+                logger.info("[%s] tap(%d,%d)%s",
+                            _rapid_action, _rapid_tx, _rapid_ty,
+                            " ダブルタップ" if _rapid_double else "")
+                tap_device(_rapid_tx, _rapid_ty, state, _rapid_action)
+                if _rapid_double:
+                    time.sleep(0.3)
+                    tap_device(_rapid_tx, _rapid_ty, state, _rapid_action)
+                # 状態更新
+                if "P1" in _rapid_action:
+                    state.character_selected = True
+                    state.char_just_selected = True
+                else:
+                    state.character_selected = False
+                    state.char_just_selected = False
                 state.finger_detections += 1
-                state.last_action = "BATTLE_RAPID_P2"
+                state.last_action = _rapid_action
                 state.stall_start = 0.0
                 state.stall_corner_tried = False
                 state.same_phash_count = 0
