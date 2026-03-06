@@ -292,6 +292,54 @@ def roi_to_device(ax: int, ay: int, roi: tuple) -> tuple[int, int]:
     )
 
 
+def _correct_btn_tap_y(img, cx: int, cy: int, box: list) -> int:
+    """
+    OCR検出ボタン (OK/はい など) のタップY座標を補正する。
+
+    まどドラのゲームボタンはOCR枠が実際のボタン視覚領域より下に延びることがある。
+    (枠中心が暗いピクセル域に落ちる) → 中心が暗い場合は枠top付近から上方向を走査して
+    輝度の高い領域（実際のボタン面）の中心を返す。
+
+    Args:
+        img : cv2 imread 済み画像 (BGRまたはNone)
+        cx  : OCR枠の中心X
+        cy  : OCR枠の中心Y
+        box : OCR box [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+    Returns: 補正後のタップY座標 (補正不要時はcyをそのまま返す)
+    """
+    try:
+        import cv2 as _cv2b
+        import numpy as _npb
+        if img is None:
+            return cy
+        gray = _cv2b.cvtColor(img, _cv2b.COLOR_BGR2GRAY)
+        H, W = img.shape[:2]
+        # 中心ピクセルの輝度確認
+        cy_c = max(0, min(cy, H - 1))
+        cx_c = max(0, min(cx, W - 1))
+        if gray[cy_c, cx_c] >= 60:
+            return cy  # 十分明るい → 補正不要
+        # 枠top Y を取得 (box[0][1])
+        box_top = int(box[0][1])
+        # 枠top から上100px の範囲でX=cx付近の輝度を走査
+        scan_start = max(0, box_top - 100)
+        scan_end = min(H - 1, box_top + 5)
+        half_w = 40
+        x0 = max(0, cx - half_w)
+        x1 = min(W, cx + half_w)
+        bright_ys = []
+        for y in range(scan_start, scan_end):
+            row_mean = float(_npb.mean(gray[y, x0:x1]))
+            if row_mean >= 60:
+                bright_ys.append(y)
+        if bright_ys:
+            corrected = (bright_ys[0] + bright_ys[-1]) // 2
+            return corrected
+        return cy
+    except Exception:
+        return cy
+
+
 def get_device_resolution() -> tuple[int, int]:
     """
     `adb shell wm size` で実機の物理解像度を取得する。
@@ -920,11 +968,17 @@ def process_paging_dialog(
     - "next"/"bottom" を検出するたびにタップ → 次ページスクリーンショット取得
     - "close" を検出したらタップして終了
     - ダイアログが消えたら完了扱い
+    - phash変化なし → ループ中断 (誤検出▷への無限タップ防止)
+    - × ROI bright_pixels=0 が2回続く → 枠外タップで強制脱出
     - max_pages 超過でタイムアウト
 
     Returns: "DIALOG_CLOSED" | "DIALOG_PAGING_TIMEOUT"
     """
+    import cv2 as _cv2p
+    import numpy as _npp
     _roi = state.game_roi
+    _prev_phash = compute_phash(analysis_path)
+    _no_close_streak = 0  # × ROI bright_pixels=0 の連続回数
     for _page in range(max_pages):
         _dlg = detect_dialog_frame_and_nav(analysis_path, W, H, roi=_roi)
         if _dlg is None:
@@ -937,6 +991,32 @@ def process_paging_dialog(
             logger.info("[PAGING] ×タップ (page=%d) → クローズ完了", _page + 1)
             state.dialog_detections += 1
             return "DIALOG_CLOSED"
+        # × ROI 輝度チェック: bright_pixels=0 が続く場合は強制脱出
+        try:
+            _img_c = _cv2p.imread(str(analysis_path))
+            if _img_c is not None:
+                _Hc, _Wc = _img_c.shape[:2]
+                _close_roi_c = _img_c[0:int(_Hc * 0.14), int(_Wc * 0.88):]
+                _gray_cl = _cv2p.cvtColor(_close_roi_c, _cv2p.COLOR_BGR2GRAY)
+                _bright_cl = _cv2p.countNonZero(
+                    _cv2p.threshold(_gray_cl, 155, 255, _cv2p.THRESH_BINARY)[1]
+                )
+                if _bright_cl == 0:
+                    _no_close_streak += 1
+                else:
+                    _no_close_streak = 0
+        except Exception:
+            pass
+        if _no_close_streak >= 2:
+            # × ボタンが画面右上に存在しない → 枠外 or 下部中央を叩いて強制脱出
+            _esc_x, _esc_y = W // 2, H - 60
+            logger.info(
+                "[PAGING] × ROI 暗(%d回連続) → 強制脱出タップ(%d,%d)",
+                _no_close_streak, _esc_x, _esc_y,
+            )
+            tap_device(_esc_x, _esc_y, state, "PAGING_ESCAPE")
+            time.sleep(1.0)
+            return "DIALOG_PAGING_TIMEOUT"
         # "next" or "bottom" → ▷ タップして次ページ
         tap_device(_dx, _dy, state, "PAGING_NEXT")
         logger.info("[PAGING] ▷タップ (page=%d/%d)", _page + 1, max_pages)
@@ -945,6 +1025,17 @@ def process_paging_dialog(
         # 次ページのスクリーンショットを取得して解析
         _img_path, _aw, _ah, _ = take_screenshot()
         analysis_path = prepare_analysis_image(_img_path, _aw, _ah)
+        # phash変化監視: 変化なし → ページが進んでいない → ループ中断
+        _new_phash = compute_phash(analysis_path)
+        if _prev_phash and _new_phash:
+            _ph_dist = phash_distance(_prev_phash, _new_phash)
+            if _ph_dist < 4:
+                logger.info(
+                    "[PAGING] ▷タップ後 phash変化なし(dist=%d<4) → 誤検出▷ → ループ中断",
+                    _ph_dist,
+                )
+                return "DIALOG_PAGING_TIMEOUT"
+        _prev_phash = _new_phash
     logger.warning("[PAGING] max_pages=%d 超過 → タイムアウト", max_pages)
     return "DIALOG_PAGING_TIMEOUT"
 
@@ -1999,24 +2090,40 @@ def detect_and_act(ocr: list, state: PilotState,
         )
         if _dlg is not None:
             _dlg_type, _dlg_x, _dlg_y = _dlg
-            state.pre_popup_tap_count += 1
-            state.dialog_detections += 1
+            # ── [SPATIAL GATE] ▷ページングより指アイコンを最優先 ──────────────
+            # 指アイコンが存在し、かつ検出した▷が指から300px以上離れている場合、
+            # 右パネル等の誤検出▷を無視して指アイコン処理(#1)へフォールスルー
             if _dlg_type in ("next", "bottom"):
-                # ページング式ダイアログ: ▷ → … → × を一括処理
-                logger.info(
-                    ">>> 【ダイアログ#0-DIALOG-PAGING】%s(%d,%d) (試行%d回) → process_paging_dialog",
-                    _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
-                )
-                _pg_result = process_paging_dialog(analysis_path, W, H, state)
-                return _pg_result, 1.0   # ← 必ず return。fallthrough なし。
-            else:
-                # "close": × ボタンを即タップ
-                logger.info(
-                    ">>> 【ダイアログ#0-DIALOG】%s(%d,%d) (試行%d回)",
-                    _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
-                )
-                tap_device(_dlg_x, _dlg_y, state, "DIALOG_CLOSE")
-                return "DIALOG_CLOSE", 1.0   # ← 必ず return。fallthrough なし。
+                _sg_blobs = find_finger_blobs(analysis_path, min_area=400)
+                _sg_blobs = [b for b in _sg_blobs if b[1] > 36 and b[0] < W - 40]
+                if _sg_blobs:
+                    _sg_best = max(_sg_blobs, key=lambda b: b[2])
+                    _sg_dist = ((_dlg_x - _sg_best[0]) ** 2 + (_dlg_y - _sg_best[1]) ** 2) ** 0.5
+                    if _sg_dist > 300:
+                        logger.info(
+                            ">>> [SPATIAL_GATE] 指(%d,%d)↔▷(%d,%d) 距離=%.0fpx>300 → #0-DIALOG スキップ",
+                            _sg_best[0], _sg_best[1], _dlg_x, _dlg_y, _sg_dist,
+                        )
+                        _dlg = None  # ダイアログをなかったことにして #1 へ
+            if _dlg is not None:
+                state.pre_popup_tap_count += 1
+                state.dialog_detections += 1
+                if _dlg_type in ("next", "bottom"):
+                    # ページング式ダイアログ: ▷ → … → × を一括処理
+                    logger.info(
+                        ">>> 【ダイアログ#0-DIALOG-PAGING】%s(%d,%d) (試行%d回) → process_paging_dialog",
+                        _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
+                    )
+                    _pg_result = process_paging_dialog(analysis_path, W, H, state)
+                    return _pg_result, 1.0   # ← 必ず return。fallthrough なし。
+                else:
+                    # "close": × ボタンを即タップ
+                    logger.info(
+                        ">>> 【ダイアログ#0-DIALOG】%s(%d,%d) (試行%d回)",
+                        _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
+                    )
+                    tap_device(_dlg_x, _dlg_y, state, "DIALOG_CLOSE")
+                    return "DIALOG_CLOSE", 1.0   # ← 必ず return。fallthrough なし。
 
     # ─── 【最優先 #0-aa】HSV金色ポインター検出 → ホールドスワイプ (Type A) ───
     # 縦長金色領域 h/w>=3.5 かつ幅<=100px のみ有効 (ボタン/カード誤検出防止)。
@@ -2357,6 +2464,8 @@ def detect_and_act(ocr: list, state: PilotState,
         _adv_choice = has_any(ocr, _adv_choice_kws)
         if _adv_choice:
             _ac_x, _ac_y = _adv_choice["center"]
+            # OCR枠が実際のボタン視覚領域より下にずれることがある → 輝度ベースで補正
+            _ac_y = _correct_btn_tap_y(state.last_screen, _ac_x, _ac_y, _adv_choice["box"])
             logger.info(">>> 【ADV選択肢】 '%s' (%d,%d) タップ", _adv_choice["text"], _ac_x, _ac_y)
             tap_device(_ac_x, _ac_y, state, f"ADV_CHOICE '{_adv_choice['text']}'")
             return "ADV_CHOICE", 1.0
@@ -2501,9 +2610,51 @@ def detect_and_act(ocr: list, state: PilotState,
                 state.blob_same_count = 0
                 state.last_blob_xy = (fx, fy)
             if state.blob_same_count >= 5:
-                logger.info(">>> もや同一座標 %d回タップ済み → OCRフォールバック (%d,%d)",
-                            state.blob_same_count, fx, fy)
-                # カウンタはリセットせず、OCR ベース処理に落ちる
+                import random as _rnd_rec
+                _stg = state.blob_same_count
+                logger.info(">>> [RECOVERY] スタック stage=%d (%d,%d)", _stg, fx, fy)
+                # 移動シーン(OCR無し) + 10回以上 → SWIPE_UP 強制 (最優先)
+                if _stg >= 10 and len(texts) == 0:
+                    logger.info(">>> [SWIPE_FALLBACK] フィンガースタック%d回+OCR無し → SWIPE_UP強制", _stg)
+                    swipe(fx, H - 50, fx, 50, 3000, state=state)
+                    state.blob_same_count = 0
+                    state.last_blob_xy = (0, 0)
+                    return "SWIPE_FALLBACK", 1.5
+                # Stage 1-3 (count=5,6,7): ジッター±10px タップ
+                if _stg <= 7:
+                    _jx = max(50, min(W - 50, fx + _rnd_rec.randint(-10, 10)))
+                    _jy = max(50, min(H - 50, fy + _rnd_rec.randint(-10, 10)))
+                    logger.info(">>> [RECOVERY s%d] ジッタータップ (%d,%d)", _stg - 4, _jx, _jy)
+                    tap_device(_jx, _jy, state, f"RECOVERY_JITTER_s{_stg - 4}")
+                    if _stg == 7:
+                        time.sleep(1.5)
+                    return "RECOVERY_JITTER", 0.5
+                # Stage 4-6 (count=8,9,10): キャッシュ破棄・広域金枠再スキャン
+                elif _stg <= 10:
+                    _rf_gf = find_gold_frame_near(analysis_path, fx, fy, search_radius=300) if analysis_path else None
+                    if _rf_gf:
+                        _rf_tx, _rf_ty = _rf_gf[0], _rf_gf[1]
+                        logger.info(">>> [RECOVERY s%d] 広域金枠(%d,%d) タップ", _stg - 7, _rf_tx, _rf_ty)
+                        tap_device(_rf_tx, _rf_ty, state, f"RECOVERY_RESCAN_s{_stg - 7}")
+                        state.blob_same_count = 0
+                        state.last_blob_xy = (0, 0)
+                        return "RECOVERY_RESCAN", 1.0
+                    logger.info(">>> [RECOVERY s%d] 広域金枠なし → OCRフォールバックへ", _stg - 7)
+                    # OCR ベース処理に落ちる (fall through)
+                # Stage 7-9 (count=11,12,13): ランダムブラインドタップ
+                elif _stg <= 13:
+                    _bx = max(50, min(W - 50, fx + _rnd_rec.randint(-80, 80)))
+                    _by = max(50, min(H - 50, fy + _rnd_rec.randint(-60, 60)))
+                    logger.info(">>> [RECOVERY s%d] ブラインドタップ (%d,%d)", _stg - 10, _bx, _by)
+                    tap_device(_bx, _by, state, f"RECOVERY_BLIND_s{_stg - 10}")
+                    return "RECOVERY_BLIND", 0.8
+                # Stage 10 (count>=14): 5秒待機 + リセット
+                else:
+                    logger.info(">>> [RECOVERY s10] 5秒待機 + カウンタリセット")
+                    time.sleep(5.0)
+                    state.blob_same_count = 0
+                    state.last_blob_xy = (0, 0)
+                    return "RECOVERY_FINAL_WAIT", 0.5
             else:
                 # ── Step3: タップ座標決定 ──
                 # 金枠あり → 金枠の中心点を射抜く
