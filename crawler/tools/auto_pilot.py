@@ -67,13 +67,17 @@ BATTLE_WAIT = 1.5           # バトル待機 — 高速化
 DOWNLOAD_WAIT = 10.0
 
 # ─── Watchdog: デッドロック自動復旧 ───
-WATCHDOG_DEADLOCK_THRESHOLD = 60.0   # 60秒以上画面変化なし → デッドロック判定
-WATCHDOG_MAX_SOFT_RECOVERIES = 3     # force-stop再起動の最大回数 (超えたらpm clear)
-WATCHDOG_MAX_TOTAL_RECOVERIES = 5    # 合計5回で諦める
+WATCHDOG_DEADLOCK_THRESHOLD = 600.0  # 10分以上画面変化なし → デッドロック判定
+WATCHDOG_MAX_SOFT_RECOVERIES = 3     # force-stop再起動の最大回数 (超えたら人間に報告)
+WATCHDOG_MAX_TOTAL_RECOVERIES = 3    # 合計3回で諦めて人間を待つ (pm clear は使わない)
 APP_PACKAGE = "com.aniplex.magia.exedra.jp"
 APP_ACTIVITY = "com.google.firebase.MessagingUnityPlayerActivity"
 # Watchdog免除シーン: これらのシーンでは意図的に待機中なのでWatchdogを発動しない
-WATCHDOG_EXEMPT_ACTIONS = frozenset(["DOWNLOAD_WAIT", "BATTLE_WAIT", "LOADING_WAIT"])
+WATCHDOG_EXEMPT_ACTIONS = frozenset([
+    "DOWNLOAD_WAIT", "BATTLE_WAIT", "LOADING_WAIT",
+    "NOTICE_DISMISS", "GO_CHUI_AGREE", "GO_CHUI_FALLBACK",  # ご注意: 初期化待ち
+    "MAIN_STORY_LOADING",  # MAIN STORY ローディング背景: 自動遷移待ち
+])
 ADV_RAPID_PHASH_MAX = 25    # ADV高速モード: phash がこれ以下なら OCR スキップ連打
 BLACKOUT_BRIGHTNESS = 20
 
@@ -213,12 +217,13 @@ def tap_device(x: int, y: int, state: PilotState, desc: str = "") -> None:
     else:
         real_x, real_y = x, y
     time.sleep(0.05)
+    # [DEBUG] タップ前に座標情報をログ出力
+    logger.info(
+        "  [DEBUG] TAP: 解析座標=(%d,%d) → デバイス座標=(%d,%d) | %s",
+        x, y, real_x, real_y, desc
+    )
     adb(f"shell input tap {real_x} {real_y}")
     state.total_taps += 1
-    if (real_x, real_y) != (x, y):
-        logger.info("  ACTION_TAKEN TAP (%d,%d)→device(%d,%d) %s", x, y, real_x, real_y, desc)
-    else:
-        logger.info("  ACTION_TAKEN TAP (%d,%d) %s", x, y, desc)
 
 
 def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> None:
@@ -304,10 +309,8 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
 
 
 # ─── Smart Tap: 金色ボタン矩形の幾何学的中心を検出 ──────────────────
-# OCR の center y はテキスト領域中心であり、ボタン hitbox 中心より約 36px 下に
-# ずれる傾向がある (テキストのパディング + レイアウト起因)。
-# このオフセットはフォールバックとして使用する。
-_BUTTON_Y_OFFSET = -36  # OCR y → 実 hitbox y (フォールバック用補正量)
+# フォールバックはOCR座標をそのまま使用する（マジックナンバーオフセット廃止）
+_BUTTON_Y_OFFSET = 0  # オフセット廃止: OCR中心をそのままhitboxとして使う
 
 
 def smart_tap_button(
@@ -355,31 +358,38 @@ def smart_tap_button(
         best_area = 0
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 200:
+            if area < 2000:  # ボタン最小面積: 2000px² (影・境界線を除外)
                 continue
             rx, ry, rw, rh = cv2.boundingRect(cnt)
-            # ボタンらしい形状: 横長 or 正方形、かつ適切なサイズ
-            if rw > 30 and rh > 10 and rw >= rh * 0.5:
-                if area > best_area:
-                    best_area = area
-                    best_rect = (rx + x1, ry + y1, rw, rh)
+            # ボタンらしい形状: 横長かつ適切なサイズ (アスペクト比 2〜15)
+            if rw < 80 or rh < 20:
+                continue
+            aspect = rw / max(rh, 1)
+            if aspect < 2.0 or aspect > 15.0:
+                continue  # 細すぎ(影)・正方形すぎ(アイコン)を除外
+            if area > best_area:
+                best_area = area
+                best_rect = (rx + x1, ry + y1, rw, rh)
 
         if best_rect:
             bx, by, bw, bh = best_rect
             cx = bx + bw // 2
             cy = by + bh // 2
-            logger.info("  [SmartTap] 金色ボタン検出 rect=(%d,%d,%d,%d) → center=(%d,%d)",
-                        bx, by, bw, bh, cx, cy)
+            logger.info(
+                "  [SmartTap] OCR中心=(%d,%d) → 金色ボタン検出 rect=(%d,%d,%d,%d) → タップ座標=(%d,%d)",
+                ocr_cx, ocr_cy, bx, by, bw, bh, cx, cy
+            )
             return cx, cy
 
     except Exception as e:
         logger.debug("  [SmartTap] エラー: %s", e)
 
-    # フォールバック: OCR 座標に定数オフセット適用
-    fallback_y = ocr_cy + _BUTTON_Y_OFFSET
-    logger.info("  [SmartTap] フォールバック OCR(%d,%d) → (%d,%d) (offset=%d)",
-                ocr_cx, ocr_cy, ocr_cx, fallback_y, _BUTTON_Y_OFFSET)
-    return ocr_cx, fallback_y
+    # フォールバック: OCR 座標をそのまま使用 (オフセットなし)
+    logger.info(
+        "  [SmartTap] HSV検出失敗 → フォールバック OCR中心=(%d,%d) をそのままタップ (offset=%d)",
+        ocr_cx, ocr_cy, _BUTTON_Y_OFFSET
+    )
+    return ocr_cx, ocr_cy + _BUTTON_Y_OFFSET
 
 
 # ─── チュートリアル: 金色ハイライトボタンを全画面スキャンで検出 ──────────────
@@ -1707,33 +1717,29 @@ def watchdog_recover(state: PilotState) -> bool:
     """
     state.watchdog_recovery_count += 1
     count = state.watchdog_recovery_count
+    elapsed = time.time() - state.last_screen_change_time
 
+    # 3回を超えたら諦めて人間に報告
     if count > WATCHDOG_MAX_TOTAL_RECOVERIES:
-        logger.error("[WATCHDOG] 復旧試行%d回失敗 — 自動走行を停止します", count - 1)
+        logger.error(
+            "[WATCHDOG] 復旧試行%d回失敗 (last_action=%s, %.0f秒経過) — 人間の介入が必要です。停止します。",
+            count - 1, state.last_action, elapsed
+        )
         return False
 
-    elapsed = time.time() - state.last_screen_change_time
-    if count <= WATCHDOG_MAX_SOFT_RECOVERIES:
-        logger.warning(
-            "[WATCHDOG] デッドロック検出 (画面変化なし %.0f秒) — ソフト再起動 #%d",
-            elapsed, count
-        )
-        adb(f"shell am force-stop {APP_PACKAGE}")
-        time.sleep(3)
-    else:
-        logger.warning(
-            "[WATCHDOG] デッドロック検出 (%.0f秒) — ハード初期化 (pm clear) #%d",
-            elapsed, count
-        )
-        adb(f"shell am force-stop {APP_PACKAGE}")
-        time.sleep(1)
-        adb(f"shell pm clear {APP_PACKAGE}")
-        time.sleep(3)
+    # ソフト再起動のみ (pm clear は使用しない)
+    logger.warning(
+        "[WATCHDOG] デッドロック判定: 画面変化なし %.0f秒 / last_action=%s / 復旧試行 #%d",
+        elapsed, state.last_action, count
+    )
+    logger.warning("[WATCHDOG] → am force-stop → am start (ソフト再起動のみ。pm clearは使用しない)")
+    adb(f"shell am force-stop {APP_PACKAGE}")
+    time.sleep(3)
 
     # 再起動
     adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
-    logger.info("[WATCHDOG] am start 実行 — 10秒待機")
-    time.sleep(10)  # 起動＋スプラッシュ待機
+    logger.info("[WATCHDOG] am start 実行 — 15秒待機 (初期化 + ご注意画面の出現を待つ)")
+    time.sleep(15)  # 起動＋スプラッシュ待機
 
     # 状態リセット (デバイス解像度・回数は保持)
     state.last_phash = ""
@@ -1848,18 +1854,26 @@ def main():
             state.same_phash_count += 1
             state.total_ocr_skipped += 1
 
-            # ── Watchdog チェック: 60秒以上変化なし = Unityデッドロック ──
+            # ── Watchdog チェック: 10分以上変化なし → 本当のデッドロック ──
             watchdog_elapsed = time.time() - state.last_screen_change_time
-            if (watchdog_elapsed >= WATCHDOG_DEADLOCK_THRESHOLD
-                    and state.last_action not in WATCHDOG_EXEMPT_ACTIONS):
-                logger.warning(
-                    "[WATCHDOG] %.0f秒間画面変化なし (last_action=%s) — 自動復旧開始",
-                    watchdog_elapsed, state.last_action
-                )
-                save_evidence(img_path, [], "WATCHDOG_DEADLOCK", state)
-                if not watchdog_recover(state):
-                    return  # 復旧不能 → 終了
-                continue   # 復旧後は次のイテレーションから
+            if watchdog_elapsed >= WATCHDOG_DEADLOCK_THRESHOLD:
+                if state.last_action in WATCHDOG_EXEMPT_ACTIONS:
+                    # 免除シーン: まだ待機中なのでWatchdogを発動しない
+                    if int(watchdog_elapsed) % 60 == 0:  # 1分ごとにログ
+                        logger.info(
+                            "[WATCHDOG] 免除: %.0f秒経過 (last_action=%s) — 引き続き待機",
+                            watchdog_elapsed, state.last_action
+                        )
+                else:
+                    logger.warning(
+                        "[WATCHDOG] デッドロック疑い: %.0f秒間画面変化なし / last_action=%s "
+                        "/ iter=%d → 自動復旧開始",
+                        watchdog_elapsed, state.last_action, state.iteration
+                    )
+                    save_evidence(img_path, [], "WATCHDOG_DEADLOCK", state)
+                    if not watchdog_recover(state):
+                        return  # 復旧不能 → 終了
+                    continue   # 復旧後は次のイテレーションから
 
             # N 回変化なし → 強制 OCR (デッドロック防止の核心)
             if state.same_phash_count >= FORCE_ANALYZE_AFTER:
