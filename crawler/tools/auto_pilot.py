@@ -146,7 +146,7 @@ class PilotState:
 SCENE_INTERVAL = {
     "BATTLE":  1.0,   # バトル画面: 最速反応
     "ADV":     1.0,   # アドベンチャー/会話: 最速反応
-    "STORY":   0.8,   # ストーリー(スキップなし): 高速化 (旧2.0→0.8)
+    "STORY":   0.5,   # ストーリー(スキップなし): 爆速化 (旧2.0→0.5)
     "LOADING": 5.0,   # ロード中: 負荷軽減
     "MENU":    1.0,   # ホーム/メニュー
     "UNKNOWN": 1.0,   # 不明
@@ -222,17 +222,18 @@ def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Path, in
         # ── 整合性チェック2: OpenCV で読み込み確認 ──
         import cv2 as _cv2_chk
         _test = _cv2_chk.imread(str(path))
-        if _test is None:
-            logger.warning("[SCREENSHOT] cv2.imread 失敗 (attempt %d/%d) — 再取得",
+        if _test is None or _test.size == 0:
+            logger.warning("[SCREENSHOT] cv2.imread 失敗/空 (attempt %d/%d) — 再取得",
                            _attempt + 1, retries)
             time.sleep(0.5)
             continue
         # 正常
         _h, _w = _test.shape[:2]
         return path, _w, _h
-    # 全リトライ失敗: デフォルト値で続行 (クラッシュさせない)
-    logger.error("[SCREENSHOT] %d回リトライ後も取得失敗 — デフォルト解像度で続行", retries)
-    return path, ANALYSIS_W, ANALYSIS_H
+    # 全リトライ失敗: 破損PNGをネイティブコードに渡すとSIGSEGVになるため安全に終了
+    logger.critical("[SCREENSHOT] %d回リトライ後も取得失敗 — sys.exit(1)", retries)
+    import sys
+    sys.exit(1)
 
 
 def tap_device(x: int, y: int, state: PilotState, desc: str = "",
