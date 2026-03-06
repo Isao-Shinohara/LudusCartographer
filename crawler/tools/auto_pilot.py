@@ -2758,8 +2758,10 @@ def main():
 
             # ── ADV 高速モード: OCR スキップして画面下部を即連打 ──
             # 前回 STORY_TAP かつ phash 変化が小さい（テキスト送り）→ 即タップ
+            # MENU シーンはホームチュートリアル中の可能性があるため除外（指/金枠をOCRで確認）
             if (state.last_action == "STORY_TAP" and
-                    PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX):
+                    PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
+                    state.current_scene != "MENU"):
                 logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
                 time.sleep(0.05)
                 adb(f"shell input tap 760 650")
