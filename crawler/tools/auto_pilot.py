@@ -82,6 +82,20 @@ WATCHDOG_EXEMPT_ACTIONS = frozenset([
 ADV_RAPID_PHASH_MAX = 25    # ADV高速モード: phash がこれ以下なら OCR スキップ連打
 BLACKOUT_BRIGHTNESS = 20
 
+# ─── ダイアログ・ファースト: 検知キーワード一覧 ───────────────────────────────
+# detect_and_act #0-DIALOG ブロックで使用。枠検出に失敗した場合の OCR 補助トリガー。
+_DIALOG_FIRST_KWS: frozenset = frozenset([
+    # バトル/ロール説明
+    "ロールについて", "ロールは全部", "STEP1", "STEP2", "バトルシステム", "ブレイクし",
+    "ATTACKER", "BREAKER", "BUFFER", "DEBUFFER", "DEFENDER", "HEALER",
+    "アタッカー", "ブレイカー", "バッファー", "デバッファー", "ディフェンダー", "ヒーラー",
+    # パーティ/編成
+    "ポートレイト", "キオクを最大", "ポジションを", "前衛", "後衛",
+    "各キオク", "パーティを組", "チームを組",
+    # マギアボックス/素材
+    "マギアボックス", "最大24時間", "素材が溜", "プレイヤーLv",
+])
+
 # ─── 解析基準解像度 ───
 ANALYSIS_W = 1520
 ANALYSIS_H = 720
@@ -576,6 +590,209 @@ def save_tutorial_dialog_templates(img_path: Path, W: int = 1520, H: int = 720) 
 
     except Exception as _e:
         logger.debug("save_tutorial_dialog_templates error: %s", _e)
+
+
+# ─── ダイアログ枠検出 + × / ▷ ボタン探索 ──────────────────────────────────
+def detect_dialog_frame_and_nav(
+    img_path: Path, W: int = 1520, H: int = 720,
+    ocr_texts: Optional[list] = None,
+) -> Optional[tuple]:
+    """
+    ダイアログ枠（形状）を視覚的に検出し、その内部/周辺で ×(閉じる)/▷(次へ) を探す。
+
+    トリガー優先順:
+      1. HSV金色枠の大矩形検出 (主: 形状ベース)
+      2. OCR キーワード補助     (副: テキストベース、枠検出失敗時フォールバック)
+
+    ボタン探索優先順:
+      ×: 1.テンプレート 2.Canny+Hough 3.輝度   → 固定座標 (W*0.975, H*0.055)
+      ▷: 1.テンプレート 2.Canny+Hough 3.輝度   → 固定座標 (W*0.91,  H*0.49)
+      未特定時: ダイアログ下部中央 ("bottom")
+
+    Returns: ("close",  cx, cy)
+             ("next",   cx, cy)
+             ("bottom", cx, cy)
+             None  — ダイアログ未検出
+    """
+    try:
+        import cv2 as _cv
+        import numpy as _np
+
+        img = _cv.imread(str(img_path))
+        if img is None:
+            return None
+        _H, _W = img.shape[:2]
+
+        # ──────────────────────────────────────────────────────────────
+        # STEP 1: HSV 金色枠で大矩形ダイアログを検出
+        # ──────────────────────────────────────────────────────────────
+        _hsv = _cv.cvtColor(img, _cv.COLOR_BGR2HSV)
+        _mask_g = _cv.inRange(
+            _hsv,
+            _np.array([12, 50, 140], _np.uint8),
+            _np.array([55, 255, 255], _np.uint8),
+        )
+        _k3 = _np.ones((3, 3), _np.uint8)
+        _mask_g = _cv.dilate(_mask_g, _k3, iterations=2)
+        _cnts, _ = _cv.findContours(_mask_g, _cv.RETR_EXTERNAL, _cv.CHAIN_APPROX_SIMPLE)
+
+        _frame: Optional[tuple] = None  # (x, y, w, h)
+        _best_area = 0
+        _scx, _scy = _W // 2, _H // 2   # 画面中心
+
+        for _c in _cnts:
+            _a = _cv.contourArea(_c)
+            if _a < 8000:
+                continue
+            _x, _y, _w, _h = _cv.boundingRect(_c)
+            if _w < 280 or _h < 160:          # 小さすぎ → カード等を除外
+                continue
+            if _w > _W * 0.97 or _h > _H * 0.97:  # 全画面 → 除外
+                continue
+            _asp = _w / max(_h, 1)
+            if not (0.3 < _asp < 5.5):
+                continue
+            # 中央付近チェック: ダイアログ中心が画面中心の 45% 以内
+            _dcx = _x + _w // 2
+            _dcy = _y + _h // 2
+            if abs(_dcx - _scx) > _W * 0.45 or abs(_dcy - _scy) > _H * 0.45:
+                continue
+            if _a > _best_area:
+                _best_area = _a
+                _frame = (_x, _y, _w, _h)
+
+        _frame_detected = _frame is not None
+
+        # OCR キーワード補助: 枠未検出でもキーワードがあればフォールバック実行
+        _ocr_trigger = False
+        if not _frame_detected and ocr_texts:
+            _joined_ocr = " ".join(ocr_texts)
+            _ocr_trigger = any(kw in _joined_ocr for kw in _DIALOG_FIRST_KWS)
+        if not _frame_detected and not _ocr_trigger:
+            return None                           # ダイアログ未検出
+
+        # ──────────────────────────────────────────────────────────────
+        # STEP 2: フレーム内/周辺で × と ▷ を探す
+        # ──────────────────────────────────────────────────────────────
+        def _canny_lines(roi_img, thr_lo=40, thr_hi=120, min_len=6, max_gap=4):
+            _g = _cv.cvtColor(roi_img, _cv.COLOR_BGR2GRAY)
+            _e = _cv.Canny(_g, thr_lo, thr_hi)
+            return (
+                _cv.HoughLinesP(_e, 1, _np.pi / 180,
+                                 threshold=8, minLineLength=min_len, maxLineGap=max_gap),
+                _g,
+            )
+
+        def _cross_center(lines):
+            """HoughLinesP 結果から × 形状の中心を返す"""
+            if lines is None or len(lines) < 2:
+                return None
+            _pd, _nd = [], []
+            for _ln in lines:
+                _x1, _y1, _x2, _y2 = _ln[0]
+                if _x2 == _x1:
+                    continue
+                _ang = _np.degrees(_np.arctan2(_y2 - _y1, _x2 - _x1))
+                if 20 < abs(_ang) < 75:
+                    (_pd if _ang > 0 else _nd).append(_ln[0])
+            if _pd and _nd:
+                _pts = _pd[0] + _nd[0]
+                return (int(sum(_pts[::2]) / 4), int(sum(_pts[1::2]) / 4))
+            return None
+
+        def _chevron_tip(lines):
+            """HoughLinesP 結果から ▷ 形状の先端を返す"""
+            if lines is None or len(lines) < 2:
+                return None
+            _ul, _dl = [], []
+            for _ln in lines:
+                _x1, _y1, _x2, _y2 = _ln[0]
+                if _x2 == _x1:
+                    continue
+                if _x1 > _x2:
+                    _x1, _y1, _x2, _y2 = _x2, _y2, _x1, _y1
+                _ang = _np.degrees(_np.arctan2(_y2 - _y1, _x2 - _x1))
+                if -70 < _ang < -20:
+                    _ul.append((_x1, _y1, _x2, _y2))
+                elif 20 < _ang < 70:
+                    _dl.append((_x1, _y1, _x2, _y2))
+            if _ul and _dl:
+                _ur = max(_ul, key=lambda l: l[2])
+                _dr = max(_dl, key=lambda l: l[2])
+                return (int((_ur[2] + _dr[2]) / 2), int((_ur[3] + _dr[3]) / 2))
+            return None
+
+        # 検索 ROI: テンプレートなければ Canny、それも失敗したら輝度、最後に固定座標
+
+        # ── × ボタン (スクリーン右上隅: テンプレートが最優先) ──────────
+        if _DIALOG_CLOSE_TEMPLATE.exists():
+            _r = _cv.matchTemplate(
+                _cv.imread(str(img_path), _cv.IMREAD_COLOR)[0: int(_H * 0.14), int(_W * 0.88):],
+                _cv.imread(str(_DIALOG_CLOSE_TEMPLATE)),
+                _cv.TM_CCOEFF_NORMED,
+            )
+            _, _mv, _, _ml = _cv.minMaxLoc(_r)
+            if _mv >= 0.75:
+                _tw, _th = _cv.imread(str(_DIALOG_CLOSE_TEMPLATE)).shape[1], _cv.imread(str(_DIALOG_CLOSE_TEMPLATE)).shape[0]
+                return ("close",
+                        int(_W * 0.88) + _ml[0] + _tw // 2,
+                        _ml[1] + _th // 2)
+
+        _rx1c, _ry1c = int(_W * 0.88), 0
+        _rx2c, _ry2c = _W, int(_H * 0.13)
+        _roi_c = img[_ry1c:_ry2c, _rx1c:_rx2c]
+        if _roi_c.size > 0:
+            _lns_c, _gray_c = _canny_lines(_roi_c)
+            _cp = _cross_center(_lns_c)
+            if _cp:
+                logger.debug("[Dialog×] Canny検出: (%d,%d)", _rx1c + _cp[0], _ry1c + _cp[1])
+                return ("close", _rx1c + _cp[0], _ry1c + _cp[1])
+            # 輝度フォールバック
+            if _cv.countNonZero(_cv.threshold(_gray_c, 155, 255, _cv.THRESH_BINARY)[1]) >= 25:
+                logger.debug("[Dialog×] 輝度FB: (%d,%d)", int(_W * 0.975), int(_H * 0.055))
+                return ("close", int(_W * 0.975), int(_H * 0.055))
+
+        # ── ▷ ボタン (スクリーン右エッジ) ────────────────────────────────
+        if _DIALOG_NEXT_TEMPLATE.exists():
+            _r2 = _cv.matchTemplate(
+                img[int(_H * 0.22): int(_H * 0.78), int(_W * 0.83):],
+                _cv.imread(str(_DIALOG_NEXT_TEMPLATE)),
+                _cv.TM_CCOEFF_NORMED,
+            )
+            _, _mv2, _, _ml2 = _cv.minMaxLoc(_r2)
+            if _mv2 >= 0.75:
+                _tw2, _th2 = _cv.imread(str(_DIALOG_NEXT_TEMPLATE)).shape[1], _cv.imread(str(_DIALOG_NEXT_TEMPLATE)).shape[0]
+                return ("next",
+                        int(_W * 0.83) + _ml2[0] + _tw2 // 2,
+                        int(_H * 0.22) + _ml2[1] + _th2 // 2)
+
+        _rx1n, _ry1n = int(_W * 0.83), int(_H * 0.22)
+        _rx2n, _ry2n = _W, int(_H * 0.78)
+        _roi_n = img[_ry1n:_ry2n, _rx1n:_rx2n]
+        if _roi_n.size > 0:
+            _lns_n, _gray_n = _canny_lines(_roi_n)
+            _np_tip = _chevron_tip(_lns_n)
+            if _np_tip:
+                logger.debug("[Dialog▷] Canny検出: (%d,%d)", _rx1n + _np_tip[0], _ry1n + _np_tip[1])
+                return ("next", _rx1n + _np_tip[0], _ry1n + _np_tip[1])
+            if _cv.countNonZero(_cv.threshold(_gray_n, 140, 255, _cv.THRESH_BINARY)[1]) >= 20:
+                logger.debug("[Dialog▷] 輝度FB: (%d,%d)", int(_W * 0.91), int(_H * 0.49))
+                return ("next", int(_W * 0.91), int(_H * 0.49))
+
+        # ── フォールバック: 固定座標 ▷ ──────────────────────────────────
+        if _frame_detected:
+            # 枠が確認できている場合は枠下部中央を安全タップ
+            _fx, _fy, _fw, _fh = _frame
+            _fb_x, _fb_y = _fx + _fw // 2, _fy + int(_fh * 0.85)
+            logger.debug("[Dialog] 枠下部フォールバック: (%d,%d)", _fb_x, _fb_y)
+            return ("bottom", _fb_x, _fb_y)
+
+        # OCR キーワードのみで枠未検出 → 固定座標 ▷
+        return ("next", int(_W * 0.91), int(_H * 0.49))
+
+    except Exception as _e:
+        logger.debug("detect_dialog_frame_and_nav error: %s", _e)
+        return None
 
 
 # ─── HSV金色チュートリアルポインター検出 → ホールドスワイプ ─────────────
@@ -1565,6 +1782,29 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.info(">>> MAIN STORY ローディング背景 — 自動遷移待ち (10s)")
         return "MAIN_STORY_LOADING", 10.0
 
+    # ─── 【最優先 #0-DIALOG】ダイアログ・ファースト (枠形状+Canny) ────────────
+    # 主トリガー: HSV金色枠の大矩形検出 (形状ベース)
+    # 副トリガー: OCR キーワード補助 (枠検出失敗時フォールバック)
+    # ダイアログ検出中は指アイコン・金枠探索を完全スキップ (即 return)
+    if analysis_path is not None:
+        _dlg = detect_dialog_frame_and_nav(
+            analysis_path, W, H, ocr_texts=texts
+        )
+        if _dlg is not None:
+            _dlg_type, _dlg_x, _dlg_y = _dlg
+            _dlg_action = {
+                "close":  "DIALOG_CLOSE",
+                "next":   "DIALOG_NEXT",
+                "bottom": "DIALOG_BOTTOM",
+            }.get(_dlg_type, "DIALOG_NAV")
+            state.pre_popup_tap_count += 1
+            logger.info(
+                ">>> 【ダイアログ#0-DIALOG】%s → %s(%d,%d) (試行%d回)",
+                _dlg_type, _dlg_action, _dlg_x, _dlg_y, state.pre_popup_tap_count,
+            )
+            tap_device(_dlg_x, _dlg_y, state, _dlg_action)
+            return _dlg_action, 1.0   # ← 必ず return。fallthrough なし。
+
     # ─── 【最優先 #0-aa】HSV金色ポインター検出 → ホールドスワイプ (Type A) ───
     # 縦長金色領域 h/w>=3.5 かつ幅<=100px のみ有効 (ボタン/カード誤検出防止)。
     # チュートリアル3D移動シーン(チェッカー床/階段/廊下)で発火。
@@ -1642,14 +1882,9 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> [Asset Match] '%s' → (%d,%d)", action, cx, cy)
             # スワイプ系アクションの処理
             if action == "SWIPE_UP":
-                # ▷ナビ矢印付きのチュートリアルポップアップはSWIPE_UPを抑制して
-                # pre_popup ブランチに委ねる (SWIPE_UPテンプレートが誤マッチするため)
-                _popup_guard_kws = [
-                    "ポートレイト", "キオクを最大", "各キオク", "パーティを組", "前衛", "後衛",
-                    "マギアボックス", "最大24時間", "A-Qップ", "素材が溜", "プレイヤーLv",
-                    "ポジションを", "チームを組",
-                ]
-                _swipe_skip = any(kw in joined for kw in _popup_guard_kws)
+                # 安全ネット: #0-DIALOG が例外等で抜けた場合の最終防衛
+                # _DIALOG_FIRST_KWS キーワードがあればポップアップと判断してスキップ
+                _swipe_skip = any(kw in joined for kw in _DIALOG_FIRST_KWS)
                 if not _swipe_skip:
                     tmpl_meta = ASSET_MANAGER._templates.get("tutorial_swipe_pointer", {})
                     sx = tmpl_meta.get("swipe_from_x", cx)
@@ -1661,7 +1896,11 @@ def detect_and_act(ocr: list, state: PilotState,
                     swipe(sx, sy, ex, ey, dur, state=state)
                     return "SWIPE_UP", 1.5
                 else:
-                    logger.info(">>> [SWIPE_UP] ポップアップキーワード検出 → スキップ (pre_popupへ委譲)")
+                    logger.info(">>> [SWIPE_UP] ダイアログKW検出 → スキップ (#0-DIALOGへ)  ← safety net")
+                    # ここに到達した場合は #0-DIALOG が None を返した異常ケース
+                    # 固定座標でダイアログ ▷ をタップして続行
+                    tap_device(int(W * 0.91), int(H * 0.49), state, "DIALOG_NEXT_FALLBACK")
+                    return "DIALOG_NEXT_FALLBACK", 1.0
             # チュートリアル指差し: 金色ハイライトされたUI要素を方向非依存で検出→タップ
             if action == "TAP_HIGHLIGHTED_NAV":
                 gold_pos = find_golden_highlighted_button(analysis_path)
@@ -1674,30 +1913,16 @@ def detect_and_act(ocr: list, state: PilotState,
                             cx, cy, tap_x, tap_y)
                 tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
                 return "TAP_HIGHLIGHTED_NAV", 1.5
-            # SWIPE_UP がポップアップガードでスキップされた場合は pre_popup に委譲
-            if action == "SWIPE_UP" and _swipe_skip:
-                pass  # fall through to pre_popup check below
-            else:
-                tap_device(cx, cy, state, action)
-                # GACHA_OK: 演出終了待ち (演出中はタップが無視されるため長めに待つ)
-                _asset_wait = 5.0 if action == "GACHA_OK" else 0.5
-                return action, _asset_wait
+            # その他のアセットアクション: タップして return (fallthrough なし)
+            tap_device(cx, cy, state, action)
+            # GACHA_OK: 演出終了待ち (演出中はタップが無視されるため長めに待つ)
+            _asset_wait = 5.0 if action == "GACHA_OK" else 0.5
+            return action, _asset_wait
 
-    # ─── 【最優先 #0】チュートリアルポップアップ (ブロブより優先) ───
-    # バトル説明・ロール説明などのポップアップはブロブ検出前に処理
-    pre_popup_kws = [
-        "ロールについて", "ロールは全部",
-        "STEP1", "STEP2", "バトルシステム", "ブレイクし",
-        # 全6ロール — 一覧画面・個別詳細ページ両方に対応
-        "ATTACKER", "BREAKER", "BUFFER", "DEBUFFER", "DEFENDER", "HEALER",
-        "アタッカー", "ブレイカー", "バッファー", "デバッファー", "ディフェンダー", "ヒーラー",
-        # パーティ/編成/ショップ等のチュートリアルポップアップ (複数ページ ▷/× 矢印ナビ)
-        "ポートレイト", "キオクを最大", "ポジションを", "前衛", "後衛",
-        "各キオク", "パーティを組", "チームを組",
-        # マギアボックス/素材系チュートリアルポップアップ
-        "マギアボックス", "最大24時間", "素材が溜", "プレイヤーLv",
-    ]
-    pre_popup = has_any(ocr, pre_popup_kws)
+    # ─── 【優先 #0】チュートリアルポップアップ セカンダリセーフネット ───
+    # #0-DIALOG (形状ベース) が失敗した場合の OCR キーワードによるバックアップ。
+    # キーワードリストは _DIALOG_FIRST_KWS (定数) と共有して管理。
+    pre_popup = has_any(ocr, list(_DIALOG_FIRST_KWS))
     if pre_popup:
         state.pre_popup_tap_count += 1
         # ── テンプレートマッチングで ▷/× を優先検出 ──
