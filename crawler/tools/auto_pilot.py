@@ -2485,8 +2485,11 @@ def detect_and_act(ocr: list, state: PilotState,
                              "ENEMY TURN", "BATTLE", "AUTO", "必殺技"]
         _in_battle_context = any(kw in t for t in texts for kw in _battle_guard_kws)
         if not _in_battle_context:
-            _progress_texts = [t for t in texts if "%" in t or "MB" in t or "GB" in t]
-            if _progress_texts:
+            # バッテリー残量 (「電池」「Battery」コンテキスト) と誤認しないガード
+            _battery_ctx = any(kw in joined for kw in ["電池", "Battery", "バッテリー", "電池切れ"])
+            _progress_texts = [t for t in texts if ("%" in t or "MB" in t or "GB" in t)
+                               and not ("電池" in t or "Battery" in t or "%" not in t and "電池" in joined)]
+            if _progress_texts and not _battery_ctx:
                 logger.info(">>> ダウンロード進捗テキスト検出: %s", _progress_texts[:3])
                 # has_any 互換の形式で返す
                 dl = {"text": _progress_texts[0], "center": (0, 0), "confidence": 0.5, "box": []}
