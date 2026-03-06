@@ -2056,7 +2056,7 @@ def detect_and_act(ocr: list, state: PilotState,
 
         # バトル停滞時: ハイライト候補を順番にタップ試行
         if state.battle_wait_count > 8:
-            stall_phase = (state.battle_wait_count - 8) % 8
+            stall_phase = (state.battle_wait_count - 8) % 12
             if stall_phase == 0:
                 sx, sy = int(W * 0.947), int(H * 0.722)
                 logger.info(">>> バトル停滞 — スキルタップ (%d,%d)", sx, sy)
@@ -2071,6 +2071,21 @@ def detect_and_act(ocr: list, state: PilotState,
                 time.sleep(0.8)
                 tap_device(hx, hy, state, "STALL_HISSATSU confirm")
                 return "BATTLE_STALL", 1.0
+            elif stall_phase == 8:
+                # 探索バトル: 左パネルのキャラカードを再タップ (char_just_selected リセット)
+                state.char_just_selected = False
+                lx, ly = int(W * 0.141), int(H * 0.875)  # 左カード中央 ≈(215,630)
+                logger.info(">>> バトル停滞 — 左カード再タップ (%d,%d)", lx, ly)
+                tap_device(lx, ly, state, "STALL_LEFT_CARD")
+                return "BATTLE_STALL", 1.0
+
+        # 高回数停滞: auto_activated リセットで再検出
+        if state.battle_wait_count > 30:
+            logger.warning(">>> バトル長期停滞 (count=%d) — auto_activated/char_justSelected リセット",
+                           state.battle_wait_count)
+            state.auto_activated = False
+            state.char_just_selected = False
+            state.battle_wait_count = 0
 
         logger.info(">>> バトル中 — 待機 (count=%d, auto=%s)",
                     state.battle_wait_count, state.auto_activated)
