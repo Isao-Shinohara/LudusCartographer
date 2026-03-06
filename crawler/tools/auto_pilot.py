@@ -1034,26 +1034,59 @@ def detect_and_act(ocr: list, state: PilotState,
     if has_text(ocr, "ご注意", min_conf=0.3) or (
         has_text(ocr, "基本無料", min_conf=0.3) and has_text(ocr, "未成年", min_conf=0.3)
     ):
-        # 「同意」ボタンをOCRで検出（見つかればその座標、なければ右下3分の2地点）
+        # 「同意」ボタンをOCRで検出
+        # 注意: OCR center (1023,585) ≠ 実際タップ有効点 (1000,570)
+        # ゲームのUIはOCRテキスト中心より少し左上がボタンのヒットゾーン (実測 2026-03-06)
         agree_btn = (has_text(ocr, "同意してゲーム", min_conf=0.2) or
                      has_text(ocr, "同意して", min_conf=0.2) or
                      has_text(ocr, "ゲームを始める", min_conf=0.2))
         if agree_btn:
-            cx, cy = agree_btn["center"]
-            logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d) → タップ", cx, cy)
-            tap_device(cx, cy, state, "GO_CHUI_AGREE")
+            # OCR 中心に補正オフセット適用 (実測: -23, -15 が有効ヒットゾーン)
+            _ocr_cx, _ocr_cy = agree_btn["center"]
+            cx, cy = _ocr_cx - 23, _ocr_cy - 15
+            logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d) → 補正後(%d,%d) タップ",
+                        _ocr_cx, _ocr_cy, cx, cy)
         else:
-            # フォールバック: 右下2/3位置 (同意ボタンは必ず右側にある)
-            logger.info(">>> 【ご注意画面】 同意ボタン未検出 → 右下フォールバック (1023,585)")
-            tap_device(1023, 585, state, "GO_CHUI_FALLBACK")
-        # ─── 忍耐モード: Unity 初期化に最低 120 秒を保証 ───
-        # 同意タップ後、Unityメインスレッドの内部初期化が完了するまで
-        # 一切の操作をせず待機する。Watchdog は NOTICE_DISMISS が
-        # WATCHDOG_EXEMPT_ACTIONS に含まれるため自動的に一時停止される。
-        logger.info(
-            ">>> 【忍耐モード】 Unity 初期化待ち — 120秒間 無操作待機 (Watchdog停止中)"
-        )
-        return "NOTICE_DISMISS", 120.0
+            # フォールバック: 実測座標 (1000,570)
+            cx, cy = 1000, 570
+            logger.info(">>> 【ご注意画面】 同意ボタン未検出 → 実測フォールバック (%d,%d)", cx, cy)
+
+        # ─── phash監視付き動的リトライ (固定120秒スリープを廃止) ───
+        # 仕様: タップ → 2s待機 → phash変化確認 → 変化なし → x+20pxずらして最大5回リトライ
+        # 変化検知 → Unity初期化待機(60s)へ即移行
+        _base_ph = compute_phash(analysis_path) if analysis_path else ""
+        _agree_changed = False
+        for _retry_i in range(5):
+            _tap_x = cx + _retry_i * 20  # x方向に +20px ずつ調整
+            _tap_y = cy
+            tap_device(_tap_x, _tap_y, state,
+                       f"GO_CHUI_AGREE_R{_retry_i}({'OCR' if agree_btn else 'FB'})")
+            logger.info(">>> 【ご注意→phash監視】 #%d タップ(%d,%d) → 2s待機",
+                        _retry_i + 1, _tap_x, _tap_y)
+            time.sleep(2.0)
+            _new_ss, _, _ = take_screenshot()
+            _new_ph = compute_phash(_new_ss)
+            if _base_ph and _new_ph:
+                _dist = phash_distance(_base_ph, _new_ph)
+                if _dist >= PHASH_THRESHOLD:
+                    logger.info(
+                        ">>> 【ご注意→変化検知!】 #%d tap(%d,%d) phash_dist=%d → Unity初期化待機へ",
+                        _retry_i + 1, _tap_x, _tap_y, _dist
+                    )
+                    _agree_changed = True
+                    break
+                logger.info(">>> 【ご注意→変化なし】 #%d phash_dist=%d → 座標+20pxで再試行",
+                            _retry_i + 1, _dist)
+                _base_ph = _new_ph  # 次回比較の基準を更新
+            else:
+                logger.info(">>> 【ご注意→phash計算失敗】 #%d → 次座標で再試行", _retry_i + 1)
+
+        if _agree_changed:
+            logger.info(">>> 【Unity初期化待機】 60秒 Watchdog停止 (NOTICE_DISMISS exempt)")
+            return "NOTICE_DISMISS", 60.0
+        else:
+            logger.info(">>> 【ご注意→リトライ上限(5回)】 次ループで再検出")
+            return "NOTICE_DISMISS", 3.0
 
     # ─── 【最優先 #-1b】MAIN STORY ローディング背景 ───
     # タイトル画面TAP後に表示される非インタラクティブなローディング背景。

@@ -356,4 +356,48 @@ WATCHDOG_MAX_TOTAL_RECOVERIES = 5    # 合計5回で諦める
 | Watchdog追加 | `auto_pilot.py` | 60秒変化なしで自動再起動/pm clearループ |
 | phash変化時刻追跡 | `auto_pilot.py` | `last_screen_change_time`フィールド追加 |
 
+---
+
+## セッション5 追加プロトコル (2026-03-06)
+
+### 【標準】phash監視による動的待機 — 固定スリープ禁止
+
+`time.sleep(N)` 固定スリープは廃止。以下の phash 監視ループを標準とする。
+
+```python
+# 標準: タップ → phash監視 → 変化検知 → 次フェーズ / 変化なし → 座標調整リトライ
+_base_ph = compute_phash(analysis_path)
+for _retry in range(5):          # 最大5回
+    tap_device(cx + _retry * 20, cy, state, f"ACTION_R{_retry}")  # x+20pxずつ調整
+    time.sleep(2.0)              # 2秒待機
+    _new_ph = compute_phash(take_screenshot()[0])
+    dist = phash_distance(_base_ph, _new_ph)
+    if dist >= PHASH_THRESHOLD:  # 変化検知
+        return "ACTION", 3.0    # 短時間の次フェーズ待機
+    _base_ph = _new_ph           # 次回比較基準を更新
+return "ACTION", 3.0             # 最大リトライ後は主ループに返す
+```
+
+**適用ルール:**
+- 5秒以上の固定スリープが必要な箇所は phash 監視に置き換える
+- 変化検知後は Unity 初期化等の「真の待ち」に短時間スリープを使う (例: 60s → Watchdog 免除)
+- Watchdog 免除リスト: `WATCHDOG_EXEMPT_ACTIONS` に追加すること
+
+### 【実測値】ご注意画面 同意ボタン座標
+
+| 方法 | X | Y | 結果 |
+|------|---|---|------|
+| OCR 中心 (従来) | 1023 | 585 | ❌ 無効 (ヒットゾーン外) |
+| 補正後 (現在) | 1000 | 570 | ✅ 動作確認 (2026-03-06) |
+| 補正オフセット | -23 | -15 | OCR中心からの差分 |
+
+**実測メモ:** phash 距離 29 で画面変化確認。ADB tap では (1000, 570) が確実。
+
+### 【座標系】ADB landscape (1520×720) 固定
+
+- 物理解像度: 720×1520 (portrait)
+- ADB操作・スクリーンショット: 1520×720 (ROTATION_90 landscape)
+- `adb input tap X Y`: X=0-1519, Y=0-719 (landscape座標)
+- `prepare_analysis_image`: 回転不要 (物理↔ADB変換はOSが処理)
+
 _このドキュメントは Claude Code (claude-sonnet-4-6) が自動生成・更新しています。_
