@@ -2309,6 +2309,17 @@ def detect_and_act(ocr: list, state: PilotState,
                             _sg_best[0], _sg_best[1], _dlg_x, _dlg_y, _sg_dist,
                         )
                         _dlg = None  # ダイアログをなかったことにして #1 へ
+            # ── バトル中 × 誤検出ガード ──────────────────────────────────────────
+            # バトル画面では y < 100 は UI ボタン帯 (倍速/メニュー等)。
+            # DIALOG_CLOSE としてタップすると「メニューが使用できません」トーストが出るため除外。
+            if (_dlg is not None and _dlg_type == "close"
+                    and _is_battle_early and _dlg_y < 100):
+                logger.info(
+                    "[BATTLE_DIALOG_GUARD] close(%d,%d) y<100 → バトル上部UI誤検出 スキップ",
+                    _dlg_x, _dlg_y,
+                )
+                _dlg = None  # フッター発光SM (#1-pre) へフォールスルー
+
             if _dlg is not None:
                 state.pre_popup_tap_count += 1
                 state.dialog_detections += 1
@@ -2379,7 +2390,8 @@ def detect_and_act(ocr: list, state: PilotState,
     # OCR が "隣接攻撃" "必殺技" を検出し、かつ右半分に金枠ボタンがある場合に発火。
     _battle_tut_kws = ["隣接攻撃", "必殺技", "巫殺技", "ATTACKER", "通常攻撃"]
     _is_battle_tut_context = any(kw in joined for kw in _battle_tut_kws)
-    if analysis_path is not None and _is_battle_tut_context:
+    # バトルUI確認済みの場合はフッター外GoldBtnをスキップ → Glow SM (フッター) に委ねる
+    if analysis_path is not None and _is_battle_tut_context and not _is_battle_early:
         _gold_btn = detect_tutorial_gold_button_tap(analysis_path, right_half_only=True)
         if _gold_btn:
             _bx, _by = _gold_btn
@@ -3578,7 +3590,10 @@ def generate_and_copy_report(state: PilotState, reason: str) -> None:
 
 
 # ─── BATTLE 高速パス: OCR 前テンプレートマッチング ──────────────────
-_BATTLE_UI_KWS = frozenset(["通常攻撃", "単体攻撃", "WAVE", "Turn", "ターン", "必殺技"])
+_BATTLE_UI_KWS = frozenset([
+    "通常攻撃", "単体攻撃", "单体攻撃",  # 单=簡体字 OCR 誤認対応
+    "WAVE", "Turn", "ターン", "必殺技",
+])
 
 def _battle_fast_check(analysis_path: Path,
                        state: "PilotState") -> tuple[str, float]:
@@ -3602,12 +3617,17 @@ def _battle_fast_check(analysis_path: Path,
         return ("GOLD_SWIPE_UP" if _dir == "UP" else "GOLD_SWIPE_DOWN"), BATTLE_WAIT
 
     # 2. GoldBtn (Type B) — バトルチュートリアルボタン (右半分)
-    gb = detect_tutorial_gold_button_tap(analysis_path, right_half_only=True)
-    if gb:
-        gx, gy = gb
-        logger.info("[FAST] GoldBtn → tap(%d,%d)", gx, gy)
-        tap_device(gx, gy, state, "GOLD_BTN_TAP")
-        return "GOLD_BTN_TAP", BATTLE_WAIT
+    # バトルUI確認済み (通常攻撃/WAVE等) の場合はフッター外の金色オブジェクトに
+    # 誤反応しないよう GoldBtn もスキップし、Glow SM (フッター優先) に委ねる。
+    if _confirmed_battle_ui:
+        logger.debug("[FAST] バトルUI確認済み → GoldBtn スキップ (フッター発光SMへ委譲)")
+    else:
+        gb = detect_tutorial_gold_button_tap(analysis_path, right_half_only=True)
+        if gb:
+            gx, gy = gb
+            logger.info("[FAST] GoldBtn → tap(%d,%d)", gx, gy)
+            tap_device(gx, gy, state, "GOLD_BTN_TAP")
+            return "GOLD_BTN_TAP", BATTLE_WAIT
 
     return "", 0.0
 
