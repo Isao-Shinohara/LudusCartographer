@@ -221,10 +221,12 @@ def tap_device(x: int, y: int, state: PilotState, desc: str = "") -> None:
     else:
         real_x, real_y = x, y
     # ─── 赤ドット描画: 解析画像にタップ位置を可視化 ───
+    # 変換不要時はスクリーンショットを直接使用（古い analysis.png を誤参照しない）
     try:
         import cv2 as _cv2
-        _analysis_img = Path("/tmp/lc_autopilot_analysis.png")
-        _src = _analysis_img if _analysis_img.exists() else Path("/tmp/lc_screenshot.png")
+        _src = Path("/tmp/lc_screenshot.png")
+        if not _src.exists():
+            _src = Path("/tmp/lc_autopilot_analysis.png")
         if _src.exists():
             _dbg = _cv2.imread(str(_src))
             if _dbg is not None:
