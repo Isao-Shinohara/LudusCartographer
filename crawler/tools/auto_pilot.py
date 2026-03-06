@@ -106,6 +106,9 @@ _DIALOG_FIRST_KWS: frozenset = frozenset([
 ANALYSIS_W = 1520
 ANALYSIS_H = 720
 
+# 排除された偽の指ブロブキャッシュ (debug_latest_tap.png への [REJECTED] 描画用)
+_rejected_finger_blobs: list = []
+
 OCR_LANG = "japan"
 OCR_MIN_CONF = 0.3
 
@@ -435,6 +438,13 @@ def tap_device(x: int, y: int, state: PilotState, desc: str = "",
                 _cv2.rectangle(_dbg, (gbx, gby), (gbx + gbw, gby + gbh),
                                 (0, 255, 0), 2)  # 緑枠: 金枠
             _cv2.circle(_dbg, (x, y), 10, (0, 0, 255), -1)  # 赤ドット: タップ点
+            # 排除された偽の指ブロブを描画 ([REJECTED: SHAPE/SPATIAL])
+            if _rejected_finger_blobs:
+                for _rx, _ry, _rr in _rejected_finger_blobs:
+                    _cv2.drawMarker(_dbg, (_rx, _ry), (0, 0, 255),
+                                    _cv2.MARKER_CROSS, 22, 2)
+                    _cv2.putText(_dbg, "[REJECTED]", (_rx - 42, _ry - 14),
+                                 _cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 255), 1)
             _out = str(Path(__file__).parent.parent / "debug_latest_tap.png")
             _cv2.imwrite(_out, _dbg)
             logger.info("  [DEBUG_TAP] Target=(%d,%d) → %s", x, y, _out)
@@ -504,11 +514,13 @@ def prepare_analysis_image(img_path: Path, actual_w: int, actual_h: int) -> Path
 
 # ─── 指差しアイコン (肌色ブロブ) 検出 ──────────────
 def find_finger_blobs(img_path: Path, min_area: int = 400,
-                      max_area: int = 15000) -> list[tuple[int, int, float, int, int, int, int]]:
+                      max_area: int = 15000,
+                      dark_mode: bool = False) -> list[tuple[int, int, float, int, int, int, int]]:
     """
     指差しアイコン（肌色）の大きいブロブを検出。
     battle_loop.py と同じ HSV マスク手法。
     max_area: 金色カード等の大面積誤検出を除外（UI カードは 15000px² 超）
+    dark_mode: バトル背景など暗い状況では輝度閾値を緩和（V:150→100, S:40→25）
     返値: [(cx, cy, area, bbox_x, bbox_y, bbox_w, bbox_h), ...] 面積降順
     """
     try:
@@ -518,26 +530,91 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
         if img is None:
             return []
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        lower = np.array([5, 40, 150])
+        # dark_mode: バトル暗背景向けに輝度・彩度閾値を緩和
+        if dark_mode:
+            lower = np.array([5, 25, 100])
+        else:
+            lower = np.array([5, 40, 150])
         upper = np.array([25, 180, 255])
         mask = cv2.inRange(hsv, lower, upper)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        img_h_fb = img.shape[0]
         blobs = []
+        global _rejected_finger_blobs
+        _rejected_finger_blobs = []  # 毎回リセット
         for c in contours:
             area = cv2.contourArea(c)
-            if area >= min_area and area <= max_area:
-                M = cv2.moments(c)
-                if M["m00"] > 0:
-                    cx = int(M["m10"] / M["m00"])
-                    cy = int(M["m01"] / M["m00"])
-                    bx, by, bw, bh = cv2.boundingRect(c)
-                    blobs.append((cx, cy, area, bx, by, bw, bh))
+            if area < min_area or area > max_area:
+                continue
+            M = cv2.moments(c)
+            if M["m00"] <= 0:
+                continue
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+            bx, by, bw, bh = cv2.boundingRect(c)
+
+            # ── 【形状検証 1】Solidity（充填率）チェック ───────────────────────
+            # 蝶の王冠/トゲトゲ形状は solidity 低い。指アイコンは輪郭が滑らかで高い。
+            hull = cv2.convexHull(c)
+            hull_area = cv2.contourArea(hull)
+            solidity = area / hull_area if hull_area > 0 else 0.0
+            if solidity < 0.35:
+                _rejected_finger_blobs.append((cx, cy, "SHAPE(sol=%.2f)" % solidity))
+                logger.debug("[REJECTED: SHAPE] (%d,%d) solidity=%.2f<0.35", cx, cy, solidity)
+                continue
+
+            # ── 【形状検証 2】アスペクト比チェック ─────────────────────────────
+            # 指アイコンは概ね 0.28〜3.5 の範囲。過度に横長な蝶の羽を排除。
+            asp = bw / bh if bh > 0 else 1.0
+            if asp > 3.5 or asp < 0.28:
+                _rejected_finger_blobs.append((cx, cy, "SHAPE(asp=%.1f)" % asp))
+                logger.debug("[REJECTED: SHAPE] (%d,%d) asp=%.1f out of [0.28,3.5]", cx, cy, asp)
+                continue
+
+            # ── 【空間的バイアス 3】バトル(dark_mode)上部30%の小面積ブロブ排除 ────
+            # 蝶エネミーは上部(バトルフィールド)に出現、チュートリアル指は下部UIに出現
+            if dark_mode and cy < img_h_fb * 0.30 and area < 1500:
+                _rejected_finger_blobs.append((cx, cy, "SPATIAL(y=%d,area=%.0f)" % (cy, area)))
+                logger.info("[REJECTED: SPATIAL] (%d,%d) 上部30%%内 area=%.0f<1500 → エネミー誤検出排除",
+                            cx, cy, area)
+                continue
+
+            blobs.append((cx, cy, area, bx, by, bw, bh))
         return sorted(blobs, key=lambda b: b[2], reverse=True)
     except ImportError:
         return []
     except Exception as e:
         logger.debug("find_finger_blobs error: %s", e)
         return []
+
+
+def create_finger_mask_image(img_path: Path, cx: int, cy: int, half: int = 175) -> Path:
+    """
+    指アイコン周囲 350×350px (half=175) 以外を純黒に塗りつぶした一時画像を生成して返す。
+    Hard Masking 2.0: 右側スキルボタン等の誤検出を物理的に排除。
+    失敗した場合は元の img_path を返す。
+    """
+    try:
+        import cv2
+        import numpy as _np_hm
+        import tempfile
+        _img_hm = cv2.imread(str(img_path))
+        if _img_hm is None:
+            return img_path
+        _H_hm, _W_hm = _img_hm.shape[:2]
+        _masked = _np_hm.zeros_like(_img_hm)
+        _x1 = max(0, cx - half)
+        _x2 = min(_W_hm, cx + half)
+        _y1 = max(0, cy - half)
+        _y2 = min(_H_hm, cy + half)
+        _masked[_y1:_y2, _x1:_x2] = _img_hm[_y1:_y2, _x1:_x2]
+        _tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        cv2.imwrite(_tmp.name, _masked)
+        _tmp.close()
+        return Path(_tmp.name)
+    except Exception as _e_hm:
+        logger.debug("create_finger_mask_image error: %s", _e_hm)
+        return img_path
 
 
 def find_gold_frame_near(img_path: Path, cx: int, cy: int,
@@ -2491,13 +2568,22 @@ def detect_and_act(ocr: list, state: PilotState,
                 tap_device(_nx, _ny, state, "RESULT_NEXT")
                 return "RESULT_TAP", 1.0
 
-        # min_area は常に400。空間フィルタ(下記)で誤検出を排除するため過大閾値は不要
+        # バトル時は dark_mode=True で輝度閾値を緩和し min_area=200 に下げる（暗背景対応）
         # ホーム画面 / 利用規約ダイアログ / システムダイアログはブロブ誤検出になるためスキップ
         _is_system_dialog = any(kw in _nav_joined for kw in
                                 ["画質を設定", "高画質", "省エネ", "省工ネ", "データ引き継ぎ",
                                  "サポート", "お問い合わせ", "キャッシュクリア"])
         if _home_kw_count >= 2:
             logger.info("  ホーム画面検出 (nav×%d) → MOYA_TAP スキップ", _home_kw_count)
+            # ── 【最優先】ダンジョン挑戦ボタン: 「挑戦」OCR検出 → 直接タップ (ホーム誤検出突破) ──
+            _chal_btn = has_text(ocr, "挑戦", min_conf=0.3)
+            if _chal_btn:
+                _cb_x, _cb_y = _chal_btn["center"]
+                # 挑戦ボタンは右下(x>W*0.5, y>H*0.5)にあるはず
+                if _cb_x > W * 0.5 and _cb_y > H * 0.5:
+                    logger.info("  [CHALLENGE_BTN] 挑戦(%d,%d) → 直接タップ (ホーム誤検出突破)", _cb_x, _cb_y)
+                    tap_device(_cb_x, _cb_y, state, "CHALLENGE_TAP")
+                    return "CHALLENGE_TAP", 1.5
             # ── ホームチュートリアル: 指アイコン+金枠がある場合は優先タップ ──
             _ht_blobs = find_finger_blobs(analysis_path) if analysis_path else []
             # ホーム画面では中央ナビバー (ショップ等) が右半分境界付近に来るため right_half_only=False
@@ -2528,7 +2614,11 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info("  システムダイアログ/利用規約検出 → MOYA_TAP スキップ")
             blobs = []
         else:
-            blobs = find_finger_blobs(analysis_path, min_area=400)
+            # バトル中は dark_mode=True + min_area=200 で暗背景の指アイコンも検知
+            _blob_dark = is_battle_screen
+            blobs = find_finger_blobs(analysis_path,
+                                      min_area=200 if _blob_dark else 400,
+                                      dark_mode=_blob_dark)
             # 画面端の誤検出を除去: y<36px(上端)または x>W-40px(右端最端)はシステムUI
             blobs = [b for b in blobs if b[1] > 36 and b[0] < W - 40]
         if blobs:
@@ -2536,7 +2626,8 @@ def detect_and_act(ocr: list, state: PilotState,
             # 優先順位: 左キャラカード(x<600,y>550) > 右パネル(x>1050) > 下部UI(y>H*0.8)
             if is_battle_screen:
                 left_char = [b for b in blobs if b[0] < 600 and b[1] > H * 0.76]
-                right_panel = [b for b in blobs if b[0] > 1050]
+                # right_panel: スキルボタンは下半分(y>H*0.45)のみ。上部の蝶エネミーを排除
+                right_panel = [b for b in blobs if b[0] > 1050 and b[1] > H * 0.45]
                 bottom_ui = [b for b in blobs if b[1] > H * 0.8 and b[0] >= 600]
                 if state.char_just_selected:
                     # 左キャラ選択済み → 右スキルを選択 (左キャラ再タップしない)
@@ -2567,6 +2658,16 @@ def detect_and_act(ocr: list, state: PilotState,
                     blobs = []
 
         if blobs:
+            # ── Hard Masking 2.0: バトル中は先頭blobの350×350以外を黒塗り ──
+            # 右側スキルボタンの金枠を物理的に排除し、指アイコンの示すターゲットだけを照準
+            _hm_analysis = analysis_path
+            if is_battle_screen and analysis_path is not None:
+                _hm_cx, _hm_cy = blobs[0][0], blobs[0][1]
+                _hm_analysis = create_finger_mask_image(analysis_path, _hm_cx, _hm_cy, half=175)
+                if _hm_analysis != analysis_path:
+                    logger.info("[HARD_MASK] 指(%d,%d)周囲350×350px以外 黒塗り → 認識対象限定",
+                                _hm_cx, _hm_cy)
+
             # ── 2段階ターゲット選択 ──────────────────────────────
             # Step1: 金枠が見つかる blobs を優先（真のGUIガイド要素）
             # Step2: 金枠なし blobs は右側優先フォールバック
@@ -2575,7 +2676,8 @@ def detect_and_act(ocr: list, state: PilotState,
             _blob_fallback = None
             for _b in blobs:
                 _bx0, _by0 = _b[0], _b[1]
-                _gf = find_gold_frame_near(analysis_path, _bx0, _by0, search_radius=150)
+                # Hard Masking 2.0 適用: バトル時はマスク済み画像で金枠検索
+                _gf = find_gold_frame_near(_hm_analysis, _bx0, _by0, search_radius=150)
                 if _gf is not None:
                     # 金枠が見つかった最初のblobを使用
                     if _blob_with_gold is None:
@@ -2672,6 +2774,11 @@ def detect_and_act(ocr: list, state: PilotState,
                     _gbox = None
                     logger.info("FINGER_DETECTED (%d,%d) area=%.0f → tip(%d,%d) count=%d",
                                 fx, fy, fa, tap_x, tap_y, state.blob_same_count)
+                # ── Y -35px 座標補正 (System Bar Fix) ──────────────────────────
+                # バトル画面でボタン下端を叩くズレを補正: 35px 上方向シフト
+                if is_battle_screen and tap_y > 35:
+                    tap_y -= 35
+                    logger.info("  [Y_SHIFT-35] バトル座標補正 → tap_y=%d", tap_y)
                 tap_device(tap_x, tap_y, state, f"MOYA_TAP ({tap_x},{tap_y})",
                            finger_box=(f_bx, f_by, f_bw, f_bh),
                            gold_box=_gbox)
