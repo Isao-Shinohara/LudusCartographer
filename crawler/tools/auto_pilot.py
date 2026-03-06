@@ -375,9 +375,9 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
 
 
 def find_gold_frame_near(img_path: Path, cx: int, cy: int,
-                         search_radius: int = 200) -> Optional[tuple[int, int, int, int]]:
+                         search_radius: int = 150) -> Optional[tuple[int, int, int, int]]:
     """
-    指アイコン中心(cx,cy)の近傍200px以内で金枠（装飾ボタン枠）を検索。
+    指アイコン中心(cx,cy)の近傍150px以内で金枠（装飾ボタン枠）を検索。
     スワイプポインター（縦長細い）は除外し、ボタン形状の金枠を返す。
     Returns: (frame_cx, frame_cy, frame_w, frame_h) or None
     """
@@ -1913,6 +1913,30 @@ def detect_and_act(ocr: list, state: PilotState,
                                  "サポート", "お問い合わせ", "キャッシュクリア"])
         if _home_kw_count >= 2:
             logger.info("  ホーム画面検出 (nav×%d) → MOYA_TAP スキップ", _home_kw_count)
+            # ── ホームチュートリアル: 指アイコン+金枠がある場合は優先タップ ──
+            _ht_blobs = find_finger_blobs(analysis_path) if analysis_path else []
+            _ht_gold = detect_tutorial_gold_button_tap(analysis_path) if analysis_path else None
+            if _ht_blobs or _ht_gold:
+                _ht_target = None
+                if _ht_blobs:
+                    _ht_chosen = max(_ht_blobs, key=lambda b: b[2])
+                    _ht_bx, _ht_by = _ht_chosen[0], _ht_chosen[1]
+                    _ht_gf = find_gold_frame_near(analysis_path, _ht_bx, _ht_by) if analysis_path else None
+                    if _ht_gf:
+                        _ht_target = (_ht_gf[0], _ht_gf[1])
+                        logger.info("  ホームチュートリアル: 指(%d,%d)→金枠(%d,%d) タップ",
+                                    _ht_bx, _ht_by, _ht_gf[0], _ht_gf[1])
+                    else:
+                        _ht_tip_y = _ht_chosen[4] + int(_ht_chosen[6] * 0.1)
+                        _ht_target = (_ht_chosen[3] + _ht_chosen[5] // 2, _ht_tip_y)
+                        logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) タップ",
+                                    _ht_bx, _ht_by, *_ht_target)
+                elif _ht_gold:
+                    _ht_target = _ht_gold
+                    logger.info("  ホームチュートリアル: 金ボタン(%d,%d) タップ", *_ht_gold)
+                if _ht_target:
+                    tap_device(_ht_target[0], _ht_target[1], state, "HOME_TUTORIAL_TAP")
+                    return "HOME_TUTORIAL_TAP", 1.5
             blobs = []
         elif _is_tos_screen or _is_system_dialog:
             logger.info("  システムダイアログ/利用規約検出 → MOYA_TAP スキップ")
@@ -1965,7 +1989,7 @@ def detect_and_act(ocr: list, state: PilotState,
             _blob_fallback = None
             for _b in blobs:
                 _bx0, _by0 = _b[0], _b[1]
-                _gf = find_gold_frame_near(analysis_path, _bx0, _by0, search_radius=200)
+                _gf = find_gold_frame_near(analysis_path, _bx0, _by0, search_radius=150)
                 if _gf is not None:
                     # 金枠が見つかった最初のblobを使用
                     if _blob_with_gold is None:
