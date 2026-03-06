@@ -16,8 +16,10 @@ import argparse
 import gc
 import logging
 import os
+import re
 import subprocess
 import sys
+import tempfile
 import time
 
 # ─── SIGSEGV 防止: OpenMP / cv2 スレッド競合対策 ─────────────────
@@ -53,7 +55,10 @@ except RuntimeError as e:
     logger.error(str(e))
     sys.exit(1)
 
-SCREENSHOT_PATH = "/tmp/lc_autopilot.png"
+# OS 非依存の一時ディレクトリ (Windows=AppData/Temp, macOS=/var/folders, Linux=/tmp)
+_TMPDIR = Path(tempfile.gettempdir())
+SCREENSHOT_PATH = _TMPDIR / "lc_autopilot.png"
+ANALYSIS_PATH   = _TMPDIR / "lc_autopilot_analysis.png"
 REMOTE_PATH = "/sdcard/lc_autopilot.png"
 EVIDENCE_DIR = _CRAWLER_ROOT / "evidence" / f"autopilot_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
@@ -216,6 +221,34 @@ def adb(cmd: str) -> str:
         return ""
 
 
+def get_device_resolution() -> tuple[int, int]:
+    """
+    `adb shell wm size` で実機の物理解像度を取得する。
+
+    - landscape デバイスでは "Physical size: 1520x720" のように返る
+    - Override がある場合は "Override size: ..." が優先される
+    - 取得失敗時は (ANALYSIS_W, ANALYSIS_H) をフォールバックとして返す
+
+    Returns: (width, height)
+    """
+    try:
+        _out = subprocess.run(
+            ["adb", "-s", DEVICE_SERIAL, "shell", "wm", "size"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        # "Override size: 1520x720" を優先、なければ "Physical size: 1520x720"
+        for _prefix in ("Override size:", "Physical size:"):
+            _m = re.search(rf"{_prefix}\s*(\d+)x(\d+)", _out)
+            if _m:
+                _w, _h = int(_m.group(1)), int(_m.group(2))
+                logger.info("[WM_SIZE] %s → %dx%d", _prefix.rstrip(":"), _w, _h)
+                return _w, _h
+        logger.warning("[WM_SIZE] パース失敗: %r — フォールバック %dx%d", _out, ANALYSIS_W, ANALYSIS_H)
+    except Exception as _e:
+        logger.warning("[WM_SIZE] 取得エラー: %s — フォールバック %dx%d", _e, ANALYSIS_W, ANALYSIS_H)
+    return ANALYSIS_W, ANALYSIS_H
+
+
 def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Path, int, int, int]:
     """
     スクリーンショット取得。破損PNG によるSIGSEGV防止のためリトライ付き。
@@ -340,7 +373,7 @@ def prepare_analysis_image(img_path: Path, actual_w: int, actual_h: int) -> Path
          (actual_h, actual_w) != (ANALYSIS_W, ANALYSIS_H))
     if not needs_transform:
         return img_path
-    analysis_path = Path("/tmp/lc_autopilot_analysis.png")
+    analysis_path = ANALYSIS_PATH
     img = Image.open(img_path)
     if img.width < img.height:
         img = img.rotate(90, expand=True)
@@ -819,8 +852,8 @@ def detect_text_input_area(
             _txt = _item.get("text", "").strip()
             if _re.match(r"^0/\d+$", _txt):
                 _cx, _cy = _item["center"]
-                # カウンターはフィールド右端にある → フィールド中心は左へ ~200px
-                return max(0, _cx - 200), _cy
+                # カウンターはフィールド右端にある → フィールド中心は左へ ~13% (200px / 1520)
+                return max(0, _cx - int(W * 0.131)), _cy
         # --- 2. プレースホルダーテキスト検出 ---
         for _item in ocr_items:
             _txt = _item.get("text", "").strip()
@@ -3010,6 +3043,12 @@ def main():
                            "(brew install scrcpy で導入可能)")
         except Exception as _e:
             logger.warning("[SCRCPY] 起動失敗: %s — Stay Awake なしで続行", _e)
+
+    # 起動直後に実機物理解像度を取得してログ出力 (ループ内の初回 take_screenshot より早期)
+    _dev_w, _dev_h = get_device_resolution()
+    logger.info("[DEVICE_RES] 物理解像度: %dx%d / 解析基準: %dx%d / ratio_x=%.3f ratio_y=%.3f",
+                _dev_w, _dev_h, ANALYSIS_W, ANALYSIS_H,
+                _dev_w / ANALYSIS_W, _dev_h / ANALYSIS_H)
 
     for i in range(MAX_ITERATIONS):
         state.iteration = i
