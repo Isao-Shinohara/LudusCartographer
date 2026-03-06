@@ -137,6 +137,8 @@ class PilotState:
     # ─── ダウンロード進捗ログ ───
     # 最後にダウンロード進捗をログ出力した時刻
     last_download_progress_log: float = 0.0
+    # ─── スクリーンショット破損リトライ統計 ───
+    screenshot_retry_count: int = 0  # SIGSEGV防止リトライ発生回数
     # ─── デバッグ: 最新スクリーンショット (numpy ndarray) ───
     last_screen: object = None  # cv2.imread 結果を格納 (型ヒント省略でdataclass互換)
 
@@ -198,14 +200,16 @@ def adb(cmd: str) -> str:
         return ""
 
 
-def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Path, int, int]:
+def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Path, int, int, int]:
     """
     スクリーンショット取得。破損PNG によるSIGSEGV防止のためリトライ付き。
 
     - retries: 破損検出時の再試行回数
     - min_bytes: 正常PNGの最小ファイルサイズ (50KB未満は破損と判定)
+    Returns: (path, width, height, retry_count)
     """
     path = Path(SCREENSHOT_PATH)
+    _retried = 0
     for _attempt in range(retries):
         adb(f"shell screencap -p {REMOTE_PATH}")
         subprocess.run(
@@ -217,6 +221,7 @@ def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Path, in
         if _fsize < min_bytes:
             logger.warning("[SCREENSHOT] 破損疑い: size=%d bytes (attempt %d/%d) — 再取得",
                            _fsize, _attempt + 1, retries)
+            _retried += 1
             time.sleep(0.5)
             continue
         # ── 整合性チェック2: OpenCV で読み込み確認 ──
@@ -225,11 +230,12 @@ def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Path, in
         if _test is None or _test.size == 0:
             logger.warning("[SCREENSHOT] cv2.imread 失敗/空 (attempt %d/%d) — 再取得",
                            _attempt + 1, retries)
+            _retried += 1
             time.sleep(0.5)
             continue
         # 正常
         _h, _w = _test.shape[:2]
-        return path, _w, _h
+        return path, _w, _h, _retried
     # 全リトライ失敗: 破損PNGをネイティブコードに渡すとSIGSEGVになるため安全に終了
     logger.critical("[SCREENSHOT] %d回リトライ後も取得失敗 — sys.exit(1)", retries)
     import sys
@@ -1404,7 +1410,7 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> 【ご注意→phash監視】 #%d タップ(%d,%d) → 1s待機",
                         _retry_i + 1, _tap_x, _tap_y)
             time.sleep(1.0)
-            _new_ss, _, _ = take_screenshot()
+            _new_ss, _, _, _ = take_screenshot()
             _new_ph = compute_phash(_new_ss)
             if _base_ph and _new_ph:
                 _dist = phash_distance(_base_ph, _new_ph)
@@ -1460,7 +1466,7 @@ def detect_and_act(ocr: list, state: PilotState,
                                 _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
                     swipe(_sx, _fy, _sx, _ty, _dur, state=state)
                 time.sleep(1.0)
-                _new_ss, _, _ = take_screenshot()
+                _new_ss, _, _, _ = take_screenshot()
                 _new_ph = compute_phash(_new_ss)
                 if _base_ph_gs and _new_ph and phash_distance(_base_ph_gs, _new_ph) >= PHASH_THRESHOLD:
                     break  # 変化検知 → 成功
@@ -1482,7 +1488,7 @@ def detect_and_act(ocr: list, state: PilotState,
             _base_ph_gb = compute_phash(analysis_path)
             tap_device(_bx, _by, state, "GOLD_BTN_TAP")
             time.sleep(1.0)
-            _new_ss_gb, _, _ = take_screenshot()
+            _new_ss_gb, _, _, _ = take_screenshot()
             try:
                 _new_ph_gb = compute_phash(_new_ss_gb)
             except Exception:
@@ -2300,6 +2306,7 @@ def generate_and_copy_report(state: PilotState, reason: str) -> None:
         f"- OCRスキップ          : {state.total_ocr_skipped}",
         f"- 暗転スキップ         : {state.total_blackout_skipped}",
         f"- Watchdog復旧試行     : {state.watchdog_recovery_count}",
+        f"- SS破損リトライ(SIGSEGV防止): {state.screenshot_retry_count}",
         f"- エビデンス保存数     : {state.screenshots_saved}",
         "",
         "## 最新コミット",
@@ -2409,11 +2416,11 @@ def main():
         _loop_t0 = time.time()  # [PERF] ループ開始時刻
 
         # ── 1) スクリーンショット取得 ──
-        img_path, actual_w, actual_h = take_screenshot()
-        if not img_path.exists():
-            logger.warning("Screenshot failed, retrying...")
-            time.sleep(1)
-            continue
+        img_path, actual_w, actual_h, _ss_retries = take_screenshot()
+        state.screenshot_retry_count += _ss_retries
+        if _ss_retries > 0:
+            logger.info("[SCREENSHOT] 破損リトライ %d回 (累計: %d回)",
+                        _ss_retries, state.screenshot_retry_count)
         # メモリ上に最新画像を保持 (デバッグ用赤ドット描画に使用)
         try:
             import cv2 as _cv2_main
