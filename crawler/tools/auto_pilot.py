@@ -1642,15 +1642,26 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> [Asset Match] '%s' → (%d,%d)", action, cx, cy)
             # スワイプ系アクションの処理
             if action == "SWIPE_UP":
-                tmpl_meta = ASSET_MANAGER._templates.get("tutorial_swipe_pointer", {})
-                sx = tmpl_meta.get("swipe_from_x", cx)
-                sy = tmpl_meta.get("swipe_from_y", H - 50)
-                ex = tmpl_meta.get("swipe_to_x", cx)
-                ey = tmpl_meta.get("swipe_to_y", 50)
-                dur = tmpl_meta.get("swipe_duration_ms", 3000)
-                logger.info(">>> [SWIPE_UP] (%d,%d)→(%d,%d) %dms", sx, sy, ex, ey, dur)
-                swipe(sx, sy, ex, ey, dur, state=state)
-                return "SWIPE_UP", 1.5
+                # ▷ナビ矢印付きのチュートリアルポップアップはSWIPE_UPを抑制して
+                # pre_popup ブランチに委ねる (SWIPE_UPテンプレートが誤マッチするため)
+                _popup_guard_kws = [
+                    "ポートレイト", "キオクを最大", "各キオク", "パーティを組", "前衛", "後衛",
+                    "マギアボックス", "最大24時間", "A-Qップ", "素材が溜", "プレイヤーLv",
+                    "ポジションを", "チームを組",
+                ]
+                if any(kw in joined for kw in _popup_guard_kws):
+                    logger.info(">>> [SWIPE_UP] ポップアップキーワード検出 → スキップ (pre_popupへ委譲)")
+                    # fall through to pre_popup check
+                else:
+                    tmpl_meta = ASSET_MANAGER._templates.get("tutorial_swipe_pointer", {})
+                    sx = tmpl_meta.get("swipe_from_x", cx)
+                    sy = tmpl_meta.get("swipe_from_y", H - 50)
+                    ex = tmpl_meta.get("swipe_to_x", cx)
+                    ey = tmpl_meta.get("swipe_to_y", 50)
+                    dur = tmpl_meta.get("swipe_duration_ms", 3000)
+                    logger.info(">>> [SWIPE_UP] (%d,%d)→(%d,%d) %dms", sx, sy, ex, ey, dur)
+                    swipe(sx, sy, ex, ey, dur, state=state)
+                    return "SWIPE_UP", 1.5
             # チュートリアル指差し: 金色ハイライトされたUI要素を方向非依存で検出→タップ
             if action == "TAP_HIGHLIGHTED_NAV":
                 gold_pos = find_golden_highlighted_button(analysis_path)
@@ -1676,9 +1687,11 @@ def detect_and_act(ocr: list, state: PilotState,
         # 全6ロール — 一覧画面・個別詳細ページ両方に対応
         "ATTACKER", "BREAKER", "BUFFER", "DEBUFFER", "DEFENDER", "HEALER",
         "アタッカー", "ブレイカー", "バッファー", "デバッファー", "ディフェンダー", "ヒーラー",
-        # パーティ/編成チュートリアルポップアップ (複数ページ ▷/× 矢印ナビ)
+        # パーティ/編成/ショップ等のチュートリアルポップアップ (複数ページ ▷/× 矢印ナビ)
         "ポートレイト", "キオクを最大", "ポジションを", "前衛", "後衛",
         "各キオク", "パーティを組", "チームを組",
+        # マギアボックス/素材系チュートリアルポップアップ
+        "マギアボックス", "最大24時間", "素材が溜", "プレイヤーLv",
     ]
     pre_popup = has_any(ocr, pre_popup_kws)
     if pre_popup:
