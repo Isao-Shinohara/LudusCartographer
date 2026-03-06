@@ -17,6 +17,7 @@ import gc
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -108,6 +109,9 @@ ANALYSIS_H = 720
 OCR_LANG = "japan"
 OCR_MIN_CONF = 0.3
 
+# Ctrl+C シグナルハンドラ用: main() で設定する PilotState への参照
+_pilot_state_ref: Optional["PilotState"] = None
+
 
 @dataclass
 class PilotState:
@@ -162,6 +166,11 @@ class PilotState:
     gold_swipe_count: int = 0
     # ─── デバッグ: 最新スクリーンショット (numpy ndarray) ───
     last_screen: object = None  # cv2.imread 結果を格納 (型ヒント省略でdataclass互換)
+    # ─── アナリティクス: 主要検知カウンタ ───
+    dialog_detections: int = 0   # ダイアログ検知成功 (DIALOG_CLOSE/NEXT)
+    finger_detections: int = 0   # 指アイコン検知成功 (MOYA_TAP)
+    gold_detections: int = 0     # 金枠ボタン検知成功 (FINGER+GOLD_FRAME)
+    total_loop_ms: float = 0.0   # 全ループ経過時間合計 [ms] (平均算出用)
 
 
 # ─── シーン分類 ──────────────────────────────────────
@@ -685,10 +694,13 @@ def detect_dialog_frame_and_nav(
             _asp = _w / max(_h, 1)
             if not (0.3 < _asp < 5.5):
                 continue
-            # 中央付近チェック: ダイアログ中心が画面中心の 45% 以内
+            # Golden Rule 3: ダイアログ中心 X が 20%〜80% 範囲内のみ有効
+            # 右端パネル・装飾要素による誤タップを防止
             _dcx = _x + _w // 2
             _dcy = _y + _h // 2
-            if abs(_dcx - _scx) > _W * 0.45 or abs(_dcy - _scy) > _H * 0.45:
+            if not (_W * 0.20 <= _dcx <= _W * 0.80):
+                continue
+            if abs(_dcy - _scy) > _H * 0.45:
                 continue
             if _a > _best_area:
                 _best_area = _a
@@ -826,6 +838,45 @@ def detect_dialog_frame_and_nav(
     except Exception as _e:
         logger.debug("detect_dialog_frame_and_nav error: %s", _e)
         return None
+
+
+# ─── ページング式ダイアログ完全処理 ────────────────────────────────────────
+def process_paging_dialog(
+    analysis_path: Path, W: int, H: int,
+    state: "PilotState", max_pages: int = 10,
+) -> str:
+    """
+    ▷ → ▷ → … → × のシーケンスを一括処理する。
+
+    - "next"/"bottom" を検出するたびにタップ → 次ページスクリーンショット取得
+    - "close" を検出したらタップして終了
+    - ダイアログが消えたら完了扱い
+    - max_pages 超過でタイムアウト
+
+    Returns: "DIALOG_CLOSED" | "DIALOG_PAGING_TIMEOUT"
+    """
+    for _page in range(max_pages):
+        _dlg = detect_dialog_frame_and_nav(analysis_path, W, H)
+        if _dlg is None:
+            logger.info("[PAGING] ダイアログ消失 (page=%d) → 完了", _page)
+            state.dialog_detections += 1
+            return "DIALOG_CLOSED"
+        _kind, _dx, _dy = _dlg
+        if _kind == "close":
+            tap_device(_dx, _dy, state, "PAGING_CLOSE")
+            logger.info("[PAGING] ×タップ (page=%d) → クローズ完了", _page + 1)
+            state.dialog_detections += 1
+            return "DIALOG_CLOSED"
+        # "next" or "bottom" → ▷ タップして次ページ
+        tap_device(_dx, _dy, state, "PAGING_NEXT")
+        logger.info("[PAGING] ▷タップ (page=%d/%d)", _page + 1, max_pages)
+        state.dialog_detections += 1
+        time.sleep(0.8)
+        # 次ページのスクリーンショットを取得して解析
+        _img_path, _aw, _ah, _ = take_screenshot()
+        analysis_path = prepare_analysis_image(_img_path, _aw, _ah)
+    logger.warning("[PAGING] max_pages=%d 超過 → タイムアウト", max_pages)
+    return "DIALOG_PAGING_TIMEOUT"
 
 
 # ─── テキスト入力エリア検出 ────────────────────────────────────────────────
@@ -1878,18 +1929,24 @@ def detect_and_act(ocr: list, state: PilotState,
         )
         if _dlg is not None:
             _dlg_type, _dlg_x, _dlg_y = _dlg
-            _dlg_action = {
-                "close":  "DIALOG_CLOSE",
-                "next":   "DIALOG_NEXT",
-                "bottom": "DIALOG_BOTTOM",
-            }.get(_dlg_type, "DIALOG_NAV")
             state.pre_popup_tap_count += 1
-            logger.info(
-                ">>> 【ダイアログ#0-DIALOG】%s → %s(%d,%d) (試行%d回)",
-                _dlg_type, _dlg_action, _dlg_x, _dlg_y, state.pre_popup_tap_count,
-            )
-            tap_device(_dlg_x, _dlg_y, state, _dlg_action)
-            return _dlg_action, 1.0   # ← 必ず return。fallthrough なし。
+            state.dialog_detections += 1
+            if _dlg_type in ("next", "bottom"):
+                # ページング式ダイアログ: ▷ → … → × を一括処理
+                logger.info(
+                    ">>> 【ダイアログ#0-DIALOG-PAGING】%s(%d,%d) (試行%d回) → process_paging_dialog",
+                    _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
+                )
+                _pg_result = process_paging_dialog(analysis_path, W, H, state)
+                return _pg_result, 1.0   # ← 必ず return。fallthrough なし。
+            else:
+                # "close": × ボタンを即タップ
+                logger.info(
+                    ">>> 【ダイアログ#0-DIALOG】%s(%d,%d) (試行%d回)",
+                    _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
+                )
+                tap_device(_dlg_x, _dlg_y, state, "DIALOG_CLOSE")
+                return "DIALOG_CLOSE", 1.0   # ← 必ず return。fallthrough なし。
 
     # ─── 【最優先 #0-aa】HSV金色ポインター検出 → ホールドスワイプ (Type A) ───
     # 縦長金色領域 h/w>=3.5 かつ幅<=100px のみ有効 (ボタン/カード誤検出防止)。
@@ -2397,6 +2454,9 @@ def detect_and_act(ocr: list, state: PilotState,
                 tap_device(tap_x, tap_y, state, f"MOYA_TAP ({tap_x},{tap_y})",
                            finger_box=(f_bx, f_by, f_bw, f_bh),
                            gold_box=_gbox)
+                state.finger_detections += 1
+                if _gold_frame is not None:
+                    state.gold_detections += 1
                 # 左キャラ選択後は char_just_selected フラグをセット
                 if fx < 600 and fy > H * 0.76:
                     state.char_just_selected = True
@@ -2926,14 +2986,26 @@ def generate_and_copy_report(state: PilotState, reason: str) -> None:
         f"- ホーム到達    : {state.home_reached}",
         "",
         "## 実行統計",
-        f"- イテレーション       : {state.iteration}",
+        f"- 総ループ数           : {state.iteration + 1}",
         f"- 総タップ数           : {state.total_taps}",
         f"- OCR実行回数          : {state.total_ocr_calls}",
         f"- OCRスキップ          : {state.total_ocr_skipped}",
         f"- 暗転スキップ         : {state.total_blackout_skipped}",
+        f"- SIGSEGV回避回数      : {state.screenshot_retry_count}",
         f"- Watchdog復旧試行     : {state.watchdog_recovery_count}",
-        f"- SS破損リトライ(SIGSEGV防止): {state.screenshot_retry_count}",
         f"- エビデンス保存数     : {state.screenshots_saved}",
+        f"- 平均判定速度         : {state.total_loop_ms / max(state.iteration + 1, 1):.0f} ms/loop",
+        "",
+        "## 主要検知成功率",
+        f"- Dialog検知           : {state.dialog_detections} 回",
+        f"- Finger検知           : {state.finger_detections} 回",
+        f"- GoldBtn検知          : {state.gold_detections} 回",
+        "",
+        "## 戦績サマリー",
+        f"- ホーム到達           : {'✓ CLEARED' if state.home_reached else '未到達'}",
+        f"- チュートリアル       : {'All Tutorials Cleared' if state.home_reached else '進行中'}",
+        f"- 最終シーン           : {state.current_scene}",
+        f"- Rank                 : {'1 / HOME REACHED' if state.home_reached else 'In Progress'}",
         "",
         "## 最新コミット",
         f"- commit: {commit_id}",
@@ -3018,6 +3090,17 @@ def main():
 
     state = PilotState()
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ─── Ctrl+C シグナルハンドラ登録 (レポート自動生成) ───
+    global _pilot_state_ref
+    _pilot_state_ref = state
+
+    def _sigint_handler(signum, frame):
+        logger.info("\n[Ctrl+C] 手動停止 — レポートを生成します...")
+        generate_and_copy_report(_pilot_state_ref, "手動停止 (Ctrl+C / SIGINT)")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _sigint_handler)
 
     # ─── scrcpy Stay Awake: 二重起動防止 + システムスリープ防止 ───
     # pgrep で既存プロセスを確認し、なければ新規起動する（増殖防止）
@@ -3264,7 +3347,9 @@ def main():
                         if _fast_wait > 0:
                             logger.info("  [FAST][%s] wait %.1fs (OCR skip)", _fast_action, _fast_wait)
                             time.sleep(_fast_wait)
-                        logger.info("  [PERF] Loop %.2fs (FAST_PATH)", time.time() - _loop_t0)
+                        _fms = (time.time() - _loop_t0) * 1000
+                        state.total_loop_ms += _fms
+                        logger.info("  [PERF] Loop %.0fms (FAST_PATH)", _fms)
                         continue  # OCR スキップ
                 else:
                     state.gold_swipe_count = 0  # GoldSwipe 以外でカウンタリセット
@@ -3275,7 +3360,9 @@ def main():
                     if _fast_wait > 0:
                         logger.info("  [FAST][%s] wait %.1fs (OCR skip)", _fast_action, _fast_wait)
                         time.sleep(_fast_wait)
-                    logger.info("  [PERF] Loop %.2fs (FAST_PATH)", time.time() - _loop_t0)
+                    _fms = (time.time() - _loop_t0) * 1000
+                    state.total_loop_ms += _fms
+                    logger.info("  [PERF] Loop %.0fms (FAST_PATH)", _fms)
                     continue  # OCR スキップ
 
         # ── 5) OCR 精査 ──
@@ -3349,7 +3436,9 @@ def main():
                         scene, action, wait_sec, next_interval)
             time.sleep(wait_sec)
 
-        logger.info("  [PERF] Loop %.2fs (OCR)", time.time() - _loop_t0)
+        _loop_elapsed_ms = (time.time() - _loop_t0) * 1000
+        state.total_loop_ms += _loop_elapsed_ms
+        logger.info("  [PERF] Loop %.0fms (OCR)", _loop_elapsed_ms)
 
         # ── 9) メモリ解放 (SIGSEGV防止) ──
         # cv2 オブジェクトを毎イテレーション解放してメモリ断片化を防ぐ
