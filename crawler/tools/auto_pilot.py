@@ -1915,7 +1915,8 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info("  ホーム画面検出 (nav×%d) → MOYA_TAP スキップ", _home_kw_count)
             # ── ホームチュートリアル: 指アイコン+金枠がある場合は優先タップ ──
             _ht_blobs = find_finger_blobs(analysis_path) if analysis_path else []
-            _ht_gold = detect_tutorial_gold_button_tap(analysis_path) if analysis_path else None
+            # ホーム画面では中央ナビバー (ショップ等) が右半分境界付近に来るため right_half_only=False
+            _ht_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
             if _ht_blobs or _ht_gold:
                 _ht_target = None
                 if _ht_blobs:
@@ -2113,7 +2114,8 @@ def detect_and_act(ocr: list, state: PilotState,
         # ── 指アイコン or 金枠がある場合 → まだホームチュートリアル中 ──
         # 「ホーム画面かつ指アイコン+金枠がない」状態が本当のチュートリアル終了
         _home_blobs = find_finger_blobs(analysis_path) if analysis_path else []
-        _home_gold = detect_tutorial_gold_button_tap(analysis_path) if analysis_path else None
+        # ホーム画面ではナビバーが中央付近に来るため right_half_only=False で全域検索
+        _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
         if _home_blobs or _home_gold:
             # 指アイコン+金枠が存在 → ガイドに従いタップして続行
             _tap_target = None
