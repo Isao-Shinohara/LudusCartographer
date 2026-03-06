@@ -375,22 +375,38 @@ def get_device_resolution() -> tuple[int, int]:
     return ANALYSIS_W, ANALYSIS_H
 
 
-def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Path, int, int, int]:
+def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Optional[Path], int, int, int]:
     """
     スクリーンショット取得。破損PNG によるSIGSEGV防止のためリトライ付き。
 
     - retries: 破損検出時の再試行回数
     - min_bytes: 正常PNGの最小ファイルサイズ (50KB未満は破損と判定)
     Returns: (path, width, height, retry_count)
+            path=None の場合は全リトライ失敗（呼び出し側で continue すること）
     """
     path = Path(SCREENSHOT_PATH)
     _retried = 0
     for _attempt in range(retries):
-        adb(f"shell screencap -p {REMOTE_PATH}")
-        subprocess.run(
-            f"adb -s {DEVICE_SERIAL} pull {REMOTE_PATH} {SCREENSHOT_PATH}",
-            shell=True, capture_output=True, timeout=10,
-        )
+        # exec-out で直接パイプ → ファイル転送の中間ステップを省略 (高速化)
+        try:
+            _result = subprocess.run(
+                ["adb", "-s", DEVICE_SERIAL, "exec-out", "screencap", "-p"],
+                capture_output=True, timeout=10,
+            )
+            if _result.returncode == 0 and len(_result.stdout) >= min_bytes:
+                path.write_bytes(_result.stdout)
+            else:
+                # exec-out 失敗 → 従来の shell + pull にフォールバック
+                adb(f"shell screencap -p {REMOTE_PATH}")
+                subprocess.run(
+                    f"adb -s {DEVICE_SERIAL} pull {REMOTE_PATH} {SCREENSHOT_PATH}",
+                    shell=True, capture_output=True, timeout=10,
+                )
+        except Exception as _ss_exc:
+            logger.warning("[SCREENSHOT] 取得例外: %s (attempt %d/%d)", _ss_exc, _attempt + 1, retries)
+            _retried += 1
+            time.sleep(0.5)
+            continue
         # ── 整合性チェック1: ファイルサイズ ──
         _fsize = path.stat().st_size if path.exists() else 0
         if _fsize < min_bytes:
@@ -411,10 +427,9 @@ def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Path, in
         # 正常
         _h, _w = _test.shape[:2]
         return path, _w, _h, _retried
-    # 全リトライ失敗: 破損PNGをネイティブコードに渡すとSIGSEGVになるため安全に終了
-    logger.critical("[SCREENSHOT] %d回リトライ後も取得失敗 — sys.exit(1)", retries)
-    import sys
-    sys.exit(1)
+    # 全リトライ失敗: クラッシュせず None を返す (呼び出し側で continue)
+    logger.error("[WIFI_ERROR] Corrupted frame dropped (%d retries exhausted). Returning None.", retries)
+    return None, 0, 0, _retried
 
 
 def tap_device(x: int, y: int, state: PilotState, desc: str = "",
@@ -3729,6 +3744,24 @@ def main():
         if _ss_retries > 0:
             logger.info("[SCREENSHOT] 破損リトライ %d回 (累計: %d回)",
                         _ss_retries, state.screenshot_retry_count)
+        # ── Wi-Fi 破損防御: 全リトライ失敗 → continue で次ループ ──
+        if img_path is None:
+            state._wifi_fail_streak = getattr(state, '_wifi_fail_streak', 0) + 1
+            logger.warning("[WIFI_ERROR] 連続失敗 %d/5 — 次ループで再取得",
+                           state._wifi_fail_streak)
+            if state._wifi_fail_streak >= 5:
+                logger.error("[WIFI_ERROR] 連続5回失敗 → ADB再接続を試行")
+                try:
+                    subprocess.run(["adb", "disconnect"], timeout=5, capture_output=True)
+                    time.sleep(1)
+                    subprocess.run(["adb", "connect", DEVICE_SERIAL], timeout=5, capture_output=True)
+                    time.sleep(2)
+                except Exception as _rc_e:
+                    logger.error("[WIFI_ERROR] ADB再接続例外: %s", _rc_e)
+                state._wifi_fail_streak = 0
+            time.sleep(1.0)
+            continue
+        state._wifi_fail_streak = 0  # 成功時リセット
         # メモリ上に最新画像を保持 + ROI更新
         try:
             import cv2 as _cv2_main
