@@ -1547,10 +1547,12 @@ def detect_and_act(ocr: list, state: PilotState,
                  and any(kw in _nav_joined for kw in _title_kws_game + ["PUELLA"])) or
                 ("VID" in _nav_joined and any(kw in _nav_joined for kw in _title_kws_game)) or
                 # フォールバック: ゲームタイトルロゴ文字 + Rank がない + ホームナビがない
+                # "Rank" "Main" "推奨" は MAIN STORY 選択画面なのでタイトルと区別する
                 (any(kw in _nav_joined for kw in ["PUELLA MAGI", "PUELLAHAGI", "PUELLAMAGI",
                                                    "PUELLA MAGIMADOKA"])
                  and any(kw in _nav_joined for kw in _title_kws_game)
-                 and not any(kw in _nav_joined for kw in ["クエスト", "ショップ", "ガチャ"]))
+                 and not any(kw in _nav_joined for kw in ["クエスト", "ショップ", "ガチャ",
+                                                           "Rank", "Main", "推奨"]))
             )
         )
         if is_title_screen:
