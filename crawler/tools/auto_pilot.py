@@ -1425,7 +1425,10 @@ def detect_and_act(ocr: list, state: PilotState,
             tap_device(_bx, _by, state, "GOLD_BTN_TAP")
             time.sleep(1.0)
             _new_ss_gb, _, _ = take_screenshot()
-            _new_ph_gb = compute_phash(_new_ss_gb)
+            try:
+                _new_ph_gb = compute_phash(_new_ss_gb)
+            except Exception:
+                _new_ph_gb = None
             if (not _base_ph_gb or not _new_ph_gb or
                     phash_distance(_base_ph_gb, _new_ph_gb) < PHASH_THRESHOLD):
                 # 変化なし → Y方向に+30pxずらして再試行
