@@ -1,0 +1,32 @@
+{
+  "patterns": {
+    "OPEN_FORMATION:自動編成": {
+      "prediction": "OPEN_FORMATION",
+      "description": "パーティ編成画面へ遷移する",
+      "text": "自動編成",
+      "success_count": 0,
+      "failure_count": 6,
+      "last_seen": "2026-03-05T16:48:55.665506"
+    },
+    "OPEN_FORMATION:今回は自動編成をしてみましょう。": {
+      "prediction": "OPEN_FORMATION",
+      "description": "パーティ編成画面へ遷移する",
+      "text": "今回は自動編成をしてみましょう。",
+      "success_count": 0,
+      "failure_count": 2,
+      "last_seen": "2026-03-05T16:48:28.455167"
+    },
+    "OPEN_FORMATION:編成：自動編成": {
+      "prediction": "OPEN_FORMATION",
+      "description": "パーティ編成画面へ遷移する",
+      "text": "編成：自動編成",
+      "success_count": 0,
+      "failure_count": 2,
+      "last_seen": "2026-03-05T16:49:09.101570"
+    }
+  },
+  "stats": {
+    "total_taps": 10,
+    "verified": 10
+  }
+}

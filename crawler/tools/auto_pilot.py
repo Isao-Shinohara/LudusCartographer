@@ -137,6 +137,8 @@ class PilotState:
     device_h: int = 0
     # 強制解析カウンタ (phash 変化なしの連続回数)
     same_phash_count: int = 0
+    # 完全凍結フレームカウンタ (phash_dist=0 の連続回数) — 階層型Watchdog用
+    consecutive_frozen_frames: int = 0
     # 最後に強制解析を実行した時刻
     last_forced_ocr_at: float = 0.0
     # 同一位置の指差しブロブ連続検出カウンタ (誤検出抑制)
@@ -1102,6 +1104,8 @@ def detect_dialog_frame_and_nav(
 def process_paging_dialog(
     analysis_path: Path, W: int, H: int,
     state: "PilotState", max_pages: int = 10,
+    initial_dlg: Optional[tuple] = None,
+    ocr_texts: Optional[list] = None,
 ) -> str:
     """
     ▷ → ▷ → … → × のシーケンスを一括処理する。
@@ -1121,7 +1125,14 @@ def process_paging_dialog(
     _prev_phash = compute_phash(analysis_path)
     _no_close_streak = 0  # × ROI bright_pixels=0 の連続回数
     for _page in range(max_pages):
-        _dlg = detect_dialog_frame_and_nav(analysis_path, W, H, roi=_roi)
+        # page=0 かつ initial_dlg が渡されている場合は外側の検出結果を再利用
+        if _page == 0 and initial_dlg is not None:
+            _dlg = initial_dlg
+        else:
+            _dlg = detect_dialog_frame_and_nav(
+                analysis_path, W, H, roi=_roi,
+                ocr_texts=ocr_texts,
+            )
         if _dlg is None:
             logger.info("[PAGING] ダイアログ消失 (page=%d) → 完了", _page)
             state.dialog_detections += 1
@@ -2223,13 +2234,34 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── 【最優先 #0-PRE】バトル発光SM ガード ─────────────────────────────────
     # DIALOG_CLOSE が「通常攻撃」等のバトルアクションを踏み越えるのを防ぐ。
-    # キャラ選択済み(character_selected=True) かつバトル画面 → 発光SM優先で右スキル/通常攻撃へ。
+    # ① 「メニューが使用できません」トースト → DIALOG 誤検出スキップ (toast 自然消滅)
+    # ② P1: 左キャラ発光 (character_selected=False) → GLOW_LEFT_CHAR
+    # ③ P2: 右スキル発光 (character_selected=True) → GLOW_RIGHT_SKILL
+    # ④ P3: 発光なし + character_selected → 通常攻撃 OCR フォールバック
     _is_battle_early = any(kw in " ".join(texts) for kw in
                            ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃", "BREAK", "WAVE", "Turn"])
-    if _is_battle_early and state.character_selected and analysis_path is not None:
+    _battle_menu_toast = "メニューが使用できません" in " ".join(texts)
+    if _is_battle_early and _battle_menu_toast:
+        # メニューボタン誤タップ → トースト表示中。DIALOG_CLOSE を完全スキップして2秒待機
+        logger.info("[#0-PRE] 「メニューが使用できません」トースト検出 → DIALOG_CLOSE スキップ (2s wait)")
+        return "BATTLE_MENU_TOAST_WAIT", 2.0
+    if _is_battle_early and analysis_path is not None:
         _pre_glows = detect_guide_glow(analysis_path, W, H, footer_ratio=0.30)
+        _pre_left = [g for g in _pre_glows if g["side"] == "left"]
         _pre_right = [g for g in _pre_glows if g["side"] == "right"]
-        if _pre_right:
+        # P1: 左キャラ発光 (キャラ未選択) → DIALOG_CLOSE より前にタップ
+        if not state.character_selected and _pre_left:
+            _pl = max(_pre_left, key=lambda g: g["area"])
+            _pl_x, _pl_y = _pl["cx"], max(1, _pl["cy"] - 35)
+            logger.info("[GLOW_SM P1] 左キャラ発光(%d,%d)→tap(%d,%d) [#0前ガード]",
+                        _pl["cx"], _pl["cy"], _pl_x, _pl_y)
+            tap_device(_pl_x, _pl_y, state, "GLOW_LEFT_CHAR")
+            state.character_selected = True
+            state.char_just_selected = True
+            state.finger_detections += 1
+            return "GLOW_LEFT_CHAR", 1.0
+        # P2: 右スキル発光 (キャラ選択済み) → DIALOG_CLOSE より前にタップ
+        if state.character_selected and _pre_right:
             _prg = max(_pre_right, key=lambda g: g["area"])
             _prg_x, _prg_y = _prg["cx"], max(1, _prg["cy"] - 35)
             logger.info("[GLOW_SM P2] 右発光(%d,%d)→tap(%d,%d) [#0前ガード]",
@@ -2239,8 +2271,8 @@ def detect_and_act(ocr: list, state: PilotState,
             state.char_just_selected = False
             state.finger_detections += 1
             return "GLOW_RIGHT_SKILL", 1.0
-        else:
-            # 発光なし → 通常攻撃をOCRで直接タップ (DIALOG_CLOSEより優先)
+        # P3: キャラ選択済み + 発光なし → 通常攻撃をOCRで直接タップ
+        if state.character_selected and not _pre_right:
             _pre_na = has_text(ocr, "通常攻撃", min_conf=0.3)
             if _pre_na:
                 _pnx, _pny = _pre_na["center"]
@@ -2286,7 +2318,11 @@ def detect_and_act(ocr: list, state: PilotState,
                         ">>> 【ダイアログ#0-DIALOG-PAGING】%s(%d,%d) (試行%d回) → process_paging_dialog",
                         _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
                     )
-                    _pg_result = process_paging_dialog(analysis_path, W, H, state)
+                    _pg_result = process_paging_dialog(
+                        analysis_path, W, H, state,
+                        initial_dlg=(_dlg_type, _dlg_x, _dlg_y),
+                        ocr_texts=texts,
+                    )
                     return _pg_result, 1.0   # ← 必ず return。fallthrough なし。
                 else:
                     # "close": × ボタンを即タップ
@@ -3372,6 +3408,42 @@ def detect_and_act(ocr: list, state: PilotState,
     return "WAIT_FOR_CHANGE", 0
 
 
+# ─── Watchdog: 物理的 ADB 生存確認 ────────────────────────
+def check_adb_liveness() -> bool:
+    """
+    ADB 接続の物理的な生存を確認する。
+    - adb shell echo 1: 応答確認 (timeout 3s)
+    - adb shell screencap: 転送サービスのハング確認 (timeout 3s)
+    Returns: True=接続正常, False=タイムアウト/エラー(要再起動)
+    """
+    import subprocess as _sp
+    _serial_arg = ["-s", DEVICE_SERIAL] if DEVICE_SERIAL else []
+    try:
+        # echo テスト
+        _r1 = _sp.run(
+            ["adb"] + _serial_arg + ["shell", "echo", "1"],
+            capture_output=True, timeout=3, text=True,
+        )
+        if _r1.returncode != 0 or _r1.stdout.strip() != "1":
+            logger.warning("[WATCHDOG] echo 応答異常: rc=%d out=%r", _r1.returncode, _r1.stdout.strip())
+            return False
+        # screencap パイプテスト (実際には読まない — ハングを検出するだけ)
+        _r2 = _sp.run(
+            ["adb"] + _serial_arg + ["shell", "screencap", "-p", "/dev/null"],
+            capture_output=True, timeout=3,
+        )
+        if _r2.returncode != 0:
+            logger.warning("[WATCHDOG] screencap ハング検出: rc=%d", _r2.returncode)
+            return False
+        return True
+    except _sp.TimeoutExpired:
+        logger.warning("[WATCHDOG] ADB コマンドタイムアウト — 物理診断失敗")
+        return False
+    except Exception as _e:
+        logger.warning("[WATCHDOG] 物理診断例外: %s", _e)
+        return False
+
+
 # ─── Watchdog: デッドロック自動復旧 ─────────────────────
 def watchdog_recover(state: PilotState) -> bool:
     """
@@ -3609,6 +3681,22 @@ def main():
         state.iteration = i
         _loop_t0 = time.time()  # [PERF] ループ開始時刻
 
+        # ── 定期健診 (100 iter ごと) ──
+        if i > 0 and i % 100 == 0:
+            logger.info("[WATCHDOG] Periodic check (iter=%d). Running physical diagnostics...", i)
+            if not check_adb_liveness():
+                logger.warning("[WATCHDOG] Periodic check FAILED → attempting reconnect")
+                import subprocess as _sp_pc
+                _sp_pc.run(["adb", "kill-server"], timeout=5)
+                time.sleep(2)
+                _sp_pc.run(["adb", "start-server"], timeout=5)
+                time.sleep(2)
+                if DEVICE_SERIAL:
+                    _sp_pc.run(["adb", "connect", DEVICE_SERIAL], timeout=5)
+                    time.sleep(1)
+            else:
+                logger.info("[WATCHDOG] Periodic check OK")
+
         # ── 1) スクリーンショット取得 ──
         img_path, actual_w, actual_h, _ss_retries = take_screenshot()
         state.screenshot_retry_count += _ss_retries
@@ -3700,6 +3788,7 @@ def main():
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
             state.same_phash_count = 0
+            state.consecutive_frozen_frames = 0
             state.stall_start = 0.0
             state.stall_corner_tried = False
             state.pre_popup_tap_count = 0  # ポップアップ試行カウンタもリセット
@@ -3724,6 +3813,34 @@ def main():
             # 画面変化なし
             state.same_phash_count += 1
             state.total_ocr_skipped += 1
+            # 完全凍結 (dist=0) のみカウント
+            if dist == 0:
+                state.consecutive_frozen_frames += 1
+            else:
+                state.consecutive_frozen_frames = 0  # わずかな変化でもリセット
+
+            # ── 階層型 Watchdog 第2段階: 5フレーム凍結 → 物理診断 ──
+            if state.consecutive_frozen_frames == 5:
+                logger.info(
+                    "[WATCHDOG] Suspect freeze (%d consecutive dist=0). "
+                    "Running physical diagnostics...",
+                    state.consecutive_frozen_frames,
+                )
+                if not check_adb_liveness():
+                    # 第3段階: 物理診断失敗 → kill-server + 再接続
+                    logger.warning("[WATCHDOG] Physical diagnostics FAILED → adb kill-server + reconnect")
+                    import subprocess as _sp_wd
+                    _sp_wd.run(["adb", "kill-server"], timeout=5)
+                    time.sleep(2)
+                    _sp_wd.run(["adb", "start-server"], timeout=5)
+                    time.sleep(2)
+                    if DEVICE_SERIAL:
+                        _sp_wd.run(["adb", "connect", DEVICE_SERIAL], timeout=5)
+                        time.sleep(1)
+                    state.consecutive_frozen_frames = 0
+                    state.last_phash = ""  # 次ループで強制再取得
+                else:
+                    logger.info("[WATCHDOG] Physical diagnostics OK — game screen is static")
 
             # ── Watchdog チェック: 10分以上変化なし → 本当のデッドロック ──
             watchdog_elapsed = time.time() - state.last_screen_change_time
