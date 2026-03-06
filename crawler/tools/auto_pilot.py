@@ -795,6 +795,59 @@ def detect_dialog_frame_and_nav(
         return None
 
 
+# ─── テキスト入力エリア検出 ────────────────────────────────────────────────
+def detect_text_input_area(
+    img_path: Path,
+    W: int = 1520,
+    H: int = 720,
+    ocr_items: Optional[list] = None,
+) -> Optional[tuple[int, int]]:
+    """
+    テキスト入力エリア（横長の暗い矩形 + 文字数カウンター）を検出してフィールド中心座標を返す。
+
+    検出手順:
+    1. OCR で "0/N" パターン（文字数カウンター）を検索 → カウンター位置からフィールド中心を推定
+    2. OCR で入力プレースホルダー（"を入力", "Enter" 等）を含む項目を探す
+    3. 上記いずれも失敗した場合、HSV で暗い横長矩形を探す
+
+    Returns: (field_cx, field_cy) or None
+    """
+    import re as _re
+    # --- 1. OCR 文字数カウンター "0/N" パターン ---
+    if ocr_items:
+        for _item in ocr_items:
+            _txt = _item.get("text", "").strip()
+            if _re.match(r"^0/\d+$", _txt):
+                _cx, _cy = _item["center"]
+                # カウンターはフィールド右端にある → フィールド中心は左へ ~200px
+                return max(0, _cx - 200), _cy
+        # --- 2. プレースホルダーテキスト検出 ---
+        for _item in ocr_items:
+            _txt = _item.get("text", "").strip()
+            if "を入力" in _txt or "Enter" in _txt.lower():
+                return _item["center"][0], _item["center"][1]
+    # --- 3. HSV 暗い横長矩形 ---
+    try:
+        import cv2 as _cv2
+        import numpy as _np
+        _img = _cv2.imread(str(img_path))
+        if _img is None:
+            return None
+        _roi_y1, _roi_y2 = int(H * 0.3), int(H * 0.75)
+        _roi = _img[_roi_y1:_roi_y2, :]
+        _hsv = _cv2.cvtColor(_roi, _cv2.COLOR_BGR2HSV)
+        # 入力フィールド特有の暗めの背景 (S低め、V中〜低)
+        _dark = _cv2.inRange(_hsv, _np.array([0, 0, 20]), _np.array([180, 80, 110]))
+        _cnts, _ = _cv2.findContours(_dark, _cv2.RETR_EXTERNAL, _cv2.CHAIN_APPROX_SIMPLE)
+        for _cnt in sorted(_cnts, key=_cv2.contourArea, reverse=True)[:8]:
+            _x, _y, _w, _h = _cv2.boundingRect(_cnt)
+            if _w > W * 0.25 and 25 < _h < 100 and _w / max(_h, 1) > 3.5:
+                return _x + _w // 2, _roi_y1 + _y + _h // 2
+    except Exception as _e:
+        logger.debug("detect_text_input_area error: %s", _e)
+    return None
+
+
 # ─── HSV金色チュートリアルポインター検出 → ホールドスワイプ ─────────────
 def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, int, int]]:
     """
@@ -1913,6 +1966,27 @@ def detect_and_act(ocr: list, state: PilotState,
                             cx, cy, tap_x, tap_y)
                 tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
                 return "TAP_HIGHLIGHTED_NAV", 1.5
+            # ── NAME_INPUT_OK_TAP: 名前未入力(0/N)の場合は入力シーケンスへ ──
+            if action == "NAME_INPUT_OK_TAP":
+                import re as _re2
+                _is_empty_field = any(_re2.match(r"^0/\d+$", t.strip()) for t in texts)
+                if _is_empty_field:
+                    _field_pos = detect_text_input_area(analysis_path, W, H, ocr_items=ocr)
+                    _fx, _fy = _field_pos if _field_pos else (700, 417)
+                    logger.info(
+                        ">>> [TEXT_INPUT_AREA] 空フィールド検出(0/N) → (%d,%d)タップ → adb input text",
+                        _fx, _fy,
+                    )
+                    tap_device(_fx, _fy, state, "TEXT_INPUT_FOCUS")
+                    time.sleep(0.8)
+                    import subprocess as _sp2
+                    _sp2.run(
+                        ["adb", "-s", DEVICE_SERIAL, "shell", "input", "text", "MadoDora"],
+                        check=False,
+                    )
+                    time.sleep(0.5)
+                    logger.info(">>> [TEXT_INPUT_AREA] 'MadoDora' 入力完了 → 次ループでOK")
+                    return "TEXT_INPUT_NAME", 1.5
             # その他のアセットアクション: タップして return (fallthrough なし)
             tap_device(cx, cy, state, action)
             # GACHA_OK: 演出終了待ち (演出中はタップが無視されるため長めに待つ)

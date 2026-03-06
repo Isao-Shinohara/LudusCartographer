@@ -116,6 +116,48 @@ sentu_btn = has_text(ocr, "戦闘") or has_text(ocr, "出撃") or has_text(ocr, 
 
 ---
 
+## TEXT_INPUT_AREA — テキスト入力エリア識別と処理 (2026-03-06実装)
+
+### 視覚的特徴
+
+| 要素 | 特徴 |
+|------|------|
+| 形状 | ダイアログ内の横長矩形 (aspect ratio > 3.5, 高さ 25-100px) |
+| 内部テキスト | プレースホルダー「〜を入力」「Enter...」 |
+| カウンター | 右端に「0/10」「0/8」等 |
+| 背景色 | 暗め (HSV V=20-110, S<80) |
+
+### 検出関数: `detect_text_input_area(img_path, W, H, ocr_items)`
+
+1. OCR で `0/N` パターンのカウンターを探す → カウンター位置から左 200px がフィールド中心
+2. OCR で「を入力」「Enter」含む項目を探す
+3. フォールバック: HSV 暗い横長矩形を画面中央帯 (y: 30%-75%) で検索
+
+Returns: `(field_cx, field_cy)` or `None`
+
+### 入力シーケンス (`NAME_INPUT_OK_TAP` ガード内)
+
+```
+1. detect_text_input_area() でフィールド中心検出
+2. tap_device(fx, fy, ..., "TEXT_INPUT_FOCUS")  ← フォーカス
+3. time.sleep(0.8)                               ← キーボード起動待ち
+4. adb shell input text "MadoDora"               ← 文字列送信
+5. time.sleep(0.5)
+6. return "TEXT_INPUT_NAME", 1.5  ← 次ループで OK タップ
+```
+
+### ガード条件
+
+`NAME_INPUT_OK_TAP` アセットマッチ時に `0/N` パターンが OCR に存在 → 入力シーケンス実行
+(`0/N` が消えたら次ループで `NAME_INPUT_OK_TAP` が正常に OK タップ)
+
+### 汎用適用ルール
+
+名前入力・検索窓・コメント入力など、ダイアログ内にこのパターンを検出した場合は
+同様の入力シーケンスを適用すること。デフォルト文字列は `"MadoDora"`。
+
+---
+
 ## 設定メニュー誤検出防止 (2026-03-06実装)
 
 ストーリー文脈（1-1/AUTO/第1幕など）が OCR に含まれる場合は SETTINGS_BACK を発火しない。
