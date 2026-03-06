@@ -1639,6 +1639,7 @@ def detect_and_act(ocr: list, state: PilotState,
     # ─── バトル画面 ───
     # 「AUTO」「HP」「戦闘」はストーリー画面にも出るため除外、戦闘固有キーワードで判定
     battle_keywords = ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃",
+                       "隣接攻撃", "必殺技", "巫殺技",  # チュートリアルバトルキーワード追加
                        "BREAK", "Turn", "WAVE"]
     battle = has_any(ocr, battle_keywords)
     if battle:
