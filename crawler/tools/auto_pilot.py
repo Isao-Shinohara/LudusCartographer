@@ -462,6 +462,125 @@ def detect_adv_advance_icon(img_path: Path,
         return False
 
 
+# ─── チュートリアルダイアログ ページ送り/閉じるボタン検出 ─────────────────
+# ダイアログにはページング可能な間 ◁▷ 矢印が表示され、
+# 最終ページでは × ボタンが右上に出現して閉じることができる。
+#
+# 検出優先順位:
+#   1. assets/templates/tutorial_dialog_close.png が存在 → テンプレートマッチで × 位置を返す
+#   2. assets/templates/tutorial_dialog_next.png が存在 → テンプレートマッチで ▷ 位置を返す
+#   3. どちらも存在しない → ("close", 固定座標) or ("next", 固定座標) をフォールバック
+#
+# 戻り値: ("next", cx, cy) | ("close", cx, cy) | None
+
+_DIALOG_CLOSE_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "tutorial_dialog_close.png"
+_DIALOG_NEXT_TEMPLATE  = _CRAWLER_ROOT / "assets" / "templates" / "tutorial_dialog_next.png"
+
+
+def detect_tutorial_dialog_nav(img_path: Path,
+                                W: int = 1520, H: int = 720,
+                                threshold: float = 0.75) -> Optional[tuple[str, int, int]]:
+    """
+    チュートリアルダイアログの ▷(次へ) または ×(閉じる) ボタンを検出する。
+
+    テンプレート画像が存在する場合はテンプレートマッチング、
+    存在しない場合は固定座標フォールバックを返す。
+
+    Returns: ("next", cx, cy) | ("close", cx, cy) | None
+    """
+    try:
+        import cv2 as _cv2d
+        import numpy as _npd
+
+        _img = _cv2d.imread(str(img_path))
+        if _img is None:
+            return None
+        _H, _W = _img.shape[:2]
+
+        def _match_template(tmpl_path: Path, roi_x1: int, roi_y1: int,
+                            roi_x2: int, roi_y2: int) -> Optional[tuple[int, int]]:
+            _tmpl = _cv2d.imread(str(tmpl_path))
+            if _tmpl is None:
+                return None
+            _roi = _img[roi_y1:roi_y2, roi_x1:roi_x2]
+            _res = _cv2d.matchTemplate(_roi, _tmpl, _cv2d.TM_CCOEFF_NORMED)
+            _, _max_val, _, _max_loc = _cv2d.minMaxLoc(_res)
+            if _max_val >= threshold:
+                _th, _tw = _tmpl.shape[:2]
+                _cx = roi_x1 + _max_loc[0] + _tw // 2
+                _cy = roi_y1 + _max_loc[1] + _th // 2
+                return (_cx, _cy)
+            return None
+
+        # 1. × ボタン (右上隅: x=W*0.92~W, y=0~H*0.15)
+        if _DIALOG_CLOSE_TEMPLATE.exists():
+            _r = _match_template(
+                _DIALOG_CLOSE_TEMPLATE,
+                int(_W * 0.92), 0, _W, int(_H * 0.15),
+            )
+            if _r:
+                logger.debug("[DialogNav] × ボタン検出 (template): (%d,%d)", *_r)
+                return ("close", _r[0], _r[1])
+
+        # 2. ▷ 矢印 (右エッジ: x=W*0.85~W, y=H*0.25~H*0.75)
+        if _DIALOG_NEXT_TEMPLATE.exists():
+            _r2 = _match_template(
+                _DIALOG_NEXT_TEMPLATE,
+                int(_W * 0.85), int(_H * 0.25), _W, int(_H * 0.75),
+            )
+            if _r2:
+                logger.debug("[DialogNav] ▷ 矢印検出 (template): (%d,%d)", *_r2)
+                return ("next", _r2[0], _r2[1])
+
+        # 3. テンプレートなし → フォールバック: 固定座標を返す
+        #    × ボタンは常に右上 (W*0.98, H*0.056) ≈ (1490, 40)
+        #    ▷ 矢印は右エッジ (W*0.91, H*0.49) ≈ (1383, 353)
+        # テンプレートが存在しないため判断できない → None を返し呼び出し側に委ねる
+        return None
+
+    except Exception as _e:
+        logger.debug("detect_tutorial_dialog_nav error: %s", _e)
+        return None
+
+
+def save_tutorial_dialog_templates(img_path: Path, W: int = 1520, H: int = 720) -> None:
+    """
+    チュートリアルダイアログが表示されている画像から × ボタンと ▷ 矢印の
+    テンプレート画像を自動保存する (各テンプレートが未存在の場合のみ)。
+
+    呼び出し: チュートリアルポップアップが検出された最初の数回。
+    """
+    try:
+        import cv2 as _cv2s
+        _img = _cv2s.imread(str(img_path))
+        if _img is None:
+            return
+        _H, _W = _img.shape[:2]
+        _tpl_dir = _CRAWLER_ROOT / "assets" / "templates"
+        _tpl_dir.mkdir(parents=True, exist_ok=True)
+
+        # × ボタン領域: 右上隅 (x: W*0.93~W, y: 0~H*0.13)
+        if not _DIALOG_CLOSE_TEMPLATE.exists():
+            _x1, _y1 = int(_W * 0.93), 0
+            _x2, _y2 = _W, int(_H * 0.13)
+            _crop = _img[_y1:_y2, _x1:_x2]
+            if _crop.size > 0:
+                _cv2s.imwrite(str(_DIALOG_CLOSE_TEMPLATE), _crop)
+                logger.info("[DialogNav] × テンプレート自動保存: %s", _DIALOG_CLOSE_TEMPLATE)
+
+        # ▷ 矢印領域: 右エッジ (x: W*0.87~W*0.97, y: H*0.3~H*0.7)
+        if not _DIALOG_NEXT_TEMPLATE.exists():
+            _x1n, _y1n = int(_W * 0.87), int(_H * 0.3)
+            _x2n, _y2n = int(_W * 0.97), int(_H * 0.7)
+            _cropn = _img[_y1n:_y2n, _x1n:_x2n]
+            if _cropn.size > 0:
+                _cv2s.imwrite(str(_DIALOG_NEXT_TEMPLATE), _cropn)
+                logger.info("[DialogNav] ▷ テンプレート自動保存: %s", _DIALOG_NEXT_TEMPLATE)
+
+    except Exception as _e:
+        logger.debug("save_tutorial_dialog_templates error: %s", _e)
+
+
 # ─── HSV金色チュートリアルポインター検出 → ホールドスワイプ ─────────────
 def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, int, int]]:
     """
@@ -1562,19 +1681,32 @@ def detect_and_act(ocr: list, state: PilotState,
     pre_popup = has_any(ocr, pre_popup_kws)
     if pre_popup:
         state.pre_popup_tap_count += 1
-        # 同じポップアップが続く場合は異なる座標を試す
-        # 通常: 中央、3回目: 右下(閉じるボタン候補)、5回目: 右上
+        # ── テンプレートマッチングで ▷/× を優先検出 ──
+        _nav = detect_tutorial_dialog_nav(analysis_path, W, H) if analysis_path else None
+        if _nav:
+            _nav_type, cx, cy = _nav
+            logger.info(">>> 【チュートリアルポップアップ】 '%s' %s→(%d,%d) [template]",
+                        pre_popup["text"][:10], "×" if _nav_type == "close" else "▷", cx, cy)
+            tap_device(cx, cy, state, "PRE_POPUP_TAP")
+            return "TUTORIAL_POPUP", 1.0
+        # ── フォールバック: 固定座標シーケンス ──
+        # ▷ 矢印: 右エッジ (W*0.91, H*0.49) ≈ (1383, 353)
+        # × ボタン: 右上隅 (W*0.98, H*0.056) ≈ (1490, 40)
+        _arr = (int(W * 0.91), int(H * 0.49))   # ▷ 矢印
+        _cls = (int(W * 0.98), int(H * 0.056))  # × ボタン
         tap_candidates = [
-            (int(W * 0.5), int(H * 0.5)),    # 中央
-            (int(W * 0.5), int(H * 0.5)),    # 中央(2回目)
-            (int(W * 0.92), int(H * 0.9)),   # 右下
-            (int(W * 0.5), int(H * 0.5)),    # 中央(4回目)
-            (int(W * 0.92), int(H * 0.1)),   # 右上(×ボタン)
+            _arr,   # ▷ 矢印 (1回目)
+            _arr,   # ▷ 矢印 (2回目)
+            _arr,   # ▷ 矢印 (3回目)
+            _arr,   # ▷ 矢印 (4回目)
+            _cls,   # × ボタン (最終ページ)
+            _cls,   # × ボタン (リトライ)
         ]
         idx = min(state.pre_popup_tap_count - 1, len(tap_candidates) - 1)
         cx, cy = tap_candidates[idx]
-        logger.info(">>> 【チュートリアルポップアップ】 '%s' → (%d,%d) (試行%d回目)",
-                    pre_popup["text"][:10], cx, cy, state.pre_popup_tap_count)
+        _label = "×" if (cx, cy) == _cls else "▷"
+        logger.info(">>> 【チュートリアルポップアップ】 '%s' %s→(%d,%d) (試行%d回目)",
+                    pre_popup["text"][:10], _label, cx, cy, state.pre_popup_tap_count)
         tap_device(cx, cy, state, "PRE_POPUP_TAP")
         return "TUTORIAL_POPUP", 1.0
 
@@ -2085,10 +2217,24 @@ def detect_and_act(ocr: list, state: PilotState,
             tap_device(1409, 19, state, "SPEED_BUTTON_TAP")
             return "BATTLE_TUTORIAL", 1.0
         if tutorial_popup:
-            # ポップアップは画面中央タップで閉じる
-            cx, cy = int(W * 0.5), int(H * 0.5)
-            logger.info(">>> バトルチュートリアル popup '%s' → 中央 (%d,%d)",
-                        tutorial_popup["text"][:10], cx, cy)
+            # ── テンプレートマッチングで ▷/× を優先検出 ──
+            _btl_nav = detect_tutorial_dialog_nav(analysis_path, W, H) if analysis_path else None
+            if _btl_nav:
+                _btn, _bx, _by = _btl_nav
+                logger.info(">>> バトルチュートリアル popup '%s' %s→(%d,%d) [template]",
+                            tutorial_popup["text"][:10], "×" if _btn == "close" else "▷", _bx, _by)
+                tap_device(_bx, _by, state, "BATTLE_TUTORIAL_POPUP")
+                return "BATTLE_TUTORIAL", 1.0
+            # フォールバック: ▷ 矢印 → × ボタンのシーケンス
+            state.pre_popup_tap_count += 1
+            _arr_b = (int(W * 0.91), int(H * 0.49))
+            _cls_b = (int(W * 0.98), int(H * 0.056))
+            _btl_candidates = [_arr_b, _arr_b, _arr_b, _arr_b, _cls_b, _cls_b]
+            _bidx = min(state.pre_popup_tap_count - 1, len(_btl_candidates) - 1)
+            cx, cy = _btl_candidates[_bidx]
+            _blabel = "×" if (cx, cy) == _cls_b else "▷"
+            logger.info(">>> バトルチュートリアル popup '%s' %s→(%d,%d) (試行%d回目)",
+                        tutorial_popup["text"][:10], _blabel, cx, cy, state.pre_popup_tap_count)
             tap_device(cx, cy, state, "BATTLE_TUTORIAL_POPUP")
             return "BATTLE_TUTORIAL", 1.0
 
