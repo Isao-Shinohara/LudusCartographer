@@ -1,5 +1,33 @@
 # PROMPT_CONTEXT.md — Auto Pilot 実装コンテキスト
 
+## チュートリアル完全突破ルール (2026-03-06確定)
+
+### ゴール定義（永続ルール）
+
+**チュートリアル完了条件 = ホーム画面到達 かつ 指アイコン+金枠が完全に消えた状態**
+
+- ホーム画面（クエスト/パーティ/ガチャ/ショップ等メニューが見える）に到達しても、
+  指アイコン（白い手形）や金枠ハイライトがある間はまだチュートリアル中。
+- 指アイコン+金枠が出なくなり自由操作が可能になった時点をもって停止・報告。
+
+### 実装 (detect_and_act 内 ホーム検出ブロック)
+
+```python
+if home_count >= 3:
+    _home_blobs = find_finger_blobs(analysis_path)
+    _home_gold  = detect_tutorial_gold_button_tap(analysis_path)
+    if _home_blobs or _home_gold:
+        # 金枠中心タップ → HOME_TUTORIAL_TAP (1.5s wait) → 継続
+    else:
+        # 指も金枠もない → HOME_REACHED → 停止・報告
+```
+
+### ホームでの指アイコン+金枠処理
+- バトル時と同じロジック（金枠中心タップ）をホームメニューにも適用
+- パーティ・クエスト等のメニューアイテムの金枠も `find_gold_frame_near()` で検出してタップ
+
+---
+
 ## ADV高速化ロジック (2026-03-06実装)
 
 ### 概要
