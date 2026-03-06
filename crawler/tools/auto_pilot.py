@@ -1746,12 +1746,21 @@ def detect_and_act(ocr: list, state: PilotState,
         # ※ OCRが "Result" を "kesuit" 等と誤読する場合も EXP/Lv.1 で補完
         _result_ctx = (has_text(ocr, "Result") or has_text(ocr, "EXP")
                        or has_text(ocr, "Lv.1") or has_text(ocr, "リザルト"))
-        _nxt_btn = has_text(ocr, "次へ") or has_text(ocr, "NEXT")
-        if _result_ctx and _nxt_btn:
-            _nx, _ny = _nxt_btn["center"]
-            logger.info(">>> 【バトルResult】 次へ (%d,%d) タップ", _nx, _ny)
-            tap_device(_nx, _ny, state, "RESULT_NEXT")
-            return "RESULT_TAP", 1.0
+        if _result_ctx:
+            # 「次へ」は右下エリア(y>H*0.6, x>W*0.5)にあるはず。誤検出を位置フィルタで排除
+            _nxt_btn = None
+            for _ocr_item in ocr:
+                _txt = _ocr_item.get("text", "")
+                if "次へ" in _txt or "NEXT" in _txt:
+                    _cx_n, _cy_n = _ocr_item["center"]
+                    if _cy_n > H * 0.6 and _cx_n > W * 0.5:
+                        _nxt_btn = _ocr_item
+                        break
+            if _nxt_btn:
+                _nx, _ny = _nxt_btn["center"]
+                logger.info(">>> 【バトルResult】 次へ (%d,%d) タップ", _nx, _ny)
+                tap_device(_nx, _ny, state, "RESULT_NEXT")
+                return "RESULT_TAP", 1.0
 
         # min_area は常に400。空間フィルタ(下記)で誤検出を排除するため過大閾値は不要
         # ホーム画面 / 利用規約ダイアログ / システムダイアログはブロブ誤検出になるためスキップ
@@ -2128,8 +2137,15 @@ def detect_and_act(ocr: list, state: PilotState,
     result_match = has_any(ocr, ["リザルト", "Result", "RESULT", "勝利", "Victory",
                                   "クリア", "CLEAR", "EXP", "経験値", "ランクアップ"])
     if result_match:
-        # まず「次へ」ボタンを優先タップ (EXP等の座標より確実に進む)
-        _nxt_r = has_text(ocr, "次へ") or has_text(ocr, "NEXT")
+        # まず「次へ」ボタンを優先タップ (右下エリアのみ: y>H*0.6 & x>W*0.5)
+        _nxt_r = None
+        for _ocr_item_r in ocr:
+            _txt_r = _ocr_item_r.get("text", "")
+            if "次へ" in _txt_r or "NEXT" in _txt_r:
+                _rx_c, _ry_c = _ocr_item_r["center"]
+                if _ry_c > H * 0.6 and _rx_c > W * 0.5:
+                    _nxt_r = _ocr_item_r
+                    break
         if _nxt_r:
             _rx, _ry = _nxt_r["center"]
             logger.info(">>> バトル結果【次へ優先】 (%d,%d) タップ", _rx, _ry)
