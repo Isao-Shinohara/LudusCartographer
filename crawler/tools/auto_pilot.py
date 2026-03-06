@@ -1751,12 +1751,18 @@ def detect_and_act(ocr: list, state: PilotState,
     dl = has_any(ocr, ["ダウンロード", "追加データ", "Loading", "ロード中",
                        "通信中", "Now Loading", "Download", "Downloading"])
     # 進捗バー: %, GB, MB を含む文字列も進捗画面と判定 (英語ダウンロード画面対応)
+    # ※ バトル中のダメージ倍率 (例: BREAK200%) との誤検知を防ぐため、
+    #   バトルキーワードが OCR に含まれる場合は % による判定をスキップ
     if not dl:
-        _progress_texts = [t for t in texts if "%" in t or "MB" in t or "GB" in t]
-        if _progress_texts:
-            logger.info(">>> ダウンロード進捗テキスト検出: %s", _progress_texts[:3])
-            # has_any 互換の形式で返す
-            dl = {"text": _progress_texts[0], "center": (0, 0), "confidence": 0.5, "box": []}
+        _battle_guard_kws = ["通常攻撃", "单体攻撃", "単体攻撃", "BREAK", "WAVE",
+                             "ENEMY TURN", "BATTLE", "AUTO", "必殺技"]
+        _in_battle_context = any(kw in t for t in texts for kw in _battle_guard_kws)
+        if not _in_battle_context:
+            _progress_texts = [t for t in texts if "%" in t or "MB" in t or "GB" in t]
+            if _progress_texts:
+                logger.info(">>> ダウンロード進捗テキスト検出: %s", _progress_texts[:3])
+                # has_any 互換の形式で返す
+                dl = {"text": _progress_texts[0], "center": (0, 0), "confidence": 0.5, "box": []}
     if dl:
         logger.info(">>> ロード/ダウンロード中: '%s' — 待機 (Watchdog免除)", dl["text"])
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
