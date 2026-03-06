@@ -137,6 +137,8 @@ class PilotState:
     # ─── ダウンロード進捗ログ ───
     # 最後にダウンロード進捗をログ出力した時刻
     last_download_progress_log: float = 0.0
+    # ─── デバッグ: 最新スクリーンショット (numpy ndarray) ───
+    last_screen: object = None  # cv2.imread 結果を格納 (型ヒント省略でdataclass互換)
 
 
 # ─── シーン分類 ──────────────────────────────────────
@@ -220,19 +222,15 @@ def tap_device(x: int, y: int, state: PilotState, desc: str = "") -> None:
         real_y = int(y * sy)
     else:
         real_x, real_y = x, y
-    # ─── 赤ドット描画: 解析画像にタップ位置を可視化 ───
-    # 変換不要時はスクリーンショットを直接使用（古い analysis.png を誤参照しない）
+    # ─── 赤ドット描画: state.last_screen (メモリ上) を使用 ───
     try:
         import cv2 as _cv2
-        _src = Path("/tmp/lc_screenshot.png")
-        if not _src.exists():
-            _src = Path("/tmp/lc_autopilot_analysis.png")
-        if _src.exists():
-            _dbg = _cv2.imread(str(_src))
-            if _dbg is not None:
-                _cv2.circle(_dbg, (x, y), 10, (0, 0, 255), -1)  # 解析座標に赤円
-                _cv2.imwrite("/tmp/debug_tap_target.png", _dbg)
-                logger.info("  [DEBUG_TAP] Target=(%d,%d) → /tmp/debug_tap_target.png", x, y)
+        if state.last_screen is not None:
+            _dbg = state.last_screen.copy()
+            _cv2.circle(_dbg, (x, y), 10, (0, 0, 255), -1)  # 解析座標(x,y)に赤円
+            _out = str(Path(__file__).parent.parent / "debug_latest_tap.png")
+            _cv2.imwrite(_out, _dbg)
+            logger.info("  [DEBUG_TAP] Target=(%d,%d) → %s", x, y, _out)
     except Exception:
         pass
     time.sleep(0.05)
@@ -2202,6 +2200,12 @@ def main():
             logger.warning("Screenshot failed, retrying...")
             time.sleep(2)
             continue
+        # メモリ上に最新画像を保持 (デバッグ用赤ドット描画に使用)
+        try:
+            import cv2 as _cv2_main
+            state.last_screen = _cv2_main.imread(str(img_path))
+        except Exception:
+            state.last_screen = None
 
         if not state.device_w:
             state.device_w = actual_w
