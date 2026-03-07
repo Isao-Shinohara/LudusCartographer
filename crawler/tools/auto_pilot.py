@@ -3112,6 +3112,11 @@ def detect_and_act(ocr: list, state: PilotState,
             _chal_btn = has_text(ocr, "挑戦", min_conf=0.3)
             if _chal_btn:
                 _cb_x, _cb_y = _chal_btn["center"]
+                _cb_y = _correct_btn_tap_y(state.last_screen, _cb_x, _cb_y, _chal_btn["box"])
+                # ROI クランプ: ゲーム領域外 (黒帯) をタップしない
+                if state.game_roi:
+                    _roi_max_y = state.game_roi[1] + state.game_roi[3] - 5
+                    _cb_y = min(_cb_y, _roi_max_y)
                 # 挑戦ボタンは右下(x>W*0.5, y>H*0.5)にあるはず
                 if _cb_x > W * 0.5 and _cb_y > H * 0.5:
                     logger.info("  [CHALLENGE_BTN] 挑戦(%d,%d) → 直接タップ (ホーム誤検出突破)", _cb_x, _cb_y)
@@ -3128,9 +3133,16 @@ def detect_and_act(ocr: list, state: PilotState,
                     _ht_bx, _ht_by = _ht_chosen[0], _ht_chosen[1]
                     _ht_gf = find_gold_frame_near(analysis_path, _ht_bx, _ht_by) if analysis_path else None
                     if _ht_gf:
-                        _ht_target = (_ht_gf[0], _ht_gf[1])
-                        logger.info("  ホームチュートリアル: 指(%d,%d)→金枠(%d,%d) タップ",
-                                    _ht_bx, _ht_by, _ht_gf[0], _ht_gf[1])
+                        _ht_fg_dist = ((_ht_bx - _ht_gf[0]) ** 2 + (_ht_by - _ht_gf[1]) ** 2) ** 0.5
+                        if _ht_fg_dist <= 200:
+                            _ht_target = (_ht_gf[0], _ht_gf[1])
+                            logger.info("  ホームチュートリアル: 指(%d,%d)→金枠(%d,%d) dist=%.0f タップ",
+                                        _ht_bx, _ht_by, _ht_gf[0], _ht_gf[1], _ht_fg_dist)
+                        else:
+                            _ht_tip_y = _ht_chosen[4] + int(_ht_chosen[6] * 0.1)
+                            _ht_target = (_ht_chosen[3] + _ht_chosen[5] // 2, _ht_tip_y)
+                            logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠(%d,%d) dist=%.0f>200 無視]",
+                                        _ht_bx, _ht_by, *_ht_target, _ht_gf[0], _ht_gf[1], _ht_fg_dist)
                     else:
                         _ht_tip_y = _ht_chosen[4] + int(_ht_chosen[6] * 0.1)
                         _ht_target = (_ht_chosen[3] + _ht_chosen[5] // 2, _ht_tip_y)
@@ -3324,26 +3336,33 @@ def detect_and_act(ocr: list, state: PilotState,
                     state.last_blob_xy = (0, 0)
                     return "SWIPE_AUTO", 1.5
 
-                # ── Step3: タップ座標決定 ──
-                # 指ガイド絶対優先: 常に指先端座標をタップ。
-                # 金枠はログ参考のみ — タップ座標をオーバーライドしない。
-                # (「金枠=良い=叩く」短絡ロジックを廃止。指が示す対象を優先。)
-                tap_x = fx
-                tap_y = f_by + max(1, int(f_bh * 0.1))  # 指先端
+                # ── Step3: タップ座標決定 (共通ルール) ──
+                # 指アイコンは「タップすべき金枠」を指し示すガイド。
+                # (A) 指の近く (200px以内) に金枠 → 金枠中心をタップ
+                # (B) 金枠なし → 指先端をタップ
                 if _gold_frame is not None:
                     gfx, gfy, gfw, gfh = _gold_frame
                     _gbox = (gfx - gfw // 2, gfy - gfh // 2, gfw, gfh)
-                    logger.info("FINGER+GOLD_FRAME (%d,%d) → finger_tip(%d,%d) [gold=(%d,%d) 参考のみ] count=%d",
-                                fx, fy, tap_x, tap_y, gfx, gfy, state.blob_same_count)
+                    # 指と金枠の距離チェック: 近距離なら金枠中心を採用
+                    _fg_dist = ((fx - gfx) ** 2 + (fy - gfy) ** 2) ** 0.5
+                    if _fg_dist <= 200:
+                        tap_x = gfx
+                        tap_y = gfy
+                        logger.info("FINGER→GOLD_FRAME (%d,%d) → gold_center(%d,%d) dist=%.0f count=%d",
+                                    fx, fy, tap_x, tap_y, _fg_dist, state.blob_same_count)
+                    else:
+                        # 遠い金枠は無関係 → 指先端
+                        tap_x = fx
+                        tap_y = f_by + max(1, int(f_bh * 0.1))
+                        _gbox = None
+                        logger.info("FINGER_DETECTED (%d,%d) → tip(%d,%d) [gold(%d,%d) dist=%.0f>200 無視] count=%d",
+                                    fx, fy, tap_x, tap_y, gfx, gfy, _fg_dist, state.blob_same_count)
                 else:
                     _gbox = None
+                    tap_x = fx
+                    tap_y = f_by + max(1, int(f_bh * 0.1))
                     logger.info("FINGER_DETECTED (%d,%d) area=%.0f → tip(%d,%d) count=%d",
                                 fx, fy, fa, tap_x, tap_y, state.blob_same_count)
-                # ── Y -35px 座標補正 (System Bar Fix) ──────────────────────────
-                # バトル画面でボタン下端を叩くズレを補正: 35px 上方向シフト
-                if is_battle_screen and tap_y > 35:
-                    tap_y -= 35
-                    logger.info("  [Y_SHIFT-35] バトル座標補正 → tap_y=%d", tap_y)
                 tap_device(tap_x, tap_y, state, f"MOYA_TAP ({tap_x},{tap_y})",
                            finger_box=(f_bx, f_by, f_bw, f_bh),
                            gold_box=_gbox)
@@ -3488,6 +3507,11 @@ def detect_and_act(ocr: list, state: PilotState,
             sentu_btn = expl
     if stage_num and sentu_btn:
         cx, cy = sentu_btn["center"]
+        cy = _correct_btn_tap_y(state.last_screen, cx, cy, sentu_btn["box"])
+        # ROI クランプ: ゲーム領域外 (黒帯) をタップしない
+        if state.game_roi:
+            _roi_max_y = state.game_roi[1] + state.game_roi[3] - 5
+            cy = min(cy, _roi_max_y)
         logger.info(">>> クエストマップ — 「%s」(%d,%d)", sentu_btn["text"], cx, cy)
         tap_device(cx, cy, state, f"QUEST_START {sentu_btn['text']}")
         state.battle_wait_count = 0
@@ -4178,9 +4202,9 @@ def main():
             # ── ADV 高速モード: OCR スキップして画面下部を即連打 ──
             # 前回 STORY_TAP かつ phash 変化が小さい（テキスト送り）→ 即タップ
             # MENU シーンはホームチュートリアル中の可能性があるため除外（指/金枠をOCRで確認）
-            if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT") and
+            if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT", "MOYA_TAP") and
                     PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
-                    state.current_scene != "MENU"):
+                    state.current_scene not in ("MENU", "BATTLE")):
                 logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
                 _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
                 tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP")
