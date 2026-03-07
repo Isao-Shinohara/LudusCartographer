@@ -3248,18 +3248,17 @@ def detect_and_act(ocr: list, state: PilotState,
                     return "SWIPE_AUTO", 1.5
 
                 # ── Step3: タップ座標決定 ──
-                # 金枠あり → 金枠の中心点を射抜く
-                # 金枠なし → 矩形上端から10%の位置（指先）
+                # 指ガイド絶対優先: 常に指先端座標をタップ。
+                # 金枠はログ参考のみ — タップ座標をオーバーライドしない。
+                # (「金枠=良い=叩く」短絡ロジックを廃止。指が示す対象を優先。)
+                tap_x = fx
+                tap_y = f_by + max(1, int(f_bh * 0.1))  # 指先端
                 if _gold_frame is not None:
                     gfx, gfy, gfw, gfh = _gold_frame
-                    tap_x, tap_y = gfx, gfy
                     _gbox = (gfx - gfw // 2, gfy - gfh // 2, gfw, gfh)
-                    logger.info("FINGER+GOLD_FRAME (%d,%d) → tap_center(%d,%d) frame=%dx%d",
-                                fx, fy, tap_x, tap_y, gfw, gfh)
+                    logger.info("FINGER+GOLD_FRAME (%d,%d) → finger_tip(%d,%d) [gold=(%d,%d) 参考のみ] count=%d",
+                                fx, fy, tap_x, tap_y, gfx, gfy, state.blob_same_count)
                 else:
-                    # 指アイコン矩形の上端10%をタップ (指先位置)
-                    tap_x = fx
-                    tap_y = f_by + max(1, int(f_bh * 0.1))
                     _gbox = None
                     logger.info("FINGER_DETECTED (%d,%d) area=%.0f → tip(%d,%d) count=%d",
                                 fx, fy, fa, tap_x, tap_y, state.blob_same_count)
