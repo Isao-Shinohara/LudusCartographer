@@ -2478,11 +2478,23 @@ def detect_and_act(ocr: list, state: PilotState,
                     state.char_just_selected = False
                     return "NORMATK_TAP", 1.0
 
+    # ── 【#0-DIALOG 前ガード】指ブロブ検出時はダイアログ検出をスキップ ──────
+    # 指ガイドが存在する画面で detect_dialog_frame_and_nav() が金枠パネルを
+    # ダイアログと誤検出し、存在しない ▷ をページングする問題を防止。
+    # 指が見えたらダイアログ処理をバイパスし、指ガイド処理 (#1) へフォールスルー。
+    _pre_dialog_finger = False
+    if analysis_path is not None:
+        _pdg_blobs = find_finger_blobs(analysis_path, min_area=300)
+        _pdg_blobs = [b for b in _pdg_blobs if b[1] > 36 and b[0] < W - 40]
+        if _pdg_blobs:
+            _pre_dialog_finger = True
+            logger.info("[PRE_DIALOG_GUARD] 指ブロブ %d 個検出 → #0-DIALOG スキップ", len(_pdg_blobs))
+
     # ─── 【最優先 #0-DIALOG】ダイアログ・ファースト (枠形状+Canny) ────────────
     # 主トリガー: HSV金色枠の大矩形検出 (形状ベース)
     # 副トリガー: OCR キーワード補助 (枠検出失敗時フォールバック)
     # ダイアログ検出中は指アイコン・金枠探索を完全スキップ (即 return)
-    if analysis_path is not None:
+    if analysis_path is not None and not _pre_dialog_finger:
         _dlg = detect_dialog_frame_and_nav(
             analysis_path, W, H, ocr_texts=texts, roi=state.game_roi
         )
@@ -2503,6 +2515,16 @@ def detect_and_act(ocr: list, state: PilotState,
                             _sg_best[0], _sg_best[1], _dlg_x, _dlg_y, _sg_dist,
                         )
                         _dlg = None  # ダイアログをなかったことにして #1 へ
+                # ── 白ハンドポインタ画面ガード: クエスト選択等 ──────────────
+                # 指ブロブなし（白ポインタは HSV 肌色検出外）でも
+                # クエスト画面キーワードが存在すれば ▷ 誤検出を抑制
+                if _dlg is not None:
+                    _quest_kws = ["NEW", "報酬", "推奖", "报酬"]
+                    if any(any(k in t for k in _quest_kws) for t in texts):
+                        logger.info(
+                            "[SPATIAL_GATE] 指ブロブなし + クエストKW検出 → #0-DIALOG(▷) スキップ",
+                        )
+                        _dlg = None
             # ── バトル中 × 誤検出ガード ──────────────────────────────────────────
             # バトル画面では y < 100 は UI ボタン帯 (倍速/メニュー等)。
             # DIALOG_CLOSE としてタップすると「メニューが使用できません」トーストが出るため除外。
