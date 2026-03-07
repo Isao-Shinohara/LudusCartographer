@@ -222,6 +222,7 @@ class PilotState:
     gacha_total: "StallCounter" = field(
         default_factory=lambda: StallCounter("gacha_total", threshold=15))
     unity_restart_count: int = 0      # Unity force-restart 試行回数 [0..3]
+    wifi_fail_streak: int = 0         # Wi-Fi破損連続失敗カウンタ [0..5]
     normatk_fallback: "StallCounter" = field(
         default_factory=lambda: StallCounter("normatk_fallback", threshold=10))
 
@@ -3086,7 +3087,7 @@ def detect_and_act(ocr: list, state: PilotState,
             cx, cy = _tc_x, _tc_y
             # スワイプ系アクションの処理
             if action == "SWIPE_UP":
-                # 安全ネット: #0-DIALOG が例外等で抜けた場合の最終防衛
+                # 安全ネット: ダイアログKWが見えるときはポップアップ上のスワイプ誤発火を防止
                 # _DIALOG_FIRST_KWS キーワードがあればポップアップと判断してスキップ
                 _swipe_skip = any(kw in joined for kw in _DIALOG_FIRST_KWS)
                 if not _swipe_skip:
@@ -4399,10 +4400,10 @@ def main():
                         _ss_retries, state.screenshot_retry_count)
         # ── Wi-Fi 破損防御: 全リトライ失敗 → continue で次ループ ──
         if img_path is None:
-            state._wifi_fail_streak = getattr(state, '_wifi_fail_streak', 0) + 1
+            state.wifi_fail_streak += 1
             logger.warning("[WIFI_ERROR] 連続失敗 %d/5 — 次ループで再取得",
-                           state._wifi_fail_streak)
-            if state._wifi_fail_streak >= 5:
+                           state.wifi_fail_streak)
+            if state.wifi_fail_streak >= 5:
                 logger.error("[WIFI_ERROR] 連続5回失敗 → ADB再接続を試行")
                 try:
                     subprocess.run(["adb", "disconnect"], timeout=5, capture_output=True)
@@ -4411,10 +4412,10 @@ def main():
                     time.sleep(2)
                 except Exception as _rc_e:
                     logger.error("[WIFI_ERROR] ADB再接続例外: %s", _rc_e)
-                state._wifi_fail_streak = 0
+                state.wifi_fail_streak = 0
             time.sleep(1.0)
             continue
-        state._wifi_fail_streak = 0  # 成功時リセット
+        state.wifi_fail_streak = 0  # 成功時リセット
         # メモリ上に最新画像を保持 + ROI更新
         try:
             import cv2 as _cv2_main
@@ -4512,7 +4513,7 @@ def main():
             # 前回 STORY_TAP かつ phash 変化が小さい（テキスト送り）→ 即タップ
             # MENU シーンはホームチュートリアル中の可能性があるため除外（指/金枠をOCRで確認）
             # Result 画面は ADV_RAPID 禁止 (キャラアニメの phash 変動で誤発動する)
-            _last_texts = getattr(state, 'last_ocr_texts', [])
+            _last_texts = state.last_ocr_texts
             _is_result_like = any(
                 any(k in t for k in ("Result", "EXP", "次へ"))
                 for t in _last_texts
@@ -4700,7 +4701,7 @@ def main():
         #   キャラ肖像の王冠/ロール装飾 (area<5000) は偽モヤ → 無視
         _force_ocr_override = (dist <= 2 and state.same_phash_count >= FORCE_ANALYZE_AFTER)
         # 速度チュートリアル表示中は BATTLE_RAPID をスキップして OCR で処理
-        _last_texts_br = getattr(state, 'last_ocr_texts', [])
+        _last_texts_br = state.last_ocr_texts
         _speed_tip_in_last = any(
             any(k in t for k in ("このボタンでバトル", "進行速度を変更"))
             for t in _last_texts_br
