@@ -181,6 +181,8 @@ class PilotState:
     finger_detections: int = 0   # 指アイコン検知成功 (MOYA_TAP)
     gold_detections: int = 0     # 金枠ボタン検知成功 (FINGER+GOLD_FRAME)
     total_loop_ms: float = 0.0   # 全ループ経過時間合計 [ms] (平均算出用)
+    # ─── ダイアログclose累計試行 (リセットなし、エスカレーション用) ───
+    dialog_close_total: int = 0  # close失敗が蓄積 → 8回でBACK, 12回でスキップ
 
 
 # ─── シーン分類 ──────────────────────────────────────
@@ -935,6 +937,37 @@ def detect_dialog_frame_and_nav(
         _H, _W = img.shape[:2]
 
         # ──────────────────────────────────────────────────────────────
+        # STEP 0: × ボタン先行検出 (無条件)
+        #   画面右上に × があれば「ダイアログ」と即断定して close を返す。
+        #   これにより金枠装飾がある画面でも × を見逃さない。
+        # ──────────────────────────────────────────────────────────────
+        def _find_close_x(img_full, _H, _W):
+            """画面右上領域でテンプレートマッチにより × ボタンを探す。"""
+            if not _DIALOG_CLOSE_TEMPLATE.exists():
+                return None
+            # 探索 ROI: 右端 15%, 上端 15%
+            _rx1 = int(_W * 0.85)
+            _ry2 = int(_H * 0.15)
+            _roi_x = img_full[0:_ry2, _rx1:_W]
+            if _roi_x.size == 0:
+                return None
+            _tpl = _cv.imread(str(_DIALOG_CLOSE_TEMPLATE))
+            if (_roi_x.shape[0] < _tpl.shape[0]
+                    or _roi_x.shape[1] < _tpl.shape[1]):
+                return None
+            _r = _cv.matchTemplate(_roi_x, _tpl, _cv.TM_CCOEFF_NORMED)
+            _, _mv, _, _ml = _cv.minMaxLoc(_r)
+            if _mv >= 0.70:
+                _tw, _th = _tpl.shape[1], _tpl.shape[0]
+                return (_rx1 + _ml[0] + _tw // 2, _ml[1] + _th // 2)
+            return None
+
+        _close_x_pos = _find_close_x(img, _H, _W)
+        if _close_x_pos is not None:
+            logger.debug("[Dialog×] STEP0 先行検出: (%d,%d)", _close_x_pos[0], _close_x_pos[1])
+            return ("close", _close_x_pos[0], _close_x_pos[1])
+
+        # ──────────────────────────────────────────────────────────────
         # STEP 1: HSV 金色枠で大矩形ダイアログを検出
         # ──────────────────────────────────────────────────────────────
         _hsv = _cv.cvtColor(img, _cv.COLOR_BGR2HSV)
@@ -1037,8 +1070,46 @@ def detect_dialog_frame_and_nav(
             return None
 
         # 検索 ROI: テンプレートなければ Canny、それも失敗したら輝度、最後に固定座標
+        # フレーム検出時はフレーム右上を優先、画面右上はフォールバック
 
-        # ── × ボタン (スクリーン右上隅: テンプレートが最優先) ──────────
+        # ── × ボタン検索 ──────────────────────────────────────────────
+        # Phase A: フレーム検出時 → フレーム右上隅で × を探す
+        if _frame_detected:
+            _fx, _fy, _fw, _fh = _frame
+            # フレーム右上角周辺を探索 (±40px マージン)
+            _frx1 = max(0, _fx + _fw - 60)
+            _fry1 = max(0, _fy - 30)
+            _frx2 = min(_W, _fx + _fw + 40)
+            _fry2 = min(_H, _fy + 50)
+            _froi = img[_fry1:_fry2, _frx1:_frx2]
+            if _froi.size > 0:
+                # テンプレートマッチング
+                if _DIALOG_CLOSE_TEMPLATE.exists():
+                    _tpl = _cv.imread(str(_DIALOG_CLOSE_TEMPLATE))
+                    if _froi.shape[0] >= _tpl.shape[0] and _froi.shape[1] >= _tpl.shape[1]:
+                        _r_f = _cv.matchTemplate(_froi, _tpl, _cv.TM_CCOEFF_NORMED)
+                        _, _mv_f, _, _ml_f = _cv.minMaxLoc(_r_f)
+                        if _mv_f >= 0.70:
+                            _tw_f = _tpl.shape[1]
+                            _th_f = _tpl.shape[0]
+                            _cx_f = _frx1 + _ml_f[0] + _tw_f // 2
+                            _cy_f = _fry1 + _ml_f[1] + _th_f // 2
+                            logger.debug("[Dialog×] フレーム右上テンプレ: (%d,%d) score=%.2f", _cx_f, _cy_f, _mv_f)
+                            return ("close", _cx_f, _cy_f)
+                # Canny エッジ
+                _lns_f, _gray_f = _canny_lines(_froi)
+                _cp_f = _cross_center(_lns_f)
+                if _cp_f:
+                    logger.debug("[Dialog×] フレーム右上Canny: (%d,%d)", _frx1 + _cp_f[0], _fry1 + _cp_f[1])
+                    return ("close", _frx1 + _cp_f[0], _fry1 + _cp_f[1])
+                # 輝度フォールバック → フレーム右上角を返す
+                if _cv.countNonZero(_cv.threshold(_gray_f, 155, 255, _cv.THRESH_BINARY)[1]) >= 15:
+                    _cx_ff = _fx + _fw - 10
+                    _cy_ff = _fy + 10
+                    logger.debug("[Dialog×] フレーム右上輝度FB: (%d,%d)", _cx_ff, _cy_ff)
+                    return ("close", _cx_ff, _cy_ff)
+
+        # Phase B: フレーム未検出 or フレーム右上で × 未発見 → 画面右上隅で探す
         if _DIALOG_CLOSE_TEMPLATE.exists():
             _r = _cv.matchTemplate(
                 _cv.imread(str(img_path), _cv.IMREAD_COLOR)[0: int(_H * 0.14), int(_W * 0.88):],
@@ -2340,7 +2411,36 @@ def detect_and_act(ocr: list, state: PilotState,
 
             if _dlg is not None:
                 state.pre_popup_tap_count += 1
+                state.dialog_close_total += 1
                 state.dialog_detections += 1
+
+                # ── エスカレーション: 12回以上 → ダイアログ検出自体をスキップ ──
+                if state.dialog_close_total >= 12:
+                    logger.warning(
+                        ">>> 【ダイアログ#0-DIALOG】累計%d回スタック → ダイアログ検出スキップ (他処理へ)",
+                        state.dialog_close_total,
+                    )
+                    state.dialog_close_total = 0
+                    state.pre_popup_tap_count = 0
+                    _dlg = None  # フォールスルーで他の処理に任せる
+                # ── エスカレーション: 8回以上 → Android BACK キー ──
+                elif state.dialog_close_total >= 8:
+                    logger.warning(
+                        ">>> 【ダイアログ#0-DIALOG】累計%d回失敗 → BACK キー押下",
+                        state.dialog_close_total,
+                    )
+                    try:
+                        import subprocess as _sp_bk
+                        _sp_bk.run(
+                            ["adb", "-s", DEVICE_SERIAL, "shell", "input", "keyevent", "KEYCODE_BACK"],
+                            timeout=5, capture_output=True,
+                        )
+                    except Exception:
+                        pass
+                    state.pre_popup_tap_count = 0
+                    return "DIALOG_BACK_ESCALATION", 2.0
+
+            if _dlg is not None:
                 if _dlg_type in ("next", "bottom"):
                     # ページング式ダイアログ: ▷ → … → × を一括処理
                     logger.info(
@@ -2355,9 +2455,30 @@ def detect_and_act(ocr: list, state: PilotState,
                     return _pg_result, 1.0   # ← 必ず return。fallthrough なし。
                 else:
                     # "close": × ボタンを即タップ
+                    # ── 4回連続失敗 → OK/確認ボタンを探してフォールバック ──
+                    if state.pre_popup_tap_count >= 4:
+                        _ok_ocr = has_any(ocr, ["OK", "確認", "決定", "おまかせ"])
+                        if _ok_ocr:
+                            _ok_cx, _ok_cy = _ok_ocr["center"]
+                            logger.info(
+                                ">>> 【ダイアログ#0-DIALOG】close失敗%d回 → OKフォールバック '%s'(%d,%d)",
+                                state.pre_popup_tap_count, _ok_ocr["text"], _ok_cx, _ok_cy,
+                            )
+                            tap_device(_ok_cx, _ok_cy, state, "DIALOG_OK_FALLBACK")
+                            state.pre_popup_tap_count = 0
+                            return "DIALOG_OK_FALLBACK", 1.5
+                        # OCR で OK 未検出 → ダイアログ下部中央をタップ
+                        _ok_fb_x, _ok_fb_y = roi_to_device(int(W * 0.7), int(H * 0.92), state.game_roi)
+                        logger.info(
+                            ">>> 【ダイアログ#0-DIALOG】close失敗%d回 → 下部中央フォールバック(%d,%d)",
+                            state.pre_popup_tap_count, _ok_fb_x, _ok_fb_y,
+                        )
+                        tap_device(_ok_fb_x, _ok_fb_y, state, "DIALOG_BOTTOM_FALLBACK")
+                        state.pre_popup_tap_count = 0
+                        return "DIALOG_BOTTOM_FALLBACK", 1.5
                     logger.info(
-                        ">>> 【ダイアログ#0-DIALOG】%s(%d,%d) (試行%d回)",
-                        _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
+                        ">>> 【ダイアログ#0-DIALOG】%s(%d,%d) (試行%d回/累計%d)",
+                        _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count, state.dialog_close_total,
                     )
                     tap_device(_dlg_x, _dlg_y, state, "DIALOG_CLOSE")
                     return "DIALOG_CLOSE", 1.0   # ← 必ず return。fallthrough なし。
@@ -3862,6 +3983,7 @@ def main():
             state.stall_start = 0.0
             state.stall_corner_tried = False
             state.pre_popup_tap_count = 0  # ポップアップ試行カウンタもリセット
+            state.dialog_close_total = 0  # ダイアログclose累計もリセット
             state.last_screen_change_time = time.time()  # Watchdog: 最終変化時刻更新
 
             # ── ADV 高速モード: OCR スキップして画面下部を即連打 ──
