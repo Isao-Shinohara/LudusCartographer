@@ -4010,7 +4010,7 @@ def main():
                     PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
                     state.current_scene != "MENU"):
                 logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
-                _adv_x, _adv_y = roi_to_device(int(W * 0.5), int(H * 0.9), state.game_roi)
+                _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
                 tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP")
                 logger.info("  ACTION_TAKEN ADV_RAPID_TAP (%d,%d)", _adv_x, _adv_y)
                 state.last_phash = cur_phash
@@ -4089,7 +4089,7 @@ def main():
                 if state.current_scene in ("STORY", "ADV"):
                     if detect_adv_advance_icon(img_path):
                         logger.info("[ADV_ADVANCE][iter %d] 送り待ちアイコン検出 → 即タップ", i)
-                        _aa_x, _aa_y = roi_to_device(int(W * 0.5), int(H * 0.9), state.game_roi)
+                        _aa_x, _aa_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
                         adb(f"shell input tap {_aa_x} {_aa_y}")
                         state.total_taps += 1
                         state.last_phash = ""
@@ -4110,7 +4110,7 @@ def main():
                 logger.warning(">>> %.0f秒スタック — 右上×ボタン試行", stall_elapsed)
                 save_evidence(img_path, [], "STALL_CORNER", state)
                 time.sleep(0.3)
-                _sc_x, _sc_y = roi_to_device(int(W * 0.97), int(H * 0.06), state.game_roi)
+                _sc_x, _sc_y = roi_to_device(int(ANALYSIS_W * 0.97), int(ANALYSIS_H * 0.06), state.game_roi)
                 adb(f"shell input tap {_sc_x} {_sc_y}")
                 state.total_taps += 1
                 state.stall_corner_tried = True
@@ -4169,7 +4169,7 @@ def main():
                 logger.info("[RESULT_RAPID] glow(%d,%d) → 即タップ", _rgx, _rgy)
                 tap_device(_rgx, _rgy, state, "RESULT_RAPID")
             else:
-                _rc_x, _rc_y = roi_to_device(int(W * 0.5), int(H * 0.5), state.game_roi)
+                _rc_x, _rc_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state.game_roi)
                 logger.info("[RESULT_RAPID] no glow → center tap (%d,%d)", _rc_x, _rc_y)
                 tap_device(_rc_x, _rc_y, state, "RESULT_RAPID")
             state.last_action = "RESULT_RAPID"
@@ -4227,7 +4227,7 @@ def main():
                         _rapid_action = "BATTLE_RAPID_MOYA_P2"
                     else:
                         # 通常攻撃ボタン: 比率ベース (W*0.90, H*0.88) + ROI 補正
-                        _rapid_tx, _rapid_ty = roi_to_device(int(W * 0.90), int(H * 0.88), state.game_roi)
+                        _rapid_tx, _rapid_ty = roi_to_device(int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
                         _rapid_action = "BATTLE_RAPID_NORMATK_P2"
                 elif _left_char:
                     _tb = max(_left_char, key=lambda b: b[2])
