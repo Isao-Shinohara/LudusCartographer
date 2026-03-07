@@ -3207,9 +3207,9 @@ def detect_and_act(ocr: list, state: PilotState,
                 tap_device(_nx, _ny, state, "RESULT_NEXT")
                 return "RESULT_TAP", 1.0
             else:
-                # 「次へ」OCR未検出 → 想定位置 (右下) をタップ
-                _nx = int(W * 0.88)
-                _ny = int(H * 0.95)
+                # 「次へ」OCR未検出 → 想定位置 (SDE検出ボタン中心付近) をタップ
+                _nx = int(W * 0.785)
+                _ny = int(H * 0.914)
                 logger.info(">>> 【バトルResult】 次へ未検出 → 想定位置 (%d,%d) タップ", _nx, _ny)
                 tap_device(_nx, _ny, state, "RESULT_NEXT")
                 return "RESULT_TAP", 1.0
@@ -4501,13 +4501,25 @@ def main():
                 logger.info("[RESULT_RAPID] right glow(%d,%d) → 即タップ", _rgx, _rgy)
                 tap_device(_rgx, _rgy, state, "RESULT_RAPID")
             else:
-                # 右側グローなし → 「次へ」ボタン想定位置 (右下) をタップ
-                _rc_x = int(ANALYSIS_W * 0.88)
-                _rc_y = int(ANALYSIS_H * 0.95)
+                # 右側グローなし → 「次へ」ボタン想定位置 (SDE検出中心付近) をタップ
+                _rc_x = int(ANALYSIS_W * 0.785)   # SDE: (1193,658) → 1193/1520≈0.785
+                _rc_y = int(ANALYSIS_H * 0.914)   # SDE: 658/720≈0.914
                 logger.info("[RESULT_RAPID] no right glow → 次へ想定位置 (%d,%d)", _rc_x, _rc_y)
                 tap_device(_rc_x, _rc_y, state, "RESULT_RAPID")
             state.last_action = "RESULT_RAPID"
             state._result_rapid_count = _result_rapid_count + 1
+            # 累積カウンター (RESULT_RAPID + OCR経由タップ合算)
+            _rtotal_rr = getattr(state, '_result_total_taps', 0) + 1
+            state._result_total_taps = _rtotal_rr
+            if _rtotal_rr >= 30:
+                logger.warning("[RESULT_FREEZE] RESULT_RAPID %d回 — Unity入力フリーズ → force-stop", _rtotal_rr)
+                state._result_total_taps = 0
+                state._result_rapid_count = 0
+                if watchdog_recover(state):
+                    continue
+                else:
+                    logger.error("[RESULT_FREEZE] 復帰失敗")
+                    break
             state.stall_start = 0.0
             state.same_phash_count = 0
             time.sleep(1.0)
