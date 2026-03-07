@@ -2213,9 +2213,10 @@ def handle_result_screen(
                         _rgx, _rgy)
             tap_device(_rgx, _rgy, state, "RESULT_RAPID")
         else:
-            # 右側グローなし → 「次へ」想定位置
-            _rc_x = int(W * _RESULT_NEXT_X_RATIO)
-            _rc_y = int(H * _RESULT_NEXT_Y_RATIO)
+            # 右側グローなし → 「次へ」想定位置 (ROI補正付き)
+            _rc_x, _rc_y = roi_to_device(
+                int(W * _RESULT_NEXT_X_RATIO),
+                int(H * _RESULT_NEXT_Y_RATIO), state.game_roi)
             logger.info("[RESULT_RAPID] no right glow → 次へ想定位置 (%d,%d)",
                         _rc_x, _rc_y)
             tap_device(_rc_x, _rc_y, state, "RESULT_RAPID")
@@ -2268,8 +2269,9 @@ def handle_result_screen(
         logger.info(">>> 【バトルResult】 次へ (%d,%d) タップ", _nx, _ny)
         tap_device(_nx, _ny, state, "RESULT_NEXT")
     else:
-        _nx = int(W * _RESULT_NEXT_X_RATIO)
-        _ny = int(H * _RESULT_NEXT_Y_RATIO)
+        _nx, _ny = roi_to_device(
+            int(W * _RESULT_NEXT_X_RATIO),
+            int(H * _RESULT_NEXT_Y_RATIO), state.game_roi)
         logger.info(">>> 【バトルResult】 次へ未検出 → 想定位置 (%d,%d) タップ",
                     _nx, _ny)
         tap_device(_nx, _ny, state, "RESULT_NEXT")
@@ -3248,7 +3250,8 @@ def detect_and_act(ocr: list, state: PilotState,
         if ok_bottom:
             ocr_cx, ocr_cy = ok_bottom["center"]
         else:
-            ocr_cx, ocr_cy = int(W * 0.70), int(H * 0.88)  # 比率ベースフォールバック
+            ocr_cx, ocr_cy = roi_to_device(
+                int(W * 0.70), int(H * 0.88), state.game_roi)  # 比率ベースフォールバック
         cx, cy = smart_tap_button(analysis_path, ocr_cx, ocr_cy, ocr_items=ocr)
         logger.info(">>> 【確認ダイアログ】 SmartTap OK (%d,%d)", cx, cy)
         tap_device(cx, cy, state, "CONFIRM_DIALOG_OK")
