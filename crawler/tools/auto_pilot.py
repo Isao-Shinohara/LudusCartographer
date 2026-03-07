@@ -463,6 +463,9 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
         parts = line.split()
         if len(parts) < 2:
             continue
+        # adb 子プロセス (scrcpy-server.jar) をスキップ — Kill 対象外
+        if "adb" in line and "scrcpy-server" in line:
+            continue
         try:
             pid = int(parts[1])
         except ValueError:
