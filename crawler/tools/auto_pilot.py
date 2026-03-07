@@ -196,7 +196,8 @@ class PilotState:
     # ─── 指アイコン静止画面カウンタ (スワイプシーン検出用) ───
     # MOYA_TAP 後に画面変化なし(phash_dist < PHASH_THRESHOLD)が連続した回数。
     # 3回以上で「タップでは進まないスワイプシーン」と判定し連続スワイプに切替。
-    finger_tap_static_count: int = 0
+    finger_tap_static: "StallCounter" = field(
+        default_factory=lambda: StallCounter("finger_tap_static", threshold=3))
     # ─── ダイアログclose累計試行 (リセットなし、エスカレーション用) ───
     dialog_close_total: int = 0  # close失敗が蓄積 → 8回でBACK, 12回でスキップ
     # ─── Result画面ハンドラ状態 ───
@@ -204,7 +205,8 @@ class PilotState:
     result_total_taps: int = 0        # Result画面での累積タップ [0..30]
     result_subtype: str = ""          # "GACHA" | "BATTLE" | ""
     # ─── 隠れ動的属性の昇格 ───
-    gacha_total_taps: int = 0         # ガチャOKフリーズ検知 [0..15]
+    gacha_total: "StallCounter" = field(
+        default_factory=lambda: StallCounter("gacha_total", threshold=15))
     unity_restart_count: int = 0      # Unity force-restart 試行回数 [0..3]
     normatk_fallback: "StallCounter" = field(
         default_factory=lambda: StallCounter("normatk_fallback", threshold=10))
@@ -3128,15 +3130,14 @@ def detect_and_act(ocr: list, state: PilotState,
             # その他のアセットアクション: タップして return (fallthrough なし)
             # GACHA_OK 入力フリーズ検出: 連続タップで応答がない場合 force-stop 復帰
             if action == "GACHA_OK":
-                _gacha_taps = state.gacha_total_taps + 1
-                state.gacha_total_taps = _gacha_taps
-                if _gacha_taps >= 15:
-                    logger.warning("[GACHA_FREEZE] %d回タップ応答なし → Unity入力フリーズ → force-stop", _gacha_taps)
-                    state.gacha_total_taps = 0
+                state.gacha_total.tick()
+                if state.gacha_total.stalled:
+                    logger.warning("[GACHA_FREEZE] %d回タップ応答なし → Unity入力フリーズ → force-stop", state.gacha_total.count)
+                    state.gacha_total.reset()
                     watchdog_recover(state)
                     return "GACHA_FREEZE_RECOVER", 3.0
             else:
-                state.gacha_total_taps = 0
+                state.gacha_total.reset()
             tap_device(cx, cy, state, action)
             # GACHA_OK: 演出終了待ち (演出中はタップが無視されるため長めに待つ)
             _asset_wait = 5.0 if action == "GACHA_OK" else 0.5
@@ -3602,12 +3603,12 @@ def detect_and_act(ocr: list, state: PilotState,
                 # ── Step3-pre: 指タップ静止検出 → スワイプシーン自動切替 ──
                 # 3回以上 MOYA_TAP しても画面が変わらない + OCR テキストなし
                 # → タップでは進まないスワイプシーン (チェック柄チュートリアル等)
-                if (state.finger_tap_static_count >= 3
+                if (state.finger_tap_static.stalled
                         and _gold_frame is None
                         and len(texts) == 0):
                     logger.info(
                         ">>> [SWIPE_AUTO] 指タップ静止%d回+OCR無し → 連続スワイプ開始 (指位置: %d,%d)",
-                        state.finger_tap_static_count, fx, fy,
+                        state.finger_tap_static.count, fx, fy,
                     )
                     _base_ph_sw = compute_phash(analysis_path)
                     _sw_success = False
@@ -3627,7 +3628,7 @@ def detect_and_act(ocr: list, state: PilotState,
                         # 基準phashを更新しない — 初回画面との比較を維持
                     if not _sw_success:
                         logger.warning(">>> [SWIPE_AUTO] 20回スワイプしても変化なし → タップに戻る")
-                    state.finger_tap_static_count = 0
+                    state.finger_tap_static.reset()
                     state.blob_same_count = 0
                     state.last_blob_xy = (0, 0)
                     return "SWIPE_AUTO", 1.5
@@ -4501,7 +4502,7 @@ def main():
             state.stall_corner_tried = False
             state.pre_popup_tap_count = 0  # ポップアップ試行カウンタもリセット
             state.dialog_close_total = 0  # ダイアログclose累計もリセット
-            state.finger_tap_static_count = 0  # 指スワイプ判定もリセット
+            state.finger_tap_static.reset()  # 指スワイプ判定もリセット
             state.last_screen_change_time = time.time()  # Watchdog: 最終変化時刻更新
 
             # ── ADV 高速モード: OCR スキップして画面下部を即連打 ──
@@ -4530,7 +4531,7 @@ def main():
             state.total_ocr_skipped += 1
             # MOYA_TAP 連続静止カウンタ: 指タップしても画面が変わらない回数を追跡
             if state.last_action == "MOYA_TAP":
-                state.finger_tap_static_count += 1
+                state.finger_tap_static.tick()
             # 完全凍結 (dist=0) のみカウント
             if dist == 0:
                 state.consecutive_frozen_frames += 1

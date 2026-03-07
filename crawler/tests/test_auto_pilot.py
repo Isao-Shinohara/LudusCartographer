@@ -461,10 +461,15 @@ class TestPilotStateDynamicAttrsRemoved:
         from tools.auto_pilot import PilotState
         return PilotState()
 
-    def test_gacha_total_taps_is_typed_field(self, state):
-        assert state.gacha_total_taps == 0
-        state.gacha_total_taps = 5
-        assert state.gacha_total_taps == 5
+    def test_gacha_total_is_stall_counter(self, state):
+        from tools.auto_pilot import StallCounter
+        assert isinstance(state.gacha_total, StallCounter)
+        assert state.gacha_total.threshold == 15
+
+    def test_finger_tap_static_is_stall_counter(self, state):
+        from tools.auto_pilot import StallCounter
+        assert isinstance(state.finger_tap_static, StallCounter)
+        assert state.finger_tap_static.threshold == 3
 
     def test_unity_restart_count_is_typed_field(self, state):
         assert state.unity_restart_count == 0
