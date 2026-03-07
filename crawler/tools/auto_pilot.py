@@ -3324,34 +3324,11 @@ def detect_and_act(ocr: list, state: PilotState,
                          "光の間", "パーティ", "プレイヤーマッチ", "お知らせ",
                          "イベント", "マイページ", "編成", "MAGIA EXEDRA"]
         _home_kw_count = sum(1 for h in _home_nav_kws if any(h in t for t in texts))
-        # ガチャ結果画面検出: "NEW" が 3件以上 → キャラ画像のオレンジ色を誤検出するためブロブ無効化
-        new_count = sum(1 for t in texts if t == "NEW")
-        is_gacha_result = new_count >= 3 and not is_battle_screen
-        if is_gacha_result:
-            logger.info("  ガチャ結果画面検出 (NEW×%d) → もや誤検出スキップ", new_count)
-            # OKボタンをダブルタップして進む (シングルタップでは反応しないゲームの挙動対策)
-            ok_match = has_text(ocr, "OK", min_conf=0.5)
-            if ok_match:
-                cx, cy = ok_match["center"]
-                logger.info(
-                    "[Targeting] Mode: Text-Center | Text: \"OK\" | Calc: (%d,%d) | Label: GachaResult",
-                    cx, cy,
-                )
-                action_type, desc = STRATEGIC_ENGINE.log_prediction("OK", cx, cy)
-                state.last_prediction = action_type
-                state.last_prediction_desc = desc
-                state.last_tap_text = "OK"
-                state.last_action_pre_phash = state.last_phash
-                logger.info(">>> 【ガチャ結果】 OK (%d,%d) → ダブルタップ", cx, cy)
-                tap_device(cx, cy, state, "GACHA_RESULT_OK_1", post_wait=0.3)
-                tap_device(cx, cy, state, "GACHA_RESULT_OK_2")
-                return "GACHA_OK", 2.0
-            # OKがない場合は画面中央をダブルタップ (NEW×8の初期表示 = タップで詳細へ)
-            _gc_x, _gc_y = roi_to_device(int(W * 0.5), int(H * 0.5), state.game_roi)
-            logger.info(">>> 【ガチャ結果初期】 OK未検出 → 画面中央ダブルタップ (%d,%d)", _gc_x, _gc_y)
-            tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_1", post_wait=0.3)
-            tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_2")
-            return "GACHA_OK", 2.0
+        # ── Result画面ハンドラ (OCR mode) ──
+        if not is_battle_screen:
+            _result_ocr = handle_result_screen(state, analysis_path, ocr, dist, mode="OCR")
+            if _result_ocr:
+                return _result_ocr
         # ─── ADV選択肢 — 肯定ボタン絶対優先 ───────────────────────────
         # OK / はい / 了解 を最優先。キャンセル / いいえ は選択禁止。
         _adv_positive_kws = ["OK", "はい", "わかった", "了解", "決定"]
@@ -3369,39 +3346,6 @@ def detect_and_act(ocr: list, state: PilotState,
                         _adv_neg["text"] if _adv_neg else "なし")
             tap_device(_ac_x, _ac_y, state, f"ADV_CHOICE '{_adv_pos['text']}'")
             return "ADV_CHOICE", 1.0
-
-        # ─── バトルResultリザルト画面 ───────────────────────────────────────
-        # "次へ" + Resultコンテキスト(EXP/Lv.1/リザルト)が見えている間は優先タップ
-        # ※ OCRが "Result" を "kesuit" 等と誤読する場合も EXP/Lv.1 で補完
-        # 除外: パーティ編成画面にも "Lv.1" が出現するため、編成KWが同時検出されたら除外
-        _formation_kws = has_any(ocr, ["パーティ", "編成", "キオク", "ポートレイト", "自動編成"])
-        _result_ctx = (
-            not _formation_kws
-            and (has_text(ocr, "Result") or has_text(ocr, "EXP")
-                 or has_text(ocr, "Lv.1") or has_text(ocr, "リザルト"))
-        )
-        if _result_ctx:
-            # 「次へ」は右下エリア(y>H*0.6, x>W*0.5)にあるはず。誤検出を位置フィルタで排除
-            _nxt_btn = None
-            for _ocr_item in ocr:
-                _txt = _ocr_item.get("text", "")
-                if "次へ" in _txt or "NEXT" in _txt:
-                    _cx_n, _cy_n = _ocr_item["center"]
-                    if _cy_n > H * 0.6 and _cx_n > W * 0.5:
-                        _nxt_btn = _ocr_item
-                        break
-            if _nxt_btn:
-                _nx, _ny = _nxt_btn["center"]
-                logger.info(">>> 【バトルResult】 次へ (%d,%d) タップ", _nx, _ny)
-                tap_device(_nx, _ny, state, "RESULT_NEXT")
-                return "RESULT_TAP", 1.0
-            else:
-                # 「次へ」OCR未検出 → 想定位置 (SDE検出ボタン中心付近) をタップ
-                _nx = int(W * 0.785)
-                _ny = int(H * 0.914)
-                logger.info(">>> 【バトルResult】 次へ未検出 → 想定位置 (%d,%d) タップ", _nx, _ny)
-                tap_device(_nx, _ny, state, "RESULT_NEXT")
-                return "RESULT_TAP", 1.0
 
         # バトル時は dark_mode=True で輝度閾値を緩和し min_area=200 に下げる（暗背景対応）
         # ホーム画面 / 利用規約ダイアログ / システムダイアログはブロブ誤検出になるためスキップ
@@ -4676,69 +4620,27 @@ def main():
         state.last_phash = cur_phash
         analysis_path = prepare_analysis_image(img_path, actual_w, actual_h)
 
-        # ── 4.2) RESULT_RAPID: リザルト/報酬画面で GLOW 検知 → 右側ボタンを連打 ──
-        # 安全弁: phash 大変化 (dist>30) = シーン遷移 → OCR で再評価
-        # 安全弁2: 15連続 RESULT_RAPID でシーン変化なし → OCR で再評価
-        _result_rapid_count = getattr(state, '_result_rapid_count', 0)
-        _result_rapid_ok = (
-            state.last_action in ("RESULT_TAP", "RESULT_NEXT", "RESULT_RAPID")
-            and analysis_path is not None
-            and dist <= 30
-            and _result_rapid_count < 15
-        )
-        if _result_rapid_ok:
-            _result_glows = detect_guide_glow(analysis_path, ANALYSIS_W, ANALYSIS_H, footer_ratio=0.10)
-            # 右側グロー (x > 60%) を優先 — ボタンは画面右側に集中
-            _right_glows = [g for g in _result_glows if g["cx"] > ANALYSIS_W * 0.60]
-            if _right_glows:
-                _rg = max(_right_glows, key=lambda g: g["area"])
-                _rgx, _rgy = _rg["cx"], _rg["cy"]
-                logger.info("[RESULT_RAPID] right glow(%d,%d) → 即タップ", _rgx, _rgy)
-                tap_device(_rgx, _rgy, state, "RESULT_RAPID")
-            else:
-                # 右側グローなし → 「次へ」ボタン想定位置 (SDE検出中心付近) をタップ
-                _rc_x = int(ANALYSIS_W * 0.785)   # SDE: (1193,658) → 1193/1520≈0.785
-                _rc_y = int(ANALYSIS_H * 0.914)   # SDE: 658/720≈0.914
-                logger.info("[RESULT_RAPID] no right glow → 次へ想定位置 (%d,%d)", _rc_x, _rc_y)
-                tap_device(_rc_x, _rc_y, state, "RESULT_RAPID")
-            state.last_action = "RESULT_RAPID"
-            state._result_rapid_count = _result_rapid_count + 1
-            # 累積カウンター (RESULT_RAPID + OCR経由タップ合算)
-            _rtotal_rr = getattr(state, '_result_total_taps', 0) + 1
-            state._result_total_taps = _rtotal_rr
-            if _rtotal_rr >= 30:
-                logger.warning("[RESULT_FREEZE] RESULT_RAPID %d回 — Unity入力フリーズ → force-stop", _rtotal_rr)
-                state._result_total_taps = 0
-                state._result_rapid_count = 0
-                if watchdog_recover(state):
-                    continue
-                else:
-                    logger.error("[RESULT_FREEZE] 復帰失敗")
-                    break
+        # ── 4.2) Result画面ハンドラ (RAPID mode) ──
+        _result_action = handle_result_screen(
+            state, analysis_path, [], dist, mode="RAPID")
+        if _result_action:
+            if _result_action[0] == "RESULT_FREEZE":
+                # watchdog_recover は handle_result_screen 内で実行済み
+                continue
+            state.last_action = _result_action[0]
             state.stall_start = 0.0
             state.same_phash_count = 0
-            time.sleep(1.0)
             _fms = (time.time() - _loop_t0) * 1000
             state.total_loop_ms += _fms
-            logger.info("  [PERF] Loop %.0fms (RESULT_RAPID) [%d/15]", _fms, state._result_rapid_count)
+            logger.info("  [PERF] Loop %.0fms (%s) [%d/15]",
+                        _fms, _result_action[0], state.result_rapid_count)
+            time.sleep(_result_action[1])
             continue
-        # RESULT_RAPID 脱出時にカウンターリセット
-        if state.last_action not in ("RESULT_TAP", "RESULT_NEXT", "RESULT_RAPID"):
-            state._result_rapid_count = 0
-            state._result_total_taps = 0
-        else:
-            # 累積カウンター: RESULT画面での総タップ数 (RAPID + OCR経由)
-            _rtotal = getattr(state, '_result_total_taps', 0) + 1
-            state._result_total_taps = _rtotal
-            if _rtotal >= 30:
-                logger.warning("[RESULT_FREEZE] Result画面で %d 回タップ応答なし → Unity入力フリーズ → force-stop 復帰", _rtotal)
-                state._result_total_taps = 0
-                state._result_rapid_count = 0
-                if watchdog_recover(state):
-                    continue
-                else:
-                    logger.error("[RESULT_FREEZE] 復帰失敗 — 停止します")
-                    break
+        # RESULT状態リセット (Result画面を脱出した時)
+        if state.last_action not in ("RESULT_TAP", "RESULT_NEXT",
+                                     "RESULT_RAPID", "GACHA_OK"):
+            state.result_rapid_count = 0
+            state.result_total_taps = 0
 
         # ── 4.3) BATTLE_RAPID: 発光/MOYA 検知即タップ → OCR 完全スキップ ──
         # detect_guide_glow() + find_finger_blobs() は OpenCV のみ (10-50ms)
