@@ -112,6 +112,18 @@ _rejected_finger_blobs: list = []
 OCR_LANG = "japan"
 OCR_MIN_CONF = 0.3
 
+# ─── scrcpy 管理 ───
+SCRCPY_DEVICE = "192.168.10.118:5555"
+SCRCPY_ARGS = [
+    "scrcpy",
+    "-s", SCRCPY_DEVICE,
+    "--turn-screen-off",   # 物理画面消灯
+    "--stay-awake",
+    "--always-on-top",
+    "--no-audio",
+    "-m", "800",
+]
+
 # Ctrl+C シグナルハンドラ用: main() で設定する PilotState への参照
 _pilot_state_ref: Optional["PilotState"] = None
 
@@ -432,6 +444,61 @@ def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Optional
     # 全リトライ失敗: クラッシュせず None を返す (呼び出し側で continue)
     logger.error("[WIFI_ERROR] Corrupted frame dropped (%d retries exhausted). Returning None.", retries)
     return None, 0, 0, _retried
+
+
+def manage_scrcpy() -> Optional[subprocess.Popen]:
+    """scrcpy を規定オプションで起動。不整合プロセスは Kill → 再起動。"""
+    try:
+        ps = subprocess.run(
+            ["ps", "aux"], capture_output=True, text=True, timeout=5
+        )
+    except Exception as e:
+        logger.warning("[SCRCPY] ps aux 失敗: %s", e)
+        return None
+
+    conforming_pid = None
+    for line in ps.stdout.splitlines():
+        if "scrcpy" not in line or "grep" in line:
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        try:
+            pid = int(parts[1])
+        except ValueError:
+            continue
+        has_device = SCRCPY_DEVICE in line
+        has_screen_off = "--turn-screen-off" in line
+        if has_device and has_screen_off:
+            conforming_pid = pid
+            logger.info("[SCRCPY] 規定プロセス検出 PID=%d — 継続", pid)
+        else:
+            logger.info("[SCRCPY] 不整合プロセス Kill PID=%d (cmdline: ...%s)",
+                        pid, line[-80:])
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+
+    if conforming_pid is not None:
+        return None  # 既に規定オプションで動作中
+
+    # 新規起動
+    try:
+        proc = subprocess.Popen(
+            SCRCPY_ARGS,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        logger.info("[SCRCPY] 規定オプションで起動 PID=%d (device=%s, --turn-screen-off)",
+                    proc.pid, SCRCPY_DEVICE)
+        return proc
+    except FileNotFoundError:
+        logger.warning("[SCRCPY] scrcpy が見つかりません — Stay Awake なしで続行 "
+                       "(brew install scrcpy で導入可能)")
+    except Exception as e:
+        logger.warning("[SCRCPY] 起動失敗: %s — Stay Awake なしで続行", e)
+    return None
 
 
 def tap_device(x: int, y: int, state: PilotState, desc: str = "",
@@ -3781,30 +3848,8 @@ def main():
 
     signal.signal(signal.SIGINT, _sigint_handler)
 
-    # ─── scrcpy Stay Awake: 二重起動防止 + システムスリープ防止 ───
-    # pgrep で既存プロセスを確認し、なければ新規起動する（増殖防止）
-    _scrcpy_proc = None
-    _existing_scrcpy = subprocess.run(
-        ["pgrep", "-x", "scrcpy"], capture_output=True, text=True
-    )
-    if _existing_scrcpy.returncode == 0:
-        logger.info("[SCRCPY] 既存プロセス検出 (PID=%s) — 新規起動をスキップ",
-                    _existing_scrcpy.stdout.strip().replace("\n", ","))
-    else:
-        try:
-            _scrcpy_proc = subprocess.Popen(
-                ["scrcpy", "-s", DEVICE_SERIAL, "-S", "--stay-awake",
-                 "--always-on-top", "--no-audio", "-m", "800"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            logger.info("[SCRCPY] Stay Awake バックグラウンド起動 PID=%d (device=%s)",
-                        _scrcpy_proc.pid, DEVICE_SERIAL)
-        except FileNotFoundError:
-            logger.warning("[SCRCPY] scrcpy が見つかりません — Stay Awake なしで続行 "
-                           "(brew install scrcpy で導入可能)")
-        except Exception as _e:
-            logger.warning("[SCRCPY] 起動失敗: %s — Stay Awake なしで続行", _e)
+    # ─── scrcpy 管理: 不整合 Kill → 規定オプション起動 ───
+    _scrcpy_proc = manage_scrcpy()
 
     # 起動直後に実機物理解像度を取得してログ出力 (ループ内の初回 take_screenshot より早期)
     _dev_w, _dev_h = get_device_resolution()
@@ -4333,6 +4378,11 @@ def main():
         # cv2 オブジェクトを毎イテレーション解放してメモリ断片化を防ぐ
         if i % 50 == 0:
             gc.collect()
+            # scrcpy 不死身モード: 50イテレーションごとにチェック
+            if i > 0:
+                if _scrcpy_proc is None or _scrcpy_proc.poll() is not None:
+                    logger.info("[SCRCPY] プロセス消滅を検知 — 自動再起動")
+                    _scrcpy_proc = manage_scrcpy()
 
     logger.warning("最大イテレーション(%d)に到達。手動確認が必要です。", MAX_ITERATIONS)
     generate_and_copy_report(state, f"最大イテレーション({MAX_ITERATIONS})到達")
