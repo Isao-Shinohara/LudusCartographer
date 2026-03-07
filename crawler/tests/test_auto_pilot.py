@@ -249,3 +249,161 @@ class TestStrategicDecisionEngineFindButtons:
         cv2.imwrite(str(img_path), img)
         # OCR結果なし → ログだけ出す（クラッシュしない）
         engine.report_screen_affordances(img_path, [])
+
+
+# ─── Result画面ハンドラ テスト ──────────────────────────────────────
+
+def _make_ocr_item(text: str, cx: int, cy: int, confidence: float = 0.9) -> dict:
+    """テスト用の OCR アイテムを生成。"""
+    return {
+        "text": text,
+        "center": (cx, cy),
+        "confidence": confidence,
+        "box": [[cx - 20, cy - 10], [cx + 20, cy - 10],
+                [cx + 20, cy + 10], [cx - 20, cy + 10]],
+    }
+
+
+class TestIsResultScreen:
+    """_is_result_screen() のテスト。"""
+
+    def test_gacha_result_detected(self):
+        from tools.auto_pilot import _is_result_screen
+        ocr = [_make_ocr_item("NEW", 100, 100),
+               _make_ocr_item("NEW", 300, 100),
+               _make_ocr_item("NEW", 500, 100)]
+        texts = [r["text"] for r in ocr]
+        is_result, subtype = _is_result_screen(ocr, texts)
+        assert is_result is True
+        assert subtype == "GACHA"
+
+    def test_battle_result_detected(self):
+        from tools.auto_pilot import _is_result_screen
+        ocr = [_make_ocr_item("Result", 760, 50),
+               _make_ocr_item("EXP", 400, 300)]
+        texts = [r["text"] for r in ocr]
+        is_result, subtype = _is_result_screen(ocr, texts)
+        assert is_result is True
+        assert subtype == "BATTLE"
+
+    def test_formation_excluded(self):
+        from tools.auto_pilot import _is_result_screen
+        ocr = [_make_ocr_item("Lv.1", 200, 200),
+               _make_ocr_item("パーティ", 400, 50)]
+        texts = [r["text"] for r in ocr]
+        is_result, subtype = _is_result_screen(ocr, texts)
+        assert is_result is False
+        assert subtype == ""
+
+    def test_no_result_keywords(self):
+        from tools.auto_pilot import _is_result_screen
+        ocr = [_make_ocr_item("クエスト", 100, 100),
+               _make_ocr_item("ショップ", 300, 100)]
+        texts = [r["text"] for r in ocr]
+        is_result, subtype = _is_result_screen(ocr, texts)
+        assert is_result is False
+        assert subtype == ""
+
+
+class TestFindNextButton:
+    """_find_next_button() のテスト。"""
+
+    def test_finds_next_in_bottom_right(self):
+        from tools.auto_pilot import _find_next_button
+        ocr = [_make_ocr_item("次へ", 1100, 650)]
+        result = _find_next_button(ocr, 1520, 720, "BATTLE")
+        assert result is not None
+        assert result["center"] == (1100, 650)
+
+    def test_ignores_next_in_top_left(self):
+        from tools.auto_pilot import _find_next_button
+        ocr = [_make_ocr_item("次へ", 100, 100)]
+        result = _find_next_button(ocr, 1520, 720, "BATTLE")
+        assert result is None
+
+    def test_finds_ok_for_gacha(self):
+        from tools.auto_pilot import _find_next_button
+        ocr = [_make_ocr_item("OK", 762, 680, confidence=0.8)]
+        result = _find_next_button(ocr, 1520, 720, "GACHA")
+        assert result is not None
+        assert result["text"] == "OK"
+
+
+class TestHandleResultScreen:
+    """handle_result_screen() のテスト。"""
+
+    @pytest.fixture
+    def state(self):
+        from tools.auto_pilot import PilotState
+        s = PilotState()
+        s.device_w = 0
+        s.device_h = 0
+        return s
+
+    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.auto_pilot.detect_guide_glow")
+    def test_rapid_mode_with_glow(self, mock_glow, mock_tap, state, tmp_path):
+        from tools.auto_pilot import handle_result_screen
+        state.last_action = "RESULT_TAP"
+        mock_glow.return_value = [
+            {"cx": 1200, "cy": 600, "area": 5000, "side": "right",
+             "bx": 1100, "by": 550, "bw": 200, "bh": 100}
+        ]
+        analysis = tmp_path / "test.png"
+        analysis.touch()
+        result = handle_result_screen(state, analysis, [], 5, mode="RAPID")
+        assert result is not None
+        assert result[0] == "RESULT_RAPID"
+        assert result[1] == 1.0
+        assert state.result_rapid_count == 1
+        mock_tap.assert_called_once()
+
+    @patch("tools.auto_pilot.tap_device")
+    def test_ocr_mode_gacha(self, mock_tap, state):
+        from tools.auto_pilot import handle_result_screen
+        ocr = [_make_ocr_item("NEW", 100, 100),
+               _make_ocr_item("NEW", 300, 100),
+               _make_ocr_item("NEW", 500, 100),
+               _make_ocr_item("OK", 762, 680)]
+        result = handle_result_screen(state, None, ocr, 5, mode="OCR")
+        assert result is not None
+        assert result[0] == "GACHA_OK"
+        assert result[1] == 2.0
+        assert mock_tap.call_count == 2  # ダブルタップ
+
+    @patch("tools.auto_pilot.tap_device")
+    def test_ocr_mode_battle(self, mock_tap, state):
+        from tools.auto_pilot import handle_result_screen
+        ocr = [_make_ocr_item("Result", 760, 50),
+               _make_ocr_item("EXP", 400, 300),
+               _make_ocr_item("次へ", 1100, 650)]
+        result = handle_result_screen(state, None, ocr, 5, mode="OCR")
+        assert result is not None
+        assert result[0] == "RESULT_TAP"
+        assert result[1] == 1.0
+        assert mock_tap.call_count == 1  # シングルタップ
+
+    @patch("tools.auto_pilot.tap_device")
+    def test_returns_none_for_non_result(self, mock_tap, state):
+        from tools.auto_pilot import handle_result_screen
+        ocr = [_make_ocr_item("クエスト", 100, 100)]
+        result = handle_result_screen(state, None, ocr, 5, mode="OCR")
+        assert result is None
+        mock_tap.assert_not_called()
+
+    @patch("tools.auto_pilot.watchdog_recover", return_value=True)
+    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.auto_pilot.detect_guide_glow", return_value=[])
+    def test_freeze_recovery_at_30_taps(self, mock_glow, mock_tap,
+                                         mock_watchdog, state, tmp_path):
+        from tools.auto_pilot import handle_result_screen
+        state.last_action = "RESULT_TAP"
+        state.result_total_taps = 29  # 次で30
+        analysis = tmp_path / "test.png"
+        analysis.touch()
+        result = handle_result_screen(state, analysis, [], 5, mode="RAPID")
+        assert result is not None
+        assert result[0] == "RESULT_FREEZE"
+        mock_watchdog.assert_called_once()
+        assert state.result_total_taps == 0
+        assert state.result_rapid_count == 0
