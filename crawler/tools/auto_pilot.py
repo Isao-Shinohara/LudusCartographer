@@ -1471,8 +1471,8 @@ def process_paging_dialog(
                     _no_close_streak += 1
                 else:
                     _no_close_streak = 0
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("[PAGING] × ROI 判定例外: %s", _e)
         if _no_close_streak >= 8:
             # × ボタンが画面右上に存在しない → 枠外 or 下部中央を叩いて強制脱出
             _esc_x, _esc_y = W // 2, H - 60
@@ -2075,6 +2075,8 @@ ASSET_MANAGER = AssetManager()
 
 # ─── Result画面ハンドラ ヘルパー ──────────────────────────────
 _RESULT_HANDLER_COMPARE = os.environ.get("RESULT_HANDLER_COMPARE", "") == "1"
+_RESULT_NEXT_X_RATIO = 0.785
+_RESULT_NEXT_Y_RATIO = 0.914
 
 # パーティ編成画面の除外キーワード (Lv.1 が出るが Result ではない)
 _FORMATION_KWS = ["パーティ", "編成", "キオク", "ポートレイト", "自動編成"]
@@ -2153,8 +2155,8 @@ def handle_result_screen(
             tap_device(_rgx, _rgy, state, "RESULT_RAPID")
         else:
             # 右側グローなし → 「次へ」想定位置
-            _rc_x = int(W * 0.785)
-            _rc_y = int(H * 0.914)
+            _rc_x = int(W * _RESULT_NEXT_X_RATIO)
+            _rc_y = int(H * _RESULT_NEXT_Y_RATIO)
             logger.info("[RESULT_RAPID] no right glow → 次へ想定位置 (%d,%d)",
                         _rc_x, _rc_y)
             tap_device(_rc_x, _rc_y, state, "RESULT_RAPID")
@@ -2207,8 +2209,8 @@ def handle_result_screen(
         logger.info(">>> 【バトルResult】 次へ (%d,%d) タップ", _nx, _ny)
         tap_device(_nx, _ny, state, "RESULT_NEXT")
     else:
-        _nx = int(W * 0.785)
-        _ny = int(H * 0.914)
+        _nx = int(W * _RESULT_NEXT_X_RATIO)
+        _ny = int(H * _RESULT_NEXT_Y_RATIO)
         logger.info(">>> 【バトルResult】 次へ未検出 → 想定位置 (%d,%d) タップ",
                     _nx, _ny)
         tap_device(_nx, _ny, state, "RESULT_NEXT")
@@ -2306,8 +2308,8 @@ def handle_dialog_screen(
         )
         try:
             adb("shell input keyevent KEYCODE_BACK")
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("[DIALOG] BACK キー送信例外: %s", _e)
         state.pre_popup_tap_count = 0
         return "DIALOG_BACK_ESCALATION", 2.0
 
@@ -4380,7 +4382,8 @@ def main():
                                     _new_roi[0], ANALYSIS_W - _new_roi[0] - _new_roi[2],
                                     _new_roi[1], ANALYSIS_H - _new_roi[1] - _new_roi[3])
                         state.game_roi = _new_roi
-        except Exception:
+        except Exception as _e:
+            logger.debug("[ROI] detect_game_roi 例外: %s", _e)
             state.last_screen = None
 
         if not state.device_w:

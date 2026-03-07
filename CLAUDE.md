@@ -70,7 +70,7 @@ AIにモバイルゲームを自律実行させ、すべてのUIを「地図を�
 
   <body（任意）>
 
-  Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+  Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
   ```
 - type の例: `feat`, `fix`, `test`, `chore`, `docs`, `refactor`
 
