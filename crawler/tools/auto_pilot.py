@@ -3984,13 +3984,35 @@ def main():
                 continue
 
             if stall_elapsed >= STALL_TIMEOUT * 2 and state.stall_corner_tried:
-                logger.error(">>> %.0f秒スタック解消不能 — 停止", stall_elapsed)
-                save_evidence(img_path, [], "STALL_FATAL", state)
-                logger.info("  総タップ: %d  OCR実行: %d  スキップ: %d  暗転: %d",
-                            state.total_taps, state.total_ocr_calls,
-                            state.total_ocr_skipped, state.total_blackout_skipped)
-                generate_and_copy_report(state, f"スタック解消不能 (elapsed={stall_elapsed:.0f}秒)")
-                return
+                _restart_count = getattr(state, '_unity_restart_count', 0)
+                if _restart_count >= 3:
+                    logger.error(">>> %.0f秒スタック解消不能 (再起動%d回失敗) — 停止",
+                                 stall_elapsed, _restart_count)
+                    save_evidence(img_path, [], "STALL_FATAL", state)
+                    generate_and_copy_report(state, f"スタック解消不能 (restart={_restart_count})")
+                    return
+                # ── Unity 入力フリーズ自動復帰 ──
+                logger.warning(">>> %.0f秒スタック — Unity入力フリーズ疑い → ゲーム再起動 (試行%d)",
+                               stall_elapsed, _restart_count + 1)
+                save_evidence(img_path, [], "UNITY_FREEZE_RESTART", state)
+                try:
+                    import subprocess as _sp_uf
+                    _sp_uf.run(["adb", "-s", DEVICE_SERIAL, "shell", "am", "force-stop",
+                                "com.aniplex.magia.exedra.jp"], timeout=5)
+                    time.sleep(3)
+                    _sp_uf.run(["adb", "-s", DEVICE_SERIAL, "shell", "am", "start", "-n",
+                                "com.aniplex.magia.exedra.jp/com.google.firebase.MessagingUnityPlayerActivity"],
+                               timeout=5)
+                    logger.info("[UNITY_RESTART] ゲーム再起動完了 — 30秒待機")
+                    time.sleep(30)
+                except Exception as _uf_e:
+                    logger.error("[UNITY_RESTART] 再起動失敗: %s", _uf_e)
+                state._unity_restart_count = _restart_count + 1
+                state.stall_start = 0.0
+                state.stall_corner_tried = False
+                state.same_phash_count = 0
+                state.last_phash = ""
+                continue
 
         # ── 4) 解析用画像の準備 ──
         state.last_phash = cur_phash
