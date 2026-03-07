@@ -31,7 +31,10 @@ os.environ.setdefault("OMP_NUM_THREADS", "2")
 # OpenCV のスレッド数も制限
 os.environ.setdefault("OPENCV_VIDEOIO_PRIORITY_MSMF", "0")
 import cv2
+import json
 import numpy as np
+import random
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -634,7 +637,6 @@ def save_evidence(img_path: Path, ocr_results: list, action: str, state: PilotSt
     ts = datetime.now().strftime("%H%M%S")
     dest = EVIDENCE_DIR / f"{ts}_iter{state.iteration:03d}_{action}.png"
     try:
-        import shutil
         shutil.copy2(str(img_path), str(dest))
         state.screenshots_saved += 1
     except Exception as e:
@@ -783,7 +785,6 @@ def create_finger_mask_image(img_path: Path, cx: int, cy: int, half: int = 175) 
     失敗した場合は元の img_path を返す。
     """
     try:
-        import tempfile
         _img_hm = cv2.imread(str(img_path))
         if _img_hm is None:
             return img_path
@@ -1519,12 +1520,11 @@ def detect_text_input_area(
 
     Returns: (field_cx, field_cy) or None
     """
-    import re as _re
     # --- 1. OCR 文字数カウンター "0/N" パターン ---
     if ocr_items:
         for _item in ocr_items:
             _txt = _item.get("text", "").strip()
-            if _re.match(r"^0/\d+$", _txt):
+            if re.match(r"^0/\d+$", _txt):
                 _cx, _cy = _item["center"]
                 # カウンターはフィールド右端にある → フィールド中心は左へ ~13% (200px / 1520)
                 return max(0, _cx - int(W * 0.131)), _cy
@@ -2441,14 +2441,12 @@ class StrategicDecisionEngine:
     def _load_knowledge(self) -> dict:
         if self.KNOWLEDGE_PATH.exists():
             try:
-                import json
                 return json.loads(self.KNOWLEDGE_PATH.read_text())
             except Exception:
                 pass
         return {"patterns": {}, "stats": {"total_taps": 0, "verified": 0}}
 
     def _save_knowledge(self) -> None:
-        import json
         self.KNOWLEDGE_PATH.parent.mkdir(parents=True, exist_ok=True)
         self.KNOWLEDGE_PATH.write_text(
             json.dumps(self._knowledge, ensure_ascii=False, indent=2)
@@ -3074,8 +3072,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 return "TAP_HIGHLIGHTED_NAV", 1.5
             # ── NAME_INPUT_OK_TAP: 名前未入力(0/N)の場合は入力シーケンスへ ──
             if action == "NAME_INPUT_OK_TAP":
-                import re as _re2
-                _is_empty_field = any(_re2.match(r"^0/\d+$", t.strip()) for t in texts)
+                _is_empty_field = any(re.match(r"^0/\d+$", t.strip()) for t in texts)
                 if _is_empty_field:
                     _field_pos = detect_text_input_area(analysis_path, W, H, ocr_items=ocr)
                     if _field_pos:
@@ -3517,7 +3514,6 @@ def detect_and_act(ocr: list, state: PilotState,
                 state.blob_same_count = 0
                 state.last_blob_xy = (fx, fy)
             if state.blob_same_count >= 5:
-                import random as _rnd_rec
                 _stg = state.blob_same_count
                 logger.info(">>> [RECOVERY] スタック stage=%d (%d,%d)", _stg, fx, fy)
                 # 移動シーン(OCR無し) + 10回以上 → SWIPE_UP 強制 (最優先)
@@ -3529,8 +3525,8 @@ def detect_and_act(ocr: list, state: PilotState,
                     return "SWIPE_FALLBACK", 1.5
                 # Stage 1-3 (count=5,6,7): ジッター±10px タップ
                 if _stg <= 7:
-                    _jx = max(50, min(W - 50, fx + _rnd_rec.randint(-10, 10)))
-                    _jy = max(50, min(H - 50, fy + _rnd_rec.randint(-10, 10)))
+                    _jx = max(50, min(W - 50, fx + random.randint(-10, 10)))
+                    _jy = max(50, min(H - 50, fy + random.randint(-10, 10)))
                     logger.info(">>> [RECOVERY s%d] ジッタータップ (%d,%d)", _stg - 4, _jx, _jy)
                     tap_device(_jx, _jy, state, f"RECOVERY_JITTER_s{_stg - 4}")
                     if _stg == 7:
@@ -3550,8 +3546,8 @@ def detect_and_act(ocr: list, state: PilotState,
                     # OCR ベース処理に落ちる (fall through)
                 # Stage 7-9 (count=11,12,13): ランダムブラインドタップ
                 elif _stg <= 13:
-                    _bx = max(50, min(W - 50, fx + _rnd_rec.randint(-80, 80)))
-                    _by = max(50, min(H - 50, fy + _rnd_rec.randint(-60, 60)))
+                    _bx = max(50, min(W - 50, fx + random.randint(-80, 80)))
+                    _by = max(50, min(H - 50, fy + random.randint(-60, 60)))
                     logger.info(">>> [RECOVERY s%d] ブラインドタップ (%d,%d)", _stg - 10, _bx, _by)
                     tap_device(_bx, _by, state, f"RECOVERY_BLIND_s{_stg - 10}")
                     return "RECOVERY_BLIND", 0.8
