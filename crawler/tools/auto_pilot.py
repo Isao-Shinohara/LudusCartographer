@@ -1352,14 +1352,15 @@ def detect_dialog_frame_and_nav(
 
         # Phase B: フレーム未検出 or フレーム右上で × 未発見 → 画面右上隅で探す
         if _DIALOG_CLOSE_TEMPLATE.exists():
+            _close_tmpl = cv2.imread(str(_DIALOG_CLOSE_TEMPLATE))
             _r = cv2.matchTemplate(
                 cv2.imread(str(img_path), cv2.IMREAD_COLOR)[0: int(_H * 0.14), int(_W * 0.88):],
-                cv2.imread(str(_DIALOG_CLOSE_TEMPLATE)),
+                _close_tmpl,
                 cv2.TM_CCOEFF_NORMED,
             )
             _, _mv, _, _ml = cv2.minMaxLoc(_r)
             if _mv >= 0.75:
-                _tw, _th = cv2.imread(str(_DIALOG_CLOSE_TEMPLATE)).shape[1], cv2.imread(str(_DIALOG_CLOSE_TEMPLATE)).shape[0]
+                _th, _tw = _close_tmpl.shape[:2]
                 return ("close",
                         int(_W * 0.88) + _ml[0] + _tw // 2,
                         _ml[1] + _th // 2)
@@ -1369,14 +1370,15 @@ def detect_dialog_frame_and_nav(
 
         # ── ▷ ボタン (スクリーン右エッジ) ────────────────────────────────
         if _DIALOG_NEXT_TEMPLATE.exists():
+            _next_tmpl = cv2.imread(str(_DIALOG_NEXT_TEMPLATE))
             _r2 = cv2.matchTemplate(
                 img[int(_H * 0.22): int(_H * 0.78), int(_W * 0.83):],
-                cv2.imread(str(_DIALOG_NEXT_TEMPLATE)),
+                _next_tmpl,
                 cv2.TM_CCOEFF_NORMED,
             )
             _, _mv2, _, _ml2 = cv2.minMaxLoc(_r2)
             if _mv2 >= 0.75:
-                _tw2, _th2 = cv2.imread(str(_DIALOG_NEXT_TEMPLATE)).shape[1], cv2.imread(str(_DIALOG_NEXT_TEMPLATE)).shape[0]
+                _th2, _tw2 = _next_tmpl.shape[:2]
                 return ("next",
                         int(_W * 0.83) + _ml2[0] + _tw2 // 2,
                         int(_H * 0.22) + _ml2[1] + _th2 // 2)
