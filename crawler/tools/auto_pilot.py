@@ -317,52 +317,53 @@ def roi_to_device(ax: int, ay: int, roi: tuple) -> tuple[int, int]:
     )
 
 
-def _correct_btn_tap_y(img, cx: int, cy: int, box: list) -> int:
-    """
-    OCR検出ボタン (OK/はい など) のタップY座標を補正する。
+def text_core_center(
+    button_region: tuple[int, int, int, int],
+    ocr_items: list[dict],
+    label: str = "",
+) -> tuple[int, int]:
+    """Text-Core Priority Algorithm: テキスト中心優先のタップ座標決定。
 
-    まどドラのゲームボタンはOCR枠が実際のボタン視覚領域より下に延びることがある。
-    (枠中心が暗いピクセル域に落ちる) → 中心が暗い場合は枠top付近から上方向を走査して
-    輝度の高い領域（実際のボタン面）の中心を返す。
+    STEP 1: button_region (B) 内に OCR テキスト中心が存在するか判定
+    STEP 2: テキストあり → テキスト領域の中心座標を返す
+    STEP 3: テキストなし → B の中心（下部15%除外）を返す
 
     Args:
-        img : cv2 imread 済み画像 (BGRまたはNone)
-        cx  : OCR枠の中心X
-        cy  : OCR枠の中心Y
-        box : OCR box [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
-    Returns: 補正後のタップY座標 (補正不要時はcyをそのまま返す)
+        button_region : ボタン検出領域 (x, y, width, height)
+        ocr_items     : OCR 結果リスト [{"text", "center", "confidence", "box"}, ...]
+        label         : ログ用ラベル
+    Returns: (tap_x, tap_y)
     """
-    try:
-        import cv2 as _cv2b
-        import numpy as _npb
-        if img is None:
-            return cy
-        gray = _cv2b.cvtColor(img, _cv2b.COLOR_BGR2GRAY)
-        H, W = img.shape[:2]
-        # 中心ピクセルの輝度確認
-        cy_c = max(0, min(cy, H - 1))
-        cx_c = max(0, min(cx, W - 1))
-        if gray[cy_c, cx_c] >= 60:
-            return cy  # 十分明るい → 補正不要
-        # 枠top Y を取得 (box[0][1])
-        box_top = int(box[0][1])
-        # 枠top から上100px の範囲でX=cx付近の輝度を走査
-        scan_start = max(0, box_top - 100)
-        scan_end = min(H - 1, box_top + 5)
-        half_w = 40
-        x0 = max(0, cx - half_w)
-        x1 = min(W, cx + half_w)
-        bright_ys = []
-        for y in range(scan_start, scan_end):
-            row_mean = float(_npb.mean(gray[y, x0:x1]))
-            if row_mean >= 60:
-                bright_ys.append(y)
-        if bright_ys:
-            corrected = (bright_ys[0] + bright_ys[-1]) // 2
-            return corrected
-        return cy
-    except Exception:
-        return cy
+    bx, by, bw, bh = button_region
+
+    # STEP 1: B 内のテキストを検索
+    texts_in_button = []
+    for item in ocr_items:
+        tcx, tcy = item["center"]
+        if bx <= tcx <= bx + bw and by <= tcy <= by + bh:
+            texts_in_button.append(item)
+
+    if texts_in_button:
+        # STEP 2: 最も信頼度の高いテキストの中心を使用
+        best = max(texts_in_button, key=lambda r: r["confidence"])
+        tx, ty = best["center"]
+        logger.info(
+            "[Targeting] Mode: Text-Center | Text: \"%s\" | Button: (%d,%d,%d,%d) | Calc: (%d,%d)%s",
+            best["text"], bx, by, bw, bh, tx, ty,
+            f" | Label: {label}" if label else "",
+        )
+        return tx, ty
+
+    # STEP 3: テキストなし → B の中心（下部15%除外）
+    effective_h = int(bh * 0.85)
+    cx = bx + bw // 2
+    cy = by + effective_h // 2
+    logger.info(
+        "[Targeting] Mode: Button-Center-Adjusted | Text: (none) | Button: (%d,%d,%d,%d) | Bottom15%%excluded | Calc: (%d,%d)%s",
+        bx, by, bw, bh, cx, cy,
+        f" | Label: {label}" if label else "",
+    )
+    return cx, cy
 
 
 def get_device_resolution() -> tuple[int, int]:
@@ -1717,10 +1718,14 @@ def smart_tap_button(
     ocr_cx: int,
     ocr_cy: int,
     search_r: int = 120,
+    ocr_items: list[dict] | None = None,
 ) -> tuple[int, int]:
-    """OCR テキスト座標周辺から金色ボタン枠を検出し、幾何学的中心を返す。
+    """Text-Core 対応 SmartTap: 金色ボタン枠を検出し、テキスト中心優先でタップ座標を返す。
 
-    検出失敗時は OCR 座標に _BUTTON_Y_OFFSET を加算してフォールバック。
+    1. OCR 中心周辺から HSV で金色ボタン枠 (B) を検出
+    2. B が見つかったら text_core_center() でテキスト中心優先の座標を返す
+    3. B が見つからない場合は OCR 座標をそのまま返す
+
     返値: (tap_x, tap_y)
     """
     try:
@@ -1741,7 +1746,7 @@ def smart_tap_button(
         roi = img_bgr[y1:y2, x1:x2]
         roi_hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
-        # 金色ボタン枠の HSV レンジ (実測: RGB≈(190,165,122) → H≈30,S≈80,V≈190)
+        # 金色ボタン枠の HSV レンジ
         lower_gold = np.array([15, 50, 120], dtype=np.uint8)
         upper_gold = np.array([42, 190, 235], dtype=np.uint8)
         mask = cv2.inRange(roi_hsv, lower_gold, upper_gold)
@@ -1757,36 +1762,33 @@ def smart_tap_button(
         best_area = 0
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 2000:  # ボタン最小面積: 2000px² (影・境界線を除外)
+            if area < 2000:
                 continue
             rx, ry, rw, rh = cv2.boundingRect(cnt)
-            # ボタンらしい形状: 横長かつ適切なサイズ (アスペクト比 2〜15)
             if rw < 80 or rh < 20:
                 continue
             aspect = rw / max(rh, 1)
             if aspect < 2.0 or aspect > 15.0:
-                continue  # 細すぎ(影)・正方形すぎ(アイコン)を除外
+                continue
             if area > best_area:
                 best_area = area
                 best_rect = (rx + x1, ry + y1, rw, rh)
 
         if best_rect:
-            bx, by, bw, bh = best_rect
-            cx = bx + bw // 2
-            cy = by + bh // 2
-            logger.info(
-                "  [SmartTap] OCR中心=(%d,%d) → 金色ボタン検出 rect=(%d,%d,%d,%d) → タップ座標=(%d,%d)",
-                ocr_cx, ocr_cy, bx, by, bw, bh, cx, cy
+            # Text-Core: ボタン枠 (B) 内のテキスト中心を優先
+            return text_core_center(
+                best_rect,
+                ocr_items or [],
+                label="SmartTap",
             )
-            return cx, cy
 
     except Exception as e:
         logger.debug("  [SmartTap] エラー: %s", e)
 
-    # フォールバック: OCR 座標をそのまま使用（数学的中心点）
+    # フォールバック: OCR 座標をそのまま使用
     logger.info(
-        "  [SmartTap] HSV検出失敗 → フォールバック OCR中心=(%d,%d) をそのままタップ",
-        ocr_cx, ocr_cy
+        "[Targeting] Mode: Text-Center | Text: (OCR-direct) | Calc: (%d,%d) | Label: SmartTap-Fallback",
+        ocr_cx, ocr_cy,
     )
     return ocr_cx, ocr_cy
 
@@ -2441,7 +2443,10 @@ def detect_and_act(ocr: list, state: PilotState,
     _confirm_neg = has_any(ocr, _confirm_neg_kws)
     if _confirm_pos and _confirm_neg:
         _cp_x, _cp_y = _confirm_pos["center"]
-        _cp_y = _correct_btn_tap_y(state.last_screen, _cp_x, _cp_y, _confirm_pos["box"])
+        logger.info(
+            "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) | Label: ConfirmDialog",
+            _confirm_pos["text"], _cp_x, _cp_y,
+        )
         logger.info(
             ">>> 【確認ダイアログ最優先】 肯定 '%s' (%d,%d) タップ (否定='%s'を無視)",
             _confirm_pos["text"], _cp_x, _cp_y,
@@ -2743,7 +2748,10 @@ def detect_and_act(ocr: list, state: PilotState,
                     _dlg_neg = has_any(ocr, ["キャンセル", "いいえ", "戻る"])
                     if _dlg_pos and _dlg_neg:
                         _dp_x, _dp_y = _dlg_pos["center"]
-                        _dp_y = _correct_btn_tap_y(state.last_screen, _dp_x, _dp_y, _dlg_pos["box"])
+                        logger.info(
+                            "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) | Label: Dialog#0",
+                            _dlg_pos["text"], _dp_x, _dp_y,
+                        )
                         logger.info(
                             ">>> 【ダイアログ#0-DIALOG】確認ダイアログ(OK+キャンセル) → × ではなく '%s'(%d,%d) タップ",
                             _dlg_pos["text"], _dp_x, _dp_y,
@@ -2883,7 +2891,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     tap_x, tap_y = gold_pos
                 else:
                     # フォールバック: 指アイコン直下160px
-                    tap_x, tap_y = smart_tap_button(analysis_path, cx, cy + 160, search_r=160)
+                    tap_x, tap_y = smart_tap_button(analysis_path, cx, cy + 160, search_r=160, ocr_items=ocr)
                 logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d) → 金色ハイライト(%d,%d)",
                             cx, cy, tap_x, tap_y)
                 tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
@@ -2997,7 +3005,7 @@ def detect_and_act(ocr: list, state: PilotState,
             ocr_cx, ocr_cy = ok_bottom["center"]
         else:
             ocr_cx, ocr_cy = int(W * 0.70), int(H * 0.88)  # 比率ベースフォールバック
-        cx, cy = smart_tap_button(analysis_path, ocr_cx, ocr_cy)
+        cx, cy = smart_tap_button(analysis_path, ocr_cx, ocr_cy, ocr_items=ocr)
         logger.info(">>> 【確認ダイアログ】 SmartTap OK (%d,%d)", cx, cy)
         tap_device(cx, cy, state, "CONFIRM_DIALOG_OK")
         return "CONFIRM_DIALOG_OK", 1.5
@@ -3179,7 +3187,10 @@ def detect_and_act(ocr: list, state: PilotState,
         _adv_neg = has_any(ocr, _adv_negative_kws)
         if _adv_pos:
             _ac_x, _ac_y = _adv_pos["center"]
-            _ac_y = _correct_btn_tap_y(state.last_screen, _ac_x, _ac_y, _adv_pos["box"])
+            logger.info(
+                "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) | Label: ADV-Choice",
+                _adv_pos["text"], _ac_x, _ac_y,
+            )
             logger.info(">>> 【ADV選択肢】 肯定 '%s' (%d,%d) タップ (否定='%s'を無視)",
                         _adv_pos["text"], _ac_x, _ac_y,
                         _adv_neg["text"] if _adv_neg else "なし")
@@ -3225,7 +3236,10 @@ def detect_and_act(ocr: list, state: PilotState,
             _chal_btn = has_text(ocr, "挑戦", min_conf=0.3)
             if _chal_btn:
                 _cb_x, _cb_y = _chal_btn["center"]
-                _cb_y = _correct_btn_tap_y(state.last_screen, _cb_x, _cb_y, _chal_btn["box"])
+                logger.info(
+                    "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) | Label: Challenge",
+                    _chal_btn["text"], _cb_x, _cb_y,
+                )
                 # ROI クランプ: ゲーム領域外 (黒帯) をタップしない
                 if state.game_roi:
                     _roi_max_y = state.game_roi[1] + state.game_roi[3] - 5
@@ -3628,7 +3642,10 @@ def detect_and_act(ocr: list, state: PilotState,
             sentu_btn = expl
     if stage_num and sentu_btn:
         cx, cy = sentu_btn["center"]
-        cy = _correct_btn_tap_y(state.last_screen, cx, cy, sentu_btn["box"])
+        logger.info(
+            "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) | Label: QuestStart",
+            sentu_btn["text"], cx, cy,
+        )
         # ROI クランプ: ゲーム領域外 (黒帯) をタップしない
         if state.game_roi:
             _roi_max_y = state.game_roi[1] + state.game_roi[3] - 5
@@ -3848,7 +3865,7 @@ def detect_and_act(ocr: list, state: PilotState,
             ocr_ok_x, ocr_ok_y = ok_item["center"]
         else:
             ocr_ok_x, ocr_ok_y = int(W * 0.65), int(H * 0.88)  # 比率ベースフォールバック
-        ok_x, ok_y = smart_tap_button(analysis_path, ocr_ok_x, ocr_ok_y)
+        ok_x, ok_y = smart_tap_button(analysis_path, ocr_ok_x, ocr_ok_y, ocr_items=ocr)
         logger.info(">>> 【システムダイアログ】 '%s' → SmartTap OK (%d,%d)",
                     sys_dlg_match["text"][:15], ok_x, ok_y)
         tap_device(ok_x, ok_y, state, "SYSTEM_DLG_OK")
