@@ -810,6 +810,105 @@ def detect_guide_glow(img_path: Path, W: int, H: int,
         return []
 
 
+def detect_active_battle_char(
+    img_path: Path,
+    analysis_w: int = 1520,
+    analysis_h: int = 720,
+) -> Optional[tuple[int, int, float]]:
+    """
+    【永続バトルルール】バトル画面で選択待ちモヤ（赤/ピンク発光ハロー）が
+    あるキャラクターを検出する。
+
+    アクティブキャラの特徴:
+      - 赤/ピンクの発光ハロー（非アクティブにはない）
+      - 肖像周辺の全体明度が著しく高い
+
+    方式:
+      1. フッター左領域（キャラ肖像エリア）を等幅カラムに分割
+      2. 各カラムの「暖色発光ピクセル数」と「平均明度」を計算
+      3. 中央値比で突出しているカラムをアクティブキャラと判定
+
+    Returns: (cx, cy, brightness_ratio) or None
+    """
+    try:
+        import cv2
+        import numpy as _np_abc
+
+        _img = cv2.imread(str(img_path))
+        if _img is None:
+            return None
+        _h, _w = _img.shape[:2]
+
+        # キャラ肖像エリア: 画面下部25%, 左側 x=100~760
+        _y0 = int(_h * 0.75)
+        _x0 = 100
+        _x1 = min(760, _w)
+        _footer = _img[_y0:_h, _x0:_x1]
+        if _footer.size == 0:
+            return None
+
+        _hsv = cv2.cvtColor(_footer, cv2.COLOR_BGR2HSV)
+        _fh, _fw = _footer.shape[:2]
+
+        # 暖色発光マスク: 赤/ピンク/マゼンタ (H:0-20 or 155-180, S>=35, V>=100)
+        _m1 = cv2.inRange(_hsv,
+                          _np_abc.array([0, 35, 100], dtype=_np_abc.uint8),
+                          _np_abc.array([20, 255, 255], dtype=_np_abc.uint8))
+        _m2 = cv2.inRange(_hsv,
+                          _np_abc.array([155, 35, 100], dtype=_np_abc.uint8),
+                          _np_abc.array([180, 255, 255], dtype=_np_abc.uint8))
+        _warm_mask = cv2.bitwise_or(_m1, _m2)
+
+        # 5カラム分割（キャラ5人想定、各カラム ~132px）
+        _n_cols = 5
+        _col_w = _fw // _n_cols
+        _stats = []  # (warm_count, avg_brightness, col_center_x, col_idx)
+
+        for _ci in range(_n_cols):
+            _cx0 = _ci * _col_w
+            _cx1 = (_ci + 1) * _col_w
+            _col_warm = _warm_mask[:, _cx0:_cx1]
+            _col_v = _hsv[:, _cx0:_cx1, 2]  # V channel
+            _warm_count = int(cv2.countNonZero(_col_warm))
+            _avg_v = float(_np_abc.mean(_col_v))
+            _center_x = _x0 + _cx0 + _col_w // 2
+            _stats.append((_warm_count, _avg_v, _center_x, _ci))
+
+        if not _stats:
+            return None
+
+        # 中央値の計算
+        _warm_counts = [s[0] for s in _stats]
+        _avg_vs = [s[1] for s in _stats]
+        _med_warm = float(_np_abc.median(_warm_counts))
+        _med_v = float(_np_abc.median(_avg_vs))
+
+        # アクティブキャラ判定: 暖色ピクセルが中央値の3倍以上 OR 明度が中央値の1.4倍以上
+        _best = None
+        for _wc, _av, _ccx, _ci in _stats:
+            _warm_ratio = _wc / max(_med_warm, 1.0)
+            _v_ratio = _av / max(_med_v, 1.0)
+            _is_active = (_warm_ratio >= 3.0) or (_v_ratio >= 1.4 and _wc > _med_warm)
+            if _is_active:
+                _score = _warm_ratio + _v_ratio
+                if _best is None or _score > _best[3]:
+                    _cy = _y0 + _fh // 2
+                    _best = (_ccx, _cy, _v_ratio, _score)
+
+        if _best:
+            logger.info(
+                "[ACTIVE_CHAR] 選択待ちキャラ検出 (%d,%d) brightness_ratio=%.2f",
+                _best[0], _best[1], _best[2]
+            )
+            return (_best[0], _best[1], _best[2])
+
+        return None
+
+    except Exception as _e_abc:
+        logger.debug("detect_active_battle_char error: %s", _e_abc)
+        return None
+
+
 def find_gold_frame_near(img_path: Path, cx: int, cy: int,
                          search_radius: int = 150) -> Optional[tuple[int, int, int, int]]:
     """
@@ -4407,57 +4506,41 @@ def main():
             _rapid_action = ""
             _rapid_double = False
 
-            # ── Phase A: GLOW 検知 (HSV 発光) ──
-            _rapid_glows = detect_guide_glow(analysis_path, ANALYSIS_W, ANALYSIS_H, footer_ratio=0.30)
-            # 左パネル (x<150) のアイコン発光を除外 — 実キャラ位置は x≈200-500
-            # 【永続ルール】左 GLOW は area>=5000 のみ有効 (王冠/装飾の偽発光を排除)
-            _rapid_left_g = [g for g in _rapid_glows
-                            if g["side"] == "left" and g["cx"] >= 150 and g["area"] >= 5000]
-            _rapid_right_g = [g for g in _rapid_glows if g["side"] == "right"]
+            # ── Phase A: アクティブキャラ検出 (赤/ピンク発光ハロー) ──
+            # 【永続ルール】キャラ選択モヤ = 赤/ピンクの発光。明度差で識別。
+            _active_char = detect_active_battle_char(analysis_path, ANALYSIS_W, ANALYSIS_H)
 
-            if not state.character_selected and _rapid_left_g:
-                _rl = max(_rapid_left_g, key=lambda g: g["area"])
-                _rapid_tx, _rapid_ty = _rl["cx"], max(1, _rl["cy"] - 35)
-                _rapid_action = "BATTLE_RAPID_GLOW_P1"
+            if not state.character_selected and _active_char is not None:
+                _rapid_tx, _rapid_ty = _active_char[0], _active_char[1]
+                _rapid_action = "BATTLE_RAPID_ACTIVE_P1"
                 _rapid_double = True
-                logger.info("[BATTLE_RAPID] 左GLOW area=%.0f → キャラ選択", _rl["area"])
-            elif state.character_selected and _rapid_right_g:
-                _rr = max(_rapid_right_g, key=lambda g: g["area"])
-                _rapid_tx, _rapid_ty = _rr["cx"], max(1, _rr["cy"] - 35)
-                _rapid_action = "BATTLE_RAPID_GLOW_P2"
 
-            # ── Phase B: MOYA 検知 (肌色ブロブ) — GLOW 未検出時のフォールバック ──
+            # ── Phase B: 右側スキル/攻撃ボタン ──
             if not _rapid_action:
+                _rapid_glows = detect_guide_glow(
+                    analysis_path, ANALYSIS_W, ANALYSIS_H, footer_ratio=0.30)
+                _rapid_right_g = [g for g in _rapid_glows if g["side"] == "right"]
+
                 _rapid_blobs = find_finger_blobs(analysis_path, min_area=200, dark_mode=True)
-                # 画面端の誤検出を除去
                 _rapid_blobs = [b for b in _rapid_blobs
                                 if b[1] > 36 and b[0] < ANALYSIS_W - 40]
-                _H = ANALYSIS_H
-                # 【永続ルール】左キャラ MOYA は area>=2000 (装飾の偽検出を排除)
-                _left_char = [b for b in _rapid_blobs
-                              if b[0] < 600 and b[1] > _H * 0.76 and b[2] >= 2000]
-                _right_panel = [b for b in _rapid_blobs if b[0] > 1050 and b[1] > _H * 0.45]
+                _right_panel = [b for b in _rapid_blobs
+                                if b[0] > 1050 and b[1] > ANALYSIS_H * 0.45]
 
-                if state.char_just_selected:
-                    # キャラ選択済み → 右スキル (x>1050) 優先
-                    if _right_panel:
+                if state.character_selected or state.char_just_selected:
+                    # キャラ選択済み → 右スキル優先
+                    if _rapid_right_g:
+                        _rr = max(_rapid_right_g, key=lambda g: g["area"])
+                        _rapid_tx, _rapid_ty = _rr["cx"], max(1, _rr["cy"] - 35)
+                        _rapid_action = "BATTLE_RAPID_GLOW_P2"
+                    elif _right_panel:
                         _tb = max(_right_panel, key=lambda b: b[2])
                         _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - 35)
                         _rapid_action = "BATTLE_RAPID_MOYA_P2"
                     else:
-                        # 通常攻撃ボタン: 比率ベース (W*0.90, H*0.88) + ROI 補正
-                        _rapid_tx, _rapid_ty = roi_to_device(int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
+                        _rapid_tx, _rapid_ty = roi_to_device(
+                            int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
                         _rapid_action = "BATTLE_RAPID_NORMATK_P2"
-                elif _left_char:
-                    _tb = max(_left_char, key=lambda b: b[2])
-                    _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - 35)
-                    _rapid_action = "BATTLE_RAPID_MOYA_P1"
-                    _rapid_double = True
-                    logger.info("[BATTLE_RAPID] 左MOYA area=%.0f → キャラ選択", _tb[2])
-                elif _right_panel:
-                    _tb = max(_right_panel, key=lambda b: b[2])
-                    _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - 35)
-                    _rapid_action = "BATTLE_RAPID_MOYA_P2"
 
             # ── Phase C: 左モヤなしフォールバック → 右側攻撃ボタン ──
             # 【永続ルール】左キャラにモヤがない場合は常に右側の通常攻撃/戦闘スキルをタップ
