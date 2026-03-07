@@ -2521,7 +2521,8 @@ def detect_and_act(ocr: list, state: PilotState,
     _white_hand_pos = None  # (cx, cy, score) — 白ハンドポインタ座標
     if analysis_path is not None:
         # (A) オレンジ指ブロブ (HSV肌色)
-        _pdg_blobs = find_finger_blobs(analysis_path, min_area=300)
+        # max_area=5000: キャラ肌色 (Result画面等) の大面積誤検出を排除
+        _pdg_blobs = find_finger_blobs(analysis_path, min_area=300, max_area=5000)
         _pdg_blobs = [b for b in _pdg_blobs if b[1] > 36 and b[0] < W - 40]
         if _pdg_blobs:
             _pre_dialog_finger = True
