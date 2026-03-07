@@ -3614,6 +3614,14 @@ def detect_and_act(ocr: list, state: PilotState,
         if _sb and _sb["center"][1] > H * 0.5:
             sentu_btn = _sb
             break
+    # 「挑戦」がヘッダー位置(y<H*0.5)でのみ検出された場合:
+    # 装飾フォントのボタンテキストをOCRが読めていない → 固定位置タップ
+    if not sentu_btn and has_text(ocr, "挑戦") and stage_num:
+        _chal_fx, _chal_fy = roi_to_device(int(W * 0.82), int(H * 0.91), state.game_roi)
+        logger.info(">>> クエストマップ — 「挑戦」ボタン固定位置 (%d,%d)", _chal_fx, _chal_fy)
+        tap_device(_chal_fx, _chal_fy, state, "QUEST_START_CHALLENGE_FIXED")
+        state.battle_wait_count = 0
+        return "QUEST_START", 2.0
     if not sentu_btn:
         expl = has_text(ocr, "探索")
         if expl and expl["center"][1] > H * 0.6:
