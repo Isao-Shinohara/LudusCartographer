@@ -2241,9 +2241,9 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d) → 補正後(%d,%d) タップ",
                         _ocr_cx, _ocr_cy, cx, cy)
         else:
-            # フォールバック: 実測座標 (1000,570)
-            cx, cy = 1000, 570
-            logger.info(">>> 【ご注意画面】 同意ボタン未検出 → 実測フォールバック (%d,%d)", cx, cy)
+            # フォールバック: 比率ベース (W*0.66, H*0.79) + ROI 補正
+            cx, cy = roi_to_device(int(W * 0.66), int(H * 0.79), state.game_roi)
+            logger.info(">>> 【ご注意画面】 同意ボタン未検出 → ROI補正フォールバック (%d,%d)", cx, cy)
 
         # ─── phash監視付き動的リトライ (固定120秒スリープを廃止) ───
         # 仕様: タップ → 2s待機 → phash変化確認 → 変化なし → x+20pxずらして最大5回リトライ
@@ -2576,7 +2576,10 @@ def detect_and_act(ocr: list, state: PilotState,
                 _is_empty_field = any(_re2.match(r"^0/\d+$", t.strip()) for t in texts)
                 if _is_empty_field:
                     _field_pos = detect_text_input_area(analysis_path, W, H, ocr_items=ocr)
-                    _fx, _fy = _field_pos if _field_pos else (700, 417)
+                    if _field_pos:
+                        _fx, _fy = _field_pos
+                    else:
+                        _fx, _fy = roi_to_device(int(W * 0.46), int(H * 0.58), state.game_roi)
                     logger.info(
                         ">>> [TEXT_INPUT_AREA] 空フィールド検出(0/N) → (%d,%d)タップ → adb input text",
                         _fx, _fy,
@@ -2647,10 +2650,9 @@ def detect_and_act(ocr: list, state: PilotState,
             None
         )
         if name_texts and ok_item:
-            # 名前入力済み → OKタップ (実測ヒットゾーン y=560、OCR center y=593 より上)
-            cx = ok_item["center"][0]
-            cy = 560  # ゴールデンボタン中心 (ピクセル解析: y=540-580がゴールデン)
-            logger.info(">>> 【名前入力 OK】 入力済み='%s' → (%d,%d) タップ", name_texts[0], cx, cy)
+            # 名前入力済み → OKタップ (ROI補正: OCR-X + 比率Y=H*0.78)
+            cx, cy = roi_to_device(ok_item["center"][0], int(H * 0.78), state.game_roi)
+            logger.info(">>> 【名前入力 OK】 入力済み='%s' → ROI補正(%d,%d) タップ", name_texts[0], cx, cy)
             tap_device(cx, cy, state, "NAME_INPUT_OK")
             return "NAME_INPUT_OK", 2.0
         elif ok_item:
@@ -2678,7 +2680,7 @@ def detect_and_act(ocr: list, state: PilotState,
         if ok_bottom:
             ocr_cx, ocr_cy = ok_bottom["center"]
         else:
-            ocr_cx, ocr_cy = 1060, 633  # フォールバック推定値
+            ocr_cx, ocr_cy = int(W * 0.70), int(H * 0.88)  # 比率ベースフォールバック
         cx, cy = smart_tap_button(analysis_path, ocr_cx, ocr_cy)
         logger.info(">>> 【確認ダイアログ】 SmartTap OK (%d,%d)", cx, cy)
         tap_device(cx, cy, state, "CONFIRM_DIALOG_OK")
@@ -3469,7 +3471,7 @@ def detect_and_act(ocr: list, state: PilotState,
         if ok_item and ok_item["center"][0] > W * 0.5:
             ocr_ok_x, ocr_ok_y = ok_item["center"]
         else:
-            ocr_ok_x, ocr_ok_y = int(W * 0.65), 633  # フォールバック推定値
+            ocr_ok_x, ocr_ok_y = int(W * 0.65), int(H * 0.88)  # 比率ベースフォールバック
         ok_x, ok_y = smart_tap_button(analysis_path, ocr_ok_x, ocr_ok_y)
         logger.info(">>> 【システムダイアログ】 '%s' → SmartTap OK (%d,%d)",
                     sys_dlg_match["text"][:15], ok_x, ok_y)
@@ -3497,7 +3499,7 @@ def detect_and_act(ocr: list, state: PilotState,
     if agree_match:
         logger.info(">>> 規約画面 — スクロール→同意")
         for _ in range(3):
-            swipe(700, 500, 700, 200, 500, state=state)
+            swipe(int(W * 0.46), int(H * 0.69), int(W * 0.46), int(H * 0.28), 500, state=state)
             time.sleep(0.8)
         agree_btn = has_any(ocr, ["同意"])
         if agree_btn:
@@ -4189,8 +4191,8 @@ def main():
                         _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - 35)
                         _rapid_action = "BATTLE_RAPID_MOYA_P2"
                     else:
-                        # 通常攻撃ボタン: OCR検出位置ベース座標 (1372, 631)
-                        _rapid_tx, _rapid_ty = 1372, 631
+                        # 通常攻撃ボタン: 比率ベース (W*0.90, H*0.88) + ROI 補正
+                        _rapid_tx, _rapid_ty = roi_to_device(int(W * 0.90), int(H * 0.88), state.game_roi)
                         _rapid_action = "BATTLE_RAPID_NORMATK_P2"
                 elif _left_char:
                     _tb = max(_left_char, key=lambda b: b[2])
