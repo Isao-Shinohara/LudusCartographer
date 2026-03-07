@@ -1956,11 +1956,13 @@ class AssetManager:
                         count, list(self._templates.keys()))
 
     def match(self, screenshot_path: Path,
-              ocr_texts: Optional[list[str]] = None) -> Optional[tuple[int, int, str]]:
+              ocr_texts: Optional[list[str]] = None,
+              ) -> Optional[tuple[int, int, str, tuple[int, int, int, int]]]:
         """
         スクリーンショットと全テンプレートを比較。
         ocr_texts が渡された場合、require_ocr 条件を満たすテンプレートのみ照合。
-        Returns: (tap_x, tap_y, action_name) or None
+        Returns: (tap_x, tap_y, action_name, button_region) or None
+            button_region = (bx, by, bw, bh) — テンプレートマッチ領域
         """
         import cv2
         if not self._templates:
@@ -1969,7 +1971,7 @@ class AssetManager:
         if img is None:
             return None
         best_score = 0.0
-        best_result: Optional[tuple[int, int, str]] = None
+        best_result: Optional[tuple[int, int, str, tuple[int, int, int, int]]] = None
         for name, data in self._templates.items():
             # require_ocr チェック: いずれか1つのキーワードがOCRにあればOK (OR条件)
             required = data.get("require_ocr", [])
@@ -1992,14 +1994,16 @@ class AssetManager:
                 if max_val >= data["threshold"] and max_val > best_score:
                     best_score = max_val
                     h, w = tmpl.shape
-                    cx = max_loc[0] + w // 2 + int(data["offset"][0])
-                    cy = max_loc[1] + h // 2 + int(data["offset"][1])
-                    best_result = (cx, cy, data["action"])
+                    bx = max_loc[0] + int(data["offset"][0])
+                    by = max_loc[1] + int(data["offset"][1])
+                    cx = bx + w // 2
+                    cy = by + h // 2
+                    best_result = (cx, cy, data["action"], (bx, by, w, h))
                     logger.debug("[Asset] '%s' score=%.3f at (%d,%d)", name, max_val, cx, cy)
             except Exception as e:
                 logger.debug("[Asset] match error '%s': %s", name, e)
         if best_result:
-            cx, cy, action = best_result
+            cx, cy, action, _ = best_result
             logger.info("[Asset] HIT: '%s' score=%.3f → (%d,%d)", action, best_score, cx, cy)
         return best_result
 
@@ -2860,8 +2864,15 @@ def detect_and_act(ocr: list, state: PilotState,
     if analysis_path is not None:
         asset_hit = ASSET_MANAGER.match(analysis_path, ocr_texts=texts)
         if asset_hit:
-            cx, cy, action = asset_hit
-            logger.info(">>> [Asset Match] '%s' → (%d,%d)", action, cx, cy)
+            cx, cy, action, _asset_region = asset_hit
+            # Text-Core: テンプレートマッチ領域 + OCR でテキスト中心優先座標を取得
+            _tc_x, _tc_y = text_core_center(_asset_region, ocr, label=f"Asset:{action}")
+            if (_tc_x, _tc_y) != (cx, cy):
+                logger.info(">>> [Asset Match] '%s' → Template(%d,%d) → TextCore(%d,%d)",
+                            action, cx, cy, _tc_x, _tc_y)
+            else:
+                logger.info(">>> [Asset Match] '%s' → (%d,%d)", action, cx, cy)
+            cx, cy = _tc_x, _tc_y
             # スワイプ系アクションの処理
             if action == "SWIPE_UP":
                 # 安全ネット: #0-DIALOG が例外等で抜けた場合の最終防衛
@@ -2920,6 +2931,17 @@ def detect_and_act(ocr: list, state: PilotState,
                     logger.info(">>> [TEXT_INPUT_AREA] 'MadoDora' 入力完了 → 次ループでOK")
                     return "TEXT_INPUT_NAME", 1.5
             # その他のアセットアクション: タップして return (fallthrough なし)
+            # GACHA_OK 入力フリーズ検出: 連続タップで応答がない場合 force-stop 復帰
+            if action == "GACHA_OK":
+                _gacha_taps = getattr(state, '_gacha_total_taps', 0) + 1
+                state._gacha_total_taps = _gacha_taps
+                if _gacha_taps >= 15:
+                    logger.warning("[GACHA_FREEZE] %d回タップ応答なし → Unity入力フリーズ → force-stop", _gacha_taps)
+                    state._gacha_total_taps = 0
+                    watchdog_recover(state)
+                    return "GACHA_FREEZE_RECOVER", 3.0
+            else:
+                state._gacha_total_taps = 0
             tap_device(cx, cy, state, action)
             # GACHA_OK: 演出終了待ち (演出中はタップが無視されるため長めに待つ)
             _asset_wait = 5.0 if action == "GACHA_OK" else 0.5
@@ -3164,6 +3186,10 @@ def detect_and_act(ocr: list, state: PilotState,
             ok_match = has_text(ocr, "OK", min_conf=0.5)
             if ok_match:
                 cx, cy = ok_match["center"]
+                logger.info(
+                    "[Targeting] Mode: Text-Center | Text: \"OK\" | Calc: (%d,%d) | Label: GachaResult",
+                    cx, cy,
+                )
                 action_type, desc = STRATEGIC_ENGINE.log_prediction("OK", cx, cy)
                 state.last_prediction = action_type
                 state.last_prediction_desc = desc
