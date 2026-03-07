@@ -2299,18 +2299,23 @@ def detect_and_act(ocr: list, state: PilotState,
         has_text(ocr, "基本無料", min_conf=0.3) and has_text(ocr, "未成年", min_conf=0.3)
     ):
         # 「同意」ボタンをOCRで検出
-        # 注意: OCR center (1023,585) ≠ 実際タップ有効点 (1000,570)
-        # ゲームのUIはOCRテキスト中心より少し左上がボタンのヒットゾーン (実測 2026-03-06)
+        # ご注意画面は非 immersive (ステータスバー表示中) のため、
+        # adb input tap の Y 座標がスクリーンキャプチャより 48px 上にズレる。
+        # 補正: OCR/フォールバック座標の Y からステータスバー高さを差し引く。
+        _STATUS_BAR_Y = 48  # mStable=[0,48][1424,720] のトップインセット
         agree_btn = (has_text(ocr, "同意してゲーム", min_conf=0.2) or
                      has_text(ocr, "同意して", min_conf=0.2) or
                      has_text(ocr, "ゲームを始める", min_conf=0.2))
         if agree_btn:
             cx, cy = agree_btn["center"]
-            logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d) タップ", cx, cy)
+            logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d) → Y-%d補正",
+                        cx, cy, _STATUS_BAR_Y)
         else:
             # フォールバック: 比率ベース (W*0.66, H*0.79) + ROI 補正
             cx, cy = roi_to_device(int(W * 0.66), int(H * 0.79), state.game_roi)
-            logger.info(">>> 【ご注意画面】 同意ボタン未検出 → ROI補正フォールバック (%d,%d)", cx, cy)
+            logger.info(">>> 【ご注意画面】 同意ボタン未検出 → ROI補正フォールバック (%d,%d) → Y-%d補正",
+                        cx, cy, _STATUS_BAR_Y)
+        cy -= _STATUS_BAR_Y  # 非 immersive ステータスバー補正
 
         # ─── phash監視付き動的リトライ (固定120秒スリープを廃止) ───
         # 仕様: タップ → 2s待機 → phash変化確認 → 変化なし → x+20pxずらして最大5回リトライ
