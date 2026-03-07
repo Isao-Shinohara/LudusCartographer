@@ -684,6 +684,41 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
         return []
 
 
+def detect_white_hand_pointer(
+    img_path: Path, threshold: float = 0.85
+) -> Optional[tuple[int, int, float]]:
+    """
+    白いハンドポインタ（home_nav_finger / home_nav_finger_up）をテンプレートマッチングで検出。
+    find_finger_blobs() が HSV 肌色のみ対象で白ポインタを見逃す問題を補完。
+    Returns: (cx, cy, score) or None
+    """
+    try:
+        import cv2
+        img = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            return None
+        templates_dir = _CRAWLER_ROOT / "assets" / "templates"
+        best: Optional[tuple[int, int, float]] = None
+        for name in ("home_nav_finger", "home_nav_finger_up"):
+            tpl_path = templates_dir / f"{name}.png"
+            if not tpl_path.exists():
+                continue
+            tmpl = cv2.imread(str(tpl_path), cv2.IMREAD_GRAYSCALE)
+            if tmpl is None or tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
+                continue
+            res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            if max_val >= threshold and (best is None or max_val > best[2]):
+                h, w = tmpl.shape
+                best = (max_loc[0] + w // 2, max_loc[1] + h // 2, max_val)
+        if best:
+            logger.info("[WHITE_HAND] 白ハンドポインタ検出 (%d,%d) score=%.3f", best[0], best[1], best[2])
+        return best
+    except Exception as e:
+        logger.debug("detect_white_hand_pointer error: %s", e)
+        return None
+
+
 def create_finger_mask_image(img_path: Path, cx: int, cy: int, half: int = 175) -> Path:
     """
     指アイコン周囲 350×350px (half=175) 以外を純黒に塗りつぶした一時画像を生成して返す。
@@ -2483,12 +2518,23 @@ def detect_and_act(ocr: list, state: PilotState,
     # ダイアログと誤検出し、存在しない ▷ をページングする問題を防止。
     # 指が見えたらダイアログ処理をバイパスし、指ガイド処理 (#1) へフォールスルー。
     _pre_dialog_finger = False
+    _white_hand_pos = None  # (cx, cy, score) — 白ハンドポインタ座標
     if analysis_path is not None:
+        # (A) オレンジ指ブロブ (HSV肌色)
         _pdg_blobs = find_finger_blobs(analysis_path, min_area=300)
         _pdg_blobs = [b for b in _pdg_blobs if b[1] > 36 and b[0] < W - 40]
         if _pdg_blobs:
             _pre_dialog_finger = True
             logger.info("[PRE_DIALOG_GUARD] 指ブロブ %d 個検出 → #0-DIALOG スキップ", len(_pdg_blobs))
+        # (B) 白ハンドポインタ (テンプレートマッチング)
+        if not _pre_dialog_finger:
+            _white_hand_pos = detect_white_hand_pointer(analysis_path, threshold=0.85)
+            if _white_hand_pos is not None:
+                _pre_dialog_finger = True
+                logger.info(
+                    "[PRE_DIALOG_GUARD] 白ハンドポインタ (%d,%d) score=%.3f → #0-DIALOG スキップ",
+                    _white_hand_pos[0], _white_hand_pos[1], _white_hand_pos[2],
+                )
 
     # ─── 【最優先 #0-DIALOG】ダイアログ・ファースト (枠形状+Canny) ────────────
     # 主トリガー: HSV金色枠の大矩形検出 (形状ベース)
@@ -2515,15 +2561,18 @@ def detect_and_act(ocr: list, state: PilotState,
                             _sg_best[0], _sg_best[1], _dlg_x, _dlg_y, _sg_dist,
                         )
                         _dlg = None  # ダイアログをなかったことにして #1 へ
-                # ── 白ハンドポインタ画面ガード: クエスト選択等 ──────────────
-                # 指ブロブなし（白ポインタは HSV 肌色検出外）でも
-                # クエスト画面キーワードが存在すれば ▷ 誤検出を抑制
+                # ── 白ハンドポインタ画面ガード ──────────────────────────
+                # テンプレートマッチング主軸 + OCRキーワード補助
                 if _dlg is not None:
-                    _quest_kws = ["NEW", "報酬", "推奖", "报酬"]
-                    if any(any(k in t for k in _quest_kws) for t in texts):
+                    _sg_white = detect_white_hand_pointer(analysis_path, threshold=0.85)
+                    if _sg_white is not None:
                         logger.info(
-                            "[SPATIAL_GATE] 指ブロブなし + クエストKW検出 → #0-DIALOG(▷) スキップ",
+                            "[SPATIAL_GATE] 白ハンドポインタ(%d,%d) score=%.3f → #0-DIALOG(▷) スキップ",
+                            _sg_white[0], _sg_white[1], _sg_white[2],
                         )
+                        _dlg = None
+                    elif any(any(k in t for k in ("NEW", "報酬", "推奖", "报酬")) for t in texts):
+                        logger.info("[SPATIAL_GATE] クエストKW検出(補助) → #0-DIALOG(▷) スキップ")
                         _dlg = None
             # ── バトル中 × 誤検出ガード ──────────────────────────────────────────
             # バトル画面では y < 100 は UI ボタン帯 (倍速/メニュー等)。
