@@ -2831,8 +2831,7 @@ def detect_and_act(ocr: list, state: PilotState,
                          if has_text(ocr, kw, min_conf=0.3) is not None)
     if not _in_story_ctx and _settings_hits >= 1:
         logger.info(">>> 【設定メニュー誤起動】 BACK キーで閉じる")
-        import subprocess as _sp
-        _sp.run(["adb", "-s", DEVICE_SERIAL, "shell", "input", "keyevent", "4"], check=False)
+        adb("shell input keyevent 4")
         return "SETTINGS_BACK", 1.5
 
     # ─── 【最優先 #-1】「ご注意」画面 (Google Play 起動時 portrait 注意書き) ───
@@ -3122,11 +3121,7 @@ def detect_and_act(ocr: list, state: PilotState,
                         _fx, _fy,
                     )
                     tap_device(_fx, _fy, state, "TEXT_INPUT_FOCUS")
-                    import subprocess as _sp2
-                    _sp2.run(
-                        ["adb", "-s", DEVICE_SERIAL, "shell", "input", "text", "MadoDora"],
-                        check=False,
-                    )
+                    adb("shell input text MadoDora")
                     time.sleep(0.5)
                     logger.info(">>> [TEXT_INPUT_AREA] 'MadoDora' 入力完了 → 次ループでOK")
                     return "TEXT_INPUT_NAME", 1.5
@@ -3207,10 +3202,9 @@ def detect_and_act(ocr: list, state: PilotState,
             _nf_x, _nf_y = roi_to_device(int(W * 0.46), int(H * 0.58), state.game_roi)
             logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d)", _nf_x, _nf_y)
             tap_device(_nf_x, _nf_y, state, "NAME_INPUT_FOCUS")
-            import subprocess as _sp
-            _sp.run(["adb", "-s", DEVICE_SERIAL, "shell", "input", "text", "MadoDora"], check=False)
+            adb("shell input text MadoDora")
             time.sleep(0.3)
-            _sp.run(["adb", "-s", DEVICE_SERIAL, "shell", "input", "keyevent", "66"], check=False)
+            adb("shell input keyevent 66")
             logger.info(">>> 【名前入力】 'MadoDora' 入力完了 → OK タップ待ち")
             return "NAME_INPUT_TEXT", 1.5
 
@@ -4126,11 +4120,10 @@ def check_adb_liveness() -> bool:
     - adb shell screencap: 転送サービスのハング確認 (timeout 3s)
     Returns: True=接続正常, False=タイムアウト/エラー(要再起動)
     """
-    import subprocess as _sp
     _serial_arg = ["-s", DEVICE_SERIAL] if DEVICE_SERIAL else []
     try:
         # echo テスト
-        _r1 = _sp.run(
+        _r1 = subprocess.run(
             ["adb"] + _serial_arg + ["shell", "echo", "1"],
             capture_output=True, timeout=3, text=True,
         )
@@ -4138,7 +4131,7 @@ def check_adb_liveness() -> bool:
             logger.warning("[WATCHDOG] echo 応答異常: rc=%d out=%r", _r1.returncode, _r1.stdout.strip())
             return False
         # screencap パイプテスト (実際には読まない — ハングを検出するだけ)
-        _r2 = _sp.run(
+        _r2 = subprocess.run(
             ["adb"] + _serial_arg + ["shell", "screencap", "-p", "/dev/null"],
             capture_output=True, timeout=3,
         )
@@ -4146,7 +4139,7 @@ def check_adb_liveness() -> bool:
             logger.warning("[WATCHDOG] screencap ハング検出: rc=%d", _r2.returncode)
             return False
         return True
-    except _sp.TimeoutExpired:
+    except subprocess.TimeoutExpired:
         logger.warning("[WATCHDOG] ADB コマンドタイムアウト — 物理診断失敗")
         return False
     except Exception as _e:
@@ -4384,13 +4377,12 @@ def main():
             logger.info("[WATCHDOG] Periodic check (iter=%d). Running physical diagnostics...", i)
             if not check_adb_liveness():
                 logger.warning("[WATCHDOG] Periodic check FAILED → attempting reconnect")
-                import subprocess as _sp_pc
-                _sp_pc.run(["adb", "kill-server"], timeout=5)
+                subprocess.run(["adb", "kill-server"], timeout=5)
                 time.sleep(2)
-                _sp_pc.run(["adb", "start-server"], timeout=5)
+                subprocess.run(["adb", "start-server"], timeout=5)
                 time.sleep(2)
                 if DEVICE_SERIAL:
-                    _sp_pc.run(["adb", "connect", DEVICE_SERIAL], timeout=5)
+                    subprocess.run(["adb", "connect", DEVICE_SERIAL], timeout=5)
                     time.sleep(1)
             else:
                 logger.info("[WATCHDOG] Periodic check OK")
@@ -4555,13 +4547,12 @@ def main():
                 if not check_adb_liveness():
                     # 第3段階: 物理診断失敗 → kill-server + 再接続
                     logger.warning("[WATCHDOG] Physical diagnostics FAILED → adb kill-server + reconnect")
-                    import subprocess as _sp_wd
-                    _sp_wd.run(["adb", "kill-server"], timeout=5)
+                    subprocess.run(["adb", "kill-server"], timeout=5)
                     time.sleep(2)
-                    _sp_wd.run(["adb", "start-server"], timeout=5)
+                    subprocess.run(["adb", "start-server"], timeout=5)
                     time.sleep(2)
                     if DEVICE_SERIAL:
-                        _sp_wd.run(["adb", "connect", DEVICE_SERIAL], timeout=5)
+                        subprocess.run(["adb", "connect", DEVICE_SERIAL], timeout=5)
                         time.sleep(1)
                     state.consecutive_frozen_frames = 0
                     state.last_phash = ""  # 次ループで強制再取得
@@ -4651,13 +4642,12 @@ def main():
                                stall_elapsed, _restart_count + 1)
                 save_evidence(img_path, [], "UNITY_FREEZE_RESTART", state)
                 try:
-                    import subprocess as _sp_uf
-                    _sp_uf.run(["adb", "-s", DEVICE_SERIAL, "shell", "am", "force-stop",
-                                "com.aniplex.magia.exedra.jp"], timeout=5)
+                    subprocess.run(["adb", "-s", DEVICE_SERIAL, "shell", "am", "force-stop",
+                                    "com.aniplex.magia.exedra.jp"], timeout=5)
                     time.sleep(3)
-                    _sp_uf.run(["adb", "-s", DEVICE_SERIAL, "shell", "am", "start", "-n",
-                                "com.aniplex.magia.exedra.jp/com.google.firebase.MessagingUnityPlayerActivity"],
-                               timeout=5)
+                    subprocess.run(["adb", "-s", DEVICE_SERIAL, "shell", "am", "start", "-n",
+                                    "com.aniplex.magia.exedra.jp/com.google.firebase.MessagingUnityPlayerActivity"],
+                                   timeout=5)
                     logger.info("[UNITY_RESTART] ゲーム再起動完了 — 30秒待機")
                     time.sleep(30)
                 except Exception as _uf_e:
