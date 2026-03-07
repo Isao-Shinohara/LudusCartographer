@@ -368,7 +368,7 @@ class TestHandleResultScreen:
         result = handle_result_screen(state, None, ocr, 5, mode="OCR")
         assert result is not None
         assert result[0] == "GACHA_OK"
-        assert result[1] == 2.0
+        assert result[1] == 1.0
         assert mock_tap.call_count == 2  # ダブルタップ
 
     @patch("tools.auto_pilot.tap_device")

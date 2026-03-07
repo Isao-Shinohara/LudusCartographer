@@ -45,7 +45,7 @@ _CRAWLER_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_CRAWLER_ROOT))
 
 from lc.ocr import run_ocr, find_text, find_best, format_results
-from lc.utils import get_android_serial, compute_phash, phash_distance
+from lc.utils import get_android_serial, compute_phash, phash_distance, ensure_adb_connection
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,7 +55,12 @@ logging.basicConfig(
 logger = logging.getLogger("auto_pilot")
 
 # ─── 設定 ────────────────────────────────────────────
+# ADB 自動接続: USB → Wi-Fi フォールバック
 try:
+    _detected = ensure_adb_connection()
+    # 環境変数にセットして get_android_serial() が一貫した値を返すようにする
+    if not os.environ.get("ANDROID_UDID") and not os.environ.get("ANDROID_SERIAL"):
+        os.environ["ANDROID_UDID"] = _detected
     DEVICE_SERIAL = get_android_serial()
 except RuntimeError as e:
     logger.error(str(e))
@@ -124,6 +129,12 @@ _BATTLE_UI_KWS: frozenset = frozenset([
 # ─── 解析基準解像度 ───
 ANALYSIS_W = 1520
 ANALYSIS_H = 720
+
+# ─── 座標補正定数 ───
+_OCR_BBOX_Y_PADDING = 30       # PaddleOCR bbox 下部パディング補正
+_GLOW_CENTER_Y_OFFSET = 35     # 発光ブロブ重心→ボタン視覚中心
+_GOLD_BTN_RETRY_Y_OFFSET = 30  # 金枠ボタン Y下方リトライ
+_FINGER_TIP_RATIO = 0.1        # 指ブロブ上端10% = 指先位置
 
 # 排除された偽の指ブロブキャッシュ (debug_latest_tap.png への [REJECTED] 描画用)
 _rejected_finger_blobs: list = []
@@ -228,6 +239,7 @@ class PilotState:
         default_factory=lambda: StallCounter("gacha_total", threshold=15))
     unity_restart_count: int = 0      # Unity force-restart 試行回数 [0..3]
     wifi_fail_streak: int = 0         # Wi-Fi破損連続失敗カウンタ [0..5]
+    last_phash_dist: int = 999        # 直近の phash 距離 (detect_and_act 内で参照)
     normatk_fallback: "StallCounter" = field(
         default_factory=lambda: StallCounter("normatk_fallback", threshold=10))
 
@@ -698,9 +710,21 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
         blobs = []
         global _rejected_finger_blobs
         _rejected_finger_blobs = []  # 毎回リセット
+        # max_area 超のブロブを一時保存 (後で金枠チェックで救済する候補)
+        _oversized: list[tuple] = []
         for c in contours:
             area = cv2.contourArea(c)
-            if area < min_area or area > max_area:
+            if area < min_area:
+                continue
+            if area > max_area:
+                # 指アイコン+隣接ゴールドUIが融合した巨大ブロブ候補 → 一時保存
+                M_ov = cv2.moments(c)
+                if M_ov["m00"] > 0:
+                    _ov_cx = int(M_ov["m10"] / M_ov["m00"])
+                    _ov_cy = int(M_ov["m01"] / M_ov["m00"])
+                    _ov_bx, _ov_by, _ov_bw, _ov_bh = cv2.boundingRect(c)
+                    _oversized.append((_ov_cx, _ov_cy, area, _ov_bx, _ov_by, _ov_bw, _ov_bh))
+                    logger.debug("[FINGER_OVERSIZED] (%d,%d) area=%.0f → 金枠救済候補", _ov_cx, _ov_cy, area)
                 continue
             M = cv2.moments(c)
             if M["m00"] <= 0:
@@ -736,6 +760,15 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
                 continue
 
             blobs.append((cx, cy, area, bx, by, bw, bh))
+        # ── 大面積ブロブ救済: 近傍に金枠があれば指+ゴールドUI融合と判定して採用 ──
+        if not blobs and _oversized:
+            for _ov in _oversized:
+                _gf = find_gold_frame_near(img_path, _ov[0], _ov[1], search_radius=200)
+                if _gf is not None:
+                    logger.info("[FINGER_OVERSIZED_RESCUE] (%d,%d) area=%.0f + 金枠(%d,%d) → 採用",
+                                _ov[0], _ov[1], _ov[2], _gf[0], _gf[1])
+                    blobs.append(_ov)
+                    break  # 最初の1件で十分
         return sorted(blobs, key=lambda b: b[2], reverse=True)
     except ImportError:
         return []
@@ -994,7 +1027,7 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
             if w < 60:
                 continue
             aspect = w / max(h, 1)
-            if not (0.3 < aspect < 4.0):
+            if not (0.3 < aspect < 5.5):
                 continue
             # スワイプポインター（縦長細い: h>w*3.5 かつ w<100）は除外
             if h > w * 3.5 and w < 100:
@@ -1208,13 +1241,39 @@ def detect_dialog_frame_and_nav(
                 return None
             _r = cv2.matchTemplate(_roi_x, _tpl, cv2.TM_CCOEFF_NORMED)
             _, _mv, _, _ml = cv2.minMaxLoc(_r)
-            if _mv >= 0.70:
+            if _mv >= 0.65:
                 _tw, _th = _tpl.shape[1], _tpl.shape[0]
                 return (_rx1 + _ml[0] + _tw // 2, _ml[1] + _th // 2)
             return None
 
+        def _has_page_arrow(img_full, _H, _W) -> Optional[tuple[int, int]]:
+            """右サイドにページング矢印 (>) が存在するか確認。
+            狭いストリップ (右端3%) × 中央帯 (30%-70%) で白/明るい矢印を検出。
+            """
+            _rx1n = int(_W * 0.94)  # 右端6%のみ
+            _ry1n, _ry2n = int(_H * 0.30), int(_H * 0.70)
+            _roi_n = img_full[_ry1n:_ry2n, _rx1n:_W]
+            if _roi_n.size == 0:
+                return None
+            _g = cv2.cvtColor(_roi_n, cv2.COLOR_BGR2GRAY)
+            # 高閾値で白い矢印のみ検出 (金色背景ノイズを排除)
+            _, _thr = cv2.threshold(_g, 180, 255, cv2.THRESH_BINARY)
+            _bright = cv2.countNonZero(_thr)
+            if _bright >= 15:
+                # 矢印の固定位置 (右端中央): ページ送り座標
+                _ax = int(_W * 0.97)
+                _ay = _H // 2
+                return (_ax, _ay)
+            return None
+
         _close_x_pos = _find_close_x(img, _H, _W)
         if _close_x_pos is not None:
+            # ページング矢印 (>) チェック: 矢印があれば close ではなく next を優先
+            _arrow_pos = _has_page_arrow(img, _H, _W)
+            if _arrow_pos is not None:
+                logger.debug("[Dialog] STEP0: × 検出(%d,%d) + 矢印(%d,%d) → next 優先 (ページング)",
+                             _close_x_pos[0], _close_x_pos[1], _arrow_pos[0], _arrow_pos[1])
+                return ("next", _arrow_pos[0], _arrow_pos[1])
             logger.debug("[Dialog×] STEP0 先行検出: (%d,%d)", _close_x_pos[0], _close_x_pos[1])
             return ("close", _close_x_pos[0], _close_x_pos[1])
 
@@ -1340,7 +1399,7 @@ def detect_dialog_frame_and_nav(
                     if _froi.shape[0] >= _tpl.shape[0] and _froi.shape[1] >= _tpl.shape[1]:
                         _r_f = cv2.matchTemplate(_froi, _tpl, cv2.TM_CCOEFF_NORMED)
                         _, _mv_f, _, _ml_f = cv2.minMaxLoc(_r_f)
-                        if _mv_f >= 0.70:
+                        if _mv_f >= 0.65:
                             _tw_f = _tpl.shape[1]
                             _th_f = _tpl.shape[0]
                             _cx_f = _frx1 + _ml_f[0] + _tw_f // 2
@@ -1359,7 +1418,7 @@ def detect_dialog_frame_and_nav(
                 cv2.TM_CCOEFF_NORMED,
             )
             _, _mv, _, _ml = cv2.minMaxLoc(_r)
-            if _mv >= 0.75:
+            if _mv >= 0.65:
                 _th, _tw = _close_tmpl.shape[:2]
                 return ("close",
                         int(_W * 0.88) + _ml[0] + _tw // 2,
@@ -2201,7 +2260,7 @@ def handle_result_screen(
                        post_wait=0.3)
             tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_2")
         state.result_total_taps += 1
-        return "GACHA_OK", 2.0
+        return "GACHA_OK", 1.0
 
     # BATTLE subtype
     if btn:
@@ -2761,16 +2820,18 @@ def detect_and_act(ocr: list, state: PilotState,
     _confirm_neg = has_any(ocr, _confirm_neg_kws)
     if _confirm_pos and _confirm_neg:
         _cp_x, _cp_y = _confirm_pos["center"]
+        # OCR bbox はテキスト下部パディングを含むため Y を上方補正
+        _cp_y_adj = max(0, _cp_y - _OCR_BBOX_Y_PADDING)
         logger.info(
-            "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) | Label: ConfirmDialog",
-            _confirm_pos["text"], _cp_x, _cp_y,
+            "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) → Y補正(%d) | Label: ConfirmDialog",
+            _confirm_pos["text"], _cp_x, _cp_y, _cp_y_adj,
         )
         logger.info(
             ">>> 【確認ダイアログ最優先】 肯定 '%s' (%d,%d) タップ (否定='%s'を無視)",
-            _confirm_pos["text"], _cp_x, _cp_y,
+            _confirm_pos["text"], _cp_x, _cp_y_adj,
             _confirm_neg["text"],
         )
-        tap_device(_cp_x, _cp_y, state, f"CONFIRM_DIALOG_OK '{_confirm_pos['text']}'")
+        tap_device(_cp_x, _cp_y_adj, state, f"CONFIRM_DIALOG_OK '{_confirm_pos['text']}'")
         return "ADV_CHOICE", 1.0
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -2898,7 +2959,7 @@ def detect_and_act(ocr: list, state: PilotState,
         # P1: 左キャラ発光 (キャラ未選択) → DIALOG_CLOSE より前にタップ
         if not state.character_selected and _pre_left:
             _pl = max(_pre_left, key=lambda g: g["area"])
-            _pl_x, _pl_y = _pl["cx"], max(1, _pl["cy"] - 35)
+            _pl_x, _pl_y = _pl["cx"], max(1, _pl["cy"] - _GLOW_CENTER_Y_OFFSET)
             logger.info("[GLOW_SM P1] 左キャラ発光(%d,%d)→tap(%d,%d) [#0前ガード]",
                         _pl["cx"], _pl["cy"], _pl_x, _pl_y)
             tap_device(_pl_x, _pl_y, state, "GLOW_LEFT_CHAR", post_wait=0.3)
@@ -2910,7 +2971,7 @@ def detect_and_act(ocr: list, state: PilotState,
         # P2: 右スキル発光 (キャラ選択済み) → DIALOG_CLOSE より前にタップ
         if state.character_selected and _pre_right:
             _prg = max(_pre_right, key=lambda g: g["area"])
-            _prg_x, _prg_y = _prg["cx"], max(1, _prg["cy"] - 35)
+            _prg_x, _prg_y = _prg["cx"], max(1, _prg["cy"] - _GLOW_CENTER_Y_OFFSET)
             logger.info("[GLOW_SM P2] 右発光(%d,%d)→tap(%d,%d) [#0前ガード]",
                         _prg["cx"], _prg["cy"], _prg_x, _prg_y)
             tap_device(_prg_x, _prg_y, state, "GLOW_RIGHT_SKILL")
@@ -2924,7 +2985,7 @@ def detect_and_act(ocr: list, state: PilotState,
             if _pre_na:
                 _pnx, _pny = _pre_na["center"]
                 if _pnx > W * 0.5 and _pny > H * 0.5:
-                    _pny = max(1, _pny - 35)
+                    _pny = max(1, _pny - _GLOW_CENTER_Y_OFFSET)
                     logger.info("[GLOW_SM P3] 攻撃ボタンOCR '%s'(%d,%d) → tap [#0前ガード]",
                                 _pre_na["text"], _pnx, _pny)
                     tap_device(_pnx, _pny, state, "NORMATK_TAP")
@@ -3020,8 +3081,9 @@ def detect_and_act(ocr: list, state: PilotState,
             if (not _base_ph_gb or not _new_ph_gb or
                     phash_distance(_base_ph_gb, _new_ph_gb) < PHASH_THRESHOLD):
                 # 変化なし → Y方向に+30pxずらして再試行
-                logger.info(">>> [GoldBtn] phash変化なし → +30px 再タップ (%d,%d)", _bx, _by + 30)
-                tap_device(_bx, _by + 30, state, "GOLD_BTN_TAP_RETRY")
+                logger.info(">>> [GoldBtn] phash変化なし → +%dpx 再タップ (%d,%d)",
+                            _GOLD_BTN_RETRY_Y_OFFSET, _bx, _by + _GOLD_BTN_RETRY_Y_OFFSET)
+                tap_device(_bx, _by + _GOLD_BTN_RETRY_Y_OFFSET, state, "GOLD_BTN_TAP_RETRY")
             return "GOLD_BTN_TAP", BATTLE_WAIT
 
     # ─── 【最優先 #0-a】テンプレートマッチング (Asset Match) — 最速 ~0.1s ───
@@ -3104,8 +3166,8 @@ def detect_and_act(ocr: list, state: PilotState,
             else:
                 state.gacha_total.reset()
             tap_device(cx, cy, state, action)
-            # GACHA_OK: 演出終了待ち (演出中はタップが無視されるため長めに待つ)
-            _asset_wait = 5.0 if action == "GACHA_OK" else 0.5
+            # GACHA_OK: テンプレートマッチ成功 = 既に結果一覧画面 → 短め待機で十分
+            _asset_wait = 1.5 if action == "GACHA_OK" else 0.5
             return action, _asset_wait
 
     # ─── 【優先 #0】チュートリアルポップアップ セカンダリセーフネット ───
@@ -3259,7 +3321,7 @@ def detect_and_act(ocr: list, state: PilotState,
         # Priority 1: 左キャラ発光検出 (キャラ未選択時)
         if not state.character_selected and _gsm_left:
             _gl = max(_gsm_left, key=lambda g: g["area"])
-            _gl_x, _gl_y = _gl["cx"], max(1, _gl["cy"] - 35)
+            _gl_x, _gl_y = _gl["cx"], max(1, _gl["cy"] - _GLOW_CENTER_Y_OFFSET)
             logger.info("[GLOW_SM P1] 左キャラ発光(%d,%d) → tap(%d,%d)", _gl["cx"], _gl["cy"], _gl_x, _gl_y)
             tap_device(_gl_x, _gl_y, state, "GLOW_LEFT_CHAR", post_wait=0.3)
             tap_device(_gl_x, _gl_y, state, "GLOW_LEFT_CHAR")  # ダブルタップ(追いタップ)
@@ -3271,7 +3333,7 @@ def detect_and_act(ocr: list, state: PilotState,
         # Priority 2: 右スキル発光検出 (キャラ選択済み)
         elif state.character_selected and _gsm_right:
             _gr = max(_gsm_right, key=lambda g: g["area"])
-            _gr_x, _gr_y = _gr["cx"], max(1, _gr["cy"] - 35)
+            _gr_x, _gr_y = _gr["cx"], max(1, _gr["cy"] - _GLOW_CENTER_Y_OFFSET)
             logger.info("[GLOW_SM P2] 右スキル発光(%d,%d) → tap(%d,%d)", _gr["cx"], _gr["cy"], _gr_x, _gr_y)
             tap_device(_gr_x, _gr_y, state, "GLOW_RIGHT_SKILL")
             state.character_selected = False
@@ -3285,7 +3347,7 @@ def detect_and_act(ocr: list, state: PilotState,
             if _na_item:
                 _na_x, _na_y = _na_item["center"]
                 if _na_x > W * 0.5 and _na_y > H * 0.5:
-                    _na_y = max(1, _na_y - 35)
+                    _na_y = max(1, _na_y - _GLOW_CENTER_Y_OFFSET)
                     logger.info("[GLOW_SM P3] 攻撃ボタンOCR '%s'(%d,%d) → tap (発光なしフォールバック)",
                                 _na_item["text"], _na_x, _na_y)
                     tap_device(_na_x, _na_y, state, "NORMATK_TAP")
@@ -3338,7 +3400,7 @@ def detect_and_act(ocr: list, state: PilotState,
         _home_kw_count = sum(1 for h in _home_nav_kws if any(h in t for t in texts))
         # ── Result画面ハンドラ (OCR mode) ──
         if not is_battle_screen:
-            _result_ocr = handle_result_screen(state, analysis_path, ocr, dist, mode="OCR")
+            _result_ocr = handle_result_screen(state, analysis_path, ocr, state.last_phash_dist, mode="OCR")
             if _result_ocr:
                 return _result_ocr
         # ─── ADV選択肢 — 肯定ボタン絶対優先 ───────────────────────────
@@ -3349,14 +3411,17 @@ def detect_and_act(ocr: list, state: PilotState,
         _adv_neg = has_any(ocr, _adv_negative_kws)
         if _adv_pos:
             _ac_x, _ac_y = _adv_pos["center"]
+            # OCR bbox はテキスト下部パディングを含むため Y を上方補正
+            # ボタンの上半分を狙い、空振りを防止 (画質設定OK等)
+            _ac_y_adj = max(0, _ac_y - _OCR_BBOX_Y_PADDING)
             logger.info(
-                "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) | Label: ADV-Choice",
-                _adv_pos["text"], _ac_x, _ac_y,
+                "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) → Y補正(%d) | Label: ADV-Choice",
+                _adv_pos["text"], _ac_x, _ac_y, _ac_y_adj,
             )
             logger.info(">>> 【ADV選択肢】 肯定 '%s' (%d,%d) タップ (否定='%s'を無視)",
-                        _adv_pos["text"], _ac_x, _ac_y,
+                        _adv_pos["text"], _ac_x, _ac_y_adj,
                         _adv_neg["text"] if _adv_neg else "なし")
-            tap_device(_ac_x, _ac_y, state, f"ADV_CHOICE '{_adv_pos['text']}'")
+            tap_device(_ac_x, _ac_y_adj, state, f"ADV_CHOICE '{_adv_pos['text']}'")
             return "ADV_CHOICE", 1.0
 
         # バトル時は dark_mode=True で輝度閾値を緩和し min_area=200 に下げる（暗背景対応）
@@ -3564,27 +3629,31 @@ def detect_and_act(ocr: list, state: PilotState,
                     return "RECOVERY_FINAL_WAIT", 0.5
             else:
                 # ── Step3-pre: 指タップ静止検出 → スワイプシーン自動切替 ──
-                # 3回以上 MOYA_TAP しても画面が変わらない + OCR テキストなし
+                # 3回以上 MOYA_TAP しても画面が変わらない + OCR テキスト少ない
                 # → タップでは進まないスワイプシーン (チェック柄チュートリアル等)
+                # len<=1: OCR誤検出 ('1','口' 等) 1件までは許容
                 if (state.finger_tap_static.stalled
                         and _gold_frame is None
-                        and len(texts) == 0):
+                        and len(texts) <= 1):
                     logger.info(
                         ">>> [SWIPE_AUTO] 指タップ静止%d回+OCR無し → 連続スワイプ開始 (指位置: %d,%d)",
                         state.finger_tap_static.count, fx, fy,
                     )
                     _base_ph_sw = compute_phash(analysis_path)
                     _sw_success = False
-                    for _sw_i in range(20):  # 最大20回 (約60秒)
+                    # 動画シーンに完全遷移するまでスワイプ継続
+                    # (チェック柄中の微変化では止まらない: 閾値20)
+                    _SW_CHANGE_THRESHOLD = 20
+                    for _sw_i in range(30):  # 最大30回 (約90秒)
                         swipe(fx, H - 50, fx, 50, 3000, state=state)
-                        time.sleep(0.5)
+                        time.sleep(0.3)
                         _sw_ss, _, _, _ = take_screenshot()
                         _sw_ph = compute_phash(_sw_ss)
                         if (_base_ph_sw and _sw_ph
-                                and phash_distance(_base_ph_sw, _sw_ph) >= PHASH_THRESHOLD):
+                                and phash_distance(_base_ph_sw, _sw_ph) >= _SW_CHANGE_THRESHOLD):
                             logger.info(
-                                ">>> [SWIPE_AUTO] %d回目で画面変化検出! → スワイプ完了",
-                                _sw_i + 1,
+                                ">>> [SWIPE_AUTO] %d回目で大きな画面変化検出 (dist=%d) → スワイプ完了",
+                                _sw_i + 1, phash_distance(_base_ph_sw, _sw_ph),
                             )
                             _sw_success = True
                             break
@@ -3613,14 +3682,14 @@ def detect_and_act(ocr: list, state: PilotState,
                     else:
                         # 遠い金枠は無関係 → 指先端
                         tap_x = fx
-                        tap_y = f_by + max(1, int(f_bh * 0.1))
+                        tap_y = f_by + max(1, int(f_bh * _FINGER_TIP_RATIO))
                         _gbox = None
                         logger.info("FINGER_DETECTED (%d,%d) → tip(%d,%d) [gold(%d,%d) dist=%.0f>200 無視] count=%d",
                                     fx, fy, tap_x, tap_y, gfx, gfy, _fg_dist, state.blob_same_count)
                 else:
                     _gbox = None
                     tap_x = fx
-                    tap_y = f_by + max(1, int(f_bh * 0.1))
+                    tap_y = f_by + max(1, int(f_bh * _FINGER_TIP_RATIO))
                     logger.info("FINGER_DETECTED (%d,%d) area=%.0f → tip(%d,%d) count=%d",
                                 fx, fy, fa, tap_x, tap_y, state.blob_same_count)
                 tap_device(tap_x, tap_y, state, f"MOYA_TAP ({tap_x},{tap_y})",
@@ -4326,6 +4395,40 @@ def main():
 
     logger.info("[TOKEN_SAVE] 節約モード稼働中。バトル発光検知で OCR スキップ → 爆速モードで進行します")
 
+    # ─── 初回アプリ起動: ランチャーにいる場合は自動で起動 ───
+    try:
+        # 画面ウェイクアップ (scrcpy --turn-screen-off で消灯済みの場合)
+        adb("shell input keyevent KEYCODE_WAKEUP")
+        time.sleep(1)
+        _focus = adb("shell dumpsys window")
+        if APP_PACKAGE not in _focus:
+            logger.info("[STARTUP] アプリ未起動 → am start で起動します")
+            adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
+            logger.info("[STARTUP] 15秒待機 (スプラッシュ + 初期化)")
+            time.sleep(15)
+        else:
+            logger.info("[STARTUP] アプリ既に起動中: %s", APP_PACKAGE)
+    except Exception as _e:
+        logger.warning("[STARTUP] フォーカス確認失敗: %s — am start で起動を試行", _e)
+        adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
+        time.sleep(15)
+
+    # ─── ランドスケープ待機: ポートレートならアプリ起動待ち ───
+    for _orient_wait in range(10):
+        _ss_check = take_screenshot()
+        if _ss_check[0] is not None and _ss_check[1] > _ss_check[2]:
+            logger.info("[STARTUP] ランドスケープ確認 (%dx%d)", _ss_check[1], _ss_check[2])
+            break
+        logger.info("[STARTUP] ポートレート検出 (%dx%d) — アプリ起動待ち (%d/10)",
+                    _ss_check[1], _ss_check[2], _orient_wait + 1)
+        if _orient_wait == 4:
+            # 5回目で再起動を試行
+            logger.info("[STARTUP] アプリ再起動を試行")
+            adb(f"shell am force-stop {APP_PACKAGE}")
+            time.sleep(2)
+            adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
+        time.sleep(3)
+
     for i in range(MAX_ITERATIONS):
         state.iteration = i
         _loop_t0 = time.time()  # [PERF] ループ開始時刻
@@ -4417,6 +4520,7 @@ def main():
             dist = phash_distance(state.last_phash, cur_phash)
         else:
             dist = 999
+        state.last_phash_dist = dist
 
         # ── 前回タップの予測を検証 (phash変化で判定) ──
         if state.last_action_pre_phash and state.last_prediction and cur_phash:
@@ -4459,7 +4563,12 @@ def main():
             state.stall_corner_tried = False
             state.pre_popup_tap_count = 0  # ポップアップ試行カウンタもリセット
             state.dialog_close_total = 0  # ダイアログclose累計もリセット
-            state.finger_tap_static.reset()  # 指スワイプ判定もリセット
+            # 指スワイプ判定: MOYA_TAP 後の微小変化 (dist<PHASH_THRESHOLD) では
+            # リセットしない。チェック柄シーンのアニメーション中に永久リセットされる問題を防止。
+            if not (state.last_action == "MOYA_TAP" and dist < PHASH_THRESHOLD):
+                state.finger_tap_static.reset()
+            elif state.last_action == "MOYA_TAP":
+                state.finger_tap_static.tick()  # 微小変化でもタップ静止としてカウント
             state.last_screen_change_time = time.time()  # Watchdog: 最終変化時刻更新
 
             # ── ADV 高速モード: OCR スキップして画面下部を即連打 ──
@@ -4692,11 +4801,11 @@ def main():
                     # キャラ選択済み → 右スキル優先
                     if _rapid_right_g:
                         _rr = max(_rapid_right_g, key=lambda g: g["area"])
-                        _rapid_tx, _rapid_ty = _rr["cx"], max(1, _rr["cy"] - 35)
+                        _rapid_tx, _rapid_ty = _rr["cx"], max(1, _rr["cy"] - _GLOW_CENTER_Y_OFFSET)
                         _rapid_action = "BATTLE_RAPID_GLOW_P2"
                     elif _right_panel:
                         _tb = max(_right_panel, key=lambda b: b[2])
-                        _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - 35)
+                        _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - _GLOW_CENTER_Y_OFFSET)
                         _rapid_action = "BATTLE_RAPID_MOYA_P2"
                     else:
                         _rapid_tx, _rapid_ty = roi_to_device(
