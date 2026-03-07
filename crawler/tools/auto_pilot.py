@@ -3199,6 +3199,13 @@ def detect_and_act(ocr: list, state: PilotState,
                 logger.info(">>> 【バトルResult】 次へ (%d,%d) タップ", _nx, _ny)
                 tap_device(_nx, _ny, state, "RESULT_NEXT")
                 return "RESULT_TAP", 1.0
+            else:
+                # 「次へ」OCR未検出 → 想定位置 (右下) をタップ
+                _nx = int(W * 0.88)
+                _ny = int(H * 0.95)
+                logger.info(">>> 【バトルResult】 次へ未検出 → 想定位置 (%d,%d) タップ", _nx, _ny)
+                tap_device(_nx, _ny, state, "RESULT_NEXT")
+                return "RESULT_TAP", 1.0
 
         # バトル時は dark_mode=True で輝度閾値を緩和し min_area=200 に下げる（暗背景対応）
         # ホーム画面 / 利用規約ダイアログ / システムダイアログはブロブ誤検出になるためスキップ
