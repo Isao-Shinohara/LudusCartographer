@@ -407,3 +407,76 @@ class TestHandleResultScreen:
         mock_watchdog.assert_called_once()
         assert state.result_total_taps == 0
         assert state.result_rapid_count == 0
+
+
+# ─── StallCounter テスト ──────────────────────────────────────
+
+class TestStallCounter:
+    """StallCounter ユーティリティクラスのテスト。"""
+
+    def _make(self, name: str = "test", threshold: int = 3):
+        from tools.auto_pilot import StallCounter
+        return StallCounter(name, threshold)
+
+    def test_tick_increments(self):
+        c = self._make()
+        assert c.tick() == 1
+        assert c.count == 1
+
+    def test_stalled_at_threshold(self):
+        c = self._make(threshold=3)
+        c.tick()
+        c.tick()
+        c.tick()
+        assert c.stalled is True
+
+    def test_not_stalled_below_threshold(self):
+        c = self._make(threshold=3)
+        c.tick()
+        c.tick()
+        assert c.stalled is False
+
+    def test_reset_clears_count(self):
+        c = self._make(threshold=3)
+        for _ in range(5):
+            c.tick()
+        c.reset()
+        assert c.count == 0
+        assert c.stalled is False
+
+    def test_repr(self):
+        c = self._make("x", threshold=3)
+        c.tick()
+        c.tick()
+        assert repr(c) == "StallCounter(x, 2/3)"
+
+
+# ─── PilotState 動的属性昇格テスト ──────────────────────────
+
+class TestPilotStateDynamicAttrsRemoved:
+    """隠れ動的属性が PilotState の正式フィールドに昇格したことを確認。"""
+
+    @pytest.fixture
+    def state(self):
+        from tools.auto_pilot import PilotState
+        return PilotState()
+
+    def test_gacha_total_taps_is_typed_field(self, state):
+        assert state.gacha_total_taps == 0
+        state.gacha_total_taps = 5
+        assert state.gacha_total_taps == 5
+
+    def test_unity_restart_count_is_typed_field(self, state):
+        assert state.unity_restart_count == 0
+        state.unity_restart_count = 2
+        assert state.unity_restart_count == 2
+
+    def test_gold_swipe_is_stall_counter(self, state):
+        from tools.auto_pilot import StallCounter
+        assert isinstance(state.gold_swipe, StallCounter)
+        assert state.gold_swipe.threshold == 6
+
+    def test_normatk_fallback_is_stall_counter(self, state):
+        from tools.auto_pilot import StallCounter
+        assert isinstance(state.normatk_fallback, StallCounter)
+        assert state.normatk_fallback.threshold == 10

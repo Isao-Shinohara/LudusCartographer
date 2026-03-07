@@ -182,7 +182,7 @@ class PilotState:
     # ─── スクリーンショット破損リトライ統計 ───
     screenshot_retry_count: int = 0  # SIGSEGV防止リトライ発生回数
     # GoldSwipe連続検出カウンタ (N回超えたらOCRへフォールバック)
-    gold_swipe_count: int = 0
+    gold_swipe: "StallCounter" = field(default_factory=lambda: StallCounter("gold_swipe", threshold=6))
     # ─── デバッグ: 最新スクリーンショット (numpy ndarray) ───
     last_screen: object = None  # cv2.imread 結果を格納 (型ヒント省略でdataclass互換)
     # ─── ROI: ゲーム描画領域 (レターボックス除外) ───
@@ -203,6 +203,48 @@ class PilotState:
     result_rapid_count: int = 0       # RESULT_RAPID ループ反復 [0..15]
     result_total_taps: int = 0        # Result画面での累積タップ [0..30]
     result_subtype: str = ""          # "GACHA" | "BATTLE" | ""
+    # ─── 隠れ動的属性の昇格 ───
+    gacha_total_taps: int = 0         # ガチャOKフリーズ検知 [0..15]
+    unity_restart_count: int = 0      # Unity force-restart 試行回数 [0..3]
+    normatk_fallback: "StallCounter" = field(
+        default_factory=lambda: StallCounter("normatk_fallback", threshold=10))
+
+
+class StallCounter:
+    """宣言的な停滞カウンタ。閾値到達時のアクションを簡潔に記述する。
+
+    Usage:
+        counter = StallCounter("gold_swipe", threshold=6)
+        counter.tick()           # +1
+        if counter.stalled:      # >= threshold ?
+            counter.reset()
+    """
+    __slots__ = ("name", "threshold", "_count")
+
+    def __init__(self, name: str, threshold: int):
+        self.name = name
+        self.threshold = threshold
+        self._count = 0
+
+    def tick(self) -> int:
+        """カウンタを +1 して現在値を返す。"""
+        self._count += 1
+        return self._count
+
+    @property
+    def count(self) -> int:
+        return self._count
+
+    @property
+    def stalled(self) -> bool:
+        """閾値に到達したか。"""
+        return self._count >= self.threshold
+
+    def reset(self) -> None:
+        self._count = 0
+
+    def __repr__(self) -> str:
+        return f"StallCounter({self.name}, {self._count}/{self.threshold})"
 
 
 # ─── シーン分類 ──────────────────────────────────────
@@ -2948,16 +2990,16 @@ def detect_and_act(ocr: list, state: PilotState,
     if analysis_path is not None and not _is_battle_ui:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:
-            # 連続スワイプ上限チェック: 6回超えたら GoldSwipe をスキップして他の処理へ
-            if state.gold_swipe_count > 6:
+            # 連続スワイプ上限チェック: 閾値超えたら GoldSwipe をスキップして他の処理へ
+            if state.gold_swipe.stalled:
                 logger.warning(
                     "[GoldSwipe] detect_and_act: 連続 %d 回 → スキップ (別アクション探索)",
-                    state.gold_swipe_count,
+                    state.gold_swipe.count,
                 )
-                state.gold_swipe_count = 0
+                state.gold_swipe.reset()
             else:
                 _dir, _sx, _fy, _ty, _dur = _gold
-                state.gold_swipe_count += 1
+                state.gold_swipe.tick()
                 _base_ph_gs = compute_phash(analysis_path)
                 for _gs_retry in range(2):
                     if _dir == "UP":
@@ -2972,7 +3014,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     _new_ss, _, _, _ = take_screenshot()
                     _new_ph = compute_phash(_new_ss)
                     if _base_ph_gs and _new_ph and phash_distance(_base_ph_gs, _new_ph) >= PHASH_THRESHOLD:
-                        state.gold_swipe_count = 0  # 画面変化 → リセット
+                        state.gold_swipe.reset()  # 画面変化 → リセット
                         break  # 変化検知 → 成功
                     _base_ph_gs = _new_ph
                     # 座標を少しずらして再試行 (+40px x方向)
@@ -3080,15 +3122,15 @@ def detect_and_act(ocr: list, state: PilotState,
             # その他のアセットアクション: タップして return (fallthrough なし)
             # GACHA_OK 入力フリーズ検出: 連続タップで応答がない場合 force-stop 復帰
             if action == "GACHA_OK":
-                _gacha_taps = getattr(state, '_gacha_total_taps', 0) + 1
-                state._gacha_total_taps = _gacha_taps
+                _gacha_taps = state.gacha_total_taps + 1
+                state.gacha_total_taps = _gacha_taps
                 if _gacha_taps >= 15:
                     logger.warning("[GACHA_FREEZE] %d回タップ応答なし → Unity入力フリーズ → force-stop", _gacha_taps)
-                    state._gacha_total_taps = 0
+                    state.gacha_total_taps = 0
                     watchdog_recover(state)
                     return "GACHA_FREEZE_RECOVER", 3.0
             else:
-                state._gacha_total_taps = 0
+                state.gacha_total_taps = 0
             tap_device(cx, cy, state, action)
             # GACHA_OK: 演出終了待ち (演出中はタップが無視されるため長めに待つ)
             _asset_wait = 5.0 if action == "GACHA_OK" else 0.5
@@ -4586,7 +4628,7 @@ def main():
                 continue
 
             if stall_elapsed >= STALL_TIMEOUT * 4 and state.stall_corner_tried:
-                _restart_count = getattr(state, '_unity_restart_count', 0)
+                _restart_count = state.unity_restart_count
                 if _restart_count >= 3:
                     logger.error(">>> %.0f秒スタック解消不能 (再起動%d回失敗) — 停止",
                                  stall_elapsed, _restart_count)
@@ -4609,7 +4651,7 @@ def main():
                     time.sleep(30)
                 except Exception as _uf_e:
                     logger.error("[UNITY_RESTART] 再起動失敗: %s", _uf_e)
-                state._unity_restart_count = _restart_count + 1
+                state.unity_restart_count = _restart_count + 1
                 state.stall_start = 0.0
                 state.stall_corner_tried = False
                 state.same_phash_count = 0
@@ -4705,19 +4747,19 @@ def main():
             # ── Phase C: 左モヤなしフォールバック → 右側攻撃ボタン ──
             # 【永続ルール】左キャラにモヤがない場合は常に右側の通常攻撃/戦闘スキルをタップ
             # 安全弁: 連続10回フォールバック → バトル以外のシーンの可能性 → OCR 再評価
-            _fb_count = getattr(state, '_normatk_fallback_count', 0)
             if not _rapid_action:
-                if _fb_count >= 10:
-                    logger.info("[BATTLE_RAPID] FALLBACK 10回連続 → OCR で再評価")
-                    state._normatk_fallback_count = 0
+                if state.normatk_fallback.stalled:
+                    logger.info("[BATTLE_RAPID] FALLBACK %d回連続 → OCR で再評価",
+                                state.normatk_fallback.count)
+                    state.normatk_fallback.reset()
                     # BATTLE_RAPID を抜けて OCR に回す (continue しない)
                 else:
                     _rapid_tx, _rapid_ty = roi_to_device(
                         int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
                     _rapid_action = "BATTLE_RAPID_NORMATK_FALLBACK"
-                    state._normatk_fallback_count = _fb_count + 1
+                    state.normatk_fallback.tick()
             else:
-                state._normatk_fallback_count = 0
+                state.normatk_fallback.reset()
 
             # ── 共通タップ実行 ──
             if _rapid_action:
@@ -4753,13 +4795,13 @@ def main():
             if _fast_action:
                 # GoldSwipe 連続回数制限: 6回超えたら OCR へフォールバック
                 if "GOLD_SWIPE" in _fast_action:
-                    state.gold_swipe_count += 1
-                    if state.gold_swipe_count > 6:
+                    state.gold_swipe.tick()
+                    if state.gold_swipe.stalled:
                         logger.warning(
                             "[GoldSwipe] 連続 %d 回 → OCR フォールバック (ループ脱出)",
-                            state.gold_swipe_count,
+                            state.gold_swipe.count,
                         )
-                        state.gold_swipe_count = 0
+                        state.gold_swipe.reset()
                         # FAST_PATH をスキップして通常 OCR へ
                     else:
                         state.last_action = _fast_action
@@ -4774,7 +4816,7 @@ def main():
                         logger.info("  [PERF] Loop %.0fms (FAST_PATH)", _fms)
                         continue  # OCR スキップ
                 else:
-                    state.gold_swipe_count = 0  # GoldSwipe 以外でカウンタリセット
+                    state.gold_swipe.reset()  # GoldSwipe 以外でカウンタリセット
                     state.last_action = _fast_action
                     state.stall_start = 0.0
                     state.stall_corner_tried = False
