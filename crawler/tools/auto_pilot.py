@@ -102,6 +102,20 @@ _DIALOG_FIRST_KWS: frozenset = frozenset([
     "マギアボックス", "最大24時間", "素材が溜", "プレイヤーLv",
 ])
 
+# ─── バトル判定キーワード ──────────────────────────────────────────
+# detect_and_act 内の複数箇所で共有するバトルコンテキスト判定リスト。
+_BATTLE_CORE_KWS: frozenset = frozenset([
+    "通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃",
+    "必殺技", "BREAK", "WAVE", "Turn",
+])
+
+# BATTLE 高速パス: OCR 前テンプレートマッチングで使用。
+# _BATTLE_CORE_KWS + ターン表記バリアントを含む。
+_BATTLE_UI_KWS: frozenset = frozenset([
+    "通常攻撃", "単体攻撃", "单体攻撃",  # 单=簡体字 OCR 誤認対応
+    "WAVE", "Turn", "ターン", "必殺技",
+])
+
 # ─── 解析基準解像度 ───
 ANALYSIS_W = 1520
 ANALYSIS_H = 720
@@ -273,8 +287,7 @@ def classify_scene(texts: list[str], last_action: str) -> tuple[str, float]:
     joined = " ".join(texts)
     if any(kw in joined for kw in ["ダウンロード", "Loading", "Now Loading", "ロード中", "通信中"]):
         return "LOADING", SCENE_INTERVAL["LOADING"]
-    if any(kw in joined for kw in ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃",
-                                    "必殺技", "BREAK", "WAVE", "ENEMY TURN", "Turn"]):
+    if any(kw in joined for kw in _BATTLE_CORE_KWS) or "ENEMY TURN" in joined:
         return "BATTLE", SCENE_INTERVAL["BATTLE"]
     if any(kw in joined for kw in ["クエスト", "ショップ", "ガシャ", "ガチャ",
                                     "ホーム", "メニュー", "お知らせ", "編成", "光の間"]):
@@ -2810,8 +2823,7 @@ def detect_and_act(ocr: list, state: PilotState,
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # "SKIP" / "スキップ" を検出 → 即タップでカットシーンをスキップ。
     # バトル中 ("通常攻撃" 等) は除外 (スキルボタンとの誤検出防止)。
-    _battle_ctx_kws = ["通常攻撃", "単体攻撃", "WAVE", "Turn", "BREAK", "必殺技"]
-    _in_battle_ctx = any(kw in joined for kw in _battle_ctx_kws)
+    _in_battle_ctx = any(kw in joined for kw in _BATTLE_CORE_KWS)
     if not _in_battle_ctx:
         _skip_btn = has_any(ocr, ["SKIP", "スキップ", "SKP", "SKIR", "SKlP", "SKLP"])
         if _skip_btn:
@@ -2917,8 +2929,7 @@ def detect_and_act(ocr: list, state: PilotState,
     # ② P1: 左キャラ発光 (character_selected=False) → GLOW_LEFT_CHAR
     # ③ P2: 右スキル発光 (character_selected=True) → GLOW_RIGHT_SKILL
     # ④ P3: 発光なし + character_selected → 通常攻撃 OCR フォールバック
-    _is_battle_early = any(kw in " ".join(texts) for kw in
-                           ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃", "BREAK", "WAVE", "Turn"])
+    _is_battle_early = any(kw in " ".join(texts) for kw in _BATTLE_CORE_KWS)
     _battle_menu_toast = "メニューが使用できません" in " ".join(texts)
     if _is_battle_early and _battle_menu_toast:
         # メニューボタン誤タップ → トースト表示中。DIALOG_CLOSE を完全スキップして2秒待機
@@ -2997,8 +3008,7 @@ def detect_and_act(ocr: list, state: PilotState,
     # チュートリアル3D移動シーン(チェッカー床/階段/廊下)で発火。
     # phash監視: スワイプ後2s待機 → 変化なければ再実行 (最大2回)
     # バトルUI（通常攻撃・単体攻撃・WAVE・Turn）が見えるとき はバトル中なのでスキップ
-    _battle_ui_kws = ["通常攻撃", "単体攻撃", "WAVE", "Turn", "ターン"]
-    _is_battle_ui = any(kw in joined for kw in _battle_ui_kws)
+    _is_battle_ui = any(kw in joined for kw in _BATTLE_UI_KWS)
     if analysis_path is not None and not _is_battle_ui:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:
@@ -3268,7 +3278,7 @@ def detect_and_act(ocr: list, state: PilotState,
     if state.blob_same_count >= 5:
         tutorial_guide = (has_text(ocr, "てみましょう", min_conf=0.3) or
                           has_text(ocr, "しましょう", min_conf=0.3))
-        is_battle_guide = any(kw in " ".join(texts) for kw in ["通常攻撃", "BREAK", "WAVE"])
+        is_battle_guide = any(kw in " ".join(texts) for kw in _BATTLE_CORE_KWS)
         if tutorial_guide and not is_battle_guide:
             close_x = W - 40  # 右上 × ボタン (1480, 40)
             close_y = 40
@@ -3331,8 +3341,7 @@ def detect_and_act(ocr: list, state: PilotState,
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
     if analysis_path is not None:
         # 「AUTO」のみはストーリー画面にも表示されるため除外、戦闘固有キーワードで判定
-        is_battle_screen = any(kw in " ".join(texts) for kw in
-                               ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃", "必殺技", "BREAK", "WAVE", "Turn"])
+        is_battle_screen = any(kw in " ".join(texts) for kw in _BATTLE_CORE_KWS)
         # ── 速度チュートリアル早期検出 (もや検出より前に処理) ──
         _speed_tip_early = has_any(ocr, ["このボタンでバトル", "進行速度を変更"])
         if _speed_tip_early and is_battle_screen:
@@ -3713,8 +3722,7 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── ストーリーセリフ進行 (バトル外でセリフが出ている) ───
     # 「画面をタップ」系の指示 or バトルでもホームでもない日本語テキストが複数ある
-    is_battle_now = any(kw in " ".join(texts) for kw in
-                        ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃", "必殺技", "BREAK", "WAVE", "Turn"])
+    is_battle_now = any(kw in " ".join(texts) for kw in _BATTLE_CORE_KWS)
     tap_screen_kws = ["画面をタップ", "タップして進む", "タップで進む", "タップしてください",
                       "タップして次へ", "TOUCH TO CONTINUE"]
     tap_screen = has_any(ocr, tap_screen_kws)
@@ -4282,11 +4290,6 @@ def generate_and_copy_report(state: PilotState, reason: str) -> None:
 
 
 # ─── BATTLE 高速パス: OCR 前テンプレートマッチング ──────────────────
-_BATTLE_UI_KWS = frozenset([
-    "通常攻撃", "単体攻撃", "单体攻撃",  # 单=簡体字 OCR 誤認対応
-    "WAVE", "Turn", "ターン", "必殺技",
-])
-
 def _battle_fast_check(analysis_path: Path,
                        state: "PilotState") -> tuple[str, float]:
     """
