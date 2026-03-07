@@ -1096,18 +1096,8 @@ def detect_dialog_frame_and_nav(
                             _cy_f = _fry1 + _ml_f[1] + _th_f // 2
                             logger.debug("[Dialog×] フレーム右上テンプレ: (%d,%d) score=%.2f", _cx_f, _cy_f, _mv_f)
                             return ("close", _cx_f, _cy_f)
-                # Canny エッジ
-                _lns_f, _gray_f = _canny_lines(_froi)
-                _cp_f = _cross_center(_lns_f)
-                if _cp_f:
-                    logger.debug("[Dialog×] フレーム右上Canny: (%d,%d)", _frx1 + _cp_f[0], _fry1 + _cp_f[1])
-                    return ("close", _frx1 + _cp_f[0], _fry1 + _cp_f[1])
-                # 輝度フォールバック → フレーム右上角を返す
-                if _cv.countNonZero(_cv.threshold(_gray_f, 155, 255, _cv.THRESH_BINARY)[1]) >= 15:
-                    _cx_ff = _fx + _fw - 10
-                    _cy_ff = _fy + 10
-                    logger.debug("[Dialog×] フレーム右上輝度FB: (%d,%d)", _cx_ff, _cy_ff)
-                    return ("close", _cx_ff, _cy_ff)
+                # Note: Canny / 輝度フォールバックは誤検出率が高いため廃止。
+                # × 検出は STEP 0 テンプレートマッチングのみが権威ある判定。
 
         # Phase B: フレーム未検出 or フレーム右上で × 未発見 → 画面右上隅で探す
         if _DIALOG_CLOSE_TEMPLATE.exists():
@@ -1123,21 +1113,8 @@ def detect_dialog_frame_and_nav(
                         int(_W * 0.88) + _ml[0] + _tw // 2,
                         _ml[1] + _th // 2)
 
-        _rx1c, _ry1c = int(_W * 0.88), 0
-        _rx2c, _ry2c = _W, int(_H * 0.13)
-        _roi_c = img[_ry1c:_ry2c, _rx1c:_rx2c]
-        if _roi_c.size > 0:
-            _lns_c, _gray_c = _canny_lines(_roi_c)
-            _cp = _cross_center(_lns_c)
-            if _cp:
-                logger.debug("[Dialog×] Canny検出: (%d,%d)", _rx1c + _cp[0], _ry1c + _cp[1])
-                return ("close", _rx1c + _cp[0], _ry1c + _cp[1])
-            # 輝度フォールバック
-            if _cv.countNonZero(_cv.threshold(_gray_c, 155, 255, _cv.THRESH_BINARY)[1]) >= 25:
-                _r = roi if roi else (0, 0, _W, _H)
-                _cx_fb, _cy_fb = roi_to_device(int(ANALYSIS_W * 0.94), int(ANALYSIS_H * 0.055), _r)
-                logger.debug("[Dialog×] 輝度FB(ROI補正): (%d,%d)", _cx_fb, _cy_fb)
-                return ("close", _cx_fb, _cy_fb)
+        # Note: Phase B Canny / 輝度フォールバックは廃止 (ホーム画面バナー誤検出防止)。
+        # × 検出は STEP 0 テンプレートマッチングに一元化。
 
         # ── ▷ ボタン (スクリーン右エッジ) ────────────────────────────────
         if _DIALOG_NEXT_TEMPLATE.exists():
