@@ -436,7 +436,8 @@ def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Optional
 
 def tap_device(x: int, y: int, state: PilotState, desc: str = "",
                finger_box: Optional[tuple] = None,
-               gold_box: Optional[tuple] = None) -> None:
+               gold_box: Optional[tuple] = None,
+               post_wait: float = 1.0) -> None:
     if state.device_w and state.device_h:
         sx = state.device_w / ANALYSIS_W
         sy = state.device_h / ANALYSIS_H
@@ -471,13 +472,13 @@ def tap_device(x: int, y: int, state: PilotState, desc: str = "",
             logger.info("  [DEBUG_TAP] Target=(%d,%d) → %s", x, y, _out)
     except Exception:
         pass
-    time.sleep(0.05)
     logger.info(
         "  [DEBUG] TAP: 解析座標=(%d,%d) → デバイス座標=(%d,%d) | %s",
         x, y, real_x, real_y, desc
     )
     adb(f"shell input tap {real_x} {real_y}")
     state.total_taps += 1
+    time.sleep(post_wait)
 
 
 def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300,
@@ -1230,7 +1231,6 @@ def process_paging_dialog(
                 _no_close_streak, _esc_x, _esc_y,
             )
             tap_device(_esc_x, _esc_y, state, "PAGING_ESCAPE")
-            time.sleep(1.0)
             return "DIALOG_PAGING_TIMEOUT"
         # "next" or "bottom" → ▷ タップして次ページ
         tap_device(_dx, _dy, state, "PAGING_NEXT")
@@ -2235,11 +2235,8 @@ def detect_and_act(ocr: list, state: PilotState,
                      has_text(ocr, "同意して", min_conf=0.2) or
                      has_text(ocr, "ゲームを始める", min_conf=0.2))
         if agree_btn:
-            # OCR 中心に補正オフセット適用 (実測: -23, -15 が有効ヒットゾーン)
-            _ocr_cx, _ocr_cy = agree_btn["center"]
-            cx, cy = _ocr_cx - 23, _ocr_cy - 15
-            logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d) → 補正後(%d,%d) タップ",
-                        _ocr_cx, _ocr_cy, cx, cy)
+            cx, cy = agree_btn["center"]
+            logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d) タップ", cx, cy)
         else:
             # フォールバック: 比率ベース (W*0.66, H*0.79) + ROI 補正
             cx, cy = roi_to_device(int(W * 0.66), int(H * 0.79), state.game_roi)
@@ -2318,8 +2315,7 @@ def detect_and_act(ocr: list, state: PilotState,
             _pl_x, _pl_y = _pl["cx"], max(1, _pl["cy"] - 35)
             logger.info("[GLOW_SM P1] 左キャラ発光(%d,%d)→tap(%d,%d) [#0前ガード]",
                         _pl["cx"], _pl["cy"], _pl_x, _pl_y)
-            tap_device(_pl_x, _pl_y, state, "GLOW_LEFT_CHAR")
-            time.sleep(0.3)
+            tap_device(_pl_x, _pl_y, state, "GLOW_LEFT_CHAR", post_wait=0.3)
             tap_device(_pl_x, _pl_y, state, "GLOW_LEFT_CHAR")  # ダブルタップ(追いタップ)
             state.character_selected = True
             state.char_just_selected = True
@@ -2514,7 +2510,6 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> [GoldBtn] 金枠ボタン検出 → tap(%d,%d)", _bx, _by)
             _base_ph_gb = compute_phash(analysis_path)
             tap_device(_bx, _by, state, "GOLD_BTN_TAP")
-            time.sleep(1.0)
             _new_ss_gb, _, _, _ = take_screenshot()
             try:
                 _new_ph_gb = compute_phash(_new_ss_gb)
@@ -2585,7 +2580,6 @@ def detect_and_act(ocr: list, state: PilotState,
                         _fx, _fy,
                     )
                     tap_device(_fx, _fy, state, "TEXT_INPUT_FOCUS")
-                    time.sleep(0.8)
                     import subprocess as _sp2
                     _sp2.run(
                         ["adb", "-s", DEVICE_SERIAL, "shell", "input", "text", "MadoDora"],
@@ -2617,8 +2611,8 @@ def detect_and_act(ocr: list, state: PilotState,
         # ── フォールバック: 固定座標シーケンス ──
         # ▷ 矢印: 右エッジ (W*0.91, H*0.49) ≈ (1383, 353)
         # × ボタン: 右上隅 (W*0.98, H*0.056) ≈ (1490, 40)
-        _arr = (int(W * 0.91), int(H * 0.49))   # ▷ 矢印
-        _cls = (int(W * 0.98), int(H * 0.056))  # × ボタン
+        _arr = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)   # ▷ 矢印
+        _cls = roi_to_device(int(W * 0.98), int(H * 0.056), state.game_roi)  # × ボタン
         tap_candidates = [
             _arr,   # ▷ 矢印 (1回目)
             _arr,   # ▷ 矢印 (2回目)
@@ -2660,7 +2654,6 @@ def detect_and_act(ocr: list, state: PilotState,
             _nf_x, _nf_y = roi_to_device(int(W * 0.46), int(H * 0.58), state.game_roi)
             logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d)", _nf_x, _nf_y)
             tap_device(_nf_x, _nf_y, state, "NAME_INPUT_FOCUS")
-            time.sleep(0.5)
             import subprocess as _sp
             _sp.run(["adb", "-s", DEVICE_SERIAL, "shell", "input", "text", "MadoDora"], check=False)
             time.sleep(0.3)
@@ -2708,8 +2701,7 @@ def detect_and_act(ocr: list, state: PilotState,
         # 最終ページへ移動 (右ナビゲーション × 6) → フレーム右上 × をタップ
         _cn_x, _cn_y = roi_to_device(int(W * 0.96), int(H * 0.5), state.game_roi)
         for _ in range(6):
-            tap_device(_cn_x, _cn_y, state, "CAROUSEL_NAV_RIGHT")
-            time.sleep(0.3)
+            tap_device(_cn_x, _cn_y, state, "CAROUSEL_NAV_RIGHT", post_wait=0.3)
         close_x, close_y = roi_to_device(int(W * 0.94), int(H * 0.12), state.game_roi)
         logger.info(">>> 【カルーセルポップアップ】 '%s' → フレーム右上 (%d,%d) タップ",
                     carousel_match["text"][:10], close_x, close_y)
@@ -2756,8 +2748,7 @@ def detect_and_act(ocr: list, state: PilotState,
             _gl = max(_gsm_left, key=lambda g: g["area"])
             _gl_x, _gl_y = _gl["cx"], max(1, _gl["cy"] - 35)
             logger.info("[GLOW_SM P1] 左キャラ発光(%d,%d) → tap(%d,%d)", _gl["cx"], _gl["cy"], _gl_x, _gl_y)
-            tap_device(_gl_x, _gl_y, state, "GLOW_LEFT_CHAR")
-            time.sleep(0.3)
+            tap_device(_gl_x, _gl_y, state, "GLOW_LEFT_CHAR", post_wait=0.3)
             tap_device(_gl_x, _gl_y, state, "GLOW_LEFT_CHAR")  # ダブルタップ(追いタップ)
             state.character_selected = True
             state.char_just_selected = True
@@ -2841,15 +2832,13 @@ def detect_and_act(ocr: list, state: PilotState,
                 state.last_tap_text = "OK"
                 state.last_action_pre_phash = state.last_phash
                 logger.info(">>> 【ガチャ結果】 OK (%d,%d) → ダブルタップ", cx, cy)
-                tap_device(cx, cy, state, "GACHA_RESULT_OK_1")
-                time.sleep(0.3)
+                tap_device(cx, cy, state, "GACHA_RESULT_OK_1", post_wait=0.3)
                 tap_device(cx, cy, state, "GACHA_RESULT_OK_2")
                 return "GACHA_OK", 2.0
             # OKがない場合は画面中央をダブルタップ (NEW×8の初期表示 = タップで詳細へ)
             _gc_x, _gc_y = roi_to_device(int(W * 0.5), int(H * 0.5), state.game_roi)
             logger.info(">>> 【ガチャ結果初期】 OK未検出 → 画面中央ダブルタップ (%d,%d)", _gc_x, _gc_y)
-            tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_1")
-            time.sleep(0.3)
+            tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_1", post_wait=0.3)
             tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_2")
             return "GACHA_OK", 2.0
         # ─── ADV選択肢「はい」「いいえ」など ─────────────────────────────
@@ -3288,8 +3277,7 @@ def detect_and_act(ocr: list, state: PilotState,
         if skill_tut:
             sx, sy = roi_to_device(int(W * 0.947), int(H * 0.722), state.game_roi)
             logger.info(">>> スキルチュートリアル (%d,%d)", sx, sy)
-            tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL")
-            time.sleep(0.8)
+            tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL", post_wait=0.8)
             tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL confirm")
             return "BATTLE_TUTORIAL", 1.0
 
@@ -3298,8 +3286,7 @@ def detect_and_act(ocr: list, state: PilotState,
         if hissatsu_tut:
             hx, hy = roi_to_device(int(W * 0.862), int(H * 0.778), state.game_roi)
             logger.info(">>> 必殺技チュートリアル (%d,%d)", hx, hy)
-            tap_device(hx, hy, state, "HISSATSU_TUTORIAL")
-            time.sleep(0.8)
+            tap_device(hx, hy, state, "HISSATSU_TUTORIAL", post_wait=0.8)
             tap_device(hx, hy, state, "HISSATSU_TUTORIAL confirm")
             return "BATTLE_TUTORIAL", 1.0
 
@@ -3366,15 +3353,13 @@ def detect_and_act(ocr: list, state: PilotState,
             if stall_phase == 0:
                 sx, sy = roi_to_device(int(W * 0.947), int(H * 0.722), state.game_roi)
                 logger.info(">>> バトル停滞 — スキルタップ (%d,%d)", sx, sy)
-                tap_device(sx, sy, state, "STALL_SKILL")
-                time.sleep(0.8)
+                tap_device(sx, sy, state, "STALL_SKILL", post_wait=0.8)
                 tap_device(sx, sy, state, "STALL_SKILL confirm")
                 return "BATTLE_STALL", 1.0
             elif stall_phase == 4:
                 hx, hy = roi_to_device(int(W * 0.862), int(H * 0.778), state.game_roi)
                 logger.info(">>> バトル停滞 — 必殺技タップ (%d,%d)", hx, hy)
-                tap_device(hx, hy, state, "STALL_HISSATSU")
-                time.sleep(0.8)
+                tap_device(hx, hy, state, "STALL_HISSATSU", post_wait=0.8)
                 tap_device(hx, hy, state, "STALL_HISSATSU confirm")
                 return "BATTLE_STALL", 1.0
             elif stall_phase == 8:
@@ -3972,13 +3957,10 @@ def main():
                     PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
                     state.current_scene != "MENU"):
                 logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
-                time.sleep(0.1)
                 _adv_x, _adv_y = roi_to_device(int(W * 0.5), int(H * 0.9), state.game_roi)
-                adb(f"shell input tap {_adv_x} {_adv_y}")
-                state.total_taps += 1
+                tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP")
                 logger.info("  ACTION_TAKEN ADV_RAPID_TAP (%d,%d)", _adv_x, _adv_y)
                 state.last_phash = cur_phash
-                time.sleep(1.0)
                 continue
 
         else:
@@ -4209,9 +4191,9 @@ def main():
                 logger.info("[%s] tap(%d,%d)%s",
                             _rapid_action, _rapid_tx, _rapid_ty,
                             " ダブルタップ" if _rapid_double else "")
-                tap_device(_rapid_tx, _rapid_ty, state, _rapid_action)
+                tap_device(_rapid_tx, _rapid_ty, state, _rapid_action,
+                          post_wait=0.5 if _rapid_double else 1.0)
                 if _rapid_double:
-                    time.sleep(0.5)
                     tap_device(_rapid_tx, _rapid_ty, state, _rapid_action)
                 # 状態更新
                 if "P1" in _rapid_action:
@@ -4225,7 +4207,6 @@ def main():
                 state.stall_start = 0.0
                 state.stall_corner_tried = False
                 state.same_phash_count = 0
-                time.sleep(1.0)
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
                 logger.info("  [PERF] Loop %.0fms (BATTLE_RAPID)", _fms)
