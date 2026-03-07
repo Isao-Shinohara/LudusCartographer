@@ -480,3 +480,98 @@ class TestPilotStateDynamicAttrsRemoved:
         from tools.auto_pilot import StallCounter
         assert isinstance(state.normatk_fallback, StallCounter)
         assert state.normatk_fallback.threshold == 10
+
+
+# ─── handle_dialog_screen テスト ──────────────────────────────
+
+class TestHandleDialogScreen:
+    """handle_dialog_screen() のテスト。"""
+
+    @pytest.fixture
+    def state(self):
+        from tools.auto_pilot import PilotState
+        s = PilotState()
+        s.device_w = 0
+        s.device_h = 0
+        return s
+
+    def test_returns_none_when_no_analysis_path(self, state):
+        from tools.auto_pilot import handle_dialog_screen
+        result = handle_dialog_screen(state, None, [], [], False, False)
+        assert result is None
+
+    def test_returns_none_when_finger_guard_active(self, state, tmp_path):
+        from tools.auto_pilot import handle_dialog_screen
+        analysis = tmp_path / "test.png"
+        analysis.touch()
+        result = handle_dialog_screen(state, analysis, [], [], False, True)
+        assert result is None
+
+    @patch("tools.auto_pilot.find_finger_blobs", return_value=[])
+    @patch("tools.auto_pilot.detect_white_hand_pointer", return_value=None)
+    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("close", 100, 50))
+    def test_dialog_close_returns_action(self, mock_dlg, mock_tap, mock_white,
+                                          mock_finger, state, tmp_path):
+        from tools.auto_pilot import handle_dialog_screen
+        analysis = tmp_path / "test.png"
+        analysis.touch()
+        result = handle_dialog_screen(state, analysis, [], [], False, False)
+        assert result is not None
+        assert result[0] == "DIALOG_CLOSE"
+        assert result[1] == 1.0
+        mock_tap.assert_called_once()
+
+    @patch("tools.auto_pilot.find_finger_blobs", return_value=[])
+    @patch("tools.auto_pilot.detect_white_hand_pointer", return_value=None)
+    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.auto_pilot.process_paging_dialog", return_value="DIALOG_CLOSED")
+    @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("next", 800, 400))
+    def test_paging_dialog_returns_action(self, mock_dlg, mock_paging, mock_tap,
+                                           mock_white, mock_finger, state, tmp_path):
+        from tools.auto_pilot import handle_dialog_screen
+        analysis = tmp_path / "test.png"
+        analysis.touch()
+        result = handle_dialog_screen(state, analysis, [], [], False, False)
+        assert result is not None
+        assert result[0] == "DIALOG_CLOSED"
+        assert result[1] == 1.0
+        mock_paging.assert_called_once()
+
+    @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("close", 100, 50))
+    def test_battle_dialog_guard_skips_close_in_top(self, mock_dlg, state, tmp_path):
+        from tools.auto_pilot import handle_dialog_screen
+        analysis = tmp_path / "test.png"
+        analysis.touch()
+        result = handle_dialog_screen(state, analysis, [], [], True, False)
+        assert result is None
+
+    @patch("tools.auto_pilot.find_finger_blobs", return_value=[])
+    @patch("tools.auto_pilot.detect_white_hand_pointer", return_value=None)
+    @patch("tools.auto_pilot.adb")
+    @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("close", 100, 400))
+    def test_escalation_back_at_8_attempts(self, mock_dlg, mock_adb, mock_white,
+                                            mock_finger, state, tmp_path):
+        from tools.auto_pilot import handle_dialog_screen
+        state.dialog_close_total = 7  # 次で8
+        analysis = tmp_path / "test.png"
+        analysis.touch()
+        result = handle_dialog_screen(state, analysis, [], [], False, False)
+        assert result is not None
+        assert result[0] == "DIALOG_BACK_ESCALATION"
+        assert result[1] == 2.0
+        mock_adb.assert_called_once_with("shell input keyevent KEYCODE_BACK")
+
+    @patch("tools.auto_pilot.find_finger_blobs", return_value=[])
+    @patch("tools.auto_pilot.detect_white_hand_pointer", return_value=None)
+    @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("close", 100, 400))
+    def test_escalation_skip_at_12_attempts(self, mock_dlg, mock_white,
+                                             mock_finger, state, tmp_path):
+        from tools.auto_pilot import handle_dialog_screen
+        state.dialog_close_total = 11  # 次で12
+        analysis = tmp_path / "test.png"
+        analysis.touch()
+        result = handle_dialog_screen(state, analysis, [], [], False, False)
+        assert result is None
+        assert state.dialog_close_total == 0
+        assert state.pre_popup_tap_count == 0

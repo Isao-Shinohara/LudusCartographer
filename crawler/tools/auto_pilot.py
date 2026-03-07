@@ -2241,6 +2241,160 @@ def handle_result_screen(
     return "RESULT_TAP", 1.0
 
 
+# ─── ダイアログ検出ハンドラ (#0-DIALOG) ──────────────────────────
+
+def handle_dialog_screen(
+    state: PilotState,
+    analysis_path: Optional[Path],
+    ocr: list,
+    texts: list[str],
+    is_battle_early: bool,
+    has_finger_guard: bool,
+) -> Optional[tuple[str, float]]:
+    """ダイアログ検出ハンドラ (#0-DIALOG)。
+
+    detect_dialog_frame_and_nav() で金色枠/×/▷ を検出し、
+    Spatial Gate / White Hand ガード / エスカレーション を経てタップ実行。
+
+    Returns: (action_name, wait_sec) or None (非ダイアログ / ガード発動)
+    """
+    if analysis_path is None or has_finger_guard:
+        return None
+
+    W, H = ANALYSIS_W, ANALYSIS_H
+
+    _dlg = detect_dialog_frame_and_nav(
+        analysis_path, W, H, ocr_texts=texts, roi=state.game_roi
+    )
+    if _dlg is None:
+        return None
+
+    _dlg_type, _dlg_x, _dlg_y = _dlg
+
+    # ── [SPATIAL GATE] ▷ページングより指アイコンを最優先 ──────────────
+    if _dlg_type in ("next", "bottom"):
+        _sg_blobs = find_finger_blobs(analysis_path, min_area=400)
+        _sg_blobs = [b for b in _sg_blobs if b[1] > 36 and b[0] < W - 40]
+        if _sg_blobs:
+            _sg_best = max(_sg_blobs, key=lambda b: b[2])
+            _sg_dist = ((_dlg_x - _sg_best[0]) ** 2 + (_dlg_y - _sg_best[1]) ** 2) ** 0.5
+            if _sg_dist > 300:
+                logger.info(
+                    ">>> [SPATIAL_GATE] 指(%d,%d)↔▷(%d,%d) 距離=%.0fpx>300 → #0-DIALOG スキップ",
+                    _sg_best[0], _sg_best[1], _dlg_x, _dlg_y, _sg_dist,
+                )
+                _dlg = None
+        # ── 白ハンドポインタ画面ガード ──────────────────────────
+        if _dlg is not None:
+            _sg_white = detect_white_hand_pointer(analysis_path, threshold=0.90)
+            if _sg_white is not None:
+                logger.info(
+                    "[SPATIAL_GATE] 白ハンドポインタ(%d,%d) score=%.3f → #0-DIALOG(▷) スキップ",
+                    _sg_white[0], _sg_white[1], _sg_white[2],
+                )
+                _dlg = None
+            elif any(any(k in t for k in ("NEW", "報酬", "推奖", "报酬")) for t in texts):
+                logger.info("[SPATIAL_GATE] クエストKW検出(補助) → #0-DIALOG(▷) スキップ")
+                _dlg = None
+
+    # ── バトル中 × 誤検出ガード ──────────────────────────────────────────
+    if (_dlg is not None and _dlg_type == "close"
+            and is_battle_early and _dlg_y < 100):
+        logger.info(
+            "[BATTLE_DIALOG_GUARD] close(%d,%d) y<100 → バトル上部UI誤検出 スキップ",
+            _dlg_x, _dlg_y,
+        )
+        _dlg = None
+
+    if _dlg is None:
+        return None
+
+    state.pre_popup_tap_count += 1
+    state.dialog_close_total += 1
+    state.dialog_detections += 1
+
+    # ── エスカレーション: 12回以上 → ダイアログ検出自体をスキップ ──
+    if state.dialog_close_total >= 12:
+        logger.warning(
+            ">>> 【ダイアログ#0-DIALOG】累計%d回スタック → ダイアログ検出スキップ (他処理へ)",
+            state.dialog_close_total,
+        )
+        state.dialog_close_total = 0
+        state.pre_popup_tap_count = 0
+        return None
+
+    # ── エスカレーション: 8回以上 → Android BACK キー ──
+    if state.dialog_close_total >= 8:
+        logger.warning(
+            ">>> 【ダイアログ#0-DIALOG】累計%d回失敗 → BACK キー押下",
+            state.dialog_close_total,
+        )
+        try:
+            adb("shell input keyevent KEYCODE_BACK")
+        except Exception:
+            pass
+        state.pre_popup_tap_count = 0
+        return "DIALOG_BACK_ESCALATION", 2.0
+
+    if _dlg_type in ("next", "bottom"):
+        # ページング式ダイアログ: ▷ → … → × を一括処理
+        logger.info(
+            ">>> 【ダイアログ#0-DIALOG-PAGING】%s(%d,%d) (試行%d回) → process_paging_dialog",
+            _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
+        )
+        _pg_result = process_paging_dialog(
+            analysis_path, W, H, state,
+            initial_dlg=(_dlg_type, _dlg_x, _dlg_y),
+            ocr_texts=texts,
+        )
+        return _pg_result, 1.0
+    else:
+        # "close": × ボタンを即タップ
+        # ── 確認ダイアログ (OK+キャンセル共存) → × ではなく OK 優先 ──
+        _dlg_pos = has_any(ocr, ["OK", "はい", "了解", "決定"])
+        _dlg_neg = has_any(ocr, ["キャンセル", "いいえ", "戻る"])
+        if _dlg_pos and _dlg_neg:
+            _dp_x, _dp_y = _dlg_pos["center"]
+            logger.info(
+                "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) | Label: Dialog#0",
+                _dlg_pos["text"], _dp_x, _dp_y,
+            )
+            logger.info(
+                ">>> 【ダイアログ#0-DIALOG】確認ダイアログ(OK+キャンセル) → × ではなく '%s'(%d,%d) タップ",
+                _dlg_pos["text"], _dp_x, _dp_y,
+            )
+            tap_device(_dp_x, _dp_y, state, f"DIALOG_CONFIRM_OK '{_dlg_pos['text']}'")
+            state.pre_popup_tap_count = 0
+            return "DIALOG_CONFIRM_OK", 1.5
+        # ── 4回連続失敗 → OK/確認ボタンを探してフォールバック ──
+        if state.pre_popup_tap_count >= 4:
+            _ok_ocr = has_any(ocr, ["OK", "確認", "決定", "おまかせ"])
+            if _ok_ocr:
+                _ok_cx, _ok_cy = _ok_ocr["center"]
+                logger.info(
+                    ">>> 【ダイアログ#0-DIALOG】close失敗%d回 → OKフォールバック '%s'(%d,%d)",
+                    state.pre_popup_tap_count, _ok_ocr["text"], _ok_cx, _ok_cy,
+                )
+                tap_device(_ok_cx, _ok_cy, state, "DIALOG_OK_FALLBACK")
+                state.pre_popup_tap_count = 0
+                return "DIALOG_OK_FALLBACK", 1.5
+            # OCR で OK 未検出 → ダイアログ下部中央をタップ
+            _ok_fb_x, _ok_fb_y = roi_to_device(int(W * 0.7), int(H * 0.92), state.game_roi)
+            logger.info(
+                ">>> 【ダイアログ#0-DIALOG】close失敗%d回 → 下部中央フォールバック(%d,%d)",
+                state.pre_popup_tap_count, _ok_fb_x, _ok_fb_y,
+            )
+            tap_device(_ok_fb_x, _ok_fb_y, state, "DIALOG_BOTTOM_FALLBACK")
+            state.pre_popup_tap_count = 0
+            return "DIALOG_BOTTOM_FALLBACK", 1.5
+        logger.info(
+            ">>> 【ダイアログ#0-DIALOG】%s(%d,%d) (試行%d回/累計%d)",
+            _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count, state.dialog_close_total,
+        )
+        tap_device(_dlg_x, _dlg_y, state, "DIALOG_CLOSE")
+        return "DIALOG_CLOSE", 1.0
+
+
 # ─── 戦略的意思決定エンジン (StrategicDecisionEngine) ──────────
 class StrategicDecisionEngine:
     """
@@ -2811,25 +2965,17 @@ def detect_and_act(ocr: list, state: PilotState,
                     return "NORMATK_TAP", 1.0
 
     # ── 【#0-DIALOG 前ガード】指ブロブ検出時はダイアログ検出をスキップ ──────
-    # 指ガイドが存在する画面で detect_dialog_frame_and_nav() が金枠パネルを
-    # ダイアログと誤検出し、存在しない ▷ をページングする問題を防止。
-    # 指が見えたらダイアログ処理をバイパスし、指ガイド処理 (#1) へフォールスルー。
     _pre_dialog_finger = False
-    _white_hand_pos = None  # (cx, cy, score) — 白ハンドポインタ座標
-    # Result/リザルト画面ではチュートリアル指ガイドは出現しない → ガード無効化
     _is_result_screen = any(
         any(k in t for k in ("Result", "リザルト", "次へ"))
         for t in texts
     )
     if analysis_path is not None and not _is_result_screen:
-        # (A) オレンジ指ブロブ (HSV肌色)
-        # max_area=5000: キャラ肌色 (Result画面等) の大面積誤検出を排除
         _pdg_blobs = find_finger_blobs(analysis_path, min_area=300, max_area=5000)
         _pdg_blobs = [b for b in _pdg_blobs if b[1] > 36 and b[0] < W - 40]
         if _pdg_blobs:
             _pre_dialog_finger = True
             logger.info("[PRE_DIALOG_GUARD] 指ブロブ %d 個検出 → #0-DIALOG スキップ", len(_pdg_blobs))
-        # (B) 白ハンドポインタ (テンプレートマッチング)
         if not _pre_dialog_finger:
             _white_hand_pos = detect_white_hand_pointer(analysis_path, threshold=0.90)
             if _white_hand_pos is not None:
@@ -2839,146 +2985,11 @@ def detect_and_act(ocr: list, state: PilotState,
                     _white_hand_pos[0], _white_hand_pos[1], _white_hand_pos[2],
                 )
 
-    # ─── 【最優先 #0-DIALOG】ダイアログ・ファースト (枠形状+Canny) ────────────
-    # 主トリガー: HSV金色枠の大矩形検出 (形状ベース)
-    # 副トリガー: OCR キーワード補助 (枠検出失敗時フォールバック)
-    # ダイアログ検出中は指アイコン・金枠探索を完全スキップ (即 return)
-    if analysis_path is not None and not _pre_dialog_finger:
-        _dlg = detect_dialog_frame_and_nav(
-            analysis_path, W, H, ocr_texts=texts, roi=state.game_roi
-        )
-        if _dlg is not None:
-            _dlg_type, _dlg_x, _dlg_y = _dlg
-            # ── [SPATIAL GATE] ▷ページングより指アイコンを最優先 ──────────────
-            # 指アイコンが存在し、かつ検出した▷が指から300px以上離れている場合、
-            # 右パネル等の誤検出▷を無視して指アイコン処理(#1)へフォールスルー
-            if _dlg_type in ("next", "bottom"):
-                _sg_blobs = find_finger_blobs(analysis_path, min_area=400)
-                _sg_blobs = [b for b in _sg_blobs if b[1] > 36 and b[0] < W - 40]
-                if _sg_blobs:
-                    _sg_best = max(_sg_blobs, key=lambda b: b[2])
-                    _sg_dist = ((_dlg_x - _sg_best[0]) ** 2 + (_dlg_y - _sg_best[1]) ** 2) ** 0.5
-                    if _sg_dist > 300:
-                        logger.info(
-                            ">>> [SPATIAL_GATE] 指(%d,%d)↔▷(%d,%d) 距離=%.0fpx>300 → #0-DIALOG スキップ",
-                            _sg_best[0], _sg_best[1], _dlg_x, _dlg_y, _sg_dist,
-                        )
-                        _dlg = None  # ダイアログをなかったことにして #1 へ
-                # ── 白ハンドポインタ画面ガード ──────────────────────────
-                # テンプレートマッチング主軸 + OCRキーワード補助
-                if _dlg is not None:
-                    _sg_white = detect_white_hand_pointer(analysis_path, threshold=0.90)
-                    if _sg_white is not None:
-                        logger.info(
-                            "[SPATIAL_GATE] 白ハンドポインタ(%d,%d) score=%.3f → #0-DIALOG(▷) スキップ",
-                            _sg_white[0], _sg_white[1], _sg_white[2],
-                        )
-                        _dlg = None
-                    elif any(any(k in t for k in ("NEW", "報酬", "推奖", "报酬")) for t in texts):
-                        logger.info("[SPATIAL_GATE] クエストKW検出(補助) → #0-DIALOG(▷) スキップ")
-                        _dlg = None
-            # ── バトル中 × 誤検出ガード ──────────────────────────────────────────
-            # バトル画面では y < 100 は UI ボタン帯 (倍速/メニュー等)。
-            # DIALOG_CLOSE としてタップすると「メニューが使用できません」トーストが出るため除外。
-            if (_dlg is not None and _dlg_type == "close"
-                    and _is_battle_early and _dlg_y < 100):
-                logger.info(
-                    "[BATTLE_DIALOG_GUARD] close(%d,%d) y<100 → バトル上部UI誤検出 スキップ",
-                    _dlg_x, _dlg_y,
-                )
-                _dlg = None  # フッター発光SM (#1-pre) へフォールスルー
-
-            if _dlg is not None:
-                state.pre_popup_tap_count += 1
-                state.dialog_close_total += 1
-                state.dialog_detections += 1
-
-                # ── エスカレーション: 12回以上 → ダイアログ検出自体をスキップ ──
-                if state.dialog_close_total >= 12:
-                    logger.warning(
-                        ">>> 【ダイアログ#0-DIALOG】累計%d回スタック → ダイアログ検出スキップ (他処理へ)",
-                        state.dialog_close_total,
-                    )
-                    state.dialog_close_total = 0
-                    state.pre_popup_tap_count = 0
-                    _dlg = None  # フォールスルーで他の処理に任せる
-                # ── エスカレーション: 8回以上 → Android BACK キー ──
-                elif state.dialog_close_total >= 8:
-                    logger.warning(
-                        ">>> 【ダイアログ#0-DIALOG】累計%d回失敗 → BACK キー押下",
-                        state.dialog_close_total,
-                    )
-                    try:
-                        import subprocess as _sp_bk
-                        _sp_bk.run(
-                            ["adb", "-s", DEVICE_SERIAL, "shell", "input", "keyevent", "KEYCODE_BACK"],
-                            timeout=5, capture_output=True,
-                        )
-                    except Exception:
-                        pass
-                    state.pre_popup_tap_count = 0
-                    return "DIALOG_BACK_ESCALATION", 2.0
-
-            if _dlg is not None:
-                if _dlg_type in ("next", "bottom"):
-                    # ページング式ダイアログ: ▷ → … → × を一括処理
-                    logger.info(
-                        ">>> 【ダイアログ#0-DIALOG-PAGING】%s(%d,%d) (試行%d回) → process_paging_dialog",
-                        _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
-                    )
-                    _pg_result = process_paging_dialog(
-                        analysis_path, W, H, state,
-                        initial_dlg=(_dlg_type, _dlg_x, _dlg_y),
-                        ocr_texts=texts,
-                    )
-                    return _pg_result, 1.0   # ← 必ず return。fallthrough なし。
-                else:
-                    # "close": × ボタンを即タップ
-                    # ── 確認ダイアログ (OK+キャンセル共存) → × ではなく OK 優先 ──
-                    # 「次へ進みますか?」等で × を押すとキャンセル扱いになるため、
-                    # OK/はい と キャンセル/いいえ が共存する場合は OK を優先タップ。
-                    _dlg_pos = has_any(ocr, ["OK", "はい", "了解", "決定"])
-                    _dlg_neg = has_any(ocr, ["キャンセル", "いいえ", "戻る"])
-                    if _dlg_pos and _dlg_neg:
-                        _dp_x, _dp_y = _dlg_pos["center"]
-                        logger.info(
-                            "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) | Label: Dialog#0",
-                            _dlg_pos["text"], _dp_x, _dp_y,
-                        )
-                        logger.info(
-                            ">>> 【ダイアログ#0-DIALOG】確認ダイアログ(OK+キャンセル) → × ではなく '%s'(%d,%d) タップ",
-                            _dlg_pos["text"], _dp_x, _dp_y,
-                        )
-                        tap_device(_dp_x, _dp_y, state, f"DIALOG_CONFIRM_OK '{_dlg_pos['text']}'")
-                        state.pre_popup_tap_count = 0
-                        return "DIALOG_CONFIRM_OK", 1.5
-                    # ── 4回連続失敗 → OK/確認ボタンを探してフォールバック ──
-                    if state.pre_popup_tap_count >= 4:
-                        _ok_ocr = has_any(ocr, ["OK", "確認", "決定", "おまかせ"])
-                        if _ok_ocr:
-                            _ok_cx, _ok_cy = _ok_ocr["center"]
-                            logger.info(
-                                ">>> 【ダイアログ#0-DIALOG】close失敗%d回 → OKフォールバック '%s'(%d,%d)",
-                                state.pre_popup_tap_count, _ok_ocr["text"], _ok_cx, _ok_cy,
-                            )
-                            tap_device(_ok_cx, _ok_cy, state, "DIALOG_OK_FALLBACK")
-                            state.pre_popup_tap_count = 0
-                            return "DIALOG_OK_FALLBACK", 1.5
-                        # OCR で OK 未検出 → ダイアログ下部中央をタップ
-                        _ok_fb_x, _ok_fb_y = roi_to_device(int(W * 0.7), int(H * 0.92), state.game_roi)
-                        logger.info(
-                            ">>> 【ダイアログ#0-DIALOG】close失敗%d回 → 下部中央フォールバック(%d,%d)",
-                            state.pre_popup_tap_count, _ok_fb_x, _ok_fb_y,
-                        )
-                        tap_device(_ok_fb_x, _ok_fb_y, state, "DIALOG_BOTTOM_FALLBACK")
-                        state.pre_popup_tap_count = 0
-                        return "DIALOG_BOTTOM_FALLBACK", 1.5
-                    logger.info(
-                        ">>> 【ダイアログ#0-DIALOG】%s(%d,%d) (試行%d回/累計%d)",
-                        _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count, state.dialog_close_total,
-                    )
-                    tap_device(_dlg_x, _dlg_y, state, "DIALOG_CLOSE")
-                    return "DIALOG_CLOSE", 1.0   # ← 必ず return。fallthrough なし。
+    # ─── 【最優先 #0-DIALOG】ダイアログ・ファースト ────────────
+    _dialog_result = handle_dialog_screen(
+        state, analysis_path, ocr, texts, _is_battle_early, _pre_dialog_finger)
+    if _dialog_result is not None:
+        return _dialog_result
 
     # ─── 【最優先 #0-aa】HSV金色ポインター検出 → ホールドスワイプ (Type A) ───
     # 縦長金色領域 h/w>=3.5 かつ幅<=100px のみ有効 (ボタン/カード誤検出防止)。
