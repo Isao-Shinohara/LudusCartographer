@@ -30,6 +30,8 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 # OpenCV のスレッド数も制限
 os.environ.setdefault("OPENCV_VIDEOIO_PRIORITY_MSMF", "0")
+import cv2
+import numpy as np
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -332,13 +334,11 @@ def detect_game_roi(img) -> tuple[int, int, int, int]:
     Returns: (roi_x, roi_y, roi_w, roi_h) in analysis image pixel coordinates
     """
     try:
-        import cv2 as _cv2r
-        import numpy as _npr
-        gray = _cv2r.cvtColor(img, _cv2r.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         _H, _W = img.shape[:2]
         # 列/行ごとの輝度ピクセル数
-        col_bright = (_npr.array(gray, dtype=_npr.int32) > 12).sum(axis=0)
-        row_bright = (_npr.array(gray, dtype=_npr.int32) > 12).sum(axis=1)
+        col_bright = (np.array(gray, dtype=np.int32) > 12).sum(axis=0)
+        row_bright = (np.array(gray, dtype=np.int32) > 12).sum(axis=1)
         # 各辺の黒帯を検出 (ノイズ耐性: min 3px 以上の明るい列/行)
         x0 = next((x for x in range(_W) if col_bright[x] > 3), 0)
         x1 = next((x for x in range(_W - 1, -1, -1) if col_bright[x] > 3), _W - 1)
@@ -497,8 +497,7 @@ def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Optional
             time.sleep(0.5)
             continue
         # ── 整合性チェック2: OpenCV で読み込み確認 ──
-        import cv2 as _cv2_chk
-        _test = _cv2_chk.imread(str(path))
+        _test = cv2.imread(str(path))
         if _test is None or _test.size == 0:
             logger.warning("[SCREENSHOT] cv2.imread 失敗/空 (attempt %d/%d) — 再取得",
                            _attempt + 1, retries)
@@ -585,27 +584,26 @@ def tap_device(x: int, y: int, state: PilotState, desc: str = "",
     # ─── デバッグオーバーレイ描画 ───
     # 青枠: 指アイコン検出領域 / 緑枠: 金枠検出領域 / 赤ドット: 実際のタップ点
     try:
-        import cv2 as _cv2
         if state.last_screen is not None:
             _dbg = state.last_screen.copy()
             if finger_box is not None:
                 fbx, fby, fbw, fbh = finger_box
-                _cv2.rectangle(_dbg, (fbx, fby), (fbx + fbw, fby + fbh),
+                cv2.rectangle(_dbg, (fbx, fby), (fbx + fbw, fby + fbh),
                                 (255, 0, 0), 2)  # 青枠: 指アイコン
             if gold_box is not None:
                 gbx, gby, gbw, gbh = gold_box
-                _cv2.rectangle(_dbg, (gbx, gby), (gbx + gbw, gby + gbh),
+                cv2.rectangle(_dbg, (gbx, gby), (gbx + gbw, gby + gbh),
                                 (0, 255, 0), 2)  # 緑枠: 金枠
-            _cv2.circle(_dbg, (x, y), 10, (0, 0, 255), -1)  # 赤ドット: タップ点
+            cv2.circle(_dbg, (x, y), 10, (0, 0, 255), -1)  # 赤ドット: タップ点
             # 排除された偽の指ブロブを描画 ([REJECTED: SHAPE/SPATIAL])
             if _rejected_finger_blobs:
                 for _rx, _ry, _rr in _rejected_finger_blobs:
-                    _cv2.drawMarker(_dbg, (_rx, _ry), (0, 0, 255),
-                                    _cv2.MARKER_CROSS, 22, 2)
-                    _cv2.putText(_dbg, "[REJECTED]", (_rx - 42, _ry - 14),
-                                 _cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 255), 1)
+                    cv2.drawMarker(_dbg, (_rx, _ry), (0, 0, 255),
+                                    cv2.MARKER_CROSS, 22, 2)
+                    cv2.putText(_dbg, "[REJECTED]", (_rx - 42, _ry - 14),
+                                 cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 255), 1)
             _out = str(Path(__file__).parent.parent / "debug_latest_tap.png")
-            _cv2.imwrite(_out, _dbg)
+            cv2.imwrite(_out, _dbg)
             logger.info("  [DEBUG_TAP] Target=(%d,%d) → %s", x, y, _out)
     except Exception:
         pass
@@ -646,7 +644,6 @@ def save_evidence(img_path: Path, ocr_results: list, action: str, state: PilotSt
 def is_dark_screen(img_path: Path) -> bool:
     try:
         from PIL import Image
-        import numpy as np
         with Image.open(img_path) as img:
             gray = img.convert("L")
             return float(np.mean(np.array(gray))) <= BLACKOUT_BRIGHTNESS
@@ -683,8 +680,6 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
     返値: [(cx, cy, area, bbox_x, bbox_y, bbox_w, bbox_h), ...] 面積降順
     """
     try:
-        import cv2
-        import numpy as np
         img = cv2.imread(str(img_path))
         if img is None:
             return []
@@ -756,7 +751,6 @@ def detect_white_hand_pointer(
     Returns: (cx, cy, score) or None
     """
     try:
-        import cv2
         img = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
         if img is None:
             return None
@@ -789,14 +783,12 @@ def create_finger_mask_image(img_path: Path, cx: int, cy: int, half: int = 175) 
     失敗した場合は元の img_path を返す。
     """
     try:
-        import cv2
-        import numpy as _np_hm
         import tempfile
         _img_hm = cv2.imread(str(img_path))
         if _img_hm is None:
             return img_path
         _H_hm, _W_hm = _img_hm.shape[:2]
-        _masked = _np_hm.zeros_like(_img_hm)
+        _masked = np.zeros_like(_img_hm)
         _x1 = max(0, cx - half)
         _x2 = min(_W_hm, cx + half)
         _y1 = max(0, cy - half)
@@ -822,8 +814,6 @@ def detect_guide_glow(img_path: Path, W: int, H: int,
             "bx":int,"by":int,"bw":int,"bh":int}, ...] 面積降順
     """
     try:
-        import cv2
-        import numpy as _np_gw
         _img_gw = cv2.imread(str(img_path))
         if _img_gw is None:
             return []
@@ -835,15 +825,15 @@ def detect_guide_glow(img_path: Path, W: int, H: int,
         _hsv_gw = cv2.cvtColor(_footer, cv2.COLOR_BGR2HSV)
         # 白発光: 低彩度・高輝度 (白いハイライト/ハロー)
         _mask_w = cv2.inRange(_hsv_gw,
-                              _np_gw.array([0, 0, 215], dtype=_np_gw.uint8),
-                              _np_gw.array([180, 65, 255], dtype=_np_gw.uint8))
+                              np.array([0, 0, 215], dtype=np.uint8),
+                              np.array([180, 65, 255], dtype=np.uint8))
         # 金発光: 金/黄色系・高輝度 (ゴールドハイライト)
         _mask_g = cv2.inRange(_hsv_gw,
-                              _np_gw.array([15, 50, 195], dtype=_np_gw.uint8),
-                              _np_gw.array([50, 210, 255], dtype=_np_gw.uint8))
+                              np.array([15, 50, 195], dtype=np.uint8),
+                              np.array([50, 210, 255], dtype=np.uint8))
         _mask_gw = cv2.bitwise_or(_mask_w, _mask_g)
         # ノイズ除去: 小さいスポット・HPバー等の細線を排除
-        _kern = _np_gw.ones((4, 4), _np_gw.uint8)
+        _kern = np.ones((4, 4), np.uint8)
         _mask_gw = cv2.morphologyEx(_mask_gw, cv2.MORPH_OPEN, _kern)
         _cnts_gw, _ = cv2.findContours(_mask_gw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         _glows = []
@@ -894,9 +884,6 @@ def detect_active_battle_char(
     Returns: (cx, cy, brightness_ratio) or None
     """
     try:
-        import cv2
-        import numpy as _np_abc
-
         _img = cv2.imread(str(img_path))
         if _img is None:
             return None
@@ -915,11 +902,11 @@ def detect_active_battle_char(
 
         # 暖色発光マスク: 赤/ピンク/マゼンタ (H:0-20 or 155-180, S>=35, V>=100)
         _m1 = cv2.inRange(_hsv,
-                          _np_abc.array([0, 35, 100], dtype=_np_abc.uint8),
-                          _np_abc.array([20, 255, 255], dtype=_np_abc.uint8))
+                          np.array([0, 35, 100], dtype=np.uint8),
+                          np.array([20, 255, 255], dtype=np.uint8))
         _m2 = cv2.inRange(_hsv,
-                          _np_abc.array([155, 35, 100], dtype=_np_abc.uint8),
-                          _np_abc.array([180, 255, 255], dtype=_np_abc.uint8))
+                          np.array([155, 35, 100], dtype=np.uint8),
+                          np.array([180, 255, 255], dtype=np.uint8))
         _warm_mask = cv2.bitwise_or(_m1, _m2)
 
         # 5カラム分割（キャラ5人想定、各カラム ~132px）
@@ -933,7 +920,7 @@ def detect_active_battle_char(
             _col_warm = _warm_mask[:, _cx0:_cx1]
             _col_v = _hsv[:, _cx0:_cx1, 2]  # V channel
             _warm_count = int(cv2.countNonZero(_col_warm))
-            _avg_v = float(_np_abc.mean(_col_v))
+            _avg_v = float(np.mean(_col_v))
             _center_x = _x0 + _cx0 + _col_w // 2
             _stats.append((_warm_count, _avg_v, _center_x, _ci))
 
@@ -943,8 +930,8 @@ def detect_active_battle_char(
         # 中央値の計算
         _warm_counts = [s[0] for s in _stats]
         _avg_vs = [s[1] for s in _stats]
-        _med_warm = float(_np_abc.median(_warm_counts))
-        _med_v = float(_np_abc.median(_avg_vs))
+        _med_warm = float(np.median(_warm_counts))
+        _med_v = float(np.median(_avg_vs))
 
         # アクティブキャラ判定: 暖色ピクセルが中央値の3倍以上 OR 明度が中央値の1.4倍以上
         _best = None
@@ -980,8 +967,6 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
     Returns: (frame_cx, frame_cy, frame_w, frame_h) or None
     """
     try:
-        import cv2
-        import numpy as np
         img = cv2.imread(str(img_path))
         if img is None:
             return None
@@ -1087,22 +1072,19 @@ def detect_tutorial_dialog_nav(img_path: Path,
     Returns: ("next", cx, cy) | ("close", cx, cy) | None
     """
     try:
-        import cv2 as _cv2d
-        import numpy as _npd
-
-        _img = _cv2d.imread(str(img_path))
+        _img = cv2.imread(str(img_path))
         if _img is None:
             return None
         _H, _W = _img.shape[:2]
 
         def _match_template(tmpl_path: Path, roi_x1: int, roi_y1: int,
                             roi_x2: int, roi_y2: int) -> Optional[tuple[int, int]]:
-            _tmpl = _cv2d.imread(str(tmpl_path))
+            _tmpl = cv2.imread(str(tmpl_path))
             if _tmpl is None:
                 return None
             _roi = _img[roi_y1:roi_y2, roi_x1:roi_x2]
-            _res = _cv2d.matchTemplate(_roi, _tmpl, _cv2d.TM_CCOEFF_NORMED)
-            _, _max_val, _, _max_loc = _cv2d.minMaxLoc(_res)
+            _res = cv2.matchTemplate(_roi, _tmpl, cv2.TM_CCOEFF_NORMED)
+            _, _max_val, _, _max_loc = cv2.minMaxLoc(_res)
             if _max_val >= threshold:
                 _th, _tw = _tmpl.shape[:2]
                 _cx = roi_x1 + _max_loc[0] + _tw // 2
@@ -1146,8 +1128,7 @@ def save_tutorial_dialog_templates(img_path: Path, W: int = 1520, H: int = 720) 
     呼び出し: チュートリアルポップアップが検出された最初の数回。
     """
     try:
-        import cv2 as _cv2s
-        _img = _cv2s.imread(str(img_path))
+        _img = cv2.imread(str(img_path))
         if _img is None:
             return
         _H, _W = _img.shape[:2]
@@ -1160,7 +1141,7 @@ def save_tutorial_dialog_templates(img_path: Path, W: int = 1520, H: int = 720) 
             _x2, _y2 = _W, int(_H * 0.13)
             _crop = _img[_y1:_y2, _x1:_x2]
             if _crop.size > 0:
-                _cv2s.imwrite(str(_DIALOG_CLOSE_TEMPLATE), _crop)
+                cv2.imwrite(str(_DIALOG_CLOSE_TEMPLATE), _crop)
                 logger.info("[DialogNav] × テンプレート自動保存: %s", _DIALOG_CLOSE_TEMPLATE)
 
         # ▷ 矢印領域: 右エッジ (x: W*0.87~W*0.97, y: H*0.3~H*0.7)
@@ -1169,7 +1150,7 @@ def save_tutorial_dialog_templates(img_path: Path, W: int = 1520, H: int = 720) 
             _x2n, _y2n = int(_W * 0.97), int(_H * 0.7)
             _cropn = _img[_y1n:_y2n, _x1n:_x2n]
             if _cropn.size > 0:
-                _cv2s.imwrite(str(_DIALOG_NEXT_TEMPLATE), _cropn)
+                cv2.imwrite(str(_DIALOG_NEXT_TEMPLATE), _cropn)
                 logger.info("[DialogNav] ▷ テンプレート自動保存: %s", _DIALOG_NEXT_TEMPLATE)
 
     except Exception as _e:
@@ -1200,10 +1181,7 @@ def detect_dialog_frame_and_nav(
              None  — ダイアログ未検出
     """
     try:
-        import cv2 as _cv
-        import numpy as _np
-
-        img = _cv.imread(str(img_path))
+        img = cv2.imread(str(img_path))
         if img is None:
             return None
         _H, _W = img.shape[:2]
@@ -1223,12 +1201,12 @@ def detect_dialog_frame_and_nav(
             _roi_x = img_full[0:_ry2, _rx1:_W]
             if _roi_x.size == 0:
                 return None
-            _tpl = _cv.imread(str(_DIALOG_CLOSE_TEMPLATE))
+            _tpl = cv2.imread(str(_DIALOG_CLOSE_TEMPLATE))
             if (_roi_x.shape[0] < _tpl.shape[0]
                     or _roi_x.shape[1] < _tpl.shape[1]):
                 return None
-            _r = _cv.matchTemplate(_roi_x, _tpl, _cv.TM_CCOEFF_NORMED)
-            _, _mv, _, _ml = _cv.minMaxLoc(_r)
+            _r = cv2.matchTemplate(_roi_x, _tpl, cv2.TM_CCOEFF_NORMED)
+            _, _mv, _, _ml = cv2.minMaxLoc(_r)
             if _mv >= 0.70:
                 _tw, _th = _tpl.shape[1], _tpl.shape[0]
                 return (_rx1 + _ml[0] + _tw // 2, _ml[1] + _th // 2)
@@ -1242,25 +1220,25 @@ def detect_dialog_frame_and_nav(
         # ──────────────────────────────────────────────────────────────
         # STEP 1: HSV 金色枠で大矩形ダイアログを検出
         # ──────────────────────────────────────────────────────────────
-        _hsv = _cv.cvtColor(img, _cv.COLOR_BGR2HSV)
-        _mask_g = _cv.inRange(
+        _hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        _mask_g = cv2.inRange(
             _hsv,
-            _np.array([12, 50, 140], _np.uint8),
-            _np.array([55, 255, 255], _np.uint8),
+            np.array([12, 50, 140], np.uint8),
+            np.array([55, 255, 255], np.uint8),
         )
-        _k3 = _np.ones((3, 3), _np.uint8)
-        _mask_g = _cv.dilate(_mask_g, _k3, iterations=2)
-        _cnts, _ = _cv.findContours(_mask_g, _cv.RETR_EXTERNAL, _cv.CHAIN_APPROX_SIMPLE)
+        _k3 = np.ones((3, 3), np.uint8)
+        _mask_g = cv2.dilate(_mask_g, _k3, iterations=2)
+        _cnts, _ = cv2.findContours(_mask_g, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         _frame: Optional[tuple] = None  # (x, y, w, h)
         _best_area = 0
         _scx, _scy = _W // 2, _H // 2   # 画面中心
 
         for _c in _cnts:
-            _a = _cv.contourArea(_c)
+            _a = cv2.contourArea(_c)
             if _a < 8000:
                 continue
-            _x, _y, _w, _h = _cv.boundingRect(_c)
+            _x, _y, _w, _h = cv2.boundingRect(_c)
             if _w < 280 or _h < 160:          # 小さすぎ → カード等を除外
                 continue
             if _w > _W * 0.97 or _h > _H * 0.97:  # 全画面 → 除外
@@ -1294,10 +1272,10 @@ def detect_dialog_frame_and_nav(
         # STEP 2: フレーム内/周辺で × と ▷ を探す
         # ──────────────────────────────────────────────────────────────
         def _canny_lines(roi_img, thr_lo=40, thr_hi=120, min_len=6, max_gap=4):
-            _g = _cv.cvtColor(roi_img, _cv.COLOR_BGR2GRAY)
-            _e = _cv.Canny(_g, thr_lo, thr_hi)
+            _g = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY)
+            _e = cv2.Canny(_g, thr_lo, thr_hi)
             return (
-                _cv.HoughLinesP(_e, 1, _np.pi / 180,
+                cv2.HoughLinesP(_e, 1, np.pi / 180,
                                  threshold=8, minLineLength=min_len, maxLineGap=max_gap),
                 _g,
             )
@@ -1311,7 +1289,7 @@ def detect_dialog_frame_and_nav(
                 _x1, _y1, _x2, _y2 = _ln[0]
                 if _x2 == _x1:
                     continue
-                _ang = _np.degrees(_np.arctan2(_y2 - _y1, _x2 - _x1))
+                _ang = np.degrees(np.arctan2(_y2 - _y1, _x2 - _x1))
                 if 20 < abs(_ang) < 75:
                     (_pd if _ang > 0 else _nd).append(_ln[0])
             if _pd and _nd:
@@ -1330,7 +1308,7 @@ def detect_dialog_frame_and_nav(
                     continue
                 if _x1 > _x2:
                     _x1, _y1, _x2, _y2 = _x2, _y2, _x1, _y1
-                _ang = _np.degrees(_np.arctan2(_y2 - _y1, _x2 - _x1))
+                _ang = np.degrees(np.arctan2(_y2 - _y1, _x2 - _x1))
                 if -70 < _ang < -20:
                     _ul.append((_x1, _y1, _x2, _y2))
                 elif 20 < _ang < 70:
@@ -1357,10 +1335,10 @@ def detect_dialog_frame_and_nav(
             if _froi.size > 0:
                 # テンプレートマッチング
                 if _DIALOG_CLOSE_TEMPLATE.exists():
-                    _tpl = _cv.imread(str(_DIALOG_CLOSE_TEMPLATE))
+                    _tpl = cv2.imread(str(_DIALOG_CLOSE_TEMPLATE))
                     if _froi.shape[0] >= _tpl.shape[0] and _froi.shape[1] >= _tpl.shape[1]:
-                        _r_f = _cv.matchTemplate(_froi, _tpl, _cv.TM_CCOEFF_NORMED)
-                        _, _mv_f, _, _ml_f = _cv.minMaxLoc(_r_f)
+                        _r_f = cv2.matchTemplate(_froi, _tpl, cv2.TM_CCOEFF_NORMED)
+                        _, _mv_f, _, _ml_f = cv2.minMaxLoc(_r_f)
                         if _mv_f >= 0.70:
                             _tw_f = _tpl.shape[1]
                             _th_f = _tpl.shape[0]
@@ -1373,14 +1351,14 @@ def detect_dialog_frame_and_nav(
 
         # Phase B: フレーム未検出 or フレーム右上で × 未発見 → 画面右上隅で探す
         if _DIALOG_CLOSE_TEMPLATE.exists():
-            _r = _cv.matchTemplate(
-                _cv.imread(str(img_path), _cv.IMREAD_COLOR)[0: int(_H * 0.14), int(_W * 0.88):],
-                _cv.imread(str(_DIALOG_CLOSE_TEMPLATE)),
-                _cv.TM_CCOEFF_NORMED,
+            _r = cv2.matchTemplate(
+                cv2.imread(str(img_path), cv2.IMREAD_COLOR)[0: int(_H * 0.14), int(_W * 0.88):],
+                cv2.imread(str(_DIALOG_CLOSE_TEMPLATE)),
+                cv2.TM_CCOEFF_NORMED,
             )
-            _, _mv, _, _ml = _cv.minMaxLoc(_r)
+            _, _mv, _, _ml = cv2.minMaxLoc(_r)
             if _mv >= 0.75:
-                _tw, _th = _cv.imread(str(_DIALOG_CLOSE_TEMPLATE)).shape[1], _cv.imread(str(_DIALOG_CLOSE_TEMPLATE)).shape[0]
+                _tw, _th = cv2.imread(str(_DIALOG_CLOSE_TEMPLATE)).shape[1], cv2.imread(str(_DIALOG_CLOSE_TEMPLATE)).shape[0]
                 return ("close",
                         int(_W * 0.88) + _ml[0] + _tw // 2,
                         _ml[1] + _th // 2)
@@ -1390,14 +1368,14 @@ def detect_dialog_frame_and_nav(
 
         # ── ▷ ボタン (スクリーン右エッジ) ────────────────────────────────
         if _DIALOG_NEXT_TEMPLATE.exists():
-            _r2 = _cv.matchTemplate(
+            _r2 = cv2.matchTemplate(
                 img[int(_H * 0.22): int(_H * 0.78), int(_W * 0.83):],
-                _cv.imread(str(_DIALOG_NEXT_TEMPLATE)),
-                _cv.TM_CCOEFF_NORMED,
+                cv2.imread(str(_DIALOG_NEXT_TEMPLATE)),
+                cv2.TM_CCOEFF_NORMED,
             )
-            _, _mv2, _, _ml2 = _cv.minMaxLoc(_r2)
+            _, _mv2, _, _ml2 = cv2.minMaxLoc(_r2)
             if _mv2 >= 0.75:
-                _tw2, _th2 = _cv.imread(str(_DIALOG_NEXT_TEMPLATE)).shape[1], _cv.imread(str(_DIALOG_NEXT_TEMPLATE)).shape[0]
+                _tw2, _th2 = cv2.imread(str(_DIALOG_NEXT_TEMPLATE)).shape[1], cv2.imread(str(_DIALOG_NEXT_TEMPLATE)).shape[0]
                 return ("next",
                         int(_W * 0.83) + _ml2[0] + _tw2 // 2,
                         int(_H * 0.22) + _ml2[1] + _th2 // 2)
@@ -1411,7 +1389,7 @@ def detect_dialog_frame_and_nav(
             if _np_tip:
                 logger.debug("[Dialog▷] Canny検出: (%d,%d)", _rx1n + _np_tip[0], _ry1n + _np_tip[1])
                 return ("next", _rx1n + _np_tip[0], _ry1n + _np_tip[1])
-            if _cv.countNonZero(_cv.threshold(_gray_n, 140, 255, _cv.THRESH_BINARY)[1]) >= 20:
+            if cv2.countNonZero(cv2.threshold(_gray_n, 140, 255, cv2.THRESH_BINARY)[1]) >= 20:
                 _r = roi if roi else (0, 0, _W, _H)
                 _nx_fb, _ny_fb = roi_to_device(int(ANALYSIS_W * 0.91), int(ANALYSIS_H * 0.49), _r)
                 logger.debug("[Dialog▷] 輝度FB(ROI補正): (%d,%d)", _nx_fb, _ny_fb)
@@ -1454,8 +1432,6 @@ def process_paging_dialog(
 
     Returns: "DIALOG_CLOSED" | "DIALOG_PAGING_TIMEOUT"
     """
-    import cv2 as _cv2p
-    import numpy as _npp
     _roi = state.game_roi
     _prev_phash = compute_phash(analysis_path)
     _no_close_streak = 0  # × ROI bright_pixels=0 の連続回数
@@ -1480,13 +1456,13 @@ def process_paging_dialog(
             return "DIALOG_CLOSED"
         # × ROI 輝度チェック: bright_pixels=0 が続く場合は強制脱出
         try:
-            _img_c = _cv2p.imread(str(analysis_path))
+            _img_c = cv2.imread(str(analysis_path))
             if _img_c is not None:
                 _Hc, _Wc = _img_c.shape[:2]
                 _close_roi_c = _img_c[0:int(_Hc * 0.14), int(_Wc * 0.88):]
-                _gray_cl = _cv2p.cvtColor(_close_roi_c, _cv2p.COLOR_BGR2GRAY)
-                _bright_cl = _cv2p.countNonZero(
-                    _cv2p.threshold(_gray_cl, 155, 255, _cv2p.THRESH_BINARY)[1]
+                _gray_cl = cv2.cvtColor(_close_roi_c, cv2.COLOR_BGR2GRAY)
+                _bright_cl = cv2.countNonZero(
+                    cv2.threshold(_gray_cl, 155, 255, cv2.THRESH_BINARY)[1]
                 )
                 if _bright_cl == 0:
                     _no_close_streak += 1
@@ -1559,19 +1535,17 @@ def detect_text_input_area(
                 return _item["center"][0], _item["center"][1]
     # --- 3. HSV 暗い横長矩形 ---
     try:
-        import cv2 as _cv2
-        import numpy as _np
-        _img = _cv2.imread(str(img_path))
+        _img = cv2.imread(str(img_path))
         if _img is None:
             return None
         _roi_y1, _roi_y2 = int(H * 0.3), int(H * 0.75)
         _roi = _img[_roi_y1:_roi_y2, :]
-        _hsv = _cv2.cvtColor(_roi, _cv2.COLOR_BGR2HSV)
+        _hsv = cv2.cvtColor(_roi, cv2.COLOR_BGR2HSV)
         # 入力フィールド特有の暗めの背景 (S低め、V中〜低)
-        _dark = _cv2.inRange(_hsv, _np.array([0, 0, 20]), _np.array([180, 80, 110]))
-        _cnts, _ = _cv2.findContours(_dark, _cv2.RETR_EXTERNAL, _cv2.CHAIN_APPROX_SIMPLE)
-        for _cnt in sorted(_cnts, key=_cv2.contourArea, reverse=True)[:8]:
-            _x, _y, _w, _h = _cv2.boundingRect(_cnt)
+        _dark = cv2.inRange(_hsv, np.array([0, 0, 20]), np.array([180, 80, 110]))
+        _cnts, _ = cv2.findContours(_dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for _cnt in sorted(_cnts, key=cv2.contourArea, reverse=True)[:8]:
+            _x, _y, _w, _h = cv2.boundingRect(_cnt)
             if _w > W * 0.25 and 25 < _h < 100 and _w / max(_h, 1) > 3.5:
                 return _x + _w // 2, _roi_y1 + _y + _h // 2
     except Exception as _e:
@@ -1596,9 +1570,6 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
     Returns: (direction, swipe_x, from_y, to_y, duration_ms) or None
     """
     try:
-        import cv2
-        import numpy as np
-
         img = cv2.imread(str(img_path))
         if img is None:
             return None
@@ -1698,9 +1669,6 @@ def detect_tutorial_gold_button_tap(img_path: Path,
     Returns: (tap_x, tap_y) or None
     """
     try:
-        import cv2
-        import numpy as np
-
         img = cv2.imread(str(img_path))
         if img is None:
             return None
@@ -1791,9 +1759,6 @@ def smart_tap_button(
     返値: (tap_x, tap_y)
     """
     try:
-        import cv2
-        import numpy as np
-
         img_bgr = cv2.imread(str(img_path))
         if img_bgr is None:
             raise ValueError("imread failed")
@@ -1865,9 +1830,6 @@ def find_golden_highlighted_button(img_path: Path) -> Optional[tuple[int, int]]:
     返値: (cx, cy) ― 最大輝度の金色領域の中心座標、検出失敗時は None
     """
     try:
-        import cv2
-        import numpy as np
-
         img_bgr = cv2.imread(str(img_path))
         if img_bgr is None:
             return None
@@ -1930,8 +1892,6 @@ def find_3d_arrow(img_path: Path) -> Optional[tuple[int, int]]:
     Returns: (cx, cy) or None
     """
     try:
-        import cv2
-        import numpy as np
         img = cv2.imread(str(img_path))
         if img is None:
             return None
@@ -1990,7 +1950,6 @@ class AssetManager:
         self._load_templates()
 
     def _load_templates(self) -> None:
-        import cv2, json
         count = 0
         for png in sorted(self.TEMPLATES_DIR.glob("*.png")):
             name = png.stem
@@ -2026,7 +1985,6 @@ class AssetManager:
         Returns: (tap_x, tap_y, action_name, button_region) or None
             button_region = (bx, by, bw, bh) — テンプレートマッチ領域
         """
-        import cv2
         if not self._templates:
             return None
         img = cv2.imread(str(screenshot_path), cv2.IMREAD_GRAYSCALE)
@@ -2080,7 +2038,6 @@ class AssetManager:
         次回起動時から [Asset Match] で高速検出可能になる。
         require_ocr: このテンプレートを使うのに必要なOCRキーワードリスト
         """
-        import cv2, json
         img = cv2.imread(str(screenshot_path))
         if img is None:
             return False
@@ -2499,8 +2456,6 @@ class StrategicDecisionEngine:
 
     def _classify_color(self, roi_bgr) -> str:
         """BGR ROI の主要色をゲームUI色彩設計に基づいて分類。"""
-        import cv2
-        import numpy as np
         hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
         s = float(np.mean(hsv[:, :, 1]))
         v = float(np.mean(hsv[:, :, 2]))
@@ -2527,8 +2482,6 @@ class StrategicDecisionEngine:
         Returns: [{"cx","cy","w","h","color","priority","area"}, ...] 優先度降順
         """
         try:
-            import cv2
-            import numpy as np
             img = cv2.imread(str(img_path))
             if img is None:
                 return []
@@ -4418,8 +4371,7 @@ def main():
         state.wifi_fail_streak = 0  # 成功時リセット
         # メモリ上に最新画像を保持 + ROI更新
         try:
-            import cv2 as _cv2_main
-            state.last_screen = _cv2_main.imread(str(img_path))
+            state.last_screen = cv2.imread(str(img_path))
             if state.last_screen is not None:
                 _new_roi = detect_game_roi(state.last_screen)
                 # 非黒画面のときのみ ROI を更新 (暗転中は前の ROI を維持)
