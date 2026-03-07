@@ -4488,7 +4488,7 @@ def main():
             else:
                 # 右側グローなし → 「次へ」ボタン想定位置 (右下) をタップ
                 _rc_x = int(ANALYSIS_W * 0.88)
-                _rc_y = int(ANALYSIS_H * 0.93)
+                _rc_y = int(ANALYSIS_H * 0.95)
                 logger.info("[RESULT_RAPID] no right glow → 次へ想定位置 (%d,%d)", _rc_x, _rc_y)
                 tap_device(_rc_x, _rc_y, state, "RESULT_RAPID")
             state.last_action = "RESULT_RAPID"
