@@ -4301,9 +4301,16 @@ def main():
             # ── ADV 高速モード: OCR スキップして画面下部を即連打 ──
             # 前回 STORY_TAP かつ phash 変化が小さい（テキスト送り）→ 即タップ
             # MENU シーンはホームチュートリアル中の可能性があるため除外（指/金枠をOCRで確認）
+            # Result 画面は ADV_RAPID 禁止 (キャラアニメの phash 変動で誤発動する)
+            _last_texts = getattr(state, 'last_ocr_texts', [])
+            _is_result_like = any(
+                any(k in t for k in ("Result", "EXP", "次へ"))
+                for t in _last_texts
+            )
             if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT", "MOYA_TAP") and
                     PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
-                    state.current_scene not in ("MENU", "BATTLE")):
+                    state.current_scene not in ("MENU", "BATTLE") and
+                    not _is_result_like):
                 logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
                 _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
                 tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP")
