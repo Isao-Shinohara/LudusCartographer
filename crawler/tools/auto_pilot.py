@@ -3108,6 +3108,13 @@ def detect_and_act(ocr: list, state: PilotState,
         # 「AUTO」のみはストーリー画面にも表示されるため除外、戦闘固有キーワードで判定
         is_battle_screen = any(kw in " ".join(texts) for kw in
                                ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃", "必殺技", "BREAK", "WAVE", "Turn"])
+        # ── 速度チュートリアル早期検出 (もや検出より前に処理) ──
+        _speed_tip_early = has_any(ocr, ["このボタンでバトル", "進行速度を変更"])
+        if _speed_tip_early and is_battle_screen:
+            _sp_x, _sp_y = roi_to_device(int(W * 0.927), int(H * 0.026), state.game_roi)
+            logger.info(">>> [EARLY] 速度ツールチップ → 速度ボタン (%d,%d) タップ", _sp_x, _sp_y)
+            tap_device(_sp_x, _sp_y, state, "SPEED_BUTTON_TAP")
+            return "BATTLE_TUTORIAL", 1.0
         # タイトル画面 / ホーム画面検出: ブロブ誤検出を防ぐ
         _nav_joined = " ".join(texts)
         # 利用規約画面・同意ダイアログが存在する場合はタイトル画面と区別する
@@ -4514,6 +4521,14 @@ def main():
         #   左側キャラにモヤがない → 右側の通常攻撃 or 戦闘スキルをタップ
         #   キャラ肖像の王冠/ロール装飾 (area<5000) は偽モヤ → 無視
         _force_ocr_override = (dist <= 2 and state.same_phash_count >= FORCE_ANALYZE_AFTER)
+        # 速度チュートリアル表示中は BATTLE_RAPID をスキップして OCR で処理
+        _last_texts_br = getattr(state, 'last_ocr_texts', [])
+        _speed_tip_in_last = any(
+            any(k in t for k in ("このボタンでバトル", "進行速度を変更"))
+            for t in _last_texts_br
+        )
+        if _speed_tip_in_last:
+            _force_ocr_override = True
         if (state.current_scene == "BATTLE" and analysis_path is not None
                 and not _force_ocr_override):
             _rapid_tx = _rapid_ty = 0
