@@ -4353,32 +4353,43 @@ def main():
         state.last_phash = cur_phash
         analysis_path = prepare_analysis_image(img_path, actual_w, actual_h)
 
-        # ── 4.2) RESULT_RAPID: リザルト/報酬画面で GLOW 検知 → 0.2s 連打で突破 ──
+        # ── 4.2) RESULT_RAPID: リザルト/報酬画面で GLOW 検知 → 右側ボタンを連打 ──
         # 安全弁: phash 大変化 (dist>30) = シーン遷移 → OCR で再評価
+        # 安全弁2: 15連続 RESULT_RAPID でシーン変化なし → OCR で再評価
+        _result_rapid_count = getattr(state, '_result_rapid_count', 0)
         _result_rapid_ok = (
             state.last_action in ("RESULT_TAP", "RESULT_NEXT", "RESULT_RAPID")
             and analysis_path is not None
             and dist <= 30
+            and _result_rapid_count < 15
         )
         if _result_rapid_ok:
             _result_glows = detect_guide_glow(analysis_path, ANALYSIS_W, ANALYSIS_H, footer_ratio=0.10)
-            if _result_glows:
-                _rg = max(_result_glows, key=lambda g: g["area"])
+            # 右側グロー (x > 60%) を優先 — ボタンは画面右側に集中
+            _right_glows = [g for g in _result_glows if g["cx"] > ANALYSIS_W * 0.60]
+            if _right_glows:
+                _rg = max(_right_glows, key=lambda g: g["area"])
                 _rgx, _rgy = _rg["cx"], _rg["cy"]
-                logger.info("[RESULT_RAPID] glow(%d,%d) → 即タップ", _rgx, _rgy)
+                logger.info("[RESULT_RAPID] right glow(%d,%d) → 即タップ", _rgx, _rgy)
                 tap_device(_rgx, _rgy, state, "RESULT_RAPID")
             else:
-                _rc_x, _rc_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state.game_roi)
-                logger.info("[RESULT_RAPID] no glow → center tap (%d,%d)", _rc_x, _rc_y)
+                # 右側グローなし → 「次へ」ボタン想定位置 (右下) をタップ
+                _rc_x = int(ANALYSIS_W * 0.88)
+                _rc_y = int(ANALYSIS_H * 0.93)
+                logger.info("[RESULT_RAPID] no right glow → 次へ想定位置 (%d,%d)", _rc_x, _rc_y)
                 tap_device(_rc_x, _rc_y, state, "RESULT_RAPID")
             state.last_action = "RESULT_RAPID"
+            state._result_rapid_count = _result_rapid_count + 1
             state.stall_start = 0.0
             state.same_phash_count = 0
             time.sleep(1.0)
             _fms = (time.time() - _loop_t0) * 1000
             state.total_loop_ms += _fms
-            logger.info("  [PERF] Loop %.0fms (RESULT_RAPID)", _fms)
+            logger.info("  [PERF] Loop %.0fms (RESULT_RAPID) [%d/15]", _fms, state._result_rapid_count)
             continue
+        # RESULT_RAPID 脱出時にカウンターリセット
+        if state.last_action not in ("RESULT_TAP", "RESULT_NEXT", "RESULT_RAPID"):
+            state._result_rapid_count = 0
 
         # ── 4.3) BATTLE_RAPID: 発光/MOYA 検知即タップ → OCR 完全スキップ ──
         # detect_guide_glow() + find_finger_blobs() は OpenCV のみ (10-50ms)
