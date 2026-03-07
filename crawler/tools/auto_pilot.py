@@ -4395,6 +4395,11 @@ def main():
         # detect_guide_glow() + find_finger_blobs() は OpenCV のみ (10-50ms)
         # OCR (6-8s) の 40-50 倍高速
         # ※ 強制 OCR (phash 静止 → ダイアログ可能性) 時は RAPID をスキップして OCR に回す
+        #
+        # 【永続バトルルール】
+        #   左側キャラにモヤ（選択待ち発光）がある → キャラをタップ
+        #   左側キャラにモヤがない → 右側の通常攻撃 or 戦闘スキルをタップ
+        #   キャラ肖像の王冠/ロール装飾 (area<5000) は偽モヤ → 無視
         _force_ocr_override = (dist <= 2 and state.same_phash_count >= FORCE_ANALYZE_AFTER)
         if (state.current_scene == "BATTLE" and analysis_path is not None
                 and not _force_ocr_override):
@@ -4405,7 +4410,9 @@ def main():
             # ── Phase A: GLOW 検知 (HSV 発光) ──
             _rapid_glows = detect_guide_glow(analysis_path, ANALYSIS_W, ANALYSIS_H, footer_ratio=0.30)
             # 左パネル (x<150) のアイコン発光を除外 — 実キャラ位置は x≈200-500
-            _rapid_left_g = [g for g in _rapid_glows if g["side"] == "left" and g["cx"] >= 150]
+            # 【永続ルール】左 GLOW は area>=5000 のみ有効 (王冠/装飾の偽発光を排除)
+            _rapid_left_g = [g for g in _rapid_glows
+                            if g["side"] == "left" and g["cx"] >= 150 and g["area"] >= 5000]
             _rapid_right_g = [g for g in _rapid_glows if g["side"] == "right"]
 
             if not state.character_selected and _rapid_left_g:
@@ -4413,6 +4420,7 @@ def main():
                 _rapid_tx, _rapid_ty = _rl["cx"], max(1, _rl["cy"] - 35)
                 _rapid_action = "BATTLE_RAPID_GLOW_P1"
                 _rapid_double = True
+                logger.info("[BATTLE_RAPID] 左GLOW area=%.0f → キャラ選択", _rl["area"])
             elif state.character_selected and _rapid_right_g:
                 _rr = max(_rapid_right_g, key=lambda g: g["area"])
                 _rapid_tx, _rapid_ty = _rr["cx"], max(1, _rr["cy"] - 35)
@@ -4425,9 +4433,10 @@ def main():
                 _rapid_blobs = [b for b in _rapid_blobs
                                 if b[1] > 36 and b[0] < ANALYSIS_W - 40]
                 _H = ANALYSIS_H
-                _left_char = [b for b in _rapid_blobs if b[0] < 600 and b[1] > _H * 0.76]
+                # 【永続ルール】左キャラ MOYA は area>=2000 (装飾の偽検出を排除)
+                _left_char = [b for b in _rapid_blobs
+                              if b[0] < 600 and b[1] > _H * 0.76 and b[2] >= 2000]
                 _right_panel = [b for b in _rapid_blobs if b[0] > 1050 and b[1] > _H * 0.45]
-                _bottom_ui = [b for b in _rapid_blobs if b[1] > _H * 0.8 and b[0] >= 600]
 
                 if state.char_just_selected:
                     # キャラ選択済み → 右スキル (x>1050) 優先
@@ -4444,10 +4453,19 @@ def main():
                     _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - 35)
                     _rapid_action = "BATTLE_RAPID_MOYA_P1"
                     _rapid_double = True
+                    logger.info("[BATTLE_RAPID] 左MOYA area=%.0f → キャラ選択", _tb[2])
                 elif _right_panel:
                     _tb = max(_right_panel, key=lambda b: b[2])
                     _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - 35)
                     _rapid_action = "BATTLE_RAPID_MOYA_P2"
+
+            # ── Phase C: 左モヤなしフォールバック → 右側攻撃ボタン ──
+            # 【永続ルール】左キャラにモヤがない場合は常に右側の通常攻撃/戦闘スキルをタップ
+            if not _rapid_action:
+                _rapid_tx, _rapid_ty = roi_to_device(
+                    int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
+                _rapid_action = "BATTLE_RAPID_NORMATK_FALLBACK"
+                logger.info("[BATTLE_RAPID] 左モヤなし → 右側通常攻撃フォールバック")
 
             # ── 共通タップ実行 ──
             if _rapid_action:
