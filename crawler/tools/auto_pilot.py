@@ -2281,6 +2281,37 @@ def detect_and_act(ocr: list, state: PilotState,
     W, H = ANALYSIS_W, ANALYSIS_H
     joined = " ".join(texts)
 
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 【絶対最優先 #-3】ダウンロード画面の厳格判定 (全検出より先に評価)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 条件: 右下エリアに "Download" テキスト + "MB" 進捗テキストが両方存在
+    # → これ以外の画面は 100% ゲーム実行中であり、ロード待ちを禁止する。
+    # 通信速度やネットワーク状態による推測は一切行わない。
+    _has_download_text = any("Download" in t or "ダウンロード" in t for t in texts)
+    _has_mb_progress = any("MB" in t for t in texts)
+    if _has_download_text and _has_mb_progress:
+        _dl_texts = [t for t in texts if "Download" in t or "MB" in t or "ダウンロード" in t]
+        logger.info(">>> [DOWNLOAD_STRICT] 右下ゲージ確認: %s — ダウンロード待機", _dl_texts)
+        return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 【絶対最優先 #-2.5】SKIP ボタン汎用ハンドラ (カットシーン/ムービー)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # "SKIP" / "スキップ" を検出 → 即タップでカットシーンをスキップ。
+    # バトル中 ("通常攻撃" 等) は除外 (スキルボタンとの誤検出防止)。
+    _battle_ctx_kws = ["通常攻撃", "単体攻撃", "WAVE", "Turn", "BREAK", "必殺技"]
+    _in_battle_ctx = any(kw in joined for kw in _battle_ctx_kws)
+    if not _in_battle_ctx:
+        _skip_btn = has_any(ocr, ["SKIP", "スキップ", "SKP"])
+        if _skip_btn:
+            _sk_x, _sk_y = _skip_btn["center"]
+            logger.info(">>> [SKIP] カットシーンスキップ '%s' (%d,%d) タップ",
+                        _skip_btn["text"], _sk_x, _sk_y)
+            tap_device(_sk_x, _sk_y, state, f"CUTSCENE_SKIP '{_skip_btn['text']}'")
+            return "CUTSCENE_SKIP", 1.5
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
     # ─── 【最優先 #-2】タイトル画面 設定/サポートメニュー ───
     # 「動画配信設定」アイコンを誤タップして開く設定ポップアップ → BACK で閉じる
     # ただし、ストーリー/バトル/マップシーン中は「サポート」がセリフに含まれるため除外
@@ -2920,16 +2951,19 @@ def detect_and_act(ocr: list, state: PilotState,
             tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_1", post_wait=0.3)
             tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_2")
             return "GACHA_OK", 2.0
-        # ─── ADV選択肢「はい」「いいえ」など ─────────────────────────────
-        # 選択肢ボタンはブロブ検出より優先タップ (ブロブが選択肢を隠す場合がある)
-        _adv_choice_kws = ["はい", "いいえ", "わかった", "了解", "OK"]
-        _adv_choice = has_any(ocr, _adv_choice_kws)
-        if _adv_choice:
-            _ac_x, _ac_y = _adv_choice["center"]
-            # OCR枠が実際のボタン視覚領域より下にずれることがある → 輝度ベースで補正
-            _ac_y = _correct_btn_tap_y(state.last_screen, _ac_x, _ac_y, _adv_choice["box"])
-            logger.info(">>> 【ADV選択肢】 '%s' (%d,%d) タップ", _adv_choice["text"], _ac_x, _ac_y)
-            tap_device(_ac_x, _ac_y, state, f"ADV_CHOICE '{_adv_choice['text']}'")
+        # ─── ADV選択肢 — 肯定ボタン絶対優先 ───────────────────────────
+        # OK / はい / 了解 を最優先。キャンセル / いいえ は選択禁止。
+        _adv_positive_kws = ["OK", "はい", "わかった", "了解", "決定"]
+        _adv_negative_kws = ["キャンセル", "いいえ", "戻る", "やめる"]
+        _adv_pos = has_any(ocr, _adv_positive_kws)
+        _adv_neg = has_any(ocr, _adv_negative_kws)
+        if _adv_pos:
+            _ac_x, _ac_y = _adv_pos["center"]
+            _ac_y = _correct_btn_tap_y(state.last_screen, _ac_x, _ac_y, _adv_pos["box"])
+            logger.info(">>> 【ADV選択肢】 肯定 '%s' (%d,%d) タップ (否定='%s'を無視)",
+                        _adv_pos["text"], _ac_x, _ac_y,
+                        _adv_neg["text"] if _adv_neg else "なし")
+            tap_device(_ac_x, _ac_y, state, f"ADV_CHOICE '{_adv_pos['text']}'")
             return "ADV_CHOICE", 1.0
 
         # ─── バトルResultリザルト画面 ───────────────────────────────────────
@@ -3316,27 +3350,14 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.info(">>> ホーム画面検出! (%d個) 指/金枠なし → チュートリアル完了!", home_count)
         return "HOME_REACHED", 0
 
-    # ─── ダウンロード/ロード中 ───
-    dl = has_any(ocr, ["ダウンロード", "追加データ", "Loading", "ロード中",
-                       "通信中", "Now Loading", "Download", "Downloading"])
-    # 進捗バー: %, GB, MB を含む文字列も進捗画面と判定 (英語ダウンロード画面対応)
-    # ※ バトル中のダメージ倍率 (例: BREAK200%) との誤検知を防ぐため、
-    #   バトルキーワードが OCR に含まれる場合は % による判定をスキップ
-    if not dl:
-        _battle_guard_kws = ["通常攻撃", "单体攻撃", "単体攻撃", "BREAK", "WAVE",
-                             "ENEMY TURN", "BATTLE", "AUTO", "必殺技"]
-        _in_battle_context = any(kw in t for t in texts for kw in _battle_guard_kws)
-        if not _in_battle_context:
-            # バッテリー残量 (「電池」「Battery」コンテキスト) と誤認しないガード
-            _battery_ctx = any(kw in joined for kw in ["電池", "Battery", "バッテリー", "電池切れ"])
-            _progress_texts = [t for t in texts if ("%" in t or "MB" in t or "GB" in t)
-                               and not ("電池" in t or "Battery" in t or "%" not in t and "電池" in joined)]
-            if _progress_texts and not _battery_ctx:
-                logger.info(">>> ダウンロード進捗テキスト検出: %s", _progress_texts[:3])
-                # has_any 互換の形式で返す
-                dl = {"text": _progress_texts[0], "center": (0, 0), "confidence": 0.5, "box": []}
-    if dl:
-        logger.info(">>> ロード/ダウンロード中: '%s' — 待機 (Watchdog免除)", dl["text"])
+    # ─── ダウンロード/ロード中 (セカンダリチェック) ───
+    # ※ メインの厳格判定は関数冒頭の【絶対最優先 #-3】で実施済み。
+    # ここではフォールバックとして「ダウンロード」(日本語) + 進捗テキスト の組み合わせのみ検出。
+    # 通信速度やネットワーク状態による推測は一切行わない。
+    _dl_jp = has_any(ocr, ["ダウンロード", "追加データ"])
+    _dl_progress = any("MB" in t or "GB" in t for t in texts)
+    if _dl_jp and _dl_progress:
+        logger.info(">>> [DOWNLOAD_STRICT_JP] %s + 進捗あり — 待機", _dl_jp["text"])
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
 
     # ─── クエストマップ/ステージ選択 ───
@@ -4160,7 +4181,7 @@ def main():
                 time.sleep(1)
                 continue
 
-            if stall_elapsed >= STALL_TIMEOUT * 2 and state.stall_corner_tried:
+            if stall_elapsed >= STALL_TIMEOUT * 4 and state.stall_corner_tried:
                 _restart_count = getattr(state, '_unity_restart_count', 0)
                 if _restart_count >= 3:
                     logger.error(">>> %.0f秒スタック解消不能 (再起動%d回失敗) — 停止",
