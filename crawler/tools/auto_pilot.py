@@ -242,6 +242,14 @@ class PilotState:
     last_phash_dist: int = 999        # 直近の phash 距離 (detect_and_act 内で参照)
     normatk_fallback: "StallCounter" = field(
         default_factory=lambda: StallCounter("normatk_fallback", threshold=10))
+    # ─── テレメトリ (DEBUG レベル) ───
+    last_action_time: float = 0.0          # 直近アクションの実行時刻
+    transition_times: list = field(default_factory=list)  # 遷移時間ヒストリ (最大100件)
+
+
+# テレメトリ定数
+_TRANSITION_SLOW_SEC = 10.0   # 10秒超遷移の閾値
+_TRANSITION_HISTORY_MAX = 100  # 遷移時間ヒストリ最大件数
 
 
 class StallCounter:
@@ -626,8 +634,13 @@ def tap_device(x: int, y: int, state: PilotState, desc: str = "",
         "  [DEBUG] TAP: 解析座標=(%d,%d) → デバイス座標=(%d,%d) | %s",
         x, y, real_x, real_y, desc
     )
+    logger.debug(
+        "  [TELEMETRY] TAP: delta=(%d,%d) | %s",
+        real_x - x, real_y - y, desc
+    )
     adb(f"shell input tap {real_x} {real_y}")
     state.total_taps += 1
+    state.last_action_time = time.time()
     time.sleep(post_wait)
 
 
@@ -4283,6 +4296,12 @@ def generate_and_copy_report(state: PilotState, reason: str) -> None:
         f"- Finger検知           : {state.finger_detections} 回",
         f"- GoldBtn検知          : {state.gold_detections} 回",
         "",
+        "## テレメトリ",
+        f"- 平均遷移時間         : {sum(state.transition_times) / max(len(state.transition_times), 1):.1f}s",
+        f"- 最大遷移時間         : {max(state.transition_times) if state.transition_times else 0:.1f}s",
+        f"- 10秒超遷移回数       : {sum(1 for t in state.transition_times if t > _TRANSITION_SLOW_SEC)}",
+        f"- 計測サンプル数       : {len(state.transition_times)}",
+        "",
         "## 戦績サマリー",
         f"- ホーム到達           : {'✓ CLEARED' if state.home_reached else '未到達'}",
         f"- チュートリアル       : {'All Tutorials Cleared' if state.home_reached else '進行中'}",
@@ -4573,6 +4592,17 @@ def main():
             elif state.last_action == "MOYA_TAP":
                 state.finger_tap_static.tick()  # 微小変化でもタップ静止としてカウント
             state.last_screen_change_time = time.time()  # Watchdog: 最終変化時刻更新
+
+            # ── テレメトリ: アクション→画面変化の遷移時間を記録 ──
+            if state.last_action_time > 0:
+                _trans_sec = time.time() - state.last_action_time
+                if len(state.transition_times) >= _TRANSITION_HISTORY_MAX:
+                    state.transition_times.pop(0)
+                state.transition_times.append(_trans_sec)
+                if _trans_sec > _TRANSITION_SLOW_SEC:
+                    logger.debug(
+                        "[TELEMETRY] SLOW transition %.1fs after '%s'",
+                        _trans_sec, state.last_action)
 
             # ── ADV 高速モード: OCR スキップして画面下部を即連打 ──
             # 前回 STORY_TAP かつ phash 変化が小さい（テキスト送り）→ 即タップ
