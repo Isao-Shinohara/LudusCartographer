@@ -2296,6 +2296,28 @@ def detect_and_act(ocr: list, state: PilotState,
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 【絶対最優先 #-2.9】確認ダイアログ — 肯定ボタン最優先
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # OK/はい + キャンセル/いいえ が共存 → 確認ダイアログ → OK を必ずタップ。
+    # #0-DIALOG の × ボタンが先に発動する問題を根本解決。
+    # ダウンロードの次、SKIP より先に評価する。
+    _confirm_pos_kws = ["OK", "はい", "わかった", "了解", "決定"]
+    _confirm_neg_kws = ["キャンセル", "いいえ", "戻る", "やめる"]
+    _confirm_pos = has_any(ocr, _confirm_pos_kws)
+    _confirm_neg = has_any(ocr, _confirm_neg_kws)
+    if _confirm_pos and _confirm_neg:
+        _cp_x, _cp_y = _confirm_pos["center"]
+        _cp_y = _correct_btn_tap_y(state.last_screen, _cp_x, _cp_y, _confirm_pos["box"])
+        logger.info(
+            ">>> 【確認ダイアログ最優先】 肯定 '%s' (%d,%d) タップ (否定='%s'を無視)",
+            _confirm_pos["text"], _cp_x, _cp_y,
+            _confirm_neg["text"],
+        )
+        tap_device(_cp_x, _cp_y, state, f"CONFIRM_DIALOG_OK '{_confirm_pos['text']}'")
+        return "ADV_CHOICE", 1.0
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # 【絶対最優先 #-2.5】SKIP ボタン汎用ハンドラ (カットシーン/ムービー)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # "SKIP" / "スキップ" を検出 → 即タップでカットシーンをスキップ。
@@ -2303,7 +2325,7 @@ def detect_and_act(ocr: list, state: PilotState,
     _battle_ctx_kws = ["通常攻撃", "単体攻撃", "WAVE", "Turn", "BREAK", "必殺技"]
     _in_battle_ctx = any(kw in joined for kw in _battle_ctx_kws)
     if not _in_battle_ctx:
-        _skip_btn = has_any(ocr, ["SKIP", "スキップ", "SKP"])
+        _skip_btn = has_any(ocr, ["SKIP", "スキップ", "SKP", "SKIR", "SKlP", "SKLP"])
         if _skip_btn:
             _sk_x, _sk_y = _skip_btn["center"]
             logger.info(">>> [SKIP] カットシーンスキップ '%s' (%d,%d) タップ",
