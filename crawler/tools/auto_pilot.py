@@ -4510,6 +4510,20 @@ def main():
         # RESULT_RAPID 脱出時にカウンターリセット
         if state.last_action not in ("RESULT_TAP", "RESULT_NEXT", "RESULT_RAPID"):
             state._result_rapid_count = 0
+            state._result_total_taps = 0
+        else:
+            # 累積カウンター: RESULT画面での総タップ数 (RAPID + OCR経由)
+            _rtotal = getattr(state, '_result_total_taps', 0) + 1
+            state._result_total_taps = _rtotal
+            if _rtotal >= 30:
+                logger.warning("[RESULT_FREEZE] Result画面で %d 回タップ応答なし → Unity入力フリーズ → force-stop 復帰", _rtotal)
+                state._result_total_taps = 0
+                state._result_rapid_count = 0
+                if watchdog_recover(state):
+                    continue
+                else:
+                    logger.error("[RESULT_FREEZE] 復帰失敗 — 停止します")
+                    break
 
         # ── 4.3) BATTLE_RAPID: 発光/MOYA 検知即タップ → OCR 完全スキップ ──
         # detect_guide_glow() + find_finger_blobs() は OpenCV のみ (10-50ms)
