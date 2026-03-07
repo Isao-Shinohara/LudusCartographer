@@ -580,3 +580,75 @@ class TestHandleDialogScreen:
         assert result is None
         assert state.dialog_close_total == 0
         assert state.pre_popup_tap_count == 0
+
+
+# ─── roi_to_device テスト ──────────────────────────────────────
+
+class TestRoiToDevice:
+    """roi_to_device() の座標変換テスト。"""
+
+    def test_identity_roi(self):
+        """ROI がフル解析空間と同一なら座標不変。"""
+        from tools.auto_pilot import roi_to_device, ANALYSIS_W, ANALYSIS_H
+        roi = (0, 0, ANALYSIS_W, ANALYSIS_H)
+        dx, dy = roi_to_device(760, 360, roi)
+        assert dx == 760
+        assert dy == 360
+
+    def test_offset_roi(self):
+        """ROI にオフセットがある場合、座標がシフトされる。"""
+        from tools.auto_pilot import roi_to_device, ANALYSIS_W, ANALYSIS_H
+        # 黒帯: 左68px, 上0px, 幅1384, 高667 のケース
+        roi = (68, 0, 1384, 667)
+        dx, dy = roi_to_device(760, 360, roi)
+        # dx = int(760 / 1520 * 1384) + 68 = int(692) + 68 = 760
+        # dy = int(360 / 720 * 667) + 0 = int(333.5) = 333
+        assert dx == 760
+        assert dy == 333
+
+    def test_zero_coordinate(self):
+        """入力 (0, 0) → ROI 左上角を返す。"""
+        from tools.auto_pilot import roi_to_device
+        roi = (68, 53, 1384, 614)
+        dx, dy = roi_to_device(0, 0, roi)
+        assert dx == 68
+        assert dy == 53
+
+    def test_max_coordinate(self):
+        """入力 (ANALYSIS_W, ANALYSIS_H) → ROI 右下角を返す。"""
+        from tools.auto_pilot import roi_to_device, ANALYSIS_W, ANALYSIS_H
+        roi = (68, 53, 1384, 614)
+        dx, dy = roi_to_device(ANALYSIS_W, ANALYSIS_H, roi)
+        assert dx == 68 + 1384
+        assert dy == 53 + 614
+
+
+# ─── 座標定数テスト ──────────────────────────────────────
+
+class TestCoordinateConstants:
+    """座標補正定数の存在・型・範囲検証。"""
+
+    def test_ocr_bbox_y_padding(self):
+        from tools.auto_pilot import _OCR_BBOX_Y_PADDING
+        assert isinstance(_OCR_BBOX_Y_PADDING, int)
+        assert 0 < _OCR_BBOX_Y_PADDING <= 100
+
+    def test_glow_center_y_offset(self):
+        from tools.auto_pilot import _GLOW_CENTER_Y_OFFSET
+        assert isinstance(_GLOW_CENTER_Y_OFFSET, int)
+        assert 0 < _GLOW_CENTER_Y_OFFSET <= 100
+
+    def test_gold_btn_retry_y_offset(self):
+        from tools.auto_pilot import _GOLD_BTN_RETRY_Y_OFFSET
+        assert isinstance(_GOLD_BTN_RETRY_Y_OFFSET, int)
+        assert 0 < _GOLD_BTN_RETRY_Y_OFFSET <= 100
+
+    def test_finger_tip_ratio(self):
+        from tools.auto_pilot import _FINGER_TIP_RATIO
+        assert isinstance(_FINGER_TIP_RATIO, float)
+        assert 0.0 < _FINGER_TIP_RATIO < 1.0
+
+    def test_analysis_dimensions(self):
+        from tools.auto_pilot import ANALYSIS_W, ANALYSIS_H
+        assert ANALYSIS_W == 1520
+        assert ANALYSIS_H == 720
