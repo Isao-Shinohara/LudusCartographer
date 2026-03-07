@@ -2538,6 +2538,21 @@ def detect_and_act(ocr: list, state: PilotState,
                     return _pg_result, 1.0   # ← 必ず return。fallthrough なし。
                 else:
                     # "close": × ボタンを即タップ
+                    # ── 確認ダイアログ (OK+キャンセル共存) → × ではなく OK 優先 ──
+                    # 「次へ進みますか?」等で × を押すとキャンセル扱いになるため、
+                    # OK/はい と キャンセル/いいえ が共存する場合は OK を優先タップ。
+                    _dlg_pos = has_any(ocr, ["OK", "はい", "了解", "決定"])
+                    _dlg_neg = has_any(ocr, ["キャンセル", "いいえ", "戻る"])
+                    if _dlg_pos and _dlg_neg:
+                        _dp_x, _dp_y = _dlg_pos["center"]
+                        _dp_y = _correct_btn_tap_y(state.last_screen, _dp_x, _dp_y, _dlg_pos["box"])
+                        logger.info(
+                            ">>> 【ダイアログ#0-DIALOG】確認ダイアログ(OK+キャンセル) → × ではなく '%s'(%d,%d) タップ",
+                            _dlg_pos["text"], _dp_x, _dp_y,
+                        )
+                        tap_device(_dp_x, _dp_y, state, f"DIALOG_CONFIRM_OK '{_dlg_pos['text']}'")
+                        state.pre_popup_tap_count = 0
+                        return "DIALOG_CONFIRM_OK", 1.5
                     # ── 4回連続失敗 → OK/確認ボタンを探してフォールバック ──
                     if state.pre_popup_tap_count >= 4:
                         _ok_ocr = has_any(ocr, ["OK", "確認", "決定", "おまかせ"])
