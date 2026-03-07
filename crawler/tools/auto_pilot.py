@@ -4544,11 +4544,20 @@ def main():
 
             # ── Phase C: 左モヤなしフォールバック → 右側攻撃ボタン ──
             # 【永続ルール】左キャラにモヤがない場合は常に右側の通常攻撃/戦闘スキルをタップ
+            # 安全弁: 連続10回フォールバック → バトル以外のシーンの可能性 → OCR 再評価
+            _fb_count = getattr(state, '_normatk_fallback_count', 0)
             if not _rapid_action:
-                _rapid_tx, _rapid_ty = roi_to_device(
-                    int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
-                _rapid_action = "BATTLE_RAPID_NORMATK_FALLBACK"
-                logger.info("[BATTLE_RAPID] 左モヤなし → 右側通常攻撃フォールバック")
+                if _fb_count >= 10:
+                    logger.info("[BATTLE_RAPID] FALLBACK 10回連続 → OCR で再評価")
+                    state._normatk_fallback_count = 0
+                    # BATTLE_RAPID を抜けて OCR に回す (continue しない)
+                else:
+                    _rapid_tx, _rapid_ty = roi_to_device(
+                        int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
+                    _rapid_action = "BATTLE_RAPID_NORMATK_FALLBACK"
+                    state._normatk_fallback_count = _fb_count + 1
+            else:
+                state._normatk_fallback_count = 0
 
             # ── 共通タップ実行 ──
             if _rapid_action:
