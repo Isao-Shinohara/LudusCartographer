@@ -94,6 +94,7 @@ WATCHDOG_EXEMPT_ACTIONS = frozenset([
     "NOTICE_DISMISS", "GO_CHUI_AGREE", "GO_CHUI_FALLBACK",  # ご注意: 初期化待ち
     "MAIN_STORY_LOADING",  # MAIN STORY ローディング背景: 自動遷移待ち
     "GOLD_SWIPE_UP", "GOLD_SWIPE_DOWN", "GOLD_SWIPE_LEFT", "GOLD_SWIPE_RIGHT",  # チュートリアル移動
+    "GRIND_QUEST_NAV",  # 周回: ホーム→クエスト遷移待ち
 ])
 ADV_RAPID_PHASH_MAX = 25    # ADV高速モード: phash がこれ以下なら OCR スキップ連打
 BLACKOUT_BRIGHTNESS = 20
@@ -240,6 +241,10 @@ class PilotState:
     unity_restart_count: int = 0      # Unity force-restart 試行回数 [0..3]
     wifi_fail_streak: int = 0         # Wi-Fi破損連続失敗カウンタ [0..5]
     last_phash_dist: int = 999        # 直近の phash 距離 (detect_and_act 内で参照)
+    # ─── 周回モード ───
+    grind_mode: bool = False          # True: ホーム到達後もクエストへ自動ナビゲート
+    grind_max_cycles: int = 0         # 0=無制限, N>0=N周で停止
+    grind_cycles_completed: int = 0   # 周回完了回数
     normatk_fallback: "StallCounter" = field(
         default_factory=lambda: StallCounter("normatk_fallback", threshold=10))
     # ─── テレメトリ (DEBUG レベル) ───
@@ -3822,7 +3827,39 @@ def detect_and_act(ocr: list, state: PilotState,
         if state.home_nav_count > 0:
             logger.info(">>> ホーム画面 + 遷移試行 %d回目 → 画面変化待ち", state.home_nav_count)
             return "HOME_NAV_WAIT", 2.0
-        # 指アイコンも金枠もない → 真のチュートリアル終了
+        # 指アイコンも金枠もない → チュートリアル完了
+        if state.grind_mode:
+            # ── 周回モード: ホーム到達 → クエストへ自動ナビゲート ──
+            state.grind_cycles_completed += 1
+            logger.info("=" * 50)
+            logger.info("  [GRIND] 周回 #%d 完了! → クエストへ自動ナビゲート",
+                        state.grind_cycles_completed)
+            logger.info("=" * 50)
+            # 周回上限チェック
+            if 0 < state.grind_max_cycles <= state.grind_cycles_completed:
+                logger.info("[GRIND] 目標周回数 %d に到達 → 終了",
+                            state.grind_max_cycles)
+                return "GRIND_COMPLETE", 0
+            # バトル関連カウンタをリセット
+            state.battle_wait_count = 0
+            state.auto_activated = False
+            state.result_rapid_count = 0
+            state.result_total_taps = 0
+            state.result_subtype = ""
+            state.home_nav_count = 0
+            state.char_just_selected = False
+            state.character_selected = False
+            # クエストボタンをタップ
+            quest_btn = has_text(ocr, "クエスト", min_conf=0.3)
+            if quest_btn:
+                cx, cy = quest_btn["center"]
+                logger.info(">>> [GRIND] クエストボタン (%d,%d) タップ", cx, cy)
+                tap_device(cx, cy, state, "GRIND_QUEST_NAV")
+            else:
+                _qf_x, _qf_y = roi_to_device(int(W * 0.88), int(H * 0.96), state.game_roi)
+                logger.info(">>> [GRIND] クエスト固定位置 (%d,%d) タップ", _qf_x, _qf_y)
+                tap_device(_qf_x, _qf_y, state, "GRIND_QUEST_NAV_FIXED")
+            return "GRIND_QUEST_NAV", 3.0
         logger.info(">>> ホーム画面検出! (%d個) 指/金枠なし → チュートリアル完了!", home_count)
         return "HOME_REACHED", 0
 
@@ -4305,6 +4342,8 @@ def generate_and_copy_report(state: PilotState, reason: str) -> None:
         "## 戦績サマリー",
         f"- ホーム到達           : {'✓ CLEARED' if state.home_reached else '未到達'}",
         f"- チュートリアル       : {'All Tutorials Cleared' if state.home_reached else '進行中'}",
+        f"- 周回モード           : {'ON' if state.grind_mode else 'OFF'}",
+        f"- 周回完了数           : {state.grind_cycles_completed}",
         f"- 最終シーン           : {state.current_scene}",
         f"- Rank                 : {'1 / HOME REACHED' if state.home_reached else 'In Progress'}",
         "",
@@ -4376,6 +4415,10 @@ def _battle_fast_check(analysis_path: Path,
 def parse_args():
     parser = argparse.ArgumentParser(description="まどドラ自律操縦")
     parser.add_argument("--verbose", action="store_true", help="デバッグログ出力")
+    parser.add_argument("--grind", action="store_true",
+                        help="周回モード: ホーム到達後もクエストへ自動ナビゲート")
+    parser.add_argument("--max-cycles", type=int, default=0,
+                        help="周回上限 (0=無制限, デフォルト: 0)")
     return parser.parse_args()
 
 
@@ -4390,9 +4433,14 @@ def main():
     logger.info("  デバイス: %s", DEVICE_SERIAL)
     logger.info("  ポーリング: %.1fs  強制解析: %d回変化なし  スタックTimeout: %.0fs",
                 POLL_INTERVAL, FORCE_ANALYZE_AFTER, STALL_TIMEOUT)
+    if args.grind:
+        _cycle_str = f"{args.max_cycles}周" if args.max_cycles > 0 else "無制限"
+        logger.info("  周回モード: ON (%s)", _cycle_str)
     logger.info("=" * 62)
 
     state = PilotState()
+    state.grind_mode = args.grind
+    state.grind_max_cycles = args.max_cycles
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
     # ─── Ctrl+C シグナルハンドラ登録 (レポート自動生成) ───
@@ -4975,15 +5023,20 @@ def main():
                 state.last_download_progress_log = _now
 
         # エビデンス保存
-        if i % 20 == 0 or action in ("HOME_REACHED", "SKIP", "AGREE", "RESULT_TAP"):
+        if i % 20 == 0 or action in ("HOME_REACHED", "GRIND_COMPLETE", "GRIND_QUEST_NAV",
+                                      "SKIP", "AGREE", "RESULT_TAP"):
             save_evidence(img_path, ocr_results, action, state)
 
-        # ── 7) ホーム到達チェック ──
-        # "HOME_REACHED" が返った時のみ停止 (QUEST_FROM_HOME 等の遷移中は続行)
-        if action == "HOME_REACHED":
+        # ── 7) ホーム到達 / 周回完了チェック ──
+        if action in ("HOME_REACHED", "GRIND_COMPLETE"):
+            if action == "GRIND_COMPLETE":
+                _reason = f"周回完了 ({state.grind_cycles_completed}/{state.grind_max_cycles}周)"
+            else:
+                _reason = "ホーム画面到達 (チュートリアル完了)"
             logger.info("=" * 62)
-            logger.info("  ホーム画面に到達しました! (チュートリアル完了)")
-            logger.info("  総タップ: %d  イテレーション: %d", state.total_taps, i + 1)
+            logger.info("  %s", _reason)
+            logger.info("  総タップ: %d  イテレーション: %d  周回: %d",
+                        state.total_taps, i + 1, state.grind_cycles_completed)
             logger.info("  OCR実行: %d  スキップ: %d  暗転: %d",
                         state.total_ocr_calls, state.total_ocr_skipped,
                         state.total_blackout_skipped)
@@ -4992,7 +5045,7 @@ def main():
             if _scrcpy_proc and _scrcpy_proc.poll() is None:
                 _scrcpy_proc.terminate()
                 logger.info("[SCRCPY] 終了 PID=%d", _scrcpy_proc.pid)
-            generate_and_copy_report(state, "ホーム画面到達 (チュートリアル完了)")
+            generate_and_copy_report(state, _reason)
             return
 
         # ── 8) 待機 ──

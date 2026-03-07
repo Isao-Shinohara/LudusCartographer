@@ -30,6 +30,67 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+
+# ─── ADB パス自動解決 ───────────────────────────────────────
+def _ensure_adb_in_path() -> None:
+    """ANDROID_HOME / ANDROID_SDK_ROOT から platform-tools を PATH に追加する。"""
+    for env_key in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        sdk = os.environ.get(env_key, "").strip()
+        if not sdk:
+            continue
+        pt = os.path.join(sdk, "platform-tools")
+        if os.path.isdir(pt) and pt not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = pt + os.pathsep + os.environ.get("PATH", "")
+            logger.debug("[ADB_PATH] %s を PATH に追加", pt)
+            return
+    # macOS デフォルトパス
+    default = os.path.expanduser("~/Library/Android/sdk/platform-tools")
+    if os.path.isdir(default) and default not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = default + os.pathsep + os.environ.get("PATH", "")
+        logger.debug("[ADB_PATH] デフォルト %s を PATH に追加", default)
+
+
+_ensure_adb_in_path()
+
+
+# ─── ADB 自動接続 ──────────────────────────────────────────
+WIFI_DEVICE_ADDR = "192.168.10.118:5555"
+
+
+def ensure_adb_connection(wifi_addr: str = WIFI_DEVICE_ADDR) -> str:
+    """
+    ADB デバイス接続を自動検出・確立する。
+
+    検出順:
+      1. adb devices でオンラインデバイスがあればそのシリアルを返す
+      2. なければ Wi-Fi アドレスに adb connect を試行
+      3. それでも失敗 → RuntimeError
+
+    Returns: デバイスシリアル文字列
+    """
+    # 既にオンラインのデバイスがあるか確認
+    serial = _try_adb(timeout=5)
+    if serial:
+        return serial
+
+    # Wi-Fi 接続を試行
+    logger.info("[ADB_CONNECT] デバイス未検出 → Wi-Fi 接続を試行: %s", wifi_addr)
+    try:
+        r = subprocess.run(
+            ["adb", "connect", wifi_addr],
+            capture_output=True, text=True, timeout=10,
+        )
+        if "connected" in r.stdout.lower():
+            logger.info("[ADB_CONNECT] Wi-Fi 接続成功: %s", wifi_addr)
+            return wifi_addr
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.warning("[ADB_CONNECT] Wi-Fi 接続失敗: %s", e)
+
+    raise RuntimeError(
+        f"ADB デバイスが見つかりません。USB を接続するか Wi-Fi ({wifi_addr}) を確認してください。"
+    )
+
+
 # ioreg で取得できる USB Serial Number のパターン (Apple: 24文字16進数)
 _IOREG_SERIAL_PATTERN = re.compile(
     r'"USB Serial Number"\s*=\s*"([0-9A-Fa-f]{24})"'
