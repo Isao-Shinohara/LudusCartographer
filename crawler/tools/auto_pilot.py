@@ -3226,8 +3226,13 @@ def detect_and_act(ocr: list, state: PilotState,
         # ─── バトルResultリザルト画面 ───────────────────────────────────────
         # "次へ" + Resultコンテキスト(EXP/Lv.1/リザルト)が見えている間は優先タップ
         # ※ OCRが "Result" を "kesuit" 等と誤読する場合も EXP/Lv.1 で補完
-        _result_ctx = (has_text(ocr, "Result") or has_text(ocr, "EXP")
-                       or has_text(ocr, "Lv.1") or has_text(ocr, "リザルト"))
+        # 除外: パーティ編成画面にも "Lv.1" が出現するため、編成KWが同時検出されたら除外
+        _formation_kws = has_any(ocr, ["パーティ", "編成", "キオク", "ポートレイト", "自動編成"])
+        _result_ctx = (
+            not _formation_kws
+            and (has_text(ocr, "Result") or has_text(ocr, "EXP")
+                 or has_text(ocr, "Lv.1") or has_text(ocr, "リザルト"))
+        )
         if _result_ctx:
             # 「次へ」は右下エリア(y>H*0.6, x>W*0.5)にあるはず。誤検出を位置フィルタで排除
             _nxt_btn = None
