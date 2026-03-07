@@ -2519,7 +2519,12 @@ def detect_and_act(ocr: list, state: PilotState,
     # 指が見えたらダイアログ処理をバイパスし、指ガイド処理 (#1) へフォールスルー。
     _pre_dialog_finger = False
     _white_hand_pos = None  # (cx, cy, score) — 白ハンドポインタ座標
-    if analysis_path is not None:
+    # Result/リザルト画面ではチュートリアル指ガイドは出現しない → ガード無効化
+    _is_result_screen = any(
+        any(k in t for k in ("Result", "リザルト", "次へ"))
+        for t in texts
+    )
+    if analysis_path is not None and not _is_result_screen:
         # (A) オレンジ指ブロブ (HSV肌色)
         # max_area=5000: キャラ肌色 (Result画面等) の大面積誤検出を排除
         _pdg_blobs = find_finger_blobs(analysis_path, min_area=300, max_area=5000)
@@ -2529,7 +2534,7 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info("[PRE_DIALOG_GUARD] 指ブロブ %d 個検出 → #0-DIALOG スキップ", len(_pdg_blobs))
         # (B) 白ハンドポインタ (テンプレートマッチング)
         if not _pre_dialog_finger:
-            _white_hand_pos = detect_white_hand_pointer(analysis_path, threshold=0.85)
+            _white_hand_pos = detect_white_hand_pointer(analysis_path, threshold=0.90)
             if _white_hand_pos is not None:
                 _pre_dialog_finger = True
                 logger.info(
@@ -2565,7 +2570,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 # ── 白ハンドポインタ画面ガード ──────────────────────────
                 # テンプレートマッチング主軸 + OCRキーワード補助
                 if _dlg is not None:
-                    _sg_white = detect_white_hand_pointer(analysis_path, threshold=0.85)
+                    _sg_white = detect_white_hand_pointer(analysis_path, threshold=0.90)
                     if _sg_white is not None:
                         logger.info(
                             "[SPATIAL_GATE] 白ハンドポインタ(%d,%d) score=%.3f → #0-DIALOG(▷) スキップ",
