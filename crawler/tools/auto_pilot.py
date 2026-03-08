@@ -99,6 +99,7 @@ WATCHDOG_EXEMPT_ACTIONS = frozenset([
     "MAIN_STORY_LOADING",  # MAIN STORY ローディング背景: 自動遷移待ち
     "GOLD_SWIPE_UP", "GOLD_SWIPE_DOWN", "GOLD_SWIPE_LEFT", "GOLD_SWIPE_RIGHT",  # チュートリアル移動
     "GRIND_QUEST_NAV",  # 周回: ホーム→クエスト遷移待ち
+    "MOVIE_WAIT",  # 動画シーン: タップ抑制中
 ])
 ADV_RAPID_PHASH_MAX = 25    # ADV高速モード: phash がこれ以下なら OCR スキップ連打
 BLACKOUT_BRIGHTNESS = 20
@@ -1097,6 +1098,72 @@ def detect_adv_advance_icon(img_path: Path,
     except Exception as _e:
         logger.debug("detect_adv_advance_icon error: %s", _e)
         return False
+
+
+def is_adv_toolbar_visible(img_path: Path) -> bool:
+    """
+    ADVパートの右上ツールバー（5個のアイコン列: メニュー, ログ, AUTO, >>, >|）を検出。
+    動画シーン（⏭ 1個のみ）と区別するために使用。
+
+    手法: 右上ROI内でCanny edge密度を計測。
+    ADVツールバー: 複数アイコンの輪郭でedge密度が高い (>=0.04)
+    動画シーン: アイコン1個のみ or 空で低密度
+    """
+    try:
+        _img = cv2.imread(str(img_path))
+        if _img is None:
+            return False
+        _H, _W = _img.shape[:2]
+        # ROI: 右上 78%~100% x, 0~10% y
+        _x1 = int(_W * 0.78)
+        _y2 = int(_H * 0.10)
+        if _y2 < 10 or _W - _x1 < 10:
+            return False
+        _roi = _img[0:_y2, _x1:_W]
+        _gray = cv2.cvtColor(_roi, cv2.COLOR_BGR2GRAY)
+        _edges = cv2.Canny(_gray, 50, 150)
+        _total = _roi.shape[0] * _roi.shape[1]
+        if _total == 0:
+            return False
+        _edge_ratio = cv2.countNonZero(_edges) / _total
+        _visible = _edge_ratio >= 0.04
+        if _visible:
+            logger.debug("[ADV_TOOLBAR] edge密度=%.3f → ADVパート確定", _edge_ratio)
+        return _visible
+    except Exception:
+        return False
+
+
+def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
+    """
+    動画シーンの⏭スキップボタン（右上の金色円形アイコン）を検出。
+    返り値: (cx, cy) or None
+    """
+    try:
+        _img = cv2.imread(str(img_path))
+        if _img is None:
+            return None
+        _H, _W = _img.shape[:2]
+        # ROI: 右上コーナー (88%~100% x, 0~12% y)
+        _x1 = int(_W * 0.88)
+        _y2 = int(_H * 0.12)
+        if _y2 < 5 or _W - _x1 < 5:
+            return None
+        _roi = _img[0:_y2, _x1:_W]
+        _hsv = cv2.cvtColor(_roi, cv2.COLOR_BGR2HSV)
+        # 金色: H=15-40, S>50, V>130
+        _mask = cv2.inRange(_hsv, (15, 50, 130), (40, 255, 255))
+        _gold_count = int(cv2.countNonZero(_mask))
+        if _gold_count >= 30:
+            _coords = cv2.findNonZero(_mask)
+            if _coords is not None:
+                _mx = int(np.mean(_coords[:, 0, 0])) + _x1
+                _my = int(np.mean(_coords[:, 0, 1]))
+                logger.debug("[MOVIE_SKIP_BTN] 金色ボタン検出 (%d,%d) gold_px=%d", _mx, _my, _gold_count)
+                return (_mx, _my)
+        return None
+    except Exception:
+        return None
 
 
 # ─── チュートリアルダイアログ ページ送り/閉じるボタン検出 ─────────────────
@@ -4510,16 +4577,34 @@ def main():
                 any(k in t for k in ("Result", "EXP", "次へ"))
                 for t in _last_texts
             )
-            if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT", "MOYA_TAP") and
+            if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT",
+                                      "MOYA_TAP", "MOVIE_SKIP", "MOVIE_WAIT") and
                     PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
                     state.current_scene not in ("MENU", "BATTLE") and
                     not _is_result_like):
-                logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
-                _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
-                tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP")
-                logger.info("  ACTION_TAKEN ADV_RAPID_TAP (%d,%d)", _adv_x, _adv_y)
-                state.last_phash = cur_phash
-                continue
+                # ADV vs 動画シーン判別: ツールバー有無で分岐
+                if is_adv_toolbar_visible(img_path):
+                    logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
+                    _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
+                    tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP")
+                    logger.info("  ACTION_TAKEN ADV_RAPID_TAP (%d,%d)", _adv_x, _adv_y)
+                    state.last_phash = cur_phash
+                    continue
+                else:
+                    # 動画シーン → ⏭ スキップボタン探索 (タップ抑制)
+                    _movie_btn = detect_movie_skip_button(img_path)
+                    if _movie_btn:
+                        _ms_x, _ms_y = roi_to_device(_movie_btn[0], _movie_btn[1], state.game_roi)
+                        tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
+                        logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d)", _ms_x, _ms_y)
+                        state.last_phash = cur_phash
+                        continue
+                    else:
+                        logger.info("[iter %d] phash_dist=%d 動画再生中 → 待機 (タップ抑制)", i, dist)
+                        state.last_action = "MOVIE_WAIT"
+                        state.last_phash = cur_phash
+                        time.sleep(2.0)
+                        continue
 
         else:
             # 画面変化なし
@@ -4593,17 +4678,35 @@ def main():
                     logger.info("[%s][iter %d] phash_dist=%d same=%d — polling (%.1fs)...",
                                 state.current_scene, i, dist, state.same_phash_count, _poll)
                 # ── ADV送り待ちアイコン検知: phash 安定中でも即タップ ──
+                # 動画シーンでは ADV ツールバーが無いためタップ抑制
                 if state.current_scene in ("STORY", "ADV"):
-                    if detect_adv_advance_icon(img_path):
-                        logger.info("[ADV_ADVANCE][iter %d] 送り待ちアイコン検出 → 即タップ", i)
-                        _aa_x, _aa_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
-                        adb(f"shell input tap {_aa_x} {_aa_y}")
-                        state.total_taps += 1
-                        state.last_phash = ""
-                        state.same_phash_count = 0
-                        state.stall_start = 0.0
-                        time.sleep(0.5)
-                        continue
+                    if is_adv_toolbar_visible(img_path):
+                        if detect_adv_advance_icon(img_path):
+                            logger.info("[ADV_ADVANCE][iter %d] 送り待ちアイコン検出 → 即タップ", i)
+                            _aa_x, _aa_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
+                            adb(f"shell input tap {_aa_x} {_aa_y}")
+                            state.total_taps += 1
+                            state.last_phash = ""
+                            state.same_phash_count = 0
+                            state.stall_start = 0.0
+                            time.sleep(0.5)
+                            continue
+                    else:
+                        # 動画シーン → ⏭ スキップボタン探索
+                        _movie_btn = detect_movie_skip_button(img_path)
+                        if _movie_btn:
+                            _ms_x, _ms_y = roi_to_device(_movie_btn[0], _movie_btn[1], state.game_roi)
+                            tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
+                            logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d) [phash stable]", _ms_x, _ms_y)
+                            state.last_phash = ""
+                            state.same_phash_count = 0
+                            time.sleep(1.0)
+                            continue
+                        else:
+                            logger.info("[MOVIE_WAIT] 動画再生中 → 待機 (phash stable)")
+                            state.last_action = "MOVIE_WAIT"
+                            time.sleep(2.0)
+                            continue
                 state.last_phash = cur_phash
                 time.sleep(_poll)
                 continue
