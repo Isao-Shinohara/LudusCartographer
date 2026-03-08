@@ -266,6 +266,9 @@ class PilotState:
     grind_cycles_completed: int = 0   # 周回完了回数
     normatk_fallback: "StallCounter" = field(
         default_factory=lambda: StallCounter("normatk_fallback", threshold=10))
+    # ─── MOVIE_WAIT 脱出カウンタ ───
+    # 動画待機が連続した回数。閾値超でフルOCRにフォールスルーし誤検出を脱出。
+    movie_wait_consecutive: int = 0
     # ─── キャッシュ (per-phash サイクル) ───
     _adv_toolbar_cache_phash: str = ""     # キャッシュ有効な phash 値
     _adv_toolbar_cache_result: bool = False # キャッシュされた結果
@@ -4543,43 +4546,59 @@ def main():
                     PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
                     state.current_scene not in ("MENU", "BATTLE") and
                     not _is_result_like):
-                # レターボックス最優先: 左黒帯>=80px → 動画確定 (ツールバー誤検出を防ぐ)
-                _rapid_roi_x = state.game_roi[0] if state.game_roi else 0
-                if _rapid_roi_x >= 80:
-                    _movie_btn = detect_movie_skip_button(img_path)
-                    if _movie_btn:
-                        _ms_x, _ms_y = roi_to_device(_movie_btn[0], _movie_btn[1], state.game_roi)
-                        tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
-                        logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d) [ADV_RAPID letterbox]", _ms_x, _ms_y)
-                    else:
-                        logger.info("[iter %d] phash_dist=%d レターボックス動画 → 待機", i, dist)
-                        state.last_action = "MOVIE_WAIT"
-                        time.sleep(2.0)
-                    state.last_phash = cur_phash
-                    continue
-                # ADV vs 動画シーン判別: ツールバー有無で分岐
-                if is_adv_toolbar_cached(img_path, state):
-                    logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
-                    _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
-                    tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP", post_wait=0.3)
-                    logger.info("  ACTION_TAKEN ADV_RAPID_TAP (%d,%d)", _adv_x, _adv_y)
-                    state.last_phash = cur_phash
-                    continue
+                # ── MOVIE_WAIT 脱出: 20回連続 (~60秒) 動画待機ならフルOCRへフォールスルー ──
+                _MOVIE_WAIT_ESCAPE = 20
+                if state.movie_wait_consecutive >= _MOVIE_WAIT_ESCAPE:
+                    logger.warning(
+                        "[MOVIE_ESCAPE] 動画待機 %d 回連続 → フルOCR解析にフォールスルー",
+                        state.movie_wait_consecutive)
+                    state.movie_wait_consecutive = 0
+                    # continue しない → 下の OCR パスへ落ちる
                 else:
-                    # 動画シーン → ⏭ スキップボタン探索 (タップ抑制)
-                    _movie_btn = detect_movie_skip_button(img_path)
-                    if _movie_btn:
-                        _ms_x, _ms_y = roi_to_device(_movie_btn[0], _movie_btn[1], state.game_roi)
-                        tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
-                        logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d)", _ms_x, _ms_y)
+                    # レターボックス最優先: 左黒帯>=80px → 動画確定 (ツールバー誤検出を防ぐ)
+                    _rapid_roi_x = state.game_roi[0] if state.game_roi else 0
+                    if _rapid_roi_x >= 80:
+                        _movie_btn = detect_movie_skip_button(img_path)
+                        if _movie_btn:
+                            _ms_x, _ms_y = roi_to_device(_movie_btn[0], _movie_btn[1], state.game_roi)
+                            tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
+                            logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d) [ADV_RAPID letterbox]", _ms_x, _ms_y)
+                            state.movie_wait_consecutive = 0
+                        else:
+                            state.movie_wait_consecutive += 1
+                            logger.info("[iter %d] phash_dist=%d レターボックス動画 → 待機 (%d/%d)",
+                                        i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
+                            state.last_action = "MOVIE_WAIT"
+                            time.sleep(2.0)
+                        state.last_phash = cur_phash
+                        continue
+                    # ADV vs 動画シーン判別: ツールバー有無で分岐
+                    if is_adv_toolbar_cached(img_path, state):
+                        logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
+                        _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
+                        tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP", post_wait=0.3)
+                        logger.info("  ACTION_TAKEN ADV_RAPID_TAP (%d,%d)", _adv_x, _adv_y)
+                        state.movie_wait_consecutive = 0
                         state.last_phash = cur_phash
                         continue
                     else:
-                        logger.info("[iter %d] phash_dist=%d 動画再生中 → 待機 (タップ抑制)", i, dist)
-                        state.last_action = "MOVIE_WAIT"
-                        state.last_phash = cur_phash
-                        time.sleep(2.0)
-                        continue
+                        # 動画シーン → ⏭ スキップボタン探索 (タップ抑制)
+                        _movie_btn = detect_movie_skip_button(img_path)
+                        if _movie_btn:
+                            _ms_x, _ms_y = roi_to_device(_movie_btn[0], _movie_btn[1], state.game_roi)
+                            tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
+                            logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d)", _ms_x, _ms_y)
+                            state.movie_wait_consecutive = 0
+                            state.last_phash = cur_phash
+                            continue
+                        else:
+                            state.movie_wait_consecutive += 1
+                            logger.info("[iter %d] phash_dist=%d 動画再生中 → 待機 (%d/%d)",
+                                        i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
+                            state.last_action = "MOVIE_WAIT"
+                            state.last_phash = cur_phash
+                            time.sleep(2.0)
+                            continue
 
         else:
             # 画面変化なし
@@ -4958,6 +4977,9 @@ def main():
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         action, wait_sec = detect_and_act(ocr_results, state, analysis_path)
         state.last_action = action
+        # フルOCR解析に到達 → MOVIE_WAIT脱出カウンタリセット
+        if action != "MOVIE_WAIT":
+            state.movie_wait_consecutive = 0
 
         # ── シーン再評価: 同一アクション連続時にシーン認識を疑う ──
         if action == state.last_action and action not in (
