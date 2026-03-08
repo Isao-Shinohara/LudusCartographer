@@ -44,7 +44,7 @@ from typing import Optional
 _CRAWLER_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_CRAWLER_ROOT))
 
-from lc.ocr import run_ocr, find_text, find_best, format_results
+from lc.ocr import run_ocr, find_best
 from lc.utils import (
     get_android_serial, compute_phash, phash_distance, ensure_adb_connection,
     uninstall_app, is_app_installed, open_play_store,
@@ -98,6 +98,22 @@ WATCHDOG_EXEMPT_ACTIONS = frozenset([
 ])
 ADV_RAPID_PHASH_MAX = 25    # ADV高速モード: phash がこれ以下なら OCR スキップ連打
 BLACKOUT_BRIGHTNESS = 20
+
+# ─── デバッグ画像保存フラグ (--verbose で True に切替) ───
+_DEBUG_SAVE_IMAGES = False
+
+# ─── 動的しきい値: Gold UI アクション後即解析対象 ───
+_GOLD_UI_ACTIONS: frozenset = frozenset([
+    "GOLD_BTN_TAP", "MOYA_TAP", "BATTLE_TUTORIAL", "SKILL_CARD_TUTORIAL",
+    "HISSATSU_TUTORIAL", "BUFF_TUTORIAL", "GOLD_SWIPE_UP", "GOLD_SWIPE_DOWN",
+])
+
+# ─── シーン再評価: 同一アクション連続閾値 ───
+_SCENE_REEVAL_THRESHOLD = 5
+
+# ─── 確認ダイアログ キーワード (複数箇所で共有) ───
+_CONFIRM_POS_KWS: list[str] = ["OK", "はい", "わかった", "了解", "決定", "許可", "Allow", "ALLOW", "リトライ", "Retry"]
+_CONFIRM_NEG_KWS: list[str] = ["キャンセル", "いいえ", "戻る", "やめる", "許可しない", "拒否", "Deny"]
 
 # ─── ダイアログ・ファースト: 検知キーワード一覧 ───────────────────────────────
 # detect_and_act #0-DIALOG ブロックで使用。枠検出に失敗した場合の OCR 補助トリガー。
@@ -200,11 +216,6 @@ class PilotState:
     pre_popup_tap_count: int = 0
     # 現在のシーン分類 (BATTLE / ADV / LOADING / MENU / UNKNOWN)
     current_scene: str = "UNKNOWN"
-    # StrategicDecisionEngine: 予測トラッキング
-    last_prediction: str = ""
-    last_prediction_desc: str = ""
-    last_tap_text: str = ""
-    last_action_pre_phash: str = ""
     # ホーム画面からクエスト等への遷移試行回数 (遷移中の誤停止を防ぐ)
     home_nav_count: int = 0
     # ─── Watchdog ───
@@ -308,12 +319,12 @@ class StallCounter:
 # ─── シーン分類 ──────────────────────────────────────
 # シーン別ポーリング間隔 (ユーザー指定)
 SCENE_INTERVAL = {
-    "BATTLE":  0.5,   # バトル画面: 爆速反応 (旧1.0→0.5)
-    "ADV":     1.0,   # アドベンチャー/会話: 最速反応
-    "STORY":   0.5,   # ストーリー(スキップなし): 爆速化 (旧2.0→0.5)
-    "LOADING": 5.0,   # ロード中: 負荷軽減
-    "MENU":    1.0,   # ホーム/メニュー
-    "UNKNOWN": 1.0,   # 不明
+    "BATTLE":  0.5,   # バトル画面: 爆速反応
+    "ADV":     0.5,   # アドベンチャー/会話: 高速化 (旧1.0)
+    "STORY":   0.5,   # ストーリー(スキップなし): 爆速化
+    "LOADING": 3.0,   # ロード中: 負荷軽減 (旧5.0)
+    "MENU":    0.5,   # ホーム/メニュー: 高速化 (旧1.0)
+    "UNKNOWN": 0.5,   # 不明: 高速化 (旧1.0)
 }
 
 def classify_scene(texts: list[str], last_action: str) -> tuple[str, float]:
@@ -606,13 +617,13 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
     return None
 
 
-MIN_TAP_INTERVAL = 1.0  # 全場面共通: タップ間隔は最低1秒
+MIN_TAP_INTERVAL = 0.5  # 全場面共通: タップ間隔は最低0.5秒 (高速化)
 
 
 def tap_device(x: int, y: int, state: PilotState, desc: str = "",
                finger_box: Optional[tuple] = None,
                gold_box: Optional[tuple] = None,
-               post_wait: float = 1.0) -> None:
+               post_wait: float = 0.5) -> None:
     # ── 最低タップ間隔の強制 ──
     if state.last_action_time > 0:
         _elapsed = time.time() - state.last_action_time
@@ -626,32 +637,31 @@ def tap_device(x: int, y: int, state: PilotState, desc: str = "",
         real_y = int(y * sy)
     else:
         real_x, real_y = x, y
-    # ─── デバッグオーバーレイ描画 ───
-    # 青枠: 指アイコン検出領域 / 緑枠: 金枠検出領域 / 赤ドット: 実際のタップ点
-    try:
-        if state.last_screen is not None:
-            _dbg = state.last_screen.copy()
-            if finger_box is not None:
-                fbx, fby, fbw, fbh = finger_box
-                cv2.rectangle(_dbg, (fbx, fby), (fbx + fbw, fby + fbh),
-                                (255, 0, 0), 2)  # 青枠: 指アイコン
-            if gold_box is not None:
-                gbx, gby, gbw, gbh = gold_box
-                cv2.rectangle(_dbg, (gbx, gby), (gbx + gbw, gby + gbh),
-                                (0, 255, 0), 2)  # 緑枠: 金枠
-            cv2.circle(_dbg, (x, y), 10, (0, 0, 255), -1)  # 赤ドット: タップ点
-            # 排除された偽の指ブロブを描画 ([REJECTED: SHAPE/SPATIAL])
-            if _rejected_finger_blobs:
-                for _rx, _ry, _rr in _rejected_finger_blobs:
-                    cv2.drawMarker(_dbg, (_rx, _ry), (0, 0, 255),
-                                    cv2.MARKER_CROSS, 22, 2)
-                    cv2.putText(_dbg, "[REJECTED]", (_rx - 42, _ry - 14),
-                                 cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 255), 1)
-            _out = str(Path(__file__).parent.parent / "debug_latest_tap.png")
-            cv2.imwrite(_out, _dbg)
-            logger.info("  [DEBUG_TAP] Target=(%d,%d) → %s", x, y, _out)
-    except Exception:
-        pass
+    # ─── デバッグオーバーレイ描画 (--verbose 時のみ) ───
+    if _DEBUG_SAVE_IMAGES:
+        try:
+            if state.last_screen is not None:
+                _dbg = state.last_screen.copy()
+                if finger_box is not None:
+                    fbx, fby, fbw, fbh = finger_box
+                    cv2.rectangle(_dbg, (fbx, fby), (fbx + fbw, fby + fbh),
+                                    (255, 0, 0), 2)
+                if gold_box is not None:
+                    gbx, gby, gbw, gbh = gold_box
+                    cv2.rectangle(_dbg, (gbx, gby), (gbx + gbw, gby + gbh),
+                                    (0, 255, 0), 2)
+                cv2.circle(_dbg, (x, y), 10, (0, 0, 255), -1)
+                if _rejected_finger_blobs:
+                    for _rx, _ry, _rr in _rejected_finger_blobs:
+                        cv2.drawMarker(_dbg, (_rx, _ry), (0, 0, 255),
+                                        cv2.MARKER_CROSS, 22, 2)
+                        cv2.putText(_dbg, "[REJECTED]", (_rx - 42, _ry - 14),
+                                     cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 255), 1)
+                _out = str(Path(__file__).parent.parent / "debug_latest_tap.png")
+                cv2.imwrite(_out, _dbg)
+                logger.debug("  [DEBUG_TAP] Target=(%d,%d) → %s", x, y, _out)
+        except Exception:
+            pass
     logger.info(
         "  [DEBUG] TAP: 解析座標=(%d,%d) → デバイス座標=(%d,%d) | %s",
         x, y, real_x, real_y, desc
@@ -1808,15 +1818,16 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
 
         cx_bb = x_bb + w_bb // 2
 
-        # ── デバッグ画像保存 ──
-        debug_dir = _CRAWLER_ROOT / "templates" / "debug"
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%H%M%S")
-        vis = img.copy()
-        cv2.rectangle(vis, (x_bb, y_bb), (x_bb + w_bb, y_bb + h_bb), (0, 0, 255), 3)
-        cv2.putText(vis, f"GoldSwipe area={int(area)} h/w={h_bb/max(w_bb,1):.1f}",
-                    (x_bb, max(0, y_bb - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-        cv2.imwrite(str(debug_dir / f"gold_detect_{ts}.png"), vis)
+        # ── デバッグ画像保存 (--verbose 時のみ) ──
+        if _DEBUG_SAVE_IMAGES:
+            debug_dir = _CRAWLER_ROOT / "templates" / "debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%H%M%S")
+            vis = img.copy()
+            cv2.rectangle(vis, (x_bb, y_bb), (x_bb + w_bb, y_bb + h_bb), (0, 0, 255), 3)
+            cv2.putText(vis, f"GoldSwipe area={int(area)} h/w={h_bb/max(w_bb,1):.1f}",
+                        (x_bb, max(0, y_bb - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            cv2.imwrite(str(debug_dir / f"gold_detect_{ts}.png"), vis)
 
         # ── 方向判定: 上半分 vs 下半分のゴールドピクセル面積で判断 ──
         # 手アイコン(幅広・濃い)が多い方が「手」の端 → その逆方向へスワイプ
@@ -1912,21 +1923,20 @@ def detect_tutorial_gold_button_tap(img_path: Path,
         best = max(candidates, key=lambda c: c[2])
         tap_x, tap_y, area_b, x_b, y_b, w_b, h_b = best
 
-        # ── デバッグ/テンプレート保存 ──
-        tut_dir = _CRAWLER_ROOT / "templates" / "tutorial"
-        tut_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%H%M%S")
-        vis = img.copy()
-        cv2.rectangle(vis, (x_b, y_b), (x_b + w_b, y_b + h_b), (255, 0, 0), 3)
-        cv2.circle(vis, (tap_x, tap_y), 12, (0, 255, 255), -1)
-        cv2.putText(vis, f"GoldBtn area={int(area_b)} asp={h_b/max(w_b,1):.1f}",
-                    (x_b, max(0, y_b - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-        cv2.imwrite(str(tut_dir / f"gold_btn_{ts}.png"), vis)
-
-        # テンプレート画像 (ボタン部分のROI) も保存 (後日 AssetManager で使えるように)
-        roi = img[y_b:y_b + h_b, x_b:x_b + w_b]
-        if roi.size > 0:
-            cv2.imwrite(str(tut_dir / f"gold_btn_roi_{ts}.png"), roi)
+        # ── デバッグ/テンプレート保存 (--verbose 時のみ) ──
+        if _DEBUG_SAVE_IMAGES:
+            tut_dir = _CRAWLER_ROOT / "templates" / "tutorial"
+            tut_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%H%M%S")
+            vis = img.copy()
+            cv2.rectangle(vis, (x_b, y_b), (x_b + w_b, y_b + h_b), (255, 0, 0), 3)
+            cv2.circle(vis, (tap_x, tap_y), 12, (0, 255, 255), -1)
+            cv2.putText(vis, f"GoldBtn area={int(area_b)} asp={h_b/max(w_b,1):.1f}",
+                        (x_b, max(0, y_b - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+            cv2.imwrite(str(tut_dir / f"gold_btn_{ts}.png"), vis)
+            roi = img[y_b:y_b + h_b, x_b:x_b + w_b]
+            if roi.size > 0:
+                cv2.imwrite(str(tut_dir / f"gold_btn_roi_{ts}.png"), roi)
 
         logger.info("[GoldBtn] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f → tap(%d,%d)",
                     area_b, x_b, y_b, w_b, h_b, h_b / max(w_b, 1), tap_x, tap_y)
@@ -2258,9 +2268,6 @@ class AssetManager:
                     name, crop.shape[1], crop.shape[0], action, require_ocr)
         return True
 
-    def reload(self) -> None:
-        self._templates.clear()
-        self._load_templates()
 
 
 # グローバル AssetManager インスタンス (起動時に1回ロード)
@@ -2530,8 +2537,8 @@ def handle_dialog_screen(
     else:
         # "close": × ボタンを即タップ
         # ── 確認ダイアログ (OK+キャンセル共存) → × ではなく OK 優先 ──
-        _dlg_pos = has_any(ocr, ["OK", "はい", "了解", "決定"])
-        _dlg_neg = has_any(ocr, ["キャンセル", "いいえ", "戻る"])
+        _dlg_pos = has_any(ocr, _CONFIRM_POS_KWS)
+        _dlg_neg = has_any(ocr, _CONFIRM_NEG_KWS)
         if _dlg_pos and _dlg_neg:
             _dp_x, _dp_y = _dlg_pos["center"]
             logger.info(
@@ -2570,241 +2577,6 @@ def handle_dialog_screen(
         return "DIALOG_CLOSE", 1.0
 
 
-# ─── 戦略的意思決定エンジン (StrategicDecisionEngine) ──────────
-class StrategicDecisionEngine:
-    """
-    UIアフォーダンス解析 + 行動予測 + 経験学習エンジン。
-
-    1. find_buttons()     : 視覚的特徴（色・形）からタップ可能領域を抽出
-    2. predict_outcome()  : OCRテキストの意味から結果を予測
-    3. verify_and_learn() : タップ結果を検証し knowledge_base.json に蓄積
-    """
-
-    KNOWLEDGE_PATH = _CRAWLER_ROOT / "storage" / "knowledge_base.json"
-
-    # テキストキーワード → (action_type, 予測説明)
-    PREDICTION_MAP: dict[str, tuple[str, str]] = {
-        # ガチャ・召喚
-        "ガシャ":    ("GACHA_DRAW",     "召喚演出・アイテム獲得シーンが発生する"),
-        "ガチャ":    ("GACHA_DRAW",     "召喚演出・アイテム獲得シーンが発生する"),
-        "召喚":      ("GACHA_DRAW",     "召喚演出が発生する"),
-        "受け取る":  ("RECEIVE_ITEM",   "アイテム受け取り処理が実行される"),
-        "獲得":      ("RECEIVE_ITEM",   "アイテム獲得処理が実行される"),
-        # 進行・スキップ
-        "次へ":      ("SCENE_ADVANCE",  "シーンが遷移してストーリーが進む"),
-        "スキップ":  ("SKIP_STORY",     "ストーリーシーンがスキップされる"),
-        "SKIP":      ("SKIP_STORY",     "ストーリーシーンがスキップされる"),
-        "進む":      ("SCENE_ADVANCE",  "シーンが遷移する"),
-        "TAP TO":    ("SCENE_ADVANCE",  "シーンが進む"),
-        "START":     ("GAME_START",     "ゲームまたはバトルが開始する"),
-        "開始":      ("BATTLE_START",   "バトルまたはクエストが開始する"),
-        "出撃":      ("BATTLE_START",   "クエストが開始しバトル画面へ遷移する"),
-        "戦闘":      ("BATTLE_START",   "クエストが開始しバトル画面へ遷移する"),
-        # バトル
-        "AUTO":      ("AUTO_BATTLE",    "バトルがAUTOモードで自動進行する"),
-        "攻撃":      ("BATTLE_ATTACK",  "戦闘ターンが進行する"),
-        "通常攻撃":  ("NORMAL_ATTACK",  "通常攻撃が実行される"),
-        "必殺技":    ("SPECIAL_ATTACK", "必殺技演出が発生し大ダメージが入る"),
-        "スキル":    ("SKILL_USE",      "スキルが発動する"),
-        # 閉じる・確認
-        "OK":        ("CONFIRM",        "確認ダイアログが閉じてメニューに戻る"),
-        "閉じる":    ("CLOSE_DIALOG",   "ダイアログが閉じる"),
-        "確認":      ("CONFIRM",        "確認処理が実行される"),
-        "完了":      ("COMPLETE",       "処理が完了してメニューに戻る"),
-        "決定":      ("CONFIRM",        "選択が確定される"),
-        "了解":      ("CONFIRM",        "確認ダイアログが閉じる"),
-        "わかった":  ("CONFIRM",        "確認ダイアログが閉じる"),
-        "リザルト":  ("RESULT",         "バトル結果画面が表示される"),
-        "Result":    ("RESULT",         "バトル結果画面が表示される"),
-        # ナビゲーション
-        "ホーム":    ("GO_HOME",        "ホーム画面に戻る"),
-        "メニュー":  ("OPEN_MENU",      "メニューが開く"),
-        "クエスト":  ("OPEN_QUEST",     "クエスト選択画面へ遷移する"),
-        "ショップ":  ("OPEN_SHOP",      "ショップ画面へ遷移する"),
-        "編成":      ("OPEN_FORMATION", "パーティ編成画面へ遷移する"),
-    }
-
-    # ゲームUIの色彩意味論: 色 → タップ優先度
-    COLOR_PRIORITY: dict[str, int] = {
-        "orange": 10,   # 橙: 攻撃・決定（最優先）
-        "red":     9,   # 赤: 攻撃・警告
-        "blue":    7,   # 青: 回復・進む
-        "green":   6,   # 緑: 回復・安全
-        "purple":  5,   # 紫: 魔法・特殊
-        "yellow":  4,   # 黄: 注意・ハイライト
-        "gray":    2,   # 灰: キャンセル・戻る
-        "white":   1,   # 白: 中立
-        "unknown": 0,
-    }
-
-    def __init__(self):
-        self._knowledge: dict = self._load_knowledge()
-
-    def _load_knowledge(self) -> dict:
-        if self.KNOWLEDGE_PATH.exists():
-            try:
-                return json.loads(self.KNOWLEDGE_PATH.read_text())
-            except Exception:
-                pass
-        return {"patterns": {}, "stats": {"total_taps": 0, "verified": 0}}
-
-    def _save_knowledge(self) -> None:
-        self.KNOWLEDGE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        self.KNOWLEDGE_PATH.write_text(
-            json.dumps(self._knowledge, ensure_ascii=False, indent=2)
-        )
-
-    def _classify_color(self, roi_bgr) -> str:
-        """BGR ROI の主要色をゲームUI色彩設計に基づいて分類。"""
-        hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
-        s = float(np.mean(hsv[:, :, 1]))
-        v = float(np.mean(hsv[:, :, 2]))
-        h = float(np.mean(hsv[:, :, 0]))
-        if s < 40:
-            return "white" if v > 180 else "gray"
-        # OpenCV HSV: H は 0-180
-        if h < 10 or h > 155:
-            return "red"
-        if h < 25:
-            return "orange"
-        if h < 35:
-            return "yellow"
-        if h < 85:
-            return "green"
-        if h < 125:
-            return "blue"
-        return "purple"
-
-    def find_buttons(self, img_path: Path) -> list[dict]:
-        """
-        エッジ検出 + 輪郭抽出でボタン候補領域を検出。
-        矩形・丸みを帯びた角・高コントラスト縁を持つ領域を「タップ可能」と判定。
-        Returns: [{"cx","cy","w","h","color","priority","area"}, ...] 優先度降順
-        """
-        try:
-            img = cv2.imread(str(img_path))
-            if img is None:
-                return []
-            H, W = img.shape[:2]
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 40, 120)
-            dilated = cv2.dilate(edges, np.ones((5, 5), np.uint8), iterations=2)
-            contours, _ = cv2.findContours(
-                dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-            )
-            buttons = []
-            for c in contours:
-                area = cv2.contourArea(c)
-                # ボタンサイズフィルタ: 1000px² ≤ area ≤ 25% 画面
-                if area < 1000 or area > W * H * 0.25:
-                    continue
-                x, y, w, h = cv2.boundingRect(c)
-                asp = w / h if h > 0 else 0
-                # ボタンのアスペクト比: 0.5 〜 12
-                if asp < 0.5 or asp > 12 or w < 40 or h < 20:
-                    continue
-                color = self._classify_color(img[y:y + h, x:x + w])
-                priority = self.COLOR_PRIORITY.get(color, 0)
-                buttons.append({
-                    "x": x, "y": y, "w": w, "h": h,
-                    "cx": x + w // 2, "cy": y + h // 2,
-                    "area": int(area), "color": color, "priority": priority,
-                })
-            buttons.sort(key=lambda b: (b["priority"], b["area"]), reverse=True)
-            return buttons[:20]
-        except Exception as e:
-            logger.debug("[SDE] find_buttons error: %s", e)
-            return []
-
-    def predict_outcome(self, text: str) -> tuple[str, str]:
-        """
-        OCRテキストからタップ後の結果を予測。
-        長いキーワードを優先（"通常攻撃" > "攻撃" など）。
-        Returns: (action_type, description)
-        """
-        # キーワード長の降順でマッチング（長い=具体的なキーワードを優先）
-        for kw, (action_type, desc) in sorted(
-            self.PREDICTION_MAP.items(), key=lambda x: len(x[0]), reverse=True
-        ):
-            if kw in text:
-                return action_type, desc
-        return "UNKNOWN", "未知の操作が実行される"
-
-    def log_prediction(self, text: str, cx: int, cy: int) -> tuple[str, str]:
-        """予測を生成してログ出力。Returns: (action_type, description)"""
-        action_type, desc = self.predict_outcome(text)
-        if action_type != "UNKNOWN":
-            logger.info(
-                "[PREDICTION] Tapping '%s' at (%d,%d) -> Expecting %s: %s",
-                text[:20], cx, cy, action_type, desc,
-            )
-        return action_type, desc
-
-    def verify_and_learn(self, pre_phash: str, post_phash: str,
-                         action_type: str, desc: str, tap_text: str) -> None:
-        """
-        タップ後のphash変化から予測の正否を検証し、knowledge_base.jsonに記録。
-        - phash距離 >= PHASH_THRESHOLD → 画面変化あり = SUCCESS
-        - phash距離 < PHASH_THRESHOLD  → 画面変化なし = NO_CHANGE
-        """
-        if not pre_phash or not post_phash or action_type == "UNKNOWN":
-            return
-        try:
-            dist = phash_distance(pre_phash, post_phash)
-            scene_changed = dist >= PHASH_THRESHOLD
-            key = f"{action_type}:{tap_text[:20]}"
-            stats = self._knowledge["stats"]
-            stats["total_taps"] = stats.get("total_taps", 0) + 1
-            stats["verified"] = stats.get("verified", 0) + 1
-            pat = self._knowledge["patterns"].setdefault(key, {
-                "prediction": action_type, "description": desc,
-                "text": tap_text, "success_count": 0, "failure_count": 0,
-                "last_seen": "",
-            })
-            if scene_changed:
-                pat["success_count"] += 1
-                logger.info("[LEARNING] '%s'→%s ✓ dist=%d (ok=%d)",
-                            tap_text[:15], action_type, dist, pat["success_count"])
-            else:
-                pat["failure_count"] += 1
-                logger.info("[LEARNING] '%s'→%s ✗ dist=%d (fail=%d)",
-                            tap_text[:15], action_type, dist, pat["failure_count"])
-            pat["last_seen"] = datetime.now().isoformat()
-            # 10タップごとに保存
-            if stats["total_taps"] % 10 == 0:
-                self._save_knowledge()
-        except Exception as e:
-            logger.debug("[SDE] verify_and_learn error: %s", e)
-
-    def report_screen_affordances(self, img_path: Path, ocr_results: list) -> None:
-        """
-        現在画面のUIアフォーダンス解析レポートをログ出力。
-        ボタン候補領域を検出し、各領域内のOCRテキストから行動を予測する。
-        """
-        buttons = self.find_buttons(img_path)
-        if not buttons:
-            return
-        logger.info("[SDE] === UIアフォーダンス解析: %d個のボタン候補 ===", len(buttons))
-        for i, btn in enumerate(buttons[:5]):
-            # ボタン領域内のOCRテキストを抽出
-            btn_texts = [
-                r["text"] for r in ocr_results
-                if (btn["x"] <= r["center"][0] <= btn["x"] + btn["w"] and
-                    btn["y"] <= r["center"][1] <= btn["y"] + btn["h"])
-            ]
-            text_str = " ".join(btn_texts) if btn_texts else "(no text)"
-            action_type, _ = self.predict_outcome(text_str)
-            logger.info(
-                "[SDE] #%d (%d,%d) %dx%d color=%s prio=%d '%s' → %s",
-                i + 1, btn["cx"], btn["cy"], btn["w"], btn["h"],
-                btn["color"], btn["priority"], text_str[:20], action_type,
-            )
-
-
-
-# グローバル StrategicDecisionEngine インスタンス
-STRATEGIC_ENGINE = StrategicDecisionEngine()
-
 
 # ─── 画面判定・アクション ──────────────────────────
 def detect_and_act(ocr: list, state: PilotState,
@@ -2834,10 +2606,8 @@ def detect_and_act(ocr: list, state: PilotState,
     # OK/はい + キャンセル/いいえ が共存 → 確認ダイアログ → OK を必ずタップ。
     # #0-DIALOG の × ボタンが先に発動する問題を根本解決。
     # ダウンロードの次、SKIP より先に評価する。
-    _confirm_pos_kws = ["OK", "はい", "わかった", "了解", "決定", "許可", "Allow", "ALLOW", "リトライ", "Retry"]
-    _confirm_neg_kws = ["キャンセル", "いいえ", "戻る", "やめる", "許可しない", "拒否", "Deny"]
-    _confirm_pos = has_any(ocr, _confirm_pos_kws)
-    _confirm_neg = has_any(ocr, _confirm_neg_kws)
+    _confirm_pos = has_any(ocr, _CONFIRM_POS_KWS)
+    _confirm_neg = has_any(ocr, _CONFIRM_NEG_KWS)
     if _confirm_pos and _confirm_neg:
         _cp_x, _cp_y = _confirm_pos["center"]
         # OCR bbox はテキスト下部パディングを含むため Y を上方補正
@@ -2860,7 +2630,7 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> [SKIP] カットシーンスキップ '%s' (%d,%d) タップ",
                         _skip_btn["text"], _sk_x, _sk_y)
             tap_device(_sk_x, _sk_y, state, f"CUTSCENE_SKIP '{_skip_btn['text']}'")
-            return "CUTSCENE_SKIP", 1.5
+            return "CUTSCENE_SKIP", 0.8
 
     # ── 【#-2.2】Android 権限ダイアログ (単独「許可」ボタン) ──
     # 通知許可等で「許可しない」なしの単独「許可」ダイアログが出ることがある。
@@ -2874,7 +2644,7 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> [PERMISSION] Android権限ダイアログ '%s' (%d,%d) タップ",
                         _perm_btn["text"], _pm_x, _pm_y)
             tap_device(_pm_x, _pm_y, state, f"PERMISSION_ALLOW '{_perm_btn['text']}'")
-            return "PERMISSION_ALLOW", 1.5
+            return "PERMISSION_ALLOW", 1.0
 
     # ── 【#-2】タイトル画面 設定/サポートメニュー ──
     # 「動画配信設定」アイコンを誤タップして開く設定ポップアップ → BACK で閉じる
@@ -2971,8 +2741,8 @@ def detect_and_act(ocr: list, state: PilotState,
     # ② P1: 左キャラ発光 (character_selected=False) → GLOW_LEFT_CHAR
     # ③ P2: 右スキル発光 (character_selected=True) → GLOW_RIGHT_SKILL
     # ④ P3: 発光なし + character_selected → 通常攻撃 OCR フォールバック
-    _is_battle_early = any(kw in " ".join(texts) for kw in _BATTLE_CORE_KWS)
-    _battle_menu_toast = "メニューが使用できません" in " ".join(texts)
+    _is_battle_early = any(kw in joined for kw in _BATTLE_CORE_KWS)
+    _battle_menu_toast = "メニューが使用できません" in joined
     if _is_battle_early and _battle_menu_toast:
         # メニューボタン誤タップ → トースト表示中。DIALOG_CLOSE を完全スキップして2秒待機
         logger.info("[#0-PRE] 「メニューが使用できません」トースト検出 → DIALOG_CLOSE スキップ (2s wait)")
@@ -3124,7 +2894,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d) → 金色ハイライト(%d,%d)",
                             cx, cy, tap_x, tap_y)
                 tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
-                return "TAP_HIGHLIGHTED_NAV", 1.5
+                return "TAP_HIGHLIGHTED_NAV", 1.0
             # ── NAME_INPUT_OK_TAP: 名前未入力(0/N)の場合は入力シーケンスへ ──
             if action == "NAME_INPUT_OK_TAP":
                 _is_empty_field = any(re.match(r"^0/\d+$", t.strip()) for t in texts)
@@ -3277,21 +3047,21 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.info(">>> 【カルーセルポップアップ】 '%s' → フレーム右上 (%d,%d) タップ",
                     carousel_match["text"][:10], close_x, close_y)
         tap_device(close_x, close_y, state, "CAROUSEL_CLOSE")
-        return "CLOSE_POPUP", 2.0
+        return "CLOSE_POPUP", 1.0
     close_popup = has_any(ocr, close_popup_kws)
     if close_popup:
         close_x = W - 40  # 右上 × ボタン (1520-40=1480)
         close_y = 40
         logger.info(">>> 【%s ポップアップ】 → × (%d,%d) タップ", close_popup["text"][:6], close_x, close_y)
         tap_device(close_x, close_y, state, f"CLOSE_POPUP_{close_popup['text'][:6]}")
-        return "CLOSE_POPUP", 1.5
+        return "CLOSE_POPUP", 1.0
 
     # 「〜してみましょう」型チュートリアルガイド + ブロブスタック → × で閉じる
     # 例: "今回は自動編成をしてみましょう。" が表示されたまま動かない場合
     if state.blob_same_count >= 5:
         tutorial_guide = (has_text(ocr, "てみましょう", min_conf=0.3) or
                           has_text(ocr, "しましょう", min_conf=0.3))
-        is_battle_guide = any(kw in " ".join(texts) for kw in _BATTLE_CORE_KWS)
+        is_battle_guide = any(kw in joined for kw in _BATTLE_CORE_KWS)
         if tutorial_guide and not is_battle_guide:
             close_x = W - 40  # 右上 × ボタン (1480, 40)
             close_y = 40
@@ -3299,7 +3069,7 @@ def detect_and_act(ocr: list, state: PilotState,
                         tutorial_guide["text"][:10], close_x, close_y)
             tap_device(close_x, close_y, state, "TUTORIAL_GUIDE_CLOSE")
             state.blob_same_count = 0
-            return "CLOSE_POPUP", 1.5
+            return "CLOSE_POPUP", 1.0
 
     # ─── 【最優先 #1-pre】バトル発光 State Machine (フッター下部30%限定) ─────────
     if _is_battle_early and analysis_path is not None:
@@ -3310,16 +3080,16 @@ def detect_and_act(ocr: list, state: PilotState,
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
     if analysis_path is not None:
         # 「AUTO」のみはストーリー画面にも表示されるため除外、戦闘固有キーワードで判定
-        is_battle_screen = any(kw in " ".join(texts) for kw in _BATTLE_CORE_KWS)
+        is_battle_screen = any(kw in joined for kw in _BATTLE_CORE_KWS)
         # ── 速度チュートリアル早期検出 (もや検出より前に処理) ──
         _speed_tip_early = has_any(ocr, ["このボタンでバトル", "進行速度を変更"])
         if _speed_tip_early and is_battle_screen:
             _sp_x, _sp_y = roi_to_device(int(W * 0.927), int(H * 0.026), state.game_roi)
             logger.info(">>> [EARLY] 速度ツールチップ → 速度ボタン (%d,%d) タップ", _sp_x, _sp_y)
             tap_device(_sp_x, _sp_y, state, "SPEED_BUTTON_TAP")
-            return "BATTLE_TUTORIAL", 1.0
+            return "BATTLE_TUTORIAL", 0.5
         # タイトル画面 / ホーム画面検出: ブロブ誤検出を防ぐ
-        _nav_joined = " ".join(texts)
+        _nav_joined = joined
         # 利用規約画面・同意ダイアログが存在する場合はタイトル画面と区別する
         _is_tos_screen = "利用規約" in _nav_joined or "同意してゲームを始める" in _nav_joined
         _title_kws_game = ["魔法", "少女", "まどか", "マギカ", "まどかハ", "MADOKA", "MAGICA"]
@@ -3357,10 +3127,8 @@ def detect_and_act(ocr: list, state: PilotState,
                 return _result_ocr
         # ─── ADV選択肢 — 肯定ボタン絶対優先 ───────────────────────────
         # OK / はい / 了解 を最優先。キャンセル / いいえ は選択禁止。
-        _adv_positive_kws = ["OK", "はい", "わかった", "了解", "決定"]
-        _adv_negative_kws = ["キャンセル", "いいえ", "戻る", "やめる"]
-        _adv_pos = has_any(ocr, _adv_positive_kws)
-        _adv_neg = has_any(ocr, _adv_negative_kws)
+        _adv_pos = has_any(ocr, _CONFIRM_POS_KWS)
+        _adv_neg = has_any(ocr, _CONFIRM_NEG_KWS)
         if _adv_pos:
             _ac_x, _ac_y = _adv_pos["center"]
             # OCR bbox はテキスト下部パディングを含むため Y を上方補正
@@ -3427,7 +3195,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     if _ht_target:
                         state.home_tutorial_tap_count += 1
                         tap_device(_ht_target[0], _ht_target[1], state, "HOME_TUTORIAL_TAP")
-                        return "HOME_TUTORIAL_TAP", 1.5
+                        return "HOME_TUTORIAL_TAP", 1.0
             else:
                 logger.info("  HOME_TUTORIAL %d回超 → LATE path (grind/ホーム到達) に委譲",
                             state.home_tutorial_tap_count)
@@ -3697,7 +3465,7 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── ストーリーセリフ進行 (バトル外でセリフが出ている) ───
     # 「画面をタップ」系の指示 or バトルでもホームでもない日本語テキストが複数ある
-    is_battle_now = any(kw in " ".join(texts) for kw in _BATTLE_CORE_KWS)
+    is_battle_now = any(kw in joined for kw in _BATTLE_CORE_KWS)
     tap_screen_kws = ["画面をタップ", "タップして進む", "タップで進む", "タップしてください",
                       "タップして次へ", "TOUCH TO CONTINUE"]
     tap_screen = has_any(ocr, tap_screen_kws)
@@ -3738,7 +3506,7 @@ def detect_and_act(ocr: list, state: PilotState,
             if _tap_target:
                 logger.info(">>> ホームチュートリアル継続: 指/金枠 → (%d,%d) タップ", *_tap_target)
                 tap_device(_tap_target[0], _tap_target[1], state, "HOME_TUTORIAL_TAP")
-                return "HOME_TUTORIAL_TAP", 1.5
+                return "HOME_TUTORIAL_TAP", 1.0
         # チュートリアルポインタが同一座標でスタックしている → クエスト探索へ移行
         if state.blob_same_count >= 5:
             logger.info(">>> ホーム画面 + もやスタック → クエストへナビゲート")
@@ -3858,7 +3626,7 @@ def detect_and_act(ocr: list, state: PilotState,
             bx, by = roi_to_device(int(W * 0.888), int(H * 0.667), state.game_roi)
             logger.info(">>> バフチュートリアル (%d,%d)", bx, by)
             tap_device(bx, by, state, "BUFF_TUTORIAL")
-            return "BATTLE_TUTORIAL", 1.0
+            return "BATTLE_TUTORIAL", 0.5
 
         # バトルチュートリアル: スキル使用
         skill_tut = has_any(ocr, ["スキルを使ってみましょう", "スキを使ってみ",
@@ -3869,7 +3637,7 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> スキルチュートリアル (%d,%d)", sx, sy)
             tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL", post_wait=0.8)
             tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL confirm")
-            return "BATTLE_TUTORIAL", 1.0
+            return "BATTLE_TUTORIAL", 0.5
 
         # バトルチュートリアル: 必殺技
         hissatsu_tut = has_any(ocr, ["CTDアップ", "必殺技"])
@@ -3878,14 +3646,14 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> 必殺技チュートリアル (%d,%d)", hx, hy)
             tap_device(hx, hy, state, "HISSATSU_TUTORIAL", post_wait=0.8)
             tap_device(hx, hy, state, "HISSATSU_TUTORIAL confirm")
-            return "BATTLE_TUTORIAL", 1.0
+            return "BATTLE_TUTORIAL", 0.5
 
         # バトルチュートリアル: 攻撃対象変更
         if has_any(ocr, ["攻撃対象を変更", "対象を変更"]):
             ex, ey = roi_to_device(int(W * 0.651), int(H * 0.361), state.game_roi)
             logger.info(">>> 攻撃対象チュートリアル (%d,%d)", ex, ey)
             tap_device(ex, ey, state, "ATTACK_TARGET_TUTORIAL")
-            return "BATTLE_TUTORIAL", 1.0
+            return "BATTLE_TUTORIAL", 0.5
 
         # バトルチュートリアル: 一般ポップアップ
         tutorial_popup = has_any(ocr, [
@@ -3906,7 +3674,7 @@ def detect_and_act(ocr: list, state: PilotState,
             _sp_x, _sp_y = roi_to_device(int(W * 0.927), int(H * 0.026), state.game_roi)
             logger.info(">>> 速度ツールチップ → 速度ボタン (%d,%d) タップ", _sp_x, _sp_y)
             tap_device(_sp_x, _sp_y, state, "SPEED_BUTTON_TAP")
-            return "BATTLE_TUTORIAL", 1.0
+            return "BATTLE_TUTORIAL", 0.5
         if tutorial_popup:
             # ── テンプレートマッチングで ▷/× を優先検出 ──
             _btl_nav = detect_tutorial_dialog_nav(analysis_path, W, H) if analysis_path else None
@@ -3915,7 +3683,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 logger.info(">>> バトルチュートリアル popup '%s' %s→(%d,%d) [template]",
                             tutorial_popup["text"][:10], "×" if _btn == "close" else "▷", _bx, _by)
                 tap_device(_bx, _by, state, "BATTLE_TUTORIAL_POPUP")
-                return "BATTLE_TUTORIAL", 1.0
+                return "BATTLE_TUTORIAL", 0.5
             # フォールバック: ▷ 矢印 → × ボタンのシーケンス
             state.pre_popup_tap_count += 1
             _arr_b = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)
@@ -3927,7 +3695,7 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> バトルチュートリアル popup '%s' %s→(%d,%d) (試行%d回目)",
                         tutorial_popup["text"][:10], _blabel, cx, cy, state.pre_popup_tap_count)
             tap_device(cx, cy, state, "BATTLE_TUTORIAL_POPUP")
-            return "BATTLE_TUTORIAL", 1.0
+            return "BATTLE_TUTORIAL", 0.5
 
         # AUTO ボタン
         if not state.auto_activated:
@@ -3998,11 +3766,6 @@ def detect_and_act(ocr: list, state: PilotState,
             return "RESULT_TAP", 1.0
         cx, cy = result_match["center"]
         text = result_match["text"]
-        action_type, desc = STRATEGIC_ENGINE.log_prediction(text, cx, cy)
-        state.last_prediction = action_type
-        state.last_prediction_desc = desc
-        state.last_tap_text = text
-        state.last_action_pre_phash = state.last_phash
         logger.info(">>> バトル結果 '%s' (%d,%d)", text, cx, cy)
         tap_device(cx, cy, state, "RESULT_TAP")
         return "RESULT_TAP", 1.0
@@ -4019,11 +3782,6 @@ def detect_and_act(ocr: list, state: PilotState,
     if skip_match:
         cx, cy = skip_match["center"]
         text = skip_match["text"]
-        action_type, desc = STRATEGIC_ENGINE.log_prediction(text, cx, cy)
-        state.last_prediction = action_type
-        state.last_prediction_desc = desc
-        state.last_tap_text = text
-        state.last_action_pre_phash = state.last_phash
         logger.info(">>> スキップ '%s' (%d,%d)", text, cx, cy)
         tap_device(cx, cy, state, f"SKIP '{text}'")
         return "SKIP", 0.5
@@ -4051,7 +3809,7 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.info(">>> 【システムダイアログ】 '%s' → SmartTap OK (%d,%d)",
                     sys_dlg_match["text"][:15], ok_x, ok_y)
         tap_device(ok_x, ok_y, state, "SYSTEM_DLG_OK")
-        return "SYSTEM_DLG_OK", 2.0
+        return "SYSTEM_DLG_OK", 1.5
 
     # ─── メンテナンス/アップデート検出 ───
     _maint_kws = ["メンテナンス", "Maintenance", "maintenance"]
@@ -4113,11 +3871,6 @@ def detect_and_act(ocr: list, state: PilotState,
     if confirm_match:
         cx, cy = confirm_match["center"]
         text = confirm_match["text"]
-        action_type, desc = STRATEGIC_ENGINE.log_prediction(text, cx, cy)
-        state.last_prediction = action_type
-        state.last_prediction_desc = desc
-        state.last_tap_text = text
-        state.last_action_pre_phash = state.last_phash
         logger.info(">>> 確認 '%s' (%d,%d)", text, cx, cy)
         tap_device(cx, cy, state, f"CONFIRM '{text}'")
         return "CONFIRM", 1.0
@@ -4513,8 +4266,10 @@ def main():
     global DEVICE_SERIAL, SCRCPY_DEVICE
 
     args = parse_args()
+    global _DEBUG_SAVE_IMAGES
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+        _DEBUG_SAVE_IMAGES = True
 
     # ─── ADB 自動接続: USB → Wi-Fi フォールバック ───
     try:
@@ -4719,25 +4474,9 @@ def main():
             dist = 999
         state.last_phash_dist = dist
 
-        # ── 前回タップの予測を検証 (phash変化で判定) ──
-        if state.last_action_pre_phash and state.last_prediction and cur_phash:
-            STRATEGIC_ENGINE.verify_and_learn(
-                state.last_action_pre_phash, cur_phash,
-                state.last_prediction, state.last_prediction_desc,
-                state.last_tap_text,
-            )
-            state.last_action_pre_phash = ""
-            state.last_prediction = ""
-
         screen_changed = dist >= PHASH_THRESHOLD
 
         # ── 動的しきい値: Gold UI アクション後はアニメーション変化でも即解析 ──
-        # GoldBtn/MOYA_TAP 後に微小な phash 変化(アニメーション)があっても
-        # OCR をスキップせず即時解析して次のアクションを実行する。
-        _GOLD_UI_ACTIONS = frozenset([
-            "GOLD_BTN_TAP", "MOYA_TAP", "BATTLE_TUTORIAL", "SKILL_CARD_TUTORIAL",
-            "HISSATSU_TUTORIAL", "BUFF_TUTORIAL", "GOLD_SWIPE_UP", "GOLD_SWIPE_DOWN",
-        ])
         if not screen_changed and state.last_action in _GOLD_UI_ACTIONS and dist >= 1:
             screen_changed = True
             state.same_phash_count = 0
@@ -4811,7 +4550,7 @@ def main():
                 if is_adv_toolbar_cached(img_path, state):
                     logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
                     _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
-                    tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP")
+                    tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP", post_wait=0.3)
                     logger.info("  ACTION_TAKEN ADV_RAPID_TAP (%d,%d)", _adv_x, _adv_y)
                     state.last_phash = cur_phash
                     continue
@@ -4964,10 +4703,10 @@ def main():
                 save_evidence(img_path, [], "UNITY_FREEZE_RESTART", state)
                 try:
                     subprocess.run(["adb", "-s", DEVICE_SERIAL, "shell", "am", "force-stop",
-                                    "com.aniplex.magia.exedra.jp"], timeout=5)
+                                    APP_PACKAGE], timeout=5)
                     time.sleep(3)
                     subprocess.run(["adb", "-s", DEVICE_SERIAL, "shell", "am", "start", "-n",
-                                    "com.aniplex.magia.exedra.jp/com.google.firebase.MessagingUnityPlayerActivity"],
+                                    f"{APP_PACKAGE}/{APP_ACTIVITY}"],
                                    timeout=5)
                     logger.info("[UNITY_RESTART] ゲーム再起動完了 — 30秒待機")
                     time.sleep(30)
@@ -5176,10 +4915,6 @@ def main():
                     scene, i, dist, state.same_phash_count, len(ocr_results), texts[:8])
         state.last_ocr_texts = texts
 
-        # ── UIアフォーダンス解析 (UNKNOWN or 30OCRごと) ──
-        if scene == "UNKNOWN" or state.total_ocr_calls % 30 == 0:
-            STRATEGIC_ENGINE.report_screen_affordances(analysis_path, ocr_results)
-
         # ── 動画シーン検出: detect_and_act 前にガード ──
         # 左右レターボックス (左黒帯>=80px) + ADVツールバーなし → 動画確定
         # 動画中にタップするとUIが一時停止/再生を繰り返すため抑制する
@@ -5218,7 +4953,6 @@ def main():
             state.action_repeat_count = 0
             state.scene_reeval_mode = False
 
-        _SCENE_REEVAL_THRESHOLD = 5
         if state.action_repeat_count >= _SCENE_REEVAL_THRESHOLD:
             logger.warning(
                 "[SCENE_REEVAL] '%s' が %d 回連続 → シーン再評価 (ガード緩和)",
