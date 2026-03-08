@@ -1852,7 +1852,7 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
             area, x_bb, y_bb, w_bb, h_bb, h_bb / max(w_bb, 1),
             upper_area, lower_area, direction, cx_bb, from_y, to_y,
         )
-        return direction, cx_bb, from_y, to_y, 3000
+        return direction, cx_bb, from_y, to_y, 10000
 
     except ImportError:
         return None
@@ -2597,24 +2597,35 @@ def detect_and_act(ocr: list, state: PilotState,
     # 通信速度やネットワーク状態による推測は一切行わない。
     _has_download_text = any("Download" in t or "ダウンロード" in t for t in texts)
     _has_size_progress = any("MB" in t or "GB" in t for t in texts)
-    if _has_download_text and _has_size_progress:
+    # 確認/完了ダイアログ除外:
+    # - 「ダウンロードを開始しますか?」等の質問 or OK+キャンセル共存
+    # - 「ダウンロード完了」等の完了通知 + OK ボタン
+    _dl_is_question = any("しますか" in t or "開始" in t for t in texts if "ダウンロード" in t)
+    _dl_is_complete = any("完了" in t or "Complete" in t for t in texts)
+    _dl_has_ok = any("OK" in t for t in texts)
+    _dl_has_cancel = any("キャンセル" in t for t in texts)
+    _dl_is_confirm_dialog = _dl_is_question or (_dl_has_ok and _dl_has_cancel) or (_dl_is_complete and _dl_has_ok)
+    if _has_download_text and _has_size_progress and not _dl_is_confirm_dialog:
         _dl_texts = [t for t in texts if "Download" in t or "MB" in t or "GB" in t or "ダウンロード" in t]
         logger.info(">>> [DOWNLOAD_STRICT] 右下ゲージ確認: %s — ダウンロード待機", _dl_texts)
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
 
     # ── 【#-2.9】確認ダイアログ — 肯定ボタン最優先 ──
-    # OK/はい + キャンセル/いいえ が共存 → 確認ダイアログ → OK を必ずタップ。
+    # (A) OK/はい + キャンセル/いいえ が共存 → 確認ダイアログ → OK を必ずタップ。
+    # (B) 「完了」系テキスト + OK 単独 → 完了通知ダイアログ → OK をタップ。
     # #0-DIALOG の × ボタンが先に発動する問題を根本解決。
     # ダウンロードの次、SKIP より先に評価する。
     _confirm_pos = has_any(ocr, _CONFIRM_POS_KWS)
     _confirm_neg = has_any(ocr, _CONFIRM_NEG_KWS)
-    if _confirm_pos and _confirm_neg:
+    _is_completion_dialog = _confirm_pos and not _confirm_neg and _dl_is_complete
+    if (_confirm_pos and _confirm_neg) or _is_completion_dialog:
         _cp_x, _cp_y = _confirm_pos["center"]
         # OCR bbox はテキスト下部パディングを含むため Y を上方補正
         _cp_y_adj = max(0, _cp_y - _OCR_BBOX_Y_PADDING)
+        _neg_label = _confirm_neg["text"] if _confirm_neg else "(なし)"
         logger.info(
             "[ConfirmDialog] '%s' (%d,%d→Y%d) タップ (否定='%s'無視)",
-            _confirm_pos["text"], _cp_x, _cp_y, _cp_y_adj, _confirm_neg["text"],
+            _confirm_pos["text"], _cp_x, _cp_y, _cp_y_adj, _neg_label,
         )
         tap_device(_cp_x, _cp_y_adj, state, f"CONFIRM_DIALOG_OK '{_confirm_pos['text']}'")
         return "ADV_CHOICE", 1.0
@@ -2872,7 +2883,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     sy = tmpl_meta.get("swipe_from_y", H - 50)
                     ex = tmpl_meta.get("swipe_to_x", cx)
                     ey = tmpl_meta.get("swipe_to_y", 50)
-                    dur = tmpl_meta.get("swipe_duration_ms", 3000)
+                    dur = tmpl_meta.get("swipe_duration_ms", 10000)
                     logger.info(">>> [SWIPE_UP] (%d,%d)→(%d,%d) %dms", sx, sy, ex, ey, dur)
                     swipe(sx, sy, ex, ey, dur, state=state)
                     return "SWIPE_UP", 1.5
@@ -3308,7 +3319,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 # 移動シーン(OCR無し) + 10回以上 → SWIPE_UP 強制 (最優先)
                 if _stg >= 10 and len(texts) == 0:
                     logger.info(">>> [SWIPE_FALLBACK] フィンガースタック%d回+OCR無し → SWIPE_UP強制", _stg)
-                    swipe(fx, H - 50, fx, 50, 3000, state=state)
+                    swipe(fx, H - 50, fx, 50, 10000, state=state)
                     state.blob_same_count = 0
                     state.last_blob_xy = (0, 0)
                     return "SWIPE_FALLBACK", 1.5
@@ -3365,7 +3376,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     # (チェック柄中の微変化では止まらない: 閾値20)
                     _SW_CHANGE_THRESHOLD = 20
                     for _sw_i in range(30):  # 最大30回 (約90秒)
-                        swipe(fx, H - 50, fx, 50, 3000, state=state)
+                        swipe(fx, H - 50, fx, 50, 10000, state=state)
                         time.sleep(0.3)
                         _sw_ss, _, _, _ = take_screenshot()
                         _sw_ph = compute_phash(_sw_ss)
@@ -4918,9 +4929,14 @@ def main():
         # ── 動画シーン検出: detect_and_act 前にガード ──
         # 左右レターボックス (左黒帯>=80px) + ADVツールバーなし → 動画確定
         # 動画中にタップするとUIが一時停止/再生を繰り返すため抑制する
+        # ただし OCR で UI テキストが豊富な場合は動画ではない (利用規約画面等)
         _roi_x = state.game_roi[0] if state.game_roi else 0
         _is_movie_letterbox = _roi_x >= 80
-        if _is_movie_letterbox and scene not in ("BATTLE", "MENU") and analysis_path:
+        _ocr_joined = " ".join(texts) if texts else ""
+        _UI_TEXT_KWS = ("利用規約", "同意", "規約", "プライバシー", "ダウンロード",
+                        "Download", "OK", "はい", "キャンセル", "設定", "お知らせ")
+        _has_ui_text = any(kw in _ocr_joined for kw in _UI_TEXT_KWS) or len(texts) >= 8
+        if _is_movie_letterbox and not _has_ui_text and scene not in ("BATTLE", "MENU") and analysis_path:
             if not is_adv_toolbar_cached(analysis_path, state):
                 _movie_btn = detect_movie_skip_button(analysis_path)
                 if _movie_btn:
