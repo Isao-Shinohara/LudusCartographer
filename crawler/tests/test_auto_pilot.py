@@ -323,7 +323,7 @@ class TestPilotStateDynamicAttrsRemoved:
     def test_gold_swipe_is_stall_counter(self, state):
         from tools.auto_pilot import StallCounter
         assert isinstance(state.gold_swipe, StallCounter)
-        assert state.gold_swipe.threshold == 6
+        assert state.gold_swipe.threshold == 3
 
     def test_normatk_fallback_is_stall_counter(self, state):
         from tools.auto_pilot import StallCounter

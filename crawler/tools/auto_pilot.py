@@ -229,7 +229,7 @@ class PilotState:
     # ─── スクリーンショット破損リトライ統計 ───
     screenshot_retry_count: int = 0  # SIGSEGV防止リトライ発生回数
     # GoldSwipe連続検出カウンタ (N回超えたらOCRへフォールバック)
-    gold_swipe: "StallCounter" = field(default_factory=lambda: StallCounter("gold_swipe", threshold=6))
+    gold_swipe: "StallCounter" = field(default_factory=lambda: StallCounter("gold_swipe", threshold=3))
     # ─── デバッグ: 最新スクリーンショット (numpy ndarray) ───
     last_screen: object = None  # cv2.imread 結果を格納 (型ヒント省略でdataclass互換)
     # ─── ROI: ゲーム描画領域 (レターボックス除外) ───
@@ -2340,7 +2340,7 @@ def handle_result_screen(
                                   "GACHA_OK")
             and analysis_path is not None
             and dist <= 30
-            and state.result_rapid_count < 15
+            and state.result_rapid_count < 8
         )
         if not _rapid_ok:
             return None
@@ -2930,10 +2930,17 @@ def detect_and_act(ocr: list, state: PilotState,
                         _fx, _fy,
                     )
                     tap_device(_fx, _fy, state, "TEXT_INPUT_FOCUS")
+                    time.sleep(1.0)
                     adb("shell input text MadoDora")
-                    time.sleep(0.5)
-                    logger.info(">>> [TEXT_INPUT_AREA] 'MadoDora' 入力完了 → 次ループでOK")
-                    return "TEXT_INPUT_NAME", 1.5
+                    time.sleep(1.0)
+                    # キーボード確定 → 閉じる → ダイアログOKタップ
+                    adb("shell input keyevent KEYCODE_BACK")  # keyboard dismiss
+                    time.sleep(1.0)
+                    # ダイアログOKボタンを直接タップ (テンプレート位置より下方)
+                    _ok_x = roi_to_device(int(W * 0.50), int(H * 0.77), state.game_roi)
+                    tap_device(_ok_x[0], _ok_x[1], state, "NAME_INPUT_OK_DIRECT")
+                    logger.info(">>> [TEXT_INPUT_AREA] 'MadoDora' 入力 → KB閉 → OK(%d,%d)", _ok_x[0], _ok_x[1])
+                    return "TEXT_INPUT_NAME", 2.0
             # その他のアセットアクション: タップして return (fallthrough なし)
             # GACHA_OK 入力フリーズ検出: 連続タップで応答がない場合 force-stop 復帰
             if action == "GACHA_OK":
@@ -4553,8 +4560,8 @@ def main():
                     PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
                     state.current_scene not in ("MENU", "BATTLE") and
                     not _is_result_like):
-                # ── MOVIE_WAIT 脱出: 20回連続 (~60秒) 動画待機ならフルOCRへフォールスルー ──
-                _MOVIE_WAIT_ESCAPE = 20
+                # ── MOVIE_WAIT 脱出: 8回連続 (~24秒) 動画待機ならフルOCRへフォールスルー ──
+                _MOVIE_WAIT_ESCAPE = 8
                 if state.movie_wait_consecutive >= _MOVIE_WAIT_ESCAPE:
                     logger.warning(
                         "[MOVIE_ESCAPE] 動画待機 %d 回連続 → フルOCR解析にフォールスルー",
@@ -4945,6 +4952,20 @@ def main():
             continue
 
         texts = all_texts(ocr_results)
+
+        # ── ロック画面検出: "緊急通報のみ" = デバイスがスリープ → 復帰 ──
+        _ocr_text_joined = " ".join(texts) if texts else ""
+        if "緊急通報" in _ocr_text_joined or "通報のみ" in _ocr_text_joined:
+            logger.warning("[LOCK_SCREEN] ロック画面検出 → WAKEUP + UNLOCK")
+            adb("shell input keyevent KEYCODE_WAKEUP")
+            time.sleep(1)
+            adb("shell input keyevent 82")  # KEYCODE_MENU = swipe unlock
+            time.sleep(2)
+            adb(f"shell am start -n {APP_PACKAGE}/{APP_ACTIVITY}")
+            time.sleep(5)
+            state.last_phash = ""
+            continue
+
         # ── シーン分類 ──
         scene, next_interval = classify_scene(texts, state.last_action)
         state.current_scene = scene
