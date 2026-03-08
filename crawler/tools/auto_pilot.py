@@ -175,6 +175,7 @@ class PilotState:
     total_ocr_calls: int = 0
     total_ocr_skipped: int = 0
     total_blackout_skipped: int = 0
+    consecutive_blackouts: int = 0
     screenshots_saved: int = 0
     device_w: int = 0
     device_h: int = 0
@@ -484,12 +485,12 @@ def get_device_resolution() -> tuple[int, int]:
     return ANALYSIS_W, ANALYSIS_H
 
 
-def take_screenshot(retries: int = 3, min_bytes: int = 50_000) -> tuple[Optional[Path], int, int, int]:
+def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[Path], int, int, int]:
     """
     スクリーンショット取得。破損PNG によるSIGSEGV防止のためリトライ付き。
 
     - retries: 破損検出時の再試行回数
-    - min_bytes: 正常PNGの最小ファイルサイズ (50KB未満は破損と判定)
+    - min_bytes: 正常PNGの最小ファイルサイズ (5KB未満は破損と判定。暗転シーン≈11KB)
     Returns: (path, width, height, retry_count)
             path=None の場合は全リトライ失敗（呼び出し側で continue すること）
     """
@@ -4573,12 +4574,30 @@ def main():
         # ── 2) 暗転検出 ──
         if is_dark_screen(img_path):
             state.total_blackout_skipped += 1
+            state.consecutive_blackouts += 1
             if state.total_blackout_skipped % 5 == 1:
-                logger.info("[iter %d] 暗転 — 3s 待機", i)
+                logger.info("[iter %d] 暗転 — 3s 待機 (連続: %d)",
+                            i, state.consecutive_blackouts)
+            # ── ムービースキップ: 連続暗転 5回以上 → 右上スキップボタン試行 ──
+            if state.consecutive_blackouts >= 5 and state.consecutive_blackouts % 5 == 0:
+                skip_x = int(ANALYSIS_W * 0.97)  # 右上 ≈ (1474, 50)
+                skip_y = int(ANALYSIS_H * 0.07)
+                logger.info("[CINEMATIC_SKIP] 連続暗転 %d 回 → 右上スキップボタン試行 (%d,%d)",
+                            state.consecutive_blackouts, skip_x, skip_y)
+                tap_device(skip_x, skip_y, state, "CINEMATIC_SKIP")
+                time.sleep(1.0)
+                # スキップ確認ダイアログが出る可能性 → 中央タップ
+                tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.6), state, "CINEMATIC_SKIP_CONFIRM")
+                time.sleep(2.0)
+            else:
+                time.sleep(2.0)
             state.last_phash = ""
             state.same_phash_count = 0
-            time.sleep(2.0)
             continue
+
+        # ── 暗転解除 ──
+        if state.consecutive_blackouts > 0:
+            state.consecutive_blackouts = 0
 
         # ── 3) phash 粗解析 ──
         try:
