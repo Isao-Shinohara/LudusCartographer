@@ -2198,7 +2198,11 @@ class AssetManager:
             return None
         best_score = 0.0
         best_result: Optional[tuple[int, int, str, tuple[int, int, int, int]]] = None
+        # match_single() 専用テンプレートは一般マッチから除外
+        _SINGLE_ONLY = frozenset(["adv_next_btn"])
         for name, data in self._templates.items():
+            if name in _SINGLE_ONLY:
+                continue
             # require_ocr チェック: いずれか1つのキーワードがOCRにあればOK (OR条件)
             required = data.get("require_ocr", [])
             if required and ocr_texts is not None:
@@ -2232,6 +2236,29 @@ class AssetManager:
             cx, cy, action, _ = best_result
             logger.info("[Asset] HIT: '%s' score=%.3f → (%d,%d)", action, best_score, cx, cy)
         return best_result
+
+    def match_single(self, name: str, screenshot_path: Path) -> Optional[tuple[int, int, float]]:
+        """指定テンプレート1枚だけをマッチング。Returns (cx, cy, score) or None."""
+        data = self._templates.get(name)
+        if data is None:
+            return None
+        img = cv2.imread(str(screenshot_path), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            return None
+        tmpl = data["img"]
+        if tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
+            return None
+        try:
+            res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            if max_val >= data["threshold"]:
+                h, w = tmpl.shape
+                cx = max_loc[0] + w // 2
+                cy = max_loc[1] + h // 2
+                return (cx, cy, max_val)
+        except Exception:
+            pass
+        return None
 
     def save_template(self, screenshot_path: Path,
                       x1: int, y1: int, x2: int, y2: int,
@@ -3905,6 +3932,14 @@ def detect_and_act(ocr: list, state: PilotState,
     if lower_texts and len(ocr) <= 15:
         target = lower_texts[-1]
         cx, cy = target["center"]
+        # ADVツールバー検出時 → ↓矢印ボタンをテンプレートマッチで優先
+        if analysis_path and is_adv_toolbar_cached(analysis_path, state):
+            _next_btn = ASSET_MANAGER.match_single("adv_next_btn", analysis_path)
+            if _next_btn:
+                cx, cy = _next_btn[0], _next_btn[1]
+                logger.info(">>> ストーリー送り '%s' → ↓ボタン (%d,%d)", target["text"][:10], cx, cy)
+                tap_device(cx, cy, state, "STORY_TAP")
+                return "STORY_TAP", 0.3
         logger.info(">>> ストーリー送り '%s' (%d,%d)", target["text"][:10], cx, cy)
         tap_device(cx, cy, state, "STORY_TAP")
         return "STORY_TAP", 0.3
@@ -4585,8 +4620,14 @@ def main():
                         continue
                     # ADV vs 動画シーン判別: ツールバー有無で分岐
                     if is_adv_toolbar_cached(img_path, state):
-                        logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
-                        _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
+                        # ↓矢印ボタンをテンプレートマッチで検出
+                        _adv_btn = ASSET_MANAGER.match_single("adv_next_btn", img_path)
+                        if _adv_btn:
+                            _adv_x, _adv_y = _adv_btn[0], _adv_btn[1]
+                            logger.info("[iter %d] phash_dist=%d ADV_RAPID → ↓ボタン (%.3f)", i, dist, _adv_btn[2])
+                        else:
+                            _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
+                            logger.info("[iter %d] phash_dist=%d ADV_RAPID → 中央下フォールバック", i, dist)
                         tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP", post_wait=0.3)
                         logger.info("  ACTION_TAKEN ADV_RAPID_TAP (%d,%d)", _adv_x, _adv_y)
                         state.movie_wait_consecutive = 0
@@ -4688,7 +4729,12 @@ def main():
                     if is_adv_toolbar_cached(img_path, state):
                         if detect_adv_advance_icon(img_path):
                             logger.info("[ADV_ADVANCE][iter %d] 送り待ちアイコン検出 → 即タップ", i)
-                            _aa_x, _aa_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
+                            # ↓矢印ボタンをテンプレートマッチで検出
+                            _aa_btn = ASSET_MANAGER.match_single("adv_next_btn", img_path)
+                            if _aa_btn:
+                                _aa_x, _aa_y = _aa_btn[0], _aa_btn[1]
+                            else:
+                                _aa_x, _aa_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
                             tap_device(_aa_x, _aa_y, state, "ADV_ADVANCE")
                             state.last_phash = ""
                             state.same_phash_count = 0
