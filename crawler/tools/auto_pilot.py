@@ -2342,7 +2342,7 @@ def handle_dialog_screen(
 
     Returns: (action_name, wait_sec) or None (非ダイアログ / ガード発動)
     """
-    if analysis_path is None or has_finger_guard:
+    if analysis_path is None:
         return None
 
     W, H = ANALYSIS_W, ANALYSIS_H
@@ -2354,6 +2354,12 @@ def handle_dialog_screen(
         return None
 
     _dlg_type, _dlg_x, _dlg_y = _dlg
+
+    # ── 指ガード: ×のみダイアログは指がある場合スキップ ──
+    # ページングダイアログ (▷) は SPATIAL_GATE に委任して指との距離で判断
+    if has_finger_guard and _dlg_type == "close":
+        logger.debug("[DIALOG_FINGER_GUARD] 指ブロブ + ×のみ → スキップ")
+        return None
 
     # ── [SPATIAL GATE] ▷ページングより指アイコンを最優先 ──────────────
     if _dlg_type in ("next", "bottom"):
