@@ -170,9 +170,6 @@ def _build_scrcpy_args(device_serial: str) -> list:
         "-s", device_serial,
         "--turn-screen-off",   # 物理画面消灯
         "--stay-awake",
-        "--always-on-top",
-        "--no-audio",
-        "-m", "800",
     ]
 
 # Ctrl+C シグナルハンドラ用: main() で設定する PilotState への参照
