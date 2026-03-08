@@ -538,6 +538,60 @@ def diagnose_device_connection() -> dict:
 
 
 # ============================================================
+# アプリ管理 (インストール / アンインストール / Play Store)
+# ============================================================
+
+def uninstall_app(serial: str, package: str, timeout: int = 30) -> bool:
+    """adb shell pm uninstall でアプリを削除する。成功 or 未インストールで True。"""
+    try:
+        r = subprocess.run(
+            ["adb", "-s", serial, "shell", "pm", "uninstall", package],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        out = r.stdout.strip().lower()
+        if "success" in out:
+            logger.info("[UNINSTALL] %s を削除しました", package)
+            return True
+        # "Unknown package" = 未インストール → 成功扱い
+        logger.info("[UNINSTALL] %s は未インストール (出力: %s)", package, r.stdout.strip())
+        return True
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.error("[UNINSTALL] 失敗: %s", e)
+        return False
+
+
+def is_app_installed(serial: str, package: str, timeout: int = 10) -> bool:
+    """adb shell pm list packages でインストール済みか確認する。"""
+    try:
+        r = subprocess.run(
+            ["adb", "-s", serial, "shell", "pm", "list", "packages", package],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return f"package:{package}" in r.stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def open_play_store(serial: str, package: str, timeout: int = 10) -> bool:
+    """Play Store のアプリ詳細ページを開く (market:// intent)。"""
+    try:
+        r = subprocess.run(
+            ["adb", "-s", serial, "shell", "am", "start", "-a",
+             "android.intent.action.VIEW", "-d", f"market://details?id={package}"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        ok = r.returncode == 0
+        if ok:
+            logger.info("[PLAY_STORE] %s の詳細ページを開きました", package)
+        else:
+            logger.warning("[PLAY_STORE] 起動失敗: %s", r.stderr.strip())
+        return ok
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.error("[PLAY_STORE] 起動失敗: %s", e)
+        return False
+
+
+# ============================================================
 # 画像ハッシュ (phash)
 # ============================================================
 

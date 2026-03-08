@@ -45,7 +45,10 @@ _CRAWLER_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_CRAWLER_ROOT))
 
 from lc.ocr import run_ocr, find_text, find_best, format_results
-from lc.utils import get_android_serial, compute_phash, phash_distance, ensure_adb_connection
+from lc.utils import (
+    get_android_serial, compute_phash, phash_distance, ensure_adb_connection,
+    uninstall_app, is_app_installed, open_play_store,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -4334,7 +4337,135 @@ def parse_args():
                         help="adb pair 用ペアリングコード (Android 11+)")
     parser.add_argument("--pairing-port", type=int, default=None,
                         help="adb pair 用ポート番号 (Android 11+)")
+    parser.add_argument("--fresh-install", action="store_true",
+                        help="アンインストール → Play Store 再インストール (新規アカウント)")
     return parser.parse_args()
+
+
+# ─── Play Store 再インストール ──────────────────────
+def _fresh_install_from_play_store(serial: str, package: str) -> None:
+    """
+    アプリをアンインストール → Play Store から再インストールする。
+
+    PilotState はまだ存在しない段階で呼ばれるため、
+    tap_device() ではなく直接 adb shell input tap を使用する。
+    """
+    INSTALL_KEYWORDS = ["インストール", "Install", "install"]
+    ACCEPT_KEYWORDS = ["同意する", "Accept", "OK"]
+    OPEN_KEYWORDS = ["開く", "Open"]
+    MAX_OCR_ATTEMPTS = 5
+    POLL_INTERVAL_SEC = 5
+    MAX_POLL_COUNT = 60  # 5秒 × 60 = 5分
+
+    def _adb_tap(x: int, y: int) -> None:
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "input", "tap", str(x), str(y)],
+            capture_output=True, timeout=5,
+        )
+
+    def _adb_screenshot(path: str) -> bool:
+        try:
+            r = subprocess.run(
+                ["adb", "-s", serial, "exec-out", "screencap", "-p"],
+                capture_output=True, timeout=10,
+            )
+            if r.returncode == 0 and len(r.stdout) >= 5_000:
+                Path(path).write_bytes(r.stdout)
+                return True
+        except (subprocess.TimeoutExpired, Exception):
+            pass
+        return False
+
+    # --- Step 1: アンインストール ---
+    logger.info("[FRESH_INSTALL] === アプリ再インストール開始 ===")
+    uninstall_app(serial, package)
+    time.sleep(2)
+
+    # --- Step 2: Play Store を開く ---
+    if not open_play_store(serial, package):
+        logger.error("[FRESH_INSTALL] Play Store を開けませんでした。手動で対応してください。")
+        return
+    time.sleep(5)
+
+    # --- Step 3: OCR → インストールボタンをタップ ---
+    tmp_ss = str(Path(tempfile.gettempdir()) / "fresh_install_ss.png")
+    installed_via_tap = False
+
+    for attempt in range(MAX_OCR_ATTEMPTS):
+        logger.info("[FRESH_INSTALL] OCR 試行 %d/%d", attempt + 1, MAX_OCR_ATTEMPTS)
+        if not _adb_screenshot(tmp_ss):
+            logger.warning("[FRESH_INSTALL] スクリーンショット取得失敗 — リトライ")
+            time.sleep(2)
+            continue
+
+        try:
+            ocr_results = run_ocr(tmp_ss)
+        except Exception as e:
+            logger.warning("[FRESH_INSTALL] OCR 失敗: %s", e)
+            time.sleep(2)
+            continue
+
+        # 「開く」が見える → 既にインストール済み → アンインストール再試行
+        for kw in OPEN_KEYWORDS:
+            hit = find_best(ocr_results, kw)
+            if hit:
+                logger.info("[FRESH_INSTALL] 「%s」検出 — 既インストール → 再アンインストール", kw)
+                uninstall_app(serial, package)
+                time.sleep(2)
+                open_play_store(serial, package)
+                time.sleep(5)
+                break
+
+        # 「インストール」ボタンを検出
+        for kw in INSTALL_KEYWORDS:
+            hit = find_best(ocr_results, kw)
+            if hit:
+                cx, cy = hit["center"]
+                logger.info("[FRESH_INSTALL] 「%s」検出 → タップ (%d, %d)", kw, cx, cy)
+                _adb_tap(cx, cy)
+                installed_via_tap = True
+                time.sleep(3)
+                break
+        if installed_via_tap:
+            # 権限ダイアログ処理
+            time.sleep(2)
+            if _adb_screenshot(tmp_ss):
+                try:
+                    ocr2 = run_ocr(tmp_ss)
+                    for akw in ACCEPT_KEYWORDS:
+                        ahit = find_best(ocr2, akw)
+                        if ahit:
+                            ax, ay = ahit["center"]
+                            logger.info("[FRESH_INSTALL] 「%s」検出 → タップ (%d, %d)", akw, ax, ay)
+                            _adb_tap(ax, ay)
+                            break
+                except Exception:
+                    pass
+            break
+
+        logger.info("[FRESH_INSTALL] インストールボタン未検出 — 待機")
+        time.sleep(3)
+
+    # --- Step 4: インストール完了ポーリング ---
+    logger.info("[FRESH_INSTALL] インストール完了を待機中... (最大%d秒)", POLL_INTERVAL_SEC * MAX_POLL_COUNT)
+    for i in range(MAX_POLL_COUNT):
+        if is_app_installed(serial, package):
+            logger.info("[FRESH_INSTALL] インストール完了を確認 (%d秒経過)", (i + 1) * POLL_INTERVAL_SEC)
+            break
+        time.sleep(POLL_INTERVAL_SEC)
+    else:
+        logger.error("[FRESH_INSTALL] タイムアウト — 手動でインストールを完了してください")
+        return
+
+    # --- Step 5: Play Store を閉じる ---
+    time.sleep(2)
+    subprocess.run(
+        ["adb", "-s", serial, "shell", "am", "force-stop", "com.android.vending"],
+        capture_output=True, timeout=5,
+    )
+    logger.info("[FRESH_INSTALL] Play Store を閉じました")
+    time.sleep(2)
+    logger.info("[FRESH_INSTALL] === 再インストール完了 → 通常起動シーケンスへ ===")
 
 
 # ─── メインループ ─────────────────────────────────
@@ -4360,6 +4491,10 @@ def main():
 
     # scrcpy デバイスを接続済みシリアルから動的設定
     SCRCPY_DEVICE = DEVICE_SERIAL
+
+    # ─── --fresh-install: アンインストール → Play Store 再インストール ───
+    if args.fresh_install:
+        _fresh_install_from_play_store(DEVICE_SERIAL, APP_PACKAGE)
 
     logger.info("=" * 62)
     logger.info("  まどドラ自律操縦 — Auto Pilot (ハイブリッド版)")
