@@ -252,6 +252,9 @@ class PilotState:
     grind_cycles_completed: int = 0   # 周回完了回数
     normatk_fallback: "StallCounter" = field(
         default_factory=lambda: StallCounter("normatk_fallback", threshold=10))
+    # ─── キャッシュ (per-phash サイクル) ───
+    _adv_toolbar_cache_phash: str = ""     # キャッシュ有効な phash 値
+    _adv_toolbar_cache_result: bool = False # キャッシュされた結果
     # ─── テレメトリ (DEBUG レベル) ───
     last_action_time: float = 0.0          # 直近アクションの実行時刻
     transition_times: list = field(default_factory=list)  # 遷移時間ヒストリ (最大100件)
@@ -926,6 +929,69 @@ def detect_guide_glow(img_path: Path, W: int, H: int,
         return []
 
 
+def _run_battle_glow_sm(
+    analysis_path: Path,
+    W: int, H: int,
+    state: "PilotState",
+    ocr: list,
+    tag: str = "GLOW_SM",
+) -> Optional[tuple]:
+    """
+    バトル発光ステートマシン (統一版)。#0-PRE と #1-pre の共通ロジック。
+
+    P1: 左キャラ発光 (character_selected=False) → タップ → character_selected=True
+    P2: 右スキル発光 (character_selected=True)  → タップ → character_selected=False
+    P3: 発光なし + character_selected → 通常攻撃 OCR フォールバック
+
+    Returns: (action, wait_sec) or None (発光なし/バトルでない)
+    """
+    glows = detect_guide_glow(analysis_path, W, H, footer_ratio=0.30)
+    left = [g for g in glows if g["side"] == "left"]
+    right = [g for g in glows if g["side"] == "right"]
+    if glows:
+        logger.info("[%s] フッター発光: 左%d個(最大%.0f) 右%d個(最大%.0f)", tag,
+                    len(left), left[0]["area"] if left else 0,
+                    len(right), right[0]["area"] if right else 0)
+
+    # P1: 左キャラ発光 (キャラ未選択)
+    if not state.character_selected and left:
+        g = max(left, key=lambda g: g["area"])
+        gx, gy = g["cx"], max(1, g["cy"] - _GLOW_CENTER_Y_OFFSET)
+        logger.info("[%s P1] 左キャラ発光(%d,%d)→tap(%d,%d)", tag, g["cx"], g["cy"], gx, gy)
+        tap_device(gx, gy, state, "GLOW_LEFT_CHAR", post_wait=0.3)
+        tap_device(gx, gy, state, "GLOW_LEFT_CHAR")  # ダブルタップ
+        state.character_selected = True
+        state.char_just_selected = True
+        state.finger_detections += 1
+        return "GLOW_LEFT_CHAR", 0.3
+
+    # P2: 右スキル発光 (キャラ選択済み)
+    if state.character_selected and right:
+        g = max(right, key=lambda g: g["area"])
+        gx, gy = g["cx"], max(1, g["cy"] - _GLOW_CENTER_Y_OFFSET)
+        logger.info("[%s P2] 右発光(%d,%d)→tap(%d,%d)", tag, g["cx"], g["cy"], gx, gy)
+        tap_device(gx, gy, state, "GLOW_RIGHT_SKILL")
+        state.character_selected = False
+        state.char_just_selected = False
+        state.finger_detections += 1
+        return "GLOW_RIGHT_SKILL", 0.3
+
+    # P3: キャラ選択済み + 発光なし → 通常攻撃 OCR フォールバック
+    if state.character_selected and not right:
+        na = has_any(ocr, ["通常攻撃", "单体攻撃", "単体攻撃"])
+        if na:
+            nx, ny = na["center"]
+            if nx > W * 0.5 and ny > H * 0.5:
+                ny = max(1, ny - _GLOW_CENTER_Y_OFFSET)
+                logger.info("[%s P3] 攻撃ボタンOCR '%s'(%d,%d) → tap", tag, na["text"], nx, ny)
+                tap_device(nx, ny, state, "NORMATK_TAP")
+                state.character_selected = False
+                state.char_just_selected = False
+                return "NORMATK_TAP", 1.0
+
+    return None
+
+
 def detect_active_battle_char(
     img_path: Path,
     analysis_w: int = 1520,
@@ -1070,6 +1136,17 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
     except Exception as e:
         logger.debug("find_gold_frame_near error: %s", e)
         return None
+
+
+def is_adv_toolbar_cached(img_path: Path, state: "PilotState") -> bool:
+    """is_adv_toolbar_visible() の phash キャッシュ付きラッパー。同一 phash なら再計算しない。"""
+    cur = state.last_phash
+    if cur and cur == state._adv_toolbar_cache_phash:
+        return state._adv_toolbar_cache_result
+    result = is_adv_toolbar_visible(img_path)
+    state._adv_toolbar_cache_phash = cur
+    state._adv_toolbar_cache_result = result
+    return result
 
 
 def detect_adv_advance_icon(img_path: Path,
@@ -2884,45 +2961,9 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.info("[#0-PRE] 「メニューが使用できません」トースト検出 → DIALOG_CLOSE スキップ (2s wait)")
         return "BATTLE_MENU_TOAST_WAIT", 2.0
     if _is_battle_early and analysis_path is not None:
-        _pre_glows = detect_guide_glow(analysis_path, W, H, footer_ratio=0.30)
-        _pre_left = [g for g in _pre_glows if g["side"] == "left"]
-        _pre_right = [g for g in _pre_glows if g["side"] == "right"]
-        # P1: 左キャラ発光 (キャラ未選択) → DIALOG_CLOSE より前にタップ
-        if not state.character_selected and _pre_left:
-            _pl = max(_pre_left, key=lambda g: g["area"])
-            _pl_x, _pl_y = _pl["cx"], max(1, _pl["cy"] - _GLOW_CENTER_Y_OFFSET)
-            logger.info("[GLOW_SM P1] 左キャラ発光(%d,%d)→tap(%d,%d) [#0前ガード]",
-                        _pl["cx"], _pl["cy"], _pl_x, _pl_y)
-            tap_device(_pl_x, _pl_y, state, "GLOW_LEFT_CHAR", post_wait=0.3)
-            tap_device(_pl_x, _pl_y, state, "GLOW_LEFT_CHAR")  # ダブルタップ(追いタップ)
-            state.character_selected = True
-            state.char_just_selected = True
-            state.finger_detections += 1
-            return "GLOW_LEFT_CHAR", 0.3
-        # P2: 右スキル発光 (キャラ選択済み) → DIALOG_CLOSE より前にタップ
-        if state.character_selected and _pre_right:
-            _prg = max(_pre_right, key=lambda g: g["area"])
-            _prg_x, _prg_y = _prg["cx"], max(1, _prg["cy"] - _GLOW_CENTER_Y_OFFSET)
-            logger.info("[GLOW_SM P2] 右発光(%d,%d)→tap(%d,%d) [#0前ガード]",
-                        _prg["cx"], _prg["cy"], _prg_x, _prg_y)
-            tap_device(_prg_x, _prg_y, state, "GLOW_RIGHT_SKILL")
-            state.character_selected = False
-            state.char_just_selected = False
-            state.finger_detections += 1
-            return "GLOW_RIGHT_SKILL", 0.3
-        # P3: キャラ選択済み + 発光なし → 通常攻撃/单体攻撃をOCRで直接タップ
-        if state.character_selected and not _pre_right:
-            _pre_na = has_any(ocr, ["通常攻撃", "单体攻撃", "単体攻撃"])
-            if _pre_na:
-                _pnx, _pny = _pre_na["center"]
-                if _pnx > W * 0.5 and _pny > H * 0.5:
-                    _pny = max(1, _pny - _GLOW_CENTER_Y_OFFSET)
-                    logger.info("[GLOW_SM P3] 攻撃ボタンOCR '%s'(%d,%d) → tap [#0前ガード]",
-                                _pre_na["text"], _pnx, _pny)
-                    tap_device(_pnx, _pny, state, "NORMATK_TAP")
-                    state.character_selected = False
-                    state.char_just_selected = False
-                    return "NORMATK_TAP", 1.0
+        _pre_result = _run_battle_glow_sm(analysis_path, W, H, state, ocr, tag="#0-PRE")
+        if _pre_result is not None:
+            return _pre_result
 
     # ── 【#0-DIALOG 前ガード】指ブロブ検出時はダイアログ検出をスキップ ──────
     _pre_dialog_finger = False
@@ -3244,54 +3285,10 @@ def detect_and_act(ocr: list, state: PilotState,
             return "CLOSE_POPUP", 1.5
 
     # ─── 【最優先 #1-pre】バトル発光 State Machine (フッター下部30%限定) ─────────
-    # 優先度 1: 左キャラ発光 → タップ → character_selected=True
-    # 優先度 2: 右スキル発光 (character_selected=True) → タップ
-    # 優先度 3: 発光なし + character_selected → 通常攻撃 OCR フォールバック
     if _is_battle_early and analysis_path is not None:
-        _gsm_glows = detect_guide_glow(analysis_path, W, H, footer_ratio=0.30)
-        _gsm_left = [g for g in _gsm_glows if g["side"] == "left"]
-        _gsm_right = [g for g in _gsm_glows if g["side"] == "right"]
-        if _gsm_glows:
-            logger.info("[GLOW_SM] フッター発光: 左%d個(最大%.0f) 右%d個(最大%.0f)",
-                        len(_gsm_left), _gsm_left[0]["area"] if _gsm_left else 0,
-                        len(_gsm_right), _gsm_right[0]["area"] if _gsm_right else 0)
-
-        # Priority 1: 左キャラ発光検出 (キャラ未選択時)
-        if not state.character_selected and _gsm_left:
-            _gl = max(_gsm_left, key=lambda g: g["area"])
-            _gl_x, _gl_y = _gl["cx"], max(1, _gl["cy"] - _GLOW_CENTER_Y_OFFSET)
-            logger.info("[GLOW_SM P1] 左キャラ発光(%d,%d) → tap(%d,%d)", _gl["cx"], _gl["cy"], _gl_x, _gl_y)
-            tap_device(_gl_x, _gl_y, state, "GLOW_LEFT_CHAR", post_wait=0.3)
-            tap_device(_gl_x, _gl_y, state, "GLOW_LEFT_CHAR")  # ダブルタップ(追いタップ)
-            state.character_selected = True
-            state.char_just_selected = True
-            state.finger_detections += 1
-            return "GLOW_LEFT_CHAR", 0.3
-
-        # Priority 2: 右スキル発光検出 (キャラ選択済み)
-        elif state.character_selected and _gsm_right:
-            _gr = max(_gsm_right, key=lambda g: g["area"])
-            _gr_x, _gr_y = _gr["cx"], max(1, _gr["cy"] - _GLOW_CENTER_Y_OFFSET)
-            logger.info("[GLOW_SM P2] 右スキル発光(%d,%d) → tap(%d,%d)", _gr["cx"], _gr["cy"], _gr_x, _gr_y)
-            tap_device(_gr_x, _gr_y, state, "GLOW_RIGHT_SKILL")
-            state.character_selected = False
-            state.char_just_selected = False
-            state.finger_detections += 1
-            return "GLOW_RIGHT_SKILL", 0.3
-
-        # Priority 3: 発光なし + character_selected → 通常攻撃/单体攻撃 OCR フォールバック
-        elif state.character_selected and not _gsm_right:
-            _na_item = has_any(ocr, ["通常攻撃", "单体攻撃", "単体攻撃"])
-            if _na_item:
-                _na_x, _na_y = _na_item["center"]
-                if _na_x > W * 0.5 and _na_y > H * 0.5:
-                    _na_y = max(1, _na_y - _GLOW_CENTER_Y_OFFSET)
-                    logger.info("[GLOW_SM P3] 攻撃ボタンOCR '%s'(%d,%d) → tap (発光なしフォールバック)",
-                                _na_item["text"], _na_x, _na_y)
-                    tap_device(_na_x, _na_y, state, "NORMATK_TAP")
-                    state.character_selected = False
-                    state.char_just_selected = False
-                    return "NORMATK_TAP", 1.0
+        _gsm_result = _run_battle_glow_sm(analysis_path, W, H, state, ocr, tag="GLOW_SM")
+        if _gsm_result is not None:
+            return _gsm_result
 
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
     if analysis_path is not None:
@@ -4477,10 +4474,12 @@ def main():
             time.sleep(1.0)
             continue
         state.wifi_fail_streak = 0  # 成功時リセット
-        # メモリ上に最新画像を保持 + ROI更新
+        # メモリ上に最新画像を保持 + ROI更新 (スロットル: 画面変化時 or 50iter毎)
         try:
             state.last_screen = cv2.imread(str(img_path))
-            if state.last_screen is not None:
+            _roi_needed = (state.game_roi is None or i % 50 == 0
+                           or state.same_phash_count == 0)  # phash変化直後
+            if state.last_screen is not None and _roi_needed:
                 _new_roi = detect_game_roi(state.last_screen)
                 # 非黒画面のときのみ ROI を更新 (暗転中は前の ROI を維持)
                 if _new_roi[2] >= ANALYSIS_W * 0.5:
@@ -4634,7 +4633,7 @@ def main():
                     state.last_phash = cur_phash
                     continue
                 # ADV vs 動画シーン判別: ツールバー有無で分岐
-                if is_adv_toolbar_visible(img_path):
+                if is_adv_toolbar_cached(img_path, state):
                     logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
                     _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
                     tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP")
@@ -4731,7 +4730,7 @@ def main():
                 # ── ADV送り待ちアイコン検知: phash 安定中でも即タップ ──
                 # 動画シーンでは ADV ツールバーが無いためタップ抑制
                 if state.current_scene in ("STORY", "ADV"):
-                    if is_adv_toolbar_visible(img_path):
+                    if is_adv_toolbar_cached(img_path, state):
                         if detect_adv_advance_icon(img_path):
                             logger.info("[ADV_ADVANCE][iter %d] 送り待ちアイコン検出 → 即タップ", i)
                             _aa_x, _aa_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
@@ -5006,7 +5005,7 @@ def main():
         _roi_x = state.game_roi[0] if state.game_roi else 0
         _is_movie_letterbox = _roi_x >= 80
         if _is_movie_letterbox and scene not in ("BATTLE", "MENU") and analysis_path:
-            if not is_adv_toolbar_visible(analysis_path):
+            if not is_adv_toolbar_cached(analysis_path, state):
                 _movie_btn = detect_movie_skip_button(analysis_path)
                 if _movie_btn:
                     _ms_x, _ms_y = roi_to_device(
@@ -5045,12 +5044,22 @@ def main():
                 action, state.action_repeat_count,
             )
             state.scene_reeval_mode = True
-            # 新しいスクリーンショットでフル再判定
+            # 新しいスクリーンショットでフル再判定 (phash 変化なければ OCR 再利用)
             try:
                 _re_img, _re_w, _re_h, _ = take_screenshot()
                 _re_analysis = prepare_analysis_image(_re_img, _re_w, _re_h)
-                _re_ocr = run_ocr(str(_re_analysis), lang=OCR_LANG,
-                                  min_confidence=OCR_MIN_CONF)
+                # phash チェック: 画面が変わっていなければ既存 OCR を再利用
+                try:
+                    _re_phash = compute_phash(_re_analysis)
+                    _re_dist = phash_distance(state.last_phash, _re_phash) if state.last_phash and _re_phash else 999
+                except Exception:
+                    _re_dist = 999
+                if _re_dist < 3 and ocr_results:
+                    logger.info("[SCENE_REEVAL] phash_dist=%d < 3 → 既存OCR再利用 (OCRスキップ)", _re_dist)
+                    _re_ocr = ocr_results
+                else:
+                    _re_ocr = run_ocr(str(_re_analysis), lang=OCR_LANG,
+                                      min_confidence=OCR_MIN_CONF)
                 _re_texts = all_texts(_re_ocr)
                 _re_scene, _ = classify_scene(_re_texts, action)
                 if _re_scene != state.current_scene:
@@ -5120,11 +5129,34 @@ def main():
             generate_and_copy_report(state, _reason)
             return
 
-        # ── 8) 待機 ──
+        # ── 8) 待機 (DOWNLOAD_WAIT は phash 監視付き適応ポーリング) ──
         if wait_sec > 0:
-            logger.info("  [%s][%s] wait %.1fs | next_check: %.1fs",
-                        scene, action, wait_sec, next_interval)
-            time.sleep(wait_sec)
+            if action == "DOWNLOAD_WAIT" and wait_sec >= 5.0:
+                # 適応ポーリング: 3秒ごとに phash チェック → 画面変化で早期脱出
+                _dl_remaining = wait_sec
+                _DL_POLL = 3.0
+                logger.info("  [%s][%s] adaptive wait %.1fs (poll=%.1fs)",
+                            scene, action, wait_sec, _DL_POLL)
+                while _dl_remaining > 0:
+                    _sleep_chunk = min(_DL_POLL, _dl_remaining)
+                    time.sleep(_sleep_chunk)
+                    _dl_remaining -= _sleep_chunk
+                    if _dl_remaining <= 0:
+                        break
+                    try:
+                        _dl_img, _, _, _ = take_screenshot()
+                        _dl_ph = compute_phash(_dl_img)
+                        _dl_dist = phash_distance(state.last_phash, _dl_ph) if state.last_phash and _dl_ph else 0
+                        if _dl_dist >= PHASH_THRESHOLD:
+                            logger.info("  [DOWNLOAD_ADAPTIVE] 画面変化検出 (dist=%d) → 早期脱出", _dl_dist)
+                            state.last_phash = _dl_ph
+                            break
+                    except Exception:
+                        pass
+            else:
+                logger.info("  [%s][%s] wait %.1fs | next_check: %.1fs",
+                            scene, action, wait_sec, next_interval)
+                time.sleep(wait_sec)
 
         _loop_elapsed_ms = (time.time() - _loop_t0) * 1000
         state.total_loop_ms += _loop_elapsed_ms
