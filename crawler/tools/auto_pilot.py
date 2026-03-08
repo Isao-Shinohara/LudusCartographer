@@ -4967,6 +4967,30 @@ def main():
         if scene == "UNKNOWN" or state.total_ocr_calls % 30 == 0:
             STRATEGIC_ENGINE.report_screen_affordances(analysis_path, ocr_results)
 
+        # ── 動画シーン検出: detect_and_act 前にガード ──
+        # 左右レターボックス (左黒帯>=80px) + ADVツールバーなし → 動画確定
+        # 動画中にタップするとUIが一時停止/再生を繰り返すため抑制する
+        _roi_x = state.game_roi[0] if state.game_roi else 0
+        _is_movie_letterbox = _roi_x >= 80
+        if _is_movie_letterbox and scene not in ("BATTLE", "MENU") and analysis_path:
+            if not is_adv_toolbar_visible(analysis_path):
+                _movie_btn = detect_movie_skip_button(analysis_path)
+                if _movie_btn:
+                    _ms_x, _ms_y = roi_to_device(
+                        _movie_btn[0], _movie_btn[1], state.game_roi)
+                    tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
+                    logger.info(
+                        "  ACTION_TAKEN MOVIE_SKIP (%d,%d) [letterbox L=%d]",
+                        _ms_x, _ms_y, _roi_x)
+                else:
+                    logger.info(
+                        "[MOVIE_GUARD] レターボックス(L=%d)+ツールバーなし → 待機",
+                        _roi_x)
+                    state.last_action = "MOVIE_WAIT"
+                    time.sleep(2.0)
+                state.last_phash = cur_phash
+                continue
+
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         action, wait_sec = detect_and_act(ocr_results, state, analysis_path)
         state.last_action = action
