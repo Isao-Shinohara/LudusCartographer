@@ -246,6 +246,7 @@ class PilotState:
     unity_restart_count: int = 0      # Unity force-restart 試行回数 [0..3]
     wifi_fail_streak: int = 0         # Wi-Fi破損連続失敗カウンタ [0..5]
     last_phash_dist: int = 999        # 直近の phash 距離 (detect_and_act 内で参照)
+    home_tutorial_tap_count: int = 0  # EARLY HOME検出でのHOME_TUTORIAL_TAP連続回数 (脱出閾値=10)
     # ─── 周回モード ───
     grind_mode: bool = False          # True: ホーム到達後もクエストへ自動ナビゲート
     grind_max_cycles: int = 0         # 0=無制限, N>0=N周で停止
@@ -3227,7 +3228,7 @@ def detect_and_act(ocr: list, state: PilotState,
         _is_tos_screen = "利用規約" in _nav_joined or "同意してゲームを始める" in _nav_joined
         _title_kws_game = ["魔法", "少女", "まどか", "マギカ", "まどかハ", "MADOKA", "MAGICA"]
         is_title_screen = (
-            not _is_tos_screen and (
+            not state.home_reached and not _is_tos_screen and (
                 any(kw in _nav_joined for kw in ["TAP TO START", "Magia Exedra",
                                                   "MAGIA EXEDRA", "TAPTOSTART"]) or
                 # 「動画配信設定」「Ver.」はタイトル画面固有の上部 UI
@@ -3298,42 +3299,48 @@ def detect_and_act(ocr: list, state: PilotState,
                     tap_device(_cb_x, _cb_y, state, "CHALLENGE_TAP")
                     return "CHALLENGE_TAP", 1.5
             # ── ホームチュートリアル: 指アイコン+金枠がある場合は優先タップ ──
-            _ht_blobs = find_finger_blobs(analysis_path) if analysis_path else []
-            # ホーム画面では中央ナビバー (ショップ等) が右半分境界付近に来るため right_half_only=False
-            _ht_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
-            if _ht_blobs or _ht_gold:
-                _ht_target = None
-                if _ht_blobs:
-                    _ht_chosen = max(_ht_blobs, key=lambda b: b[2])
-                    _ht_bx, _ht_by = _ht_chosen[0], _ht_chosen[1]
-                    _ht_gf = find_gold_frame_near(analysis_path, _ht_bx, _ht_by) if analysis_path else None
-                    if _ht_gf:
-                        _ht_fg_dist = ((_ht_bx - _ht_gf[0]) ** 2 + (_ht_by - _ht_gf[1]) ** 2) ** 0.5
-                        if _ht_fg_dist <= 200:
-                            _ht_target = (_ht_gf[0], _ht_gf[1])
-                            logger.info("  ホームチュートリアル: 指(%d,%d)→金枠(%d,%d) dist=%.0f タップ",
-                                        _ht_bx, _ht_by, _ht_gf[0], _ht_gf[1], _ht_fg_dist)
+            # ただし 10回超ループしたら LATE path (grind_mode処理) に委譲
+            if state.home_tutorial_tap_count < 10:
+                _ht_blobs = find_finger_blobs(analysis_path) if analysis_path else []
+                _ht_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
+                if _ht_blobs or _ht_gold:
+                    _ht_target = None
+                    if _ht_blobs:
+                        _ht_chosen = max(_ht_blobs, key=lambda b: b[2])
+                        _ht_bx, _ht_by = _ht_chosen[0], _ht_chosen[1]
+                        _ht_gf = find_gold_frame_near(analysis_path, _ht_bx, _ht_by) if analysis_path else None
+                        if _ht_gf:
+                            _ht_fg_dist = ((_ht_bx - _ht_gf[0]) ** 2 + (_ht_by - _ht_gf[1]) ** 2) ** 0.5
+                            if _ht_fg_dist <= 200:
+                                _ht_target = (_ht_gf[0], _ht_gf[1])
+                                logger.info("  ホームチュートリアル: 指(%d,%d)→金枠(%d,%d) dist=%.0f タップ",
+                                            _ht_bx, _ht_by, _ht_gf[0], _ht_gf[1], _ht_fg_dist)
+                            else:
+                                _ht_tip_y = _ht_chosen[4] + int(_ht_chosen[6] * 0.1)
+                                _ht_target = (_ht_chosen[3] + _ht_chosen[5] // 2, _ht_tip_y)
+                                logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠(%d,%d) dist=%.0f>200 無視]",
+                                            _ht_bx, _ht_by, *_ht_target, _ht_gf[0], _ht_gf[1], _ht_fg_dist)
                         else:
                             _ht_tip_y = _ht_chosen[4] + int(_ht_chosen[6] * 0.1)
                             _ht_target = (_ht_chosen[3] + _ht_chosen[5] // 2, _ht_tip_y)
-                            logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠(%d,%d) dist=%.0f>200 無視]",
-                                        _ht_bx, _ht_by, *_ht_target, _ht_gf[0], _ht_gf[1], _ht_fg_dist)
-                    else:
-                        _ht_tip_y = _ht_chosen[4] + int(_ht_chosen[6] * 0.1)
-                        _ht_target = (_ht_chosen[3] + _ht_chosen[5] // 2, _ht_tip_y)
-                        logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) タップ",
-                                    _ht_bx, _ht_by, *_ht_target)
-                elif _ht_gold:
-                    _ht_target = _ht_gold
-                    logger.info("  ホームチュートリアル: 金ボタン(%d,%d) タップ", *_ht_gold)
-                if _ht_target:
-                    tap_device(_ht_target[0], _ht_target[1], state, "HOME_TUTORIAL_TAP")
-                    return "HOME_TUTORIAL_TAP", 1.5
+                            logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) タップ",
+                                        _ht_bx, _ht_by, *_ht_target)
+                    elif _ht_gold:
+                        _ht_target = _ht_gold
+                        logger.info("  ホームチュートリアル: 金ボタン(%d,%d) タップ", *_ht_gold)
+                    if _ht_target:
+                        state.home_tutorial_tap_count += 1
+                        tap_device(_ht_target[0], _ht_target[1], state, "HOME_TUTORIAL_TAP")
+                        return "HOME_TUTORIAL_TAP", 1.5
+            else:
+                logger.info("  HOME_TUTORIAL %d回超 → LATE path (grind/ホーム到達) に委譲",
+                            state.home_tutorial_tap_count)
             blobs = []
         elif _is_tos_screen or _is_system_dialog:
             logger.info("  システムダイアログ/利用規約検出 → MOYA_TAP スキップ")
             blobs = []
         else:
+            state.home_tutorial_tap_count = 0  # ホーム以外 → カウンタリセット
             # バトル中は dark_mode=True + min_area=200 で暗背景の指アイコンも検知
             _blob_dark = is_battle_screen
             blobs = find_finger_blobs(analysis_path,
@@ -3675,6 +3682,7 @@ def detect_and_act(ocr: list, state: PilotState,
             state.result_total_taps = 0
             state.result_subtype = ""
             state.home_nav_count = 0
+            state.home_tutorial_tap_count = 0
             state.char_just_selected = False
             state.character_selected = False
             # クエストボタンをタップ
