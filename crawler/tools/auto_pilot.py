@@ -4600,6 +4600,20 @@ def main():
                     PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
                     state.current_scene not in ("MENU", "BATTLE") and
                     not _is_result_like):
+                # レターボックス最優先: 左黒帯>=80px → 動画確定 (ツールバー誤検出を防ぐ)
+                _rapid_roi_x = state.game_roi[0] if state.game_roi else 0
+                if _rapid_roi_x >= 80:
+                    _movie_btn = detect_movie_skip_button(img_path)
+                    if _movie_btn:
+                        _ms_x, _ms_y = roi_to_device(_movie_btn[0], _movie_btn[1], state.game_roi)
+                        tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
+                        logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d) [ADV_RAPID letterbox]", _ms_x, _ms_y)
+                    else:
+                        logger.info("[iter %d] phash_dist=%d レターボックス動画 → 待機", i, dist)
+                        state.last_action = "MOVIE_WAIT"
+                        time.sleep(2.0)
+                    state.last_phash = cur_phash
+                    continue
                 # ADV vs 動画シーン判別: ツールバー有無で分岐
                 if is_adv_toolbar_visible(img_path):
                     logger.info("[iter %d] phash_dist=%d ADV_RAPID → 即タップ (OCR skip)", i, dist)
@@ -5026,6 +5040,16 @@ def main():
                         state.current_scene, _re_scene,
                     )
                     state.current_scene = _re_scene
+                # レターボックスガード (動画シーンでのdetect_and_actバイパス)
+                _re_roi_x = state.game_roi[0] if state.game_roi else 0
+                if _re_roi_x >= 80 and _re_scene not in ("BATTLE", "MENU"):
+                    if not is_adv_toolbar_visible(_re_analysis):
+                        logger.info("[SCENE_REEVAL] レターボックス動画 → MOVIE_WAIT")
+                        state.last_action = "MOVIE_WAIT"
+                        state.action_repeat_count = 0
+                        state.scene_reeval_mode = False
+                        time.sleep(2.0)
+                        continue
                 action, wait_sec = detect_and_act(_re_ocr, state, _re_analysis)
                 state.last_action = action
                 state.action_repeat_count = 0
