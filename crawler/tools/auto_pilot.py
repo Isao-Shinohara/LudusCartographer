@@ -54,6 +54,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("auto_pilot")
 
+# PIL/Pillow の DEBUG STREAM ログを抑制 (スクリーンショット毎に IHDR/sRGB/IDAT が出る)
+logging.getLogger("PIL").setLevel(logging.WARNING)
+logging.getLogger("PIL.PngImagePlugin").setLevel(logging.WARNING)
+
 # ─── 設定 ────────────────────────────────────────────
 # ADB 自動接続: USB → Wi-Fi フォールバック
 try:
@@ -438,22 +442,18 @@ def text_core_center(
         # STEP 2: 最も信頼度の高いテキストの中心を使用
         best = max(texts_in_button, key=lambda r: r["confidence"])
         tx, ty = best["center"]
-        logger.info(
-            "[Targeting] Mode: Text-Center | Text: \"%s\" | Button: (%d,%d,%d,%d) | Calc: (%d,%d)%s",
-            best["text"], bx, by, bw, bh, tx, ty,
-            f" | Label: {label}" if label else "",
-        )
+        logger.debug("[SmartTap] text='%s' btn(%d,%d,%d,%d)→(%d,%d)%s",
+                     best["text"], bx, by, bw, bh, tx, ty,
+                     f" {label}" if label else "")
         return tx, ty
 
     # STEP 3: テキストなし → B の中心（下部15%除外）
     effective_h = int(bh * 0.85)
     cx = bx + bw // 2
     cy = by + effective_h // 2
-    logger.info(
-        "[Targeting] Mode: Button-Center-Adjusted | Text: (none) | Button: (%d,%d,%d,%d) | Bottom15%%excluded | Calc: (%d,%d)%s",
-        bx, by, bw, bh, cx, cy,
-        f" | Label: {label}" if label else "",
-    )
+    logger.debug("[SmartTap] no-text btn(%d,%d,%d,%d)→(%d,%d)%s",
+                 bx, by, bw, bh, cx, cy,
+                 f" {label}" if label else "")
     return cx, cy
 
 
@@ -1173,43 +1173,6 @@ def detect_tutorial_dialog_nav(img_path: Path,
         return None
 
 
-def save_tutorial_dialog_templates(img_path: Path, W: int = 1520, H: int = 720) -> None:
-    """
-    チュートリアルダイアログが表示されている画像から × ボタンと ▷ 矢印の
-    テンプレート画像を自動保存する (各テンプレートが未存在の場合のみ)。
-
-    呼び出し: チュートリアルポップアップが検出された最初の数回。
-    """
-    try:
-        _img = cv2.imread(str(img_path))
-        if _img is None:
-            return
-        _H, _W = _img.shape[:2]
-        _tpl_dir = _CRAWLER_ROOT / "assets" / "templates"
-        _tpl_dir.mkdir(parents=True, exist_ok=True)
-
-        # × ボタン領域: 右上隅 (x: W*0.93~W, y: 0~H*0.13)
-        if not _DIALOG_CLOSE_TEMPLATE.exists():
-            _x1, _y1 = int(_W * 0.93), 0
-            _x2, _y2 = _W, int(_H * 0.13)
-            _crop = _img[_y1:_y2, _x1:_x2]
-            if _crop.size > 0:
-                cv2.imwrite(str(_DIALOG_CLOSE_TEMPLATE), _crop)
-                logger.info("[DialogNav] × テンプレート自動保存: %s", _DIALOG_CLOSE_TEMPLATE)
-
-        # ▷ 矢印領域: 右エッジ (x: W*0.87~W*0.97, y: H*0.3~H*0.7)
-        if not _DIALOG_NEXT_TEMPLATE.exists():
-            _x1n, _y1n = int(_W * 0.87), int(_H * 0.3)
-            _x2n, _y2n = int(_W * 0.97), int(_H * 0.7)
-            _cropn = _img[_y1n:_y2n, _x1n:_x2n]
-            if _cropn.size > 0:
-                cv2.imwrite(str(_DIALOG_NEXT_TEMPLATE), _cropn)
-                logger.info("[DialogNav] ▷ テンプレート自動保存: %s", _DIALOG_NEXT_TEMPLATE)
-
-    except Exception as _e:
-        logger.debug("save_tutorial_dialog_templates error: %s", _e)
-
-
 # ─── ダイアログ枠検出 + × / ▷ ボタン探索 ──────────────────────────────────
 def detect_dialog_frame_and_nav(
     img_path: Path, W: int = 1520, H: int = 720,
@@ -1893,10 +1856,7 @@ def smart_tap_button(
         logger.debug("  [SmartTap] エラー: %s", e)
 
     # フォールバック: OCR 座標をそのまま使用
-    logger.info(
-        "[Targeting] Mode: Text-Center | Text: (OCR-direct) | Calc: (%d,%d) | Label: SmartTap-Fallback",
-        ocr_cx, ocr_cy,
-    )
+    logger.debug("[SmartTap] fallback OCR-direct (%d,%d)", ocr_cx, ocr_cy)
     return ocr_cx, ocr_cy
 
 
@@ -2151,8 +2111,7 @@ class AssetManager:
 ASSET_MANAGER = AssetManager()
 
 
-# ─── Result画面ハンドラ ヘルパー ──────────────────────────────
-_RESULT_HANDLER_COMPARE = os.environ.get("RESULT_HANDLER_COMPARE", "") == "1"
+# ─── Result画面ハンドラ ──────────────────────────────
 _RESULT_NEXT_X_RATIO = 0.785
 _RESULT_NEXT_Y_RATIO = 0.914
 
@@ -2413,11 +2372,7 @@ def handle_dialog_screen(
         if _dlg_pos and _dlg_neg:
             _dp_x, _dp_y = _dlg_pos["center"]
             logger.info(
-                "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) | Label: Dialog#0",
-                _dlg_pos["text"], _dp_x, _dp_y,
-            )
-            logger.info(
-                ">>> 【ダイアログ#0-DIALOG】確認ダイアログ(OK+キャンセル) → × ではなく '%s'(%d,%d) タップ",
+                "[Dialog#0] 確認ダイアログ OK優先 '%s'(%d,%d) タップ",
                 _dlg_pos["text"], _dp_x, _dp_y,
             )
             tap_device(_dp_x, _dp_y, state, f"DIALOG_CONFIRM_OK '{_dlg_pos['text']}'")
@@ -2682,120 +2637,6 @@ class StrategicDecisionEngine:
                 btn["color"], btn["priority"], text_str[:20], action_type,
             )
 
-    # ─── 要素キーワード → (英語名, 検出方法) ───
-    _ELEMENT_MAP: dict[str, tuple[str, str]] = {
-        "矢印":     ("arrow",   "arrow"),
-        "矩形":     ("rect",    "button"),
-        "ボタン":   ("btn",     "button"),
-        "アイコン": ("icon",    "button"),
-        "スキップ": ("skip",    "ocr:スキップ"),
-        "次へ":     ("next",    "ocr:次へ"),
-        "OK":       ("ok",      "ocr:OK"),
-        "閉じる":   ("close",   "ocr:閉じる"),
-        "ホーム":   ("home",    "ocr:ホーム"),
-        "ガチャ":   ("gacha",   "ocr:ガチャ"),
-        "ガシャ":   ("gacha",   "ocr:ガシャ"),
-        "戦闘":     ("battle",  "ocr:戦闘"),
-        "出撃":     ("deploy",  "ocr:出撃"),
-        "クエスト": ("quest",   "ocr:クエスト"),
-    }
-
-    # ─── 役割キーワード → プレフィックス ───
-    _ROLE_MAP: dict[str, str] = {
-        "ボタン": "btn",
-        "アイコン": "icon",
-        "タブ": "tab",
-        "メニュー": "menu",
-        "リスト": "list",
-    }
-
-    def learn_from_instruction(
-        self,
-        instruction: str,
-        screenshot_path: Path,
-        ocr_results: list,
-        asset_manager: "AssetManager",
-    ) -> Optional[str]:
-        """
-        ユーザーの曖昧な指示から UI 要素を自律的に抽出・命名・保存する。
-
-        例:
-            "矢印はボタン"   → 矢印を検出 → "btn_arrow" として保存
-            "スキップはボタン"→ OCRでスキップ検出 → "btn_skip" として保存
-
-        Returns: 保存したテンプレート名 or None
-        """
-        # 役割パース
-        role = "btn"
-        for kw, r in self._ROLE_MAP.items():
-            if kw in instruction:
-                role = r
-                break
-
-        # 要素パース
-        element = "unknown"
-        find_method = "button"
-        for kw, (en_name, method) in self._ELEMENT_MAP.items():
-            if kw in instruction:
-                element = en_name
-                find_method = method
-                break
-
-        name = f"{role}_{element}"
-        W, H = ANALYSIS_W, ANALYSIS_H
-        x1 = y1 = x2 = y2 = 0
-        cx: Optional[int] = None
-
-        if find_method == "arrow":
-            pos = find_3d_arrow(screenshot_path)
-            if pos:
-                cx, cy_val = pos
-                half_w, half_h = 80, 60
-                x1 = max(0, cx - half_w)
-                y1 = max(0, cy_val - half_h)
-                x2 = min(W, cx + half_w)
-                y2 = min(H, cy_val + half_h)
-
-        elif find_method.startswith("ocr:"):
-            ocr_kw = find_method[4:]
-            match = find_best(ocr_results, ocr_kw)
-            if match:
-                cx, _ = match["center"]
-                box = match["box"]
-                xs = [p[0] for p in box]
-                ys = [p[1] for p in box]
-                pad = 10
-                x1 = max(0, min(xs) - pad)
-                y1 = max(0, min(ys) - pad)
-                x2 = min(W, max(xs) + pad)
-                y2 = min(H, max(ys) + pad)
-
-        else:
-            # ボタン検出: find_buttons から最優先候補を使用
-            buttons = self.find_buttons(screenshot_path)
-            if buttons:
-                btn = buttons[0]
-                cx = btn["cx"]
-                x1, y1 = btn["x"], btn["y"]
-                x2, y2 = btn["x"] + btn["w"], btn["y"] + btn["h"]
-
-        if cx is None:
-            logger.warning("[SemanticAsset] '%s' から要素を検出できませんでした", instruction)
-            return None
-
-        saved = asset_manager.save_template(
-            screenshot_path, x1, y1, x2, y2,
-            name=name,
-            action=f"SEMANTIC_{name.upper()}",
-            threshold=0.75,
-        )
-        if saved:
-            logger.info(
-                "[SemanticAsset] '%s' → '%s' 登録完了 (%d,%d)-(%d,%d)",
-                instruction, name, x1, y1, x2, y2,
-            )
-            return name
-        return None
 
 
 # グローバル StrategicDecisionEngine インスタンス
@@ -2815,9 +2656,7 @@ def detect_and_act(ocr: list, state: PilotState,
     W, H = ANALYSIS_W, ANALYSIS_H
     joined = " ".join(texts)
 
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # 【絶対最優先 #-3】ダウンロード画面の厳格判定 (全検出より先に評価)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ── 【#-3】ダウンロード画面の厳格判定 ──
     # 条件: 右下エリアに "Download" テキスト + "MB" 進捗テキストが両方存在
     # → これ以外の画面は 100% ゲーム実行中であり、ロード待ちを禁止する。
     # 通信速度やネットワーク状態による推測は一切行わない。
@@ -2827,11 +2666,8 @@ def detect_and_act(ocr: list, state: PilotState,
         _dl_texts = [t for t in texts if "Download" in t or "MB" in t or "ダウンロード" in t]
         logger.info(">>> [DOWNLOAD_STRICT] 右下ゲージ確認: %s — ダウンロード待機", _dl_texts)
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # 【絶対最優先 #-2.9】確認ダイアログ — 肯定ボタン最優先
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ── 【#-2.9】確認ダイアログ — 肯定ボタン最優先 ──
     # OK/はい + キャンセル/いいえ が共存 → 確認ダイアログ → OK を必ずタップ。
     # #0-DIALOG の × ボタンが先に発動する問題を根本解決。
     # ダウンロードの次、SKIP より先に評価する。
@@ -2844,21 +2680,13 @@ def detect_and_act(ocr: list, state: PilotState,
         # OCR bbox はテキスト下部パディングを含むため Y を上方補正
         _cp_y_adj = max(0, _cp_y - _OCR_BBOX_Y_PADDING)
         logger.info(
-            "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) → Y補正(%d) | Label: ConfirmDialog",
-            _confirm_pos["text"], _cp_x, _cp_y, _cp_y_adj,
-        )
-        logger.info(
-            ">>> 【確認ダイアログ最優先】 肯定 '%s' (%d,%d) タップ (否定='%s'を無視)",
-            _confirm_pos["text"], _cp_x, _cp_y_adj,
-            _confirm_neg["text"],
+            "[ConfirmDialog] '%s' (%d,%d→Y%d) タップ (否定='%s'無視)",
+            _confirm_pos["text"], _cp_x, _cp_y, _cp_y_adj, _confirm_neg["text"],
         )
         tap_device(_cp_x, _cp_y_adj, state, f"CONFIRM_DIALOG_OK '{_confirm_pos['text']}'")
         return "ADV_CHOICE", 1.0
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # 【絶対最優先 #-2.5】SKIP ボタン汎用ハンドラ (カットシーン/ムービー)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ── 【#-2.5】SKIP ボタン汎用ハンドラ (カットシーン/ムービー) ──
     # "SKIP" / "スキップ" を検出 → 即タップでカットシーンをスキップ。
     # バトル中 ("通常攻撃" 等) は除外 (スキルボタンとの誤検出防止)。
     _in_battle_ctx = any(kw in joined for kw in _BATTLE_CORE_KWS)
@@ -2870,9 +2698,8 @@ def detect_and_act(ocr: list, state: PilotState,
                         _skip_btn["text"], _sk_x, _sk_y)
             tap_device(_sk_x, _sk_y, state, f"CUTSCENE_SKIP '{_skip_btn['text']}'")
             return "CUTSCENE_SKIP", 1.5
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    # ─── 【最優先 #-2】タイトル画面 設定/サポートメニュー ───
+    # ── 【#-2】タイトル画面 設定/サポートメニュー ──
     # 「動画配信設定」アイコンを誤タップして開く設定ポップアップ → BACK で閉じる
     # ただし、ストーリー/バトル/マップシーン中は「サポート」がセリフに含まれるため除外
     _settings_menu_kws = ["サポート", "データ引き継ぎ", "キャッシュクリア", "お問い合わせ"]
@@ -3437,12 +3264,10 @@ def detect_and_act(ocr: list, state: PilotState,
             # ボタンの上半分を狙い、空振りを防止 (画質設定OK等)
             _ac_y_adj = max(0, _ac_y - _OCR_BBOX_Y_PADDING)
             logger.info(
-                "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) → Y補正(%d) | Label: ADV-Choice",
+                "[ADV-Choice] '%s' (%d,%d→Y%d) タップ (否定='%s'無視)",
                 _adv_pos["text"], _ac_x, _ac_y, _ac_y_adj,
+                _adv_neg["text"] if _adv_neg else "なし",
             )
-            logger.info(">>> 【ADV選択肢】 肯定 '%s' (%d,%d) タップ (否定='%s'を無視)",
-                        _adv_pos["text"], _ac_x, _ac_y_adj,
-                        _adv_neg["text"] if _adv_neg else "なし")
             tap_device(_ac_x, _ac_y_adj, state, f"ADV_CHOICE '{_adv_pos['text']}'")
             return "ADV_CHOICE", 1.0
 
@@ -3457,17 +3282,13 @@ def detect_and_act(ocr: list, state: PilotState,
             _chal_btn = has_text(ocr, "挑戦", min_conf=0.3)
             if _chal_btn:
                 _cb_x, _cb_y = _chal_btn["center"]
-                logger.info(
-                    "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) | Label: Challenge",
-                    _chal_btn["text"], _cb_x, _cb_y,
-                )
                 # ROI クランプ: ゲーム領域外 (黒帯) をタップしない
                 if state.game_roi:
                     _roi_max_y = state.game_roi[1] + state.game_roi[3] - 5
                     _cb_y = min(_cb_y, _roi_max_y)
                 # 挑戦ボタンは右下(x>W*0.5, y>H*0.5)にあるはず
                 if _cb_x > W * 0.5 and _cb_y > H * 0.5:
-                    logger.info("  [CHALLENGE_BTN] 挑戦(%d,%d) → 直接タップ (ホーム誤検出突破)", _cb_x, _cb_y)
+                    logger.info("[Challenge] '%s'(%d,%d) → 直接タップ", _chal_btn["text"], _cb_x, _cb_y)
                     tap_device(_cb_x, _cb_y, state, "CHALLENGE_TAP")
                     return "CHALLENGE_TAP", 1.5
             # ── ホームチュートリアル: 指アイコン+金枠がある場合は優先タップ ──
@@ -3897,15 +3718,11 @@ def detect_and_act(ocr: list, state: PilotState,
             sentu_btn = expl
     if stage_num and sentu_btn:
         cx, cy = sentu_btn["center"]
-        logger.info(
-            "[Targeting] Mode: Text-Center | Text: \"%s\" | Calc: (%d,%d) | Label: QuestStart",
-            sentu_btn["text"], cx, cy,
-        )
         # ROI クランプ: ゲーム領域外 (黒帯) をタップしない
         if state.game_roi:
             _roi_max_y = state.game_roi[1] + state.game_roi[3] - 5
             cy = min(cy, _roi_max_y)
-        logger.info(">>> クエストマップ — 「%s」(%d,%d)", sentu_btn["text"], cx, cy)
+        logger.info("[QuestStart] '%s'(%d,%d) タップ", sentu_btn["text"], cx, cy)
         tap_device(cx, cy, state, f"QUEST_START {sentu_btn['text']}")
         state.battle_wait_count = 0
         return "QUEST_START", 2.0
@@ -4460,9 +4277,8 @@ def main():
 
     # 起動直後に実機物理解像度を取得してログ出力 (ループ内の初回 take_screenshot より早期)
     _dev_w, _dev_h = get_device_resolution()
-    logger.info("[DEVICE_RES] 物理解像度: %dx%d / 解析基準: %dx%d / ratio_x=%.3f ratio_y=%.3f",
-                _dev_w, _dev_h, ANALYSIS_W, ANALYSIS_H,
-                _dev_w / ANALYSIS_W, _dev_h / ANALYSIS_H)
+    logger.info("[DEVICE_RES] wm size: %dx%d / 解析基準: %dx%d (ROI補正で座標変換)",
+                _dev_w, _dev_h, ANALYSIS_W, ANALYSIS_H)
 
     logger.info("[TOKEN_SAVE] 節約モード稼働中。バトル発光検知で OCR スキップ → 爆速モードで進行します")
 
