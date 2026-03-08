@@ -2877,10 +2877,17 @@ def detect_and_act(ocr: list, state: PilotState,
             cx, cy = _tc_x, _tc_y
             # スワイプ系アクションの処理
             if action == "SWIPE_UP":
-                # 安全ネット: ダイアログKWが見えるときはポップアップ上のスワイプ誤発火を防止
-                # _DIALOG_FIRST_KWS キーワードがあればポップアップと判断してスキップ
+                # 安全ネット1: ダイアログKWが見えるときはポップアップ上のスワイプ誤発火を防止
                 _swipe_skip = any(kw in joined for kw in _DIALOG_FIRST_KWS)
+                # 安全ネット2: SWIPE_UP 連続空振り → テンプレート誤検出と判断しスキップ
+                if state.gold_swipe.stalled:
+                    logger.warning(
+                        "[SWIPE_UP] Asset Match 連続 %d 回空振り → スキップ (誤検出)",
+                        state.gold_swipe.count)
+                    state.gold_swipe.reset()
+                    _swipe_skip = True
                 if not _swipe_skip:
+                    state.gold_swipe.tick()
                     tmpl_meta = ASSET_MANAGER._templates.get("tutorial_swipe_pointer", {})
                     sx = tmpl_meta.get("swipe_from_x", cx)
                     sy = tmpl_meta.get("swipe_from_y", H - 50)
