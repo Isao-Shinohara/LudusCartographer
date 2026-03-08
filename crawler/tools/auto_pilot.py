@@ -3028,30 +3028,36 @@ def detect_and_act(ocr: list, state: PilotState,
         _nav = detect_tutorial_dialog_nav(analysis_path, W, H) if analysis_path else None
         if _nav:
             _nav_type, cx, cy = _nav
-            logger.info(">>> 【チュートリアルポップアップ】 '%s' %s→(%d,%d) [template]",
-                        pre_popup["text"][:10], "×" if _nav_type == "close" else "▷", cx, cy)
-            tap_device(cx, cy, state, "PRE_POPUP_TAP")
-            return "TUTORIAL_POPUP", 1.0
-        # ── フォールバック: 固定座標シーケンス ──
-        # ▷ 矢印: 右エッジ (W*0.91, H*0.49) ≈ (1383, 353)
-        # × ボタン: 右上隅 (W*0.98, H*0.056) ≈ (1490, 40)
+            if _nav_type == "close":
+                logger.info(">>> 【チュートリアルポップアップ】 '%s' ×→(%d,%d) [template]",
+                            pre_popup["text"][:10], cx, cy)
+                tap_device(cx, cy, state, "PRE_POPUP_TAP")
+                return "TUTORIAL_POPUP", 1.0
+            # ▷ 検出 → ページングダイアログ: process_paging_dialog で全ページ一括処理
+            # (単発タップだとページ2以降の OCR が _DIALOG_FIRST_KWS に不一致 → スタックする)
+            logger.info(">>> 【チュートリアルポップアップ→PAGING】 '%s' ▷(%d,%d) → 全ページ走査開始",
+                        pre_popup["text"][:10], cx, cy)
+            _pg_result = process_paging_dialog(
+                analysis_path, W, H, state,
+                initial_dlg=(_nav_type, cx, cy),
+                ocr_texts=texts,
+            )
+            state.pre_popup_tap_count = 0
+            return _pg_result, 1.0
+        # ── フォールバック: 固定座標 → process_paging_dialog に委譲 ──
+        # テンプレートなしでも ▷ 位置を推定してページング処理
         _arr = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)   # ▷ 矢印
         _cls = roi_to_device(int(W * 0.98), int(H * 0.056), state.game_roi)  # × ボタン
-        tap_candidates = [
-            _arr,   # ▷ 矢印 (1回目)
-            _arr,   # ▷ 矢印 (2回目)
-            _arr,   # ▷ 矢印 (3回目)
-            _arr,   # ▷ 矢印 (4回目)
-            _cls,   # × ボタン (最終ページ)
-            _cls,   # × ボタン (リトライ)
-        ]
-        idx = min(state.pre_popup_tap_count - 1, len(tap_candidates) - 1)
-        cx, cy = tap_candidates[idx]
-        _label = "×" if (cx, cy) == _cls else "▷"
-        logger.info(">>> 【チュートリアルポップアップ】 '%s' %s→(%d,%d) (試行%d回目)",
-                    pre_popup["text"][:10], _label, cx, cy, state.pre_popup_tap_count)
-        tap_device(cx, cy, state, "PRE_POPUP_TAP")
-        return "TUTORIAL_POPUP", 1.0
+        # まず ▷ をタップして反応を見る → process_paging_dialog で全ページ処理
+        logger.info(">>> 【チュートリアルポップアップ→PAGING(FB)】 '%s' ▷(%d,%d) → 全ページ走査",
+                    pre_popup["text"][:10], _arr[0], _arr[1])
+        _pg_result = process_paging_dialog(
+            analysis_path, W, H, state,
+            initial_dlg=("next", _arr[0], _arr[1]),
+            ocr_texts=texts,
+        )
+        state.pre_popup_tap_count = 0
+        return _pg_result, 1.0
 
     # ─── 【最優先 #0-b-extra】プレイヤー名入力ダイアログ ───
     # 「プレイヤー名を入力してください」→ 名前入力 → OKタップ
