@@ -2824,9 +2824,9 @@ def detect_and_act(ocr: list, state: PilotState,
     # → これ以外の画面は 100% ゲーム実行中であり、ロード待ちを禁止する。
     # 通信速度やネットワーク状態による推測は一切行わない。
     _has_download_text = any("Download" in t or "ダウンロード" in t for t in texts)
-    _has_mb_progress = any("MB" in t for t in texts)
-    if _has_download_text and _has_mb_progress:
-        _dl_texts = [t for t in texts if "Download" in t or "MB" in t or "ダウンロード" in t]
+    _has_size_progress = any("MB" in t or "GB" in t for t in texts)
+    if _has_download_text and _has_size_progress:
+        _dl_texts = [t for t in texts if "Download" in t or "MB" in t or "GB" in t or "ダウンロード" in t]
         logger.info(">>> [DOWNLOAD_STRICT] 右下ゲージ確認: %s — ダウンロード待機", _dl_texts)
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
 
@@ -2834,8 +2834,8 @@ def detect_and_act(ocr: list, state: PilotState,
     # OK/はい + キャンセル/いいえ が共存 → 確認ダイアログ → OK を必ずタップ。
     # #0-DIALOG の × ボタンが先に発動する問題を根本解決。
     # ダウンロードの次、SKIP より先に評価する。
-    _confirm_pos_kws = ["OK", "はい", "わかった", "了解", "決定"]
-    _confirm_neg_kws = ["キャンセル", "いいえ", "戻る", "やめる"]
+    _confirm_pos_kws = ["OK", "はい", "わかった", "了解", "決定", "許可", "Allow", "ALLOW", "リトライ", "Retry"]
+    _confirm_neg_kws = ["キャンセル", "いいえ", "戻る", "やめる", "許可しない", "拒否", "Deny"]
     _confirm_pos = has_any(ocr, _confirm_pos_kws)
     _confirm_neg = has_any(ocr, _confirm_neg_kws)
     if _confirm_pos and _confirm_neg:
@@ -2862,6 +2862,20 @@ def detect_and_act(ocr: list, state: PilotState,
             tap_device(_sk_x, _sk_y, state, f"CUTSCENE_SKIP '{_skip_btn['text']}'")
             return "CUTSCENE_SKIP", 1.5
 
+    # ── 【#-2.2】Android 権限ダイアログ (単独「許可」ボタン) ──
+    # 通知許可等で「許可しない」なしの単独「許可」ダイアログが出ることがある。
+    # 確認ダイアログ(#-2.9)は肯定+否定の共存が条件なので、ここで補完する。
+    if not _confirm_pos and not _in_battle_ctx:
+        _perm_btn = has_any(ocr, ["許可", "Allow", "ALLOW"])
+        _perm_ctx = has_any(ocr, ["通知", "位置情報", "ストレージ", "カメラ",
+                                   "notification", "permission"])
+        if _perm_btn and _perm_ctx:
+            _pm_x, _pm_y = _perm_btn["center"]
+            logger.info(">>> [PERMISSION] Android権限ダイアログ '%s' (%d,%d) タップ",
+                        _perm_btn["text"], _pm_x, _pm_y)
+            tap_device(_pm_x, _pm_y, state, f"PERMISSION_ALLOW '{_perm_btn['text']}'")
+            return "PERMISSION_ALLOW", 1.5
+
     # ── 【#-2】タイトル画面 設定/サポートメニュー ──
     # 「動画配信設定」アイコンを誤タップして開く設定ポップアップ → BACK で閉じる
     # ただし、ストーリー/バトル/マップシーン中は「サポート」がセリフに含まれるため除外
@@ -2871,7 +2885,7 @@ def detect_and_act(ocr: list, state: PilotState,
     # 設定メニューはストーリーコンテキスト外かつ2つ以上のキーワードが揃った時のみ判定
     _settings_hits = sum(1 for kw in _settings_menu_kws
                          if has_text(ocr, kw, min_conf=0.3) is not None)
-    if not _in_story_ctx and _settings_hits >= 1:
+    if not _in_story_ctx and _settings_hits >= 2:
         logger.info(">>> 【設定メニュー誤起動】 BACK キーで閉じる")
         adb("shell input keyevent 4")
         return "SETTINGS_BACK", 1.5
@@ -4039,6 +4053,25 @@ def detect_and_act(ocr: list, state: PilotState,
         tap_device(ok_x, ok_y, state, "SYSTEM_DLG_OK")
         return "SYSTEM_DLG_OK", 2.0
 
+    # ─── メンテナンス/アップデート検出 ───
+    _maint_kws = ["メンテナンス", "Maintenance", "maintenance"]
+    _update_kws = ["アップデート", "Update", "update", "最新バージョン"]
+    _maint_hit = has_any(ocr, _maint_kws, min_conf=0.3)
+    _update_hit = has_any(ocr, _update_kws, min_conf=0.3)
+    if _maint_hit:
+        logger.warning(">>> [MAINTENANCE] メンテナンス検出: '%s' — 60秒待機", _maint_hit["text"])
+        return "MAINTENANCE_WAIT", 60.0
+    if _update_hit and not _in_battle_ctx:
+        # アップデートダイアログ: OK/確認ボタンがあればタップ
+        _upd_ok = has_any(ocr, ["OK", "確認", "ストアへ"])
+        if _upd_ok:
+            _uo_x, _uo_y = _upd_ok["center"]
+            logger.info(">>> [UPDATE] アップデート通知 → '%s' (%d,%d) タップ", _upd_ok["text"], _uo_x, _uo_y)
+            tap_device(_uo_x, _uo_y, state, "UPDATE_DIALOG_OK")
+            return "UPDATE_DIALOG", 3.0
+        logger.warning(">>> [UPDATE] アップデート検出: '%s' — 手動対応が必要な可能性", _update_hit["text"])
+        return "UPDATE_WAIT", 10.0
+
     # ─── 利用規約同意ダイアログ ───
     # 「同意してゲームを始める」ボタンを右下の固定座標または OCR 座標でタップ
     tos_screen = has_any(ocr, ["同意してゲームを始める", "プライバシーポリシー"], min_conf=0.3)
@@ -4183,11 +4216,18 @@ def watchdog_recover(state: PilotState) -> bool:
     logger.info("[WATCHDOG] am start 実行 — 15秒待機 (初期化 + ご注意画面の出現を待つ)")
     time.sleep(15)  # 起動＋スプラッシュ待機
 
-    # 状態リセット (デバイス解像度・回数は保持)
+    # 状態リセット (デバイス解像度・回数・周回進捗は保持)
+    # force-stop → am start でタイトル画面に戻るため、
+    # home_reached / auto_activated 等のフラグもリセットする。
     state.last_phash = ""
     state.same_phash_count = 0
     state.stall_start = 0.0
     state.stall_corner_tried = False
+    state.home_reached = False
+    state.auto_activated = False
+    state.character_selected = False
+    state.char_just_selected = False
+    state.battle_wait_count = 0
     state.last_action = "WATCHDOG_RECOVERY"
     state.last_screen_change_time = time.time()
     return True
@@ -4938,6 +4978,12 @@ def main():
                 state.stall_corner_tried = False
                 state.same_phash_count = 0
                 state.last_phash = ""
+                # force-stop でタイトル画面に戻るため、進行フラグをリセット
+                state.home_reached = False
+                state.auto_activated = False
+                state.character_selected = False
+                state.char_just_selected = False
+                state.battle_wait_count = 0
                 continue
 
         # ── 4) 解析用画像の準備 ──
