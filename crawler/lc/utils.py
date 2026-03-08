@@ -57,37 +57,169 @@ _ensure_adb_in_path()
 WIFI_DEVICE_ADDR = "192.168.10.118:5555"
 
 
-def ensure_adb_connection(wifi_addr: str = WIFI_DEVICE_ADDR) -> str:
+def _find_usb_device(timeout: int = 5) -> Optional[str]:
+    """adb devices から USB デバイス (ポート番号なし = 非Wi-Fi) を返す。"""
+    try:
+        result = subprocess.run(
+            ["adb", "devices"], capture_output=True, text=True, timeout=timeout,
+        )
+        for line in result.stdout.splitlines():
+            parts = line.strip().split("\t")
+            if len(parts) == 2 and parts[1].strip() == "device":
+                serial = parts[0].strip()
+                # Wi-Fi デバイスは "IP:PORT" 形式 → ":" を含まないものが USB
+                if serial and ":" not in serial:
+                    return serial
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _find_wifi_device(addr: str, timeout: int = 5) -> Optional[str]:
+    """adb devices から指定 Wi-Fi アドレスに一致するオンラインデバイスを返す。"""
+    try:
+        result = subprocess.run(
+            ["adb", "devices"], capture_output=True, text=True, timeout=timeout,
+        )
+        for line in result.stdout.splitlines():
+            parts = line.strip().split("\t")
+            if len(parts) == 2 and parts[1].strip() == "device":
+                serial = parts[0].strip()
+                if serial == addr:
+                    return serial
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _switch_to_tcpip(usb_serial: str, port: int = 5555, timeout: int = 10) -> bool:
+    """USB デバイスを adb tcpip モードに切り替える。成功で True。"""
+    try:
+        r = subprocess.run(
+            ["adb", "-s", usb_serial, "tcpip", str(port)],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        ok = "restarting" in r.stdout.lower() or r.returncode == 0
+        if ok:
+            logger.info("[ADB_TCPIP] USB デバイス %s → tcpip %d に切り替え成功", usb_serial, port)
+        else:
+            logger.warning("[ADB_TCPIP] tcpip 切り替え失敗: %s %s", r.stdout.strip(), r.stderr.strip())
+        return ok
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.warning("[ADB_TCPIP] tcpip 切り替え失敗: %s", e)
+        return False
+
+
+def _adb_connect(addr: str, timeout: int = 10) -> bool:
+    """adb connect を実行。成功で True。"""
+    try:
+        r = subprocess.run(
+            ["adb", "connect", addr],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        out = r.stdout.lower()
+        ok = "connected" in out and "cannot" not in out
+        if ok:
+            logger.info("[ADB_CONNECT] Wi-Fi 接続成功: %s", addr)
+        return ok
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.warning("[ADB_CONNECT] adb connect 失敗: %s", e)
+        return False
+
+
+def _adb_pair(host: str, port: int, code: str, timeout: int = 15) -> bool:
+    """adb pair を実行 (Android 11+)。成功で True。"""
+    addr = f"{host}:{port}"
+    try:
+        r = subprocess.run(
+            ["adb", "pair", addr, code],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        ok = "successfully" in r.stdout.lower() or r.returncode == 0
+        if ok:
+            logger.info("[ADB_PAIR] ペアリング成功: %s", addr)
+        else:
+            logger.warning("[ADB_PAIR] ペアリング失敗: %s %s (コード期限切れ?)", r.stdout.strip(), r.stderr.strip())
+        return ok
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.warning("[ADB_PAIR] adb pair 失敗: %s", e)
+        return False
+
+
+def ensure_adb_connection(
+    wifi_addr: str = WIFI_DEVICE_ADDR,
+    pairing_code: Optional[str] = None,
+    pairing_port: Optional[int] = None,
+) -> str:
     """
     ADB デバイス接続を自動検出・確立する。
 
     検出順:
-      1. adb devices でオンラインデバイスがあればそのシリアルを返す
-      2. なければ Wi-Fi アドレスに adb connect を試行
-      3. それでも失敗 → RuntimeError
+      1. adb devices で Wi-Fi デバイスが見つかった → return
+      2a. USB デバイスあり → adb tcpip → adb connect wifi_addr
+      2b. デバイスなし → adb connect 直接試行 (既に tcpip モードの可能性)
+      2c. 失敗 + pairing_code あり → adb pair → adb connect
+      3. すべて失敗 → RuntimeError
+
+    Args:
+        wifi_addr: Wi-Fi 接続先アドレス (IP:PORT)
+        pairing_code: adb pair 用コード (Android 11+, Optional)
+        pairing_port: adb pair 用ポート (Android 11+, Optional)
 
     Returns: デバイスシリアル文字列
     """
-    # 既にオンラインのデバイスがあるか確認
-    serial = _try_adb(timeout=5)
-    if serial:
-        return serial
+    import time as _time  # sleep 用 (モジュール上位の time と衝突回避)
 
-    # Wi-Fi 接続を試行
-    logger.info("[ADB_CONNECT] デバイス未検出 → Wi-Fi 接続を試行: %s", wifi_addr)
-    try:
-        r = subprocess.run(
-            ["adb", "connect", wifi_addr],
-            capture_output=True, text=True, timeout=10,
+    # Step 1: 既にオンラインの Wi-Fi デバイスがあるか
+    wifi_serial = _find_wifi_device(wifi_addr)
+    if wifi_serial:
+        logger.info("[ADB_CONNECT] Wi-Fi デバイス検出済み: %s", wifi_serial)
+        return wifi_serial
+
+    # USB デバイスも含めて任意のオンラインデバイスを確認
+    any_serial = _try_adb(timeout=5)
+    if any_serial and ":" not in any_serial:
+        # Step 2a: USB デバイスあり → tcpip 切り替え → Wi-Fi 接続
+        logger.info("[ADB_CONNECT] USB デバイス検出: %s → Wi-Fi 切り替えを試行", any_serial)
+        if _switch_to_tcpip(any_serial):
+            _time.sleep(2)
+            if _adb_connect(wifi_addr):
+                # 接続確認
+                _time.sleep(1)
+                confirmed = _find_wifi_device(wifi_addr)
+                if confirmed:
+                    logger.info("[ADB_CONNECT] USB→Wi-Fi 切り替え完了: %s (USBケーブルは抜いてOK)", wifi_addr)
+                    return wifi_addr
+        # tcpip 切り替え失敗でも USB デバイスは使える
+        logger.info("[ADB_CONNECT] Wi-Fi 切り替え失敗 — USB デバイスをそのまま使用: %s", any_serial)
+        return any_serial
+    elif any_serial:
+        # 何らかの Wi-Fi デバイスが接続中 (アドレス不一致だが使えるデバイスあり)
+        return any_serial
+
+    # Step 2b: デバイスなし → Wi-Fi 直接接続試行 (既に tcpip モードの可能性)
+    logger.info("[ADB_CONNECT] デバイス未検出 → Wi-Fi 直接接続を試行: %s", wifi_addr)
+    if _adb_connect(wifi_addr):
+        return wifi_addr
+
+    # Step 2c: adb pair (Android 11+)
+    if pairing_code and pairing_port:
+        # wifi_addr から host 部分を抽出
+        host = wifi_addr.split(":")[0]
+        logger.info("[ADB_CONNECT] adb pair を試行: %s:%d", host, pairing_port)
+        if _adb_pair(host, pairing_port, pairing_code):
+            _time.sleep(1)
+            if _adb_connect(wifi_addr):
+                return wifi_addr
+        raise RuntimeError(
+            f"adb pair 失敗。ペアリングコード ({pairing_code}) が期限切れの可能性があります。\n"
+            f"デバイスの「ワイヤレスデバッグ」→「ペアリングコードによるデバイスのペアリング」で新しいコードを取得してください。"
         )
-        if "connected" in r.stdout.lower():
-            logger.info("[ADB_CONNECT] Wi-Fi 接続成功: %s", wifi_addr)
-            return wifi_addr
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        logger.warning("[ADB_CONNECT] Wi-Fi 接続失敗: %s", e)
 
     raise RuntimeError(
-        f"ADB デバイスが見つかりません。USB を接続するか Wi-Fi ({wifi_addr}) を確認してください。"
+        f"ADB デバイスが見つかりません。\n"
+        f"  [USB] USBデバッグを有効にしてケーブル接続してください\n"
+        f"  [Wi-Fi] adb connect {wifi_addr} または --pairing-code/--pairing-port を指定してください"
     )
 
 

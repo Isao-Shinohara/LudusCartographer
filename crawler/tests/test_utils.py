@@ -1,11 +1,11 @@
 """
-test_utils.py — get_device_udid() / detect_connected_device() / diagnose_device_connection() ユニットテスト
+test_utils.py — デバイス接続ユーティリティのユニットテスト
 
 実機なし・外部コマンドをモックして全パスを検証する。
 """
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 import subprocess
 
 import pytest
@@ -16,9 +16,15 @@ from lc.utils import (
     get_device_udid,
     get_android_serial,
     detect_connected_device,
+    ensure_adb_connection,
     _try_idevice_id,
     _try_ioreg,
     _try_adb,
+    _find_usb_device,
+    _find_wifi_device,
+    _switch_to_tcpip,
+    _adb_connect,
+    _adb_pair,
     _format_ios_udid,
     diagnose_device_connection,
 )
@@ -476,3 +482,200 @@ class TestGetAndroidSerial:
         assert "Wi-Fi" in msg
         assert "adb connect" in msg
         assert "ANDROID_UDID" in msg
+
+
+# ============================================================
+# _find_usb_device / _find_wifi_device ヘルパーテスト
+# ============================================================
+
+ADB_DEVICES_USB_ONLY = """\
+List of devices attached
+f6b8cef7\tdevice
+"""
+
+ADB_DEVICES_WIFI_ONLY = """\
+List of devices attached
+192.168.10.118:5555\tdevice
+"""
+
+ADB_DEVICES_USB_AND_WIFI = """\
+List of devices attached
+f6b8cef7\tdevice
+192.168.10.118:5555\tdevice
+"""
+
+
+class TestFindUsbDevice:
+
+    def _mock_run(self, stdout):
+        r = MagicMock(); r.stdout = stdout; return r
+
+    def test_returns_usb_serial(self):
+        with patch("subprocess.run", return_value=self._mock_run(ADB_DEVICES_USB_ONLY)):
+            assert _find_usb_device() == "f6b8cef7"
+
+    def test_ignores_wifi_device(self):
+        with patch("subprocess.run", return_value=self._mock_run(ADB_DEVICES_WIFI_ONLY)):
+            assert _find_usb_device() is None
+
+    def test_returns_first_usb_when_mixed(self):
+        with patch("subprocess.run", return_value=self._mock_run(ADB_DEVICES_USB_AND_WIFI)):
+            assert _find_usb_device() == "f6b8cef7"
+
+    def test_returns_none_on_error(self):
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            assert _find_usb_device() is None
+
+
+class TestFindWifiDevice:
+
+    def _mock_run(self, stdout):
+        r = MagicMock(); r.stdout = stdout; return r
+
+    def test_returns_matching_wifi(self):
+        with patch("subprocess.run", return_value=self._mock_run(ADB_DEVICES_WIFI_ONLY)):
+            assert _find_wifi_device("192.168.10.118:5555") == "192.168.10.118:5555"
+
+    def test_returns_none_when_no_match(self):
+        with patch("subprocess.run", return_value=self._mock_run(ADB_DEVICES_USB_ONLY)):
+            assert _find_wifi_device("192.168.10.118:5555") is None
+
+    def test_returns_none_on_error(self):
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            assert _find_wifi_device("192.168.10.118:5555") is None
+
+
+# ============================================================
+# _switch_to_tcpip / _adb_connect / _adb_pair
+# ============================================================
+
+class TestSwitchToTcpip:
+
+    def test_success(self):
+        r = MagicMock(); r.stdout = "restarting in TCP mode port: 5555"; r.returncode = 0
+        with patch("subprocess.run", return_value=r):
+            assert _switch_to_tcpip("f6b8cef7") is True
+
+    def test_failure_on_timeout(self):
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("adb", 10)):
+            assert _switch_to_tcpip("f6b8cef7") is False
+
+
+class TestAdbConnect:
+
+    def test_success(self):
+        r = MagicMock(); r.stdout = "connected to 192.168.10.118:5555"
+        with patch("subprocess.run", return_value=r):
+            assert _adb_connect("192.168.10.118:5555") is True
+
+    def test_cannot_connect(self):
+        r = MagicMock(); r.stdout = "cannot connect to 192.168.10.118:5555"
+        with patch("subprocess.run", return_value=r):
+            assert _adb_connect("192.168.10.118:5555") is False
+
+    def test_failure_on_error(self):
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            assert _adb_connect("192.168.10.118:5555") is False
+
+
+class TestAdbPair:
+
+    def test_success(self):
+        r = MagicMock(); r.stdout = "Successfully paired to 192.168.10.118:37000"; r.returncode = 0
+        with patch("subprocess.run", return_value=r):
+            assert _adb_pair("192.168.10.118", 37000, "123456") is True
+
+    def test_failure(self):
+        r = MagicMock(); r.stdout = "Failed: "; r.stderr = "error"; r.returncode = 1
+        with patch("subprocess.run", return_value=r):
+            assert _adb_pair("192.168.10.118", 37000, "123456") is False
+
+
+# ============================================================
+# ensure_adb_connection — 統合フロー
+# ============================================================
+
+class TestEnsureAdbConnection:
+    """ensure_adb_connection() の各パスを検証する。"""
+
+    WIFI_ADDR = "192.168.10.118:5555"
+
+    def test_wifi_already_connected(self):
+        """Wi-Fi デバイスが既にオンライン → そのまま返す"""
+        with patch("lc.utils._find_wifi_device", return_value=self.WIFI_ADDR):
+            result = ensure_adb_connection(wifi_addr=self.WIFI_ADDR)
+        assert result == self.WIFI_ADDR
+
+    def test_usb_to_wifi_switch(self):
+        """USB デバイス検出 → tcpip 切替 → Wi-Fi 接続成功"""
+        with patch("lc.utils._find_wifi_device", side_effect=[None, self.WIFI_ADDR]), \
+             patch("lc.utils._try_adb", return_value="f6b8cef7"), \
+             patch("lc.utils._switch_to_tcpip", return_value=True), \
+             patch("lc.utils._adb_connect", return_value=True), \
+             patch("time.sleep"):
+            result = ensure_adb_connection(wifi_addr=self.WIFI_ADDR)
+        assert result == self.WIFI_ADDR
+
+    def test_usb_fallback_when_tcpip_fails(self):
+        """USB デバイスあり + tcpip 切替失敗 → USB シリアルを返す"""
+        with patch("lc.utils._find_wifi_device", return_value=None), \
+             patch("lc.utils._try_adb", return_value="f6b8cef7"), \
+             patch("lc.utils._switch_to_tcpip", return_value=False):
+            result = ensure_adb_connection(wifi_addr=self.WIFI_ADDR)
+        assert result == "f6b8cef7"
+
+    def test_direct_wifi_connect(self):
+        """デバイスなし → Wi-Fi 直接接続成功"""
+        with patch("lc.utils._find_wifi_device", return_value=None), \
+             patch("lc.utils._try_adb", return_value=None), \
+             patch("lc.utils._adb_connect", return_value=True):
+            result = ensure_adb_connection(wifi_addr=self.WIFI_ADDR)
+        assert result == self.WIFI_ADDR
+
+    def test_adb_pair_flow(self):
+        """直接接続失敗 + pairing_code あり → adb pair → connect 成功"""
+        with patch("lc.utils._find_wifi_device", return_value=None), \
+             patch("lc.utils._try_adb", return_value=None), \
+             patch("lc.utils._adb_connect", side_effect=[False, True]), \
+             patch("lc.utils._adb_pair", return_value=True), \
+             patch("time.sleep"):
+            result = ensure_adb_connection(
+                wifi_addr=self.WIFI_ADDR,
+                pairing_code="123456",
+                pairing_port=37000,
+            )
+        assert result == self.WIFI_ADDR
+
+    def test_adb_pair_failure_raises(self):
+        """adb pair 失敗 → RuntimeError"""
+        with patch("lc.utils._find_wifi_device", return_value=None), \
+             patch("lc.utils._try_adb", return_value=None), \
+             patch("lc.utils._adb_connect", return_value=False), \
+             patch("lc.utils._adb_pair", return_value=False):
+            with pytest.raises(RuntimeError, match="pair 失敗"):
+                ensure_adb_connection(
+                    wifi_addr=self.WIFI_ADDR,
+                    pairing_code="123456",
+                    pairing_port=37000,
+                )
+
+    def test_no_device_no_pairing_raises(self):
+        """デバイスなし + pairing_code なし → RuntimeError"""
+        with patch("lc.utils._find_wifi_device", return_value=None), \
+             patch("lc.utils._try_adb", return_value=None), \
+             patch("lc.utils._adb_connect", return_value=False):
+            with pytest.raises(RuntimeError, match="見つかりません"):
+                ensure_adb_connection(wifi_addr=self.WIFI_ADDR)
+
+    def test_backward_compatible_no_args(self):
+        """引数なし呼び出し (後方互換) — Wi-Fi デバイスあれば成功"""
+        with patch("lc.utils._find_wifi_device", return_value="192.168.10.118:5555"):
+            result = ensure_adb_connection()
+        assert result == "192.168.10.118:5555"
+
+    def test_other_wifi_device_returned(self):
+        """Wi-Fi アドレス不一致だが何らかのデバイスが接続中 → そのまま返す"""
+        with patch("lc.utils._find_wifi_device", return_value=None), \
+             patch("lc.utils._try_adb", return_value="10.0.0.5:5555"):
+            result = ensure_adb_connection(wifi_addr=self.WIFI_ADDR)
+        assert result == "10.0.0.5:5555"

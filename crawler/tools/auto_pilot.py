@@ -59,16 +59,8 @@ logging.getLogger("PIL").setLevel(logging.WARNING)
 logging.getLogger("PIL.PngImagePlugin").setLevel(logging.WARNING)
 
 # ─── 設定 ────────────────────────────────────────────
-# ADB 自動接続: USB → Wi-Fi フォールバック
-try:
-    _detected = ensure_adb_connection()
-    # 環境変数にセットして get_android_serial() が一貫した値を返すようにする
-    if not os.environ.get("ANDROID_UDID") and not os.environ.get("ANDROID_SERIAL"):
-        os.environ["ANDROID_UDID"] = _detected
-    DEVICE_SERIAL = get_android_serial()
-except RuntimeError as e:
-    logger.error(str(e))
-    sys.exit(1)
+# ADB 接続は main() 内で実行する (CLI 引数 --pairing-code 等を受け取るため)
+DEVICE_SERIAL = ""  # main() で設定される
 
 # OS 非依存の一時ディレクトリ (Windows=AppData/Temp, macOS=/var/folders, Linux=/tmp)
 _TMPDIR = Path(tempfile.gettempdir())
@@ -149,16 +141,20 @@ OCR_LANG = "japan"
 OCR_MIN_CONF = 0.3
 
 # ─── scrcpy 管理 ───
-SCRCPY_DEVICE = "192.168.10.118:5555"
-SCRCPY_ARGS = [
-    "scrcpy",
-    "-s", SCRCPY_DEVICE,
-    "--turn-screen-off",   # 物理画面消灯
-    "--stay-awake",
-    "--always-on-top",
-    "--no-audio",
-    "-m", "800",
-]
+SCRCPY_DEVICE = ""  # main() で DEVICE_SERIAL から動的設定
+
+
+def _build_scrcpy_args(device_serial: str) -> list:
+    """scrcpy 起動引数を動的に構築する。"""
+    return [
+        "scrcpy",
+        "-s", device_serial,
+        "--turn-screen-off",   # 物理画面消灯
+        "--stay-awake",
+        "--always-on-top",
+        "--no-audio",
+        "-m", "800",
+    ]
 
 # Ctrl+C シグナルハンドラ用: main() で設定する PilotState への参照
 _pilot_state_ref: Optional["PilotState"] = None
@@ -586,9 +582,10 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
         return None  # 既に規定オプションで動作中
 
     # 新規起動
+    scrcpy_args = _build_scrcpy_args(SCRCPY_DEVICE)
     try:
         proc = subprocess.Popen(
-            SCRCPY_ARGS,
+            scrcpy_args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -4336,14 +4333,36 @@ def parse_args():
                         help="周回モード: ホーム到達後もクエストへ自動ナビゲート")
     parser.add_argument("--max-cycles", type=int, default=0,
                         help="周回上限 (0=無制限, デフォルト: 0)")
+    parser.add_argument("--pairing-code", type=str, default=None,
+                        help="adb pair 用ペアリングコード (Android 11+)")
+    parser.add_argument("--pairing-port", type=int, default=None,
+                        help="adb pair 用ポート番号 (Android 11+)")
     return parser.parse_args()
 
 
 # ─── メインループ ─────────────────────────────────
 def main():
+    global DEVICE_SERIAL, SCRCPY_DEVICE
+
     args = parse_args()
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+
+    # ─── ADB 自動接続: USB → Wi-Fi フォールバック ───
+    try:
+        _detected = ensure_adb_connection(
+            pairing_code=args.pairing_code,
+            pairing_port=args.pairing_port,
+        )
+        if not os.environ.get("ANDROID_UDID") and not os.environ.get("ANDROID_SERIAL"):
+            os.environ["ANDROID_UDID"] = _detected
+        DEVICE_SERIAL = get_android_serial()
+    except RuntimeError as e:
+        logger.error(str(e))
+        sys.exit(1)
+
+    # scrcpy デバイスを接続済みシリアルから動的設定
+    SCRCPY_DEVICE = DEVICE_SERIAL
 
     logger.info("=" * 62)
     logger.info("  まどドラ自律操縦 — Auto Pilot (ハイブリッド版)")
