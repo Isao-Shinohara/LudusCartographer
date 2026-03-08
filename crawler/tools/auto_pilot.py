@@ -603,10 +603,19 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
     return None
 
 
+MIN_TAP_INTERVAL = 1.0  # 全場面共通: タップ間隔は最低1秒
+
+
 def tap_device(x: int, y: int, state: PilotState, desc: str = "",
                finger_box: Optional[tuple] = None,
                gold_box: Optional[tuple] = None,
                post_wait: float = 1.0) -> None:
+    # ── 最低タップ間隔の強制 ──
+    if state.last_action_time > 0:
+        _elapsed = time.time() - state.last_action_time
+        if _elapsed < MIN_TAP_INTERVAL:
+            _wait = MIN_TAP_INTERVAL - _elapsed
+            time.sleep(_wait)
     if state.device_w and state.device_h:
         sx = state.device_w / ANALYSIS_W
         sy = state.device_h / ANALYSIS_H
@@ -4693,8 +4702,7 @@ def main():
                         if detect_adv_advance_icon(img_path):
                             logger.info("[ADV_ADVANCE][iter %d] 送り待ちアイコン検出 → 即タップ", i)
                             _aa_x, _aa_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
-                            adb(f"shell input tap {_aa_x} {_aa_y}")
-                            state.total_taps += 1
+                            tap_device(_aa_x, _aa_y, state, "ADV_ADVANCE")
                             state.last_phash = ""
                             state.same_phash_count = 0
                             state.stall_start = 0.0
@@ -4728,14 +4736,11 @@ def main():
             if stall_elapsed >= STALL_TIMEOUT and not state.stall_corner_tried:
                 logger.warning(">>> %.0f秒スタック — 右上×ボタン試行", stall_elapsed)
                 save_evidence(img_path, [], "STALL_CORNER", state)
-                time.sleep(0.3)
                 _sc_x, _sc_y = roi_to_device(int(ANALYSIS_W * 0.97), int(ANALYSIS_H * 0.06), state.game_roi)
-                adb(f"shell input tap {_sc_x} {_sc_y}")
-                state.total_taps += 1
+                tap_device(_sc_x, _sc_y, state, "STALL_CORNER")
                 state.stall_corner_tried = True
                 state.last_phash = ""
                 state.same_phash_count = 0
-                time.sleep(1)
                 continue
 
             if stall_elapsed >= STALL_TIMEOUT * 4 and state.stall_corner_tried:
