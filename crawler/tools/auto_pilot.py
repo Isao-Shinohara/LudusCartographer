@@ -248,6 +248,8 @@ class PilotState:
     wifi_fail_streak: int = 0         # Wi-Fi破損連続失敗カウンタ [0..5]
     last_phash_dist: int = 999        # 直近の phash 距離 (detect_and_act 内で参照)
     home_tutorial_tap_count: int = 0  # EARLY HOME検出でのHOME_TUTORIAL_TAP連続回数 (脱出閾値=10)
+    action_repeat_count: int = 0     # 同一アクション連続回数 (シーン再評価トリガー)
+    scene_reeval_mode: bool = False  # True: ガード緩和して再判定中
     # ─── 周回モード ───
     grind_mode: bool = False          # True: ホーム到達後もクエストへ自動ナビゲート
     grind_max_cycles: int = 0         # 0=無制限, N>0=N周で停止
@@ -2357,7 +2359,8 @@ def handle_dialog_screen(
 
     # ── 指ガード: ×のみダイアログは指がある場合スキップ ──
     # ページングダイアログ (▷) は SPATIAL_GATE に委任して指との距離で判断
-    if has_finger_guard and _dlg_type == "close":
+    # scene_reeval_mode 中はガード緩和 (誤認識からの脱出のため)
+    if has_finger_guard and _dlg_type == "close" and not state.scene_reeval_mode:
         logger.debug("[DIALOG_FINGER_GUARD] 指ブロブ + ×のみ → スキップ")
         return None
 
@@ -4962,6 +4965,45 @@ def main():
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         action, wait_sec = detect_and_act(ocr_results, state, analysis_path)
         state.last_action = action
+
+        # ── シーン再評価: 同一アクション連続時にシーン認識を疑う ──
+        if action == state.last_action and action not in (
+            "WAIT_FOR_CHANGE", "BATTLE_WAIT", "DOWNLOAD_WAIT",
+            "MOVIE_WAIT", "LOADING_WAIT",
+        ):
+            state.action_repeat_count += 1
+        else:
+            state.action_repeat_count = 0
+            state.scene_reeval_mode = False
+
+        _SCENE_REEVAL_THRESHOLD = 5
+        if state.action_repeat_count >= _SCENE_REEVAL_THRESHOLD:
+            logger.warning(
+                "[SCENE_REEVAL] '%s' が %d 回連続 → シーン再評価 (ガード緩和)",
+                action, state.action_repeat_count,
+            )
+            state.scene_reeval_mode = True
+            # 新しいスクリーンショットでフル再判定
+            try:
+                _re_img, _re_w, _re_h, _ = take_screenshot()
+                _re_analysis = prepare_analysis_image(_re_img, _re_w, _re_h)
+                _re_ocr = run_ocr(str(_re_analysis), lang=OCR_LANG,
+                                  min_confidence=OCR_MIN_CONF)
+                _re_texts = all_texts(_re_ocr)
+                _re_scene, _ = classify_scene(_re_texts, action)
+                if _re_scene != state.current_scene:
+                    logger.warning(
+                        "[SCENE_REEVAL] シーン不一致: %s → %s → 切替+再判定",
+                        state.current_scene, _re_scene,
+                    )
+                    state.current_scene = _re_scene
+                action, wait_sec = detect_and_act(_re_ocr, state, _re_analysis)
+                state.last_action = action
+                state.action_repeat_count = 0
+                logger.info("[SCENE_REEVAL] 再判定結果: %s", action)
+            except Exception as _re_err:
+                logger.debug("[SCENE_REEVAL] 再評価例外: %s", _re_err)
+            state.scene_reeval_mode = False
 
         # タップ成功時: スタックカウンタリセット
         if action not in ("WAIT_FOR_CHANGE", "BATTLE_WAIT", "DOWNLOAD_WAIT"):
