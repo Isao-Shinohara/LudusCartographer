@@ -2145,20 +2145,18 @@ def main():
             os.environ["ANDROID_UDID"] = _detected
         _serial = get_android_serial()
         set_device_serial(_serial)
+        set_scrcpy_device(_serial)
     except RuntimeError as e:
         logger.error(str(e))
         sys.exit(1)
 
-    # scrcpy デバイスを接続済みシリアルから動的設定
-    set_scrcpy_device(DEVICE_SERIAL)
-
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
     if args.fresh_install:
-        _fresh_install_from_play_store(DEVICE_SERIAL, APP_PACKAGE)
+        _fresh_install_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
 
     logger.info("=" * 62)
     logger.info("  まどドラ自律操縦 — Auto Pilot (ハイブリッド版)")
-    logger.info("  デバイス: %s", DEVICE_SERIAL)
+    logger.info("  デバイス: %s", _ap_device.DEVICE_SERIAL)
     logger.info("  ポーリング: %.1fs  強制解析: %d回変化なし  スタックTimeout: %.0fs",
                 POLL_INTERVAL, FORCE_ANALYZE_AFTER, STALL_TIMEOUT)
     if args.grind:
@@ -2239,8 +2237,8 @@ def main():
                 time.sleep(2)
                 subprocess.run(["adb", "start-server"], timeout=5)
                 time.sleep(2)
-                if DEVICE_SERIAL:
-                    subprocess.run(["adb", "connect", DEVICE_SERIAL], timeout=5)
+                if _ap_device.DEVICE_SERIAL:
+                    subprocess.run(["adb", "connect", _ap_device.DEVICE_SERIAL], timeout=5)
                     time.sleep(1)
             else:
                 logger.info("[WATCHDOG] Periodic check OK")
@@ -2261,7 +2259,7 @@ def main():
                 try:
                     subprocess.run(["adb", "disconnect"], timeout=5, capture_output=True)
                     time.sleep(1)
-                    subprocess.run(["adb", "connect", DEVICE_SERIAL], timeout=5, capture_output=True)
+                    subprocess.run(["adb", "connect", _ap_device.DEVICE_SERIAL], timeout=5, capture_output=True)
                     time.sleep(2)
                 except Exception as _rc_e:
                     logger.error("[WIFI_ERROR] ADB再接続例外: %s", _rc_e)
@@ -2484,8 +2482,8 @@ def main():
                     time.sleep(2)
                     subprocess.run(["adb", "start-server"], timeout=5)
                     time.sleep(2)
-                    if DEVICE_SERIAL:
-                        subprocess.run(["adb", "connect", DEVICE_SERIAL], timeout=5)
+                    if _ap_device.DEVICE_SERIAL:
+                        subprocess.run(["adb", "connect", _ap_device.DEVICE_SERIAL], timeout=5)
                         time.sleep(1)
                     state.consecutive_frozen_frames = 0
                     state.last_phash = ""  # 次ループで強制再取得
@@ -2594,10 +2592,10 @@ def main():
                                stall_elapsed, _restart_count + 1)
                 save_evidence(img_path, [], "UNITY_FREEZE_RESTART", state)
                 try:
-                    subprocess.run(["adb", "-s", DEVICE_SERIAL, "shell", "am", "force-stop",
+                    subprocess.run(["adb", "-s", _ap_device.DEVICE_SERIAL, "shell", "am", "force-stop",
                                     APP_PACKAGE], timeout=5)
                     time.sleep(3)
-                    subprocess.run(["adb", "-s", DEVICE_SERIAL, "shell", "am", "start", "-n",
+                    subprocess.run(["adb", "-s", _ap_device.DEVICE_SERIAL, "shell", "am", "start", "-n",
                                     f"{APP_PACKAGE}/{APP_ACTIVITY}"],
                                    timeout=5)
                     logger.info("[UNITY_RESTART] ゲーム再起動完了 — 30秒待機")
