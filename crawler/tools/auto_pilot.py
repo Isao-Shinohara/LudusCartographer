@@ -2400,15 +2400,8 @@ def main():
                     # レターボックス最優先: 左黒帯>=80px → 動画確定 (ツールバー誤検出を防ぐ)
                     _rapid_roi_x = state.game_roi[0] if state.game_roi else 0
                     if _rapid_roi_x >= 80:
-                        _movie_btn = detect_movie_skip_button(img_path)
-                        if _movie_btn:
-                            # img_path はデバイス解像度 — SKIP は全画面オーバーレイのため ROI 補正不要
-                            _ms_x = int(_movie_btn[0] * ANALYSIS_W / actual_w)
-                            _ms_y = int(_movie_btn[1] * ANALYSIS_H / actual_h)
-                            tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
-                            logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d) [ADV_RAPID letterbox]", _ms_x, _ms_y)
-                            state.movie_wait_consecutive = 0
-                        else:
+                        # MOVIE_SKIP 無効化 (ストーリースキップ禁止) — 動画は自然終了を待つ
+                        if True:
                             state.movie_wait_consecutive += 1
                             logger.info("[iter %d] phash_dist=%d レターボックス動画 → 待機 (%d/%d)",
                                         i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
@@ -2434,24 +2427,14 @@ def main():
                         state.last_phash = cur_phash
                         continue
                     else:
-                        # 動画シーン → ⏭ スキップボタン探索 (タップ抑制)
-                        _movie_btn = detect_movie_skip_button(img_path)
-                        if _movie_btn:
-                            _ms_x = int(_movie_btn[0] * ANALYSIS_W / actual_w)
-                            _ms_y = int(_movie_btn[1] * ANALYSIS_H / actual_h)
-                            tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
-                            logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d)", _ms_x, _ms_y)
-                            state.movie_wait_consecutive = 0
-                            state.last_phash = cur_phash
-                            continue
-                        else:
-                            state.movie_wait_consecutive += 1
-                            logger.info("[iter %d] phash_dist=%d 動画再生中 → 待機 (%d/%d)",
-                                        i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
-                            state.last_action = "MOVIE_WAIT"
-                            state.last_phash = cur_phash
-                            time.sleep(0.5)
-                            continue
+                        # MOVIE_SKIP 無効化 (ストーリースキップ禁止) — 動画は自然終了を待つ
+                        state.movie_wait_consecutive += 1
+                        logger.info("[iter %d] phash_dist=%d 動画再生中 → 待機 (%d/%d)",
+                                    i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
+                        state.last_action = "MOVIE_WAIT"
+                        state.last_phash = cur_phash
+                        time.sleep(0.5)
+                        continue
 
         else:
             # 画面変化なし
@@ -2548,21 +2531,11 @@ def main():
                             state.stall_start = 0.0
                             continue
                     else:
-                        # 動画シーン → ⏭ スキップボタン探索
-                        _movie_btn = detect_movie_skip_button(img_path)
-                        if _movie_btn:
-                            _ms_x = int(_movie_btn[0] * ANALYSIS_W / actual_w)
-                            _ms_y = int(_movie_btn[1] * ANALYSIS_H / actual_h)
-                            tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
-                            logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d) [phash stable]", _ms_x, _ms_y)
-                            state.last_phash = ""
-                            state.same_phash_count = 0
-                            continue
-                        else:
-                            logger.info("[MOVIE_WAIT] 動画再生中 → 待機 (phash stable)")
-                            state.last_action = "MOVIE_WAIT"
-                            time.sleep(0.5)
-                            continue
+                        # MOVIE_SKIP 無効化 (ストーリースキップ禁止) — 動画は自然終了を待つ
+                        logger.info("[MOVIE_WAIT] 動画再生中 → 待機 (phash stable)")
+                        state.last_action = "MOVIE_WAIT"
+                        time.sleep(0.5)
+                        continue
                 state.last_phash = cur_phash
                 time.sleep(_poll)
                 continue
@@ -2848,17 +2821,8 @@ def main():
         )
         if _movie_candidate and not _has_ui_text and scene not in ("BATTLE", "MENU") and analysis_path:
             if not is_adv_toolbar_cached(analysis_path, state):
-                _movie_btn = detect_movie_skip_button(analysis_path)
-                if _movie_btn:
-                    _ms_x, _ms_y = roi_to_device(
-                        _movie_btn[0], _movie_btn[1], state.game_roi)
-                    tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
-                    logger.info(
-                        "  ACTION_TAKEN MOVIE_SKIP (%d,%d) [letterbox L=%d]",
-                        _ms_x, _ms_y, _roi_x)
-                    state.last_phash = cur_phash
-                    continue
-                elif _is_movie_letterbox:
+                # MOVIE_SKIP 無効化 (ストーリースキップ禁止) — 動画は自然終了を待つ
+                if _is_movie_letterbox:
                     # レターボックスあり + ⏭なし → 動画待機
                     logger.info(
                         "[MOVIE_GUARD] レターボックス(L=%d)+ツールバーなし → 待機",
