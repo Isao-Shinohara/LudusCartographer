@@ -1246,18 +1246,16 @@ def detect_text_input_area(
 
 
 # ─── HSV金色チュートリアルポインター検出 → ホールドスワイプ ─────────────
+_SWIPE_FINGER_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "tutorial_swipe_finger.png"
+
+
 def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, int, int]]:
     """
-    HSVフィルタで金色チュートリアルポインター（手アイコン+軌跡）を検出し
-    スワイプ方向と座標を返す。
+    チュートリアル移動シーンの金色指アイコン+軌跡を検出しスワイプ方向を返す。
 
-    ユーザー指定HSV: Hue~30-50, Sat~100-250, Val~200-255
-    OpenCV HSV では H は 0-180 (標準360°の半分)なのでH=15-50を使用。
-
-    縦長領域(h>=w*2.5) のみ有効 (ボタン等との誤検出防止)。
-    手アイコン(幅広部)が上半分 → SWIPE_UP、下半分 → SWIPE_DOWN。
-
-    デバッグ画像: crawler/templates/debug/gold_detect_HHMMSS.png に自動保存。
+    検出優先順:
+      1. テンプレートマッチ (指アイコン) + 白い縦軌跡の確認
+      2. HSV金色フィルタ (フォールバック)
 
     Returns: (direction, swipe_x, from_y, to_y, duration_ms) or None
     """
@@ -1267,6 +1265,46 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
             return None
         H_img, W_img = img.shape[:2]
 
+        # ── Phase 1: テンプレートマッチ (指アイコン) + 白い縦軌跡 ──
+        if _SWIPE_FINGER_TEMPLATE.exists():
+            _tpl = cv2.imread(str(_SWIPE_FINGER_TEMPLATE))
+            if _tpl is not None and img.shape[0] >= _tpl.shape[0] and img.shape[1] >= _tpl.shape[1]:
+                _r = cv2.matchTemplate(img, _tpl, cv2.TM_CCOEFF_NORMED)
+                _, _mv, _, _ml = cv2.minMaxLoc(_r)
+                if _mv >= 0.60:
+                    _th, _tw = _tpl.shape[:2]
+                    _fx = _ml[0] + _tw // 2  # 指アイコン中心X
+                    _fy = _ml[1] + _th // 2  # 指アイコン中心Y
+                    # 指の下方に白い縦軌跡があるかチェック
+                    _trail_x1 = max(0, _fx - 15)
+                    _trail_x2 = min(W_img, _fx + 15)
+                    _trail_y1 = _ml[1] + _th  # 指の下端から
+                    _trail_y2 = min(H_img, _trail_y1 + 200)  # 200px下まで
+                    _has_trail = False
+                    if _trail_y2 > _trail_y1 + 20:
+                        _trail_roi = img[_trail_y1:_trail_y2, _trail_x1:_trail_x2]
+                        if _trail_roi.size > 0:
+                            _gray_t = cv2.cvtColor(_trail_roi, cv2.COLOR_BGR2GRAY)
+                            _bright = cv2.countNonZero(
+                                cv2.threshold(_gray_t, 160, 255, cv2.THRESH_BINARY)[1])
+                            _has_trail = _bright >= 30
+                    if _has_trail:
+                        # 指が上 + 軌跡が下 → SWIPE_UP
+                        _from_y = min(H_img - 60, _trail_y2 + 50)
+                        _to_y = max(50, _fy - 80)
+                        logger.info(
+                            "[GoldSwipe] テンプレ検出: score=%.2f finger=(%d,%d) trail=%s "
+                            "→ UP swipe_x=%d from=%d to=%d",
+                            _mv, _fx, _fy, _has_trail, _fx, _from_y, _to_y,
+                        )
+                        return "UP", _fx, _from_y, _to_y, 10000
+                    else:
+                        logger.debug(
+                            "[GoldSwipe] テンプレ指検出 score=%.2f (%d,%d) だが軌跡なし → HSVへ",
+                            _mv, _fx, _fy,
+                        )
+
+        # ── Phase 2: HSV金色フィルタ (フォールバック) ──
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         # 金色 (手アイコン+軌跡): H=15-50, S=60-255, V=180-255
         lower_gold = np.array([15, 60, 180], dtype=np.uint8)
