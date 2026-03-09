@@ -6,6 +6,7 @@ from __future__ import annotations
 import cv2
 import json
 import logging
+import re
 import time
 import numpy as np
 from pathlib import Path
@@ -17,8 +18,8 @@ from tools.ap.constants import (
     _CHAR_HEAD_Y1, _CHAR_HEAD_Y2, _SINGLE_ONLY, _CRAWLER_ROOT,
     _DEBUG_SAVE_IMAGES,
 )
-from lc.utils import compute_phash
-from tools.ap.device import tap_device
+from lc.utils import compute_phash, phash_distance
+from tools.ap.device import tap_device, take_screenshot
 
 logger = logging.getLogger("auto_pilot")
 
