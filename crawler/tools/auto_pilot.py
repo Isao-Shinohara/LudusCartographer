@@ -3538,9 +3538,16 @@ def detect_and_act(ocr: list, state: PilotState,
         state.home_reached = True
         # ── 指アイコン or 金枠がある場合 → まだホームチュートリアル中 ──
         # 「ホーム画面かつ指アイコン+金枠がない」状態が本当のチュートリアル終了
-        _home_blobs = find_finger_blobs(analysis_path) if analysis_path else []
+        # 安全弁: HOME_TUTORIAL_TAP 15回超 → 偽検出と判断しチュートリアル完了扱い
+        _tutorial_tap_limit = state.home_tutorial_tap_count >= 15
+        if _tutorial_tap_limit:
+            logger.info(">>> HOME_TUTORIAL_TAP %d回到達 → 偽検出と判断、チュートリアル完了扱い",
+                        state.home_tutorial_tap_count)
+        _home_blobs = [] if _tutorial_tap_limit else (
+            find_finger_blobs(analysis_path) if analysis_path else [])
         # ホーム画面ではナビバーが中央付近に来るため right_half_only=False で全域検索
-        _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
+        _home_gold = None if _tutorial_tap_limit else (
+            detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None)
         if _home_blobs or _home_gold:
             # 指アイコン+金枠が存在 → ガイドに従いタップして続行
             _tap_target = None
@@ -3558,29 +3565,32 @@ def detect_and_act(ocr: list, state: PilotState,
             elif _home_gold:
                 _tap_target = _home_gold
             if _tap_target:
-                logger.info(">>> ホームチュートリアル継続: 指/金枠 → (%d,%d) タップ", *_tap_target)
+                state.home_tutorial_tap_count += 1
+                logger.info(">>> ホームチュートリアル継続: 指/金枠 → (%d,%d) タップ [%d回目]",
+                            _tap_target[0], _tap_target[1], state.home_tutorial_tap_count)
                 tap_device(_tap_target[0], _tap_target[1], state, "HOME_TUTORIAL_TAP")
                 return "HOME_TUTORIAL_TAP", 1.0
-        # チュートリアルポインタが同一座標でスタックしている → クエスト探索へ移行
-        if state.blob_same_count >= 5:
-            logger.info(">>> ホーム画面 + もやスタック → クエストへナビゲート")
-            state.blob_same_count = 0  # リセット: 次回はまたブロブ検出を試みる
-            state.home_nav_count += 1
-            quest_btn = has_text(ocr, "クエスト", min_conf=0.3)
-            if quest_btn:
-                cx, cy = quest_btn["center"]
-                logger.info(">>> クエストボタン (%d,%d) タップ", cx, cy)
-                tap_device(cx, cy, state, "QUEST_FROM_HOME")
+            # blob/gold検出あるがタップ対象なし → blob_same_count 処理へ
+            if state.blob_same_count >= 5:
+                logger.info(">>> ホーム画面 + もやスタック → クエストへナビゲート")
+                state.blob_same_count = 0
+                state.home_nav_count += 1
+                quest_btn = has_text(ocr, "クエスト", min_conf=0.3)
+                if quest_btn:
+                    cx, cy = quest_btn["center"]
+                    logger.info(">>> クエストボタン (%d,%d) タップ", cx, cy)
+                    tap_device(cx, cy, state, "QUEST_FROM_HOME")
+                    return "QUEST_FROM_HOME", 3.0
+                _qf_x, _qf_y = roi_to_device(int(W * 0.88), int(H * 0.96), state.game_roi)
+                tap_device(_qf_x, _qf_y, state, "QUEST_FIXED")
                 return "QUEST_FROM_HOME", 3.0
-            # OCR未検出 → 右下固定座標 (1520×720 画面での位置)
-            _qf_x, _qf_y = roi_to_device(int(W * 0.88), int(H * 0.96), state.game_roi)
-            tap_device(_qf_x, _qf_y, state, "QUEST_FIXED")
-            return "QUEST_FROM_HOME", 3.0
-        # クエストへの遷移を試みた後、まだホーム画面が表示されている → 遷移待ち
-        if state.home_nav_count > 0:
-            logger.info(">>> ホーム画面 + 遷移試行 %d回目 → 画面変化待ち", state.home_nav_count)
-            return "HOME_NAV_WAIT", 2.0
-        # 指アイコンも金枠もない → チュートリアル完了
+            if state.home_nav_count > 0:
+                logger.info(">>> ホーム画面 + 遷移試行 %d回目 → 画面変化待ち", state.home_nav_count)
+                return "HOME_NAV_WAIT", 2.0
+        # ── 指アイコンも金枠もない → チュートリアル完了判定 ──
+        # nav カウンタをリセット (チュートリアル指標消失)
+        state.home_nav_count = 0
+        state.blob_same_count = 0
         if state.grind_mode:
             # ── 周回モード: ホーム到達 → クエストへ自動ナビゲート ──
             state.grind_cycles_completed += 1
@@ -5019,8 +5029,10 @@ def main():
         state.last_ocr_texts = texts
 
         # ── 動画シーン検出: detect_and_act 前にガード ──
-        # 左右レターボックス (左黒帯>=80px) + ADVツールバーなし → 動画確定
         # 動画中にタップするとUIが一時停止/再生を繰り返すため抑制する
+        # 検出条件:
+        #   A) レターボックス (左黒帯>=80px) + ADVツールバーなし
+        #   B) レターボックスなしでも ⏭スキップボタン検出 + ADVツールバーなし
         # ただし OCR で UI テキストが豊富な場合は動画ではない (利用規約画面等)
         _roi_x = state.game_roi[0] if state.game_roi else 0
         _is_movie_letterbox = _roi_x >= 80
@@ -5028,7 +5040,10 @@ def main():
         _UI_TEXT_KWS = ("利用規約", "同意", "規約", "プライバシー", "ダウンロード",
                         "Download", "OK", "はい", "キャンセル", "設定", "お知らせ")
         _has_ui_text = any(kw in _ocr_joined for kw in _UI_TEXT_KWS) or len(texts) >= 8
-        if _is_movie_letterbox and not _has_ui_text and scene not in ("BATTLE", "MENU") and analysis_path:
+        _movie_candidate = (
+            _is_movie_letterbox or (len(texts) <= 3 and scene not in ("BATTLE", "MENU"))
+        )
+        if _movie_candidate and not _has_ui_text and scene not in ("BATTLE", "MENU") and analysis_path:
             if not is_adv_toolbar_cached(analysis_path, state):
                 _movie_btn = detect_movie_skip_button(analysis_path)
                 if _movie_btn:
@@ -5038,14 +5053,18 @@ def main():
                     logger.info(
                         "  ACTION_TAKEN MOVIE_SKIP (%d,%d) [letterbox L=%d]",
                         _ms_x, _ms_y, _roi_x)
-                else:
+                    state.last_phash = cur_phash
+                    continue
+                elif _is_movie_letterbox:
+                    # レターボックスあり + ⏭なし → 動画待機
                     logger.info(
                         "[MOVIE_GUARD] レターボックス(L=%d)+ツールバーなし → 待機",
                         _roi_x)
                     state.last_action = "MOVIE_WAIT"
                     time.sleep(2.0)
-                state.last_phash = cur_phash
-                continue
+                    state.last_phash = cur_phash
+                    continue
+                # レターボックスなし + ⏭なし → 動画ではない → detect_and_act へ
 
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         action, wait_sec = detect_and_act(ocr_results, state, analysis_path)
