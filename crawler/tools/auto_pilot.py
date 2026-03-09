@@ -2417,7 +2417,9 @@ def main():
                     if _rapid_roi_x >= 80:
                         _movie_btn = detect_movie_skip_button(img_path)
                         if _movie_btn:
-                            _ms_x, _ms_y = roi_to_device(_movie_btn[0], _movie_btn[1], state.game_roi)
+                            # img_path はデバイス解像度 — SKIP は全画面オーバーレイのため ROI 補正不要
+                            _ms_x = int(_movie_btn[0] * ANALYSIS_W / actual_w)
+                            _ms_y = int(_movie_btn[1] * ANALYSIS_H / actual_h)
                             tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
                             logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d) [ADV_RAPID letterbox]", _ms_x, _ms_y)
                             state.movie_wait_consecutive = 0
@@ -2434,7 +2436,9 @@ def main():
                         # ↓矢印ボタンをテンプレートマッチで検出
                         _adv_btn = ASSET_MANAGER.match_single("adv_next_btn", img_path)
                         if _adv_btn:
-                            _adv_x, _adv_y = _adv_btn[0], _adv_btn[1]
+                            # img_path はデバイス解像度 → 解析空間に変換
+                            _adv_x = int(_adv_btn[0] * ANALYSIS_W / actual_w)
+                            _adv_y = int(_adv_btn[1] * ANALYSIS_H / actual_h)
                             logger.info("[iter %d] phash_dist=%d ADV_RAPID → ↓ボタン (%.3f)", i, dist, _adv_btn[2])
                         else:
                             _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
@@ -2448,7 +2452,8 @@ def main():
                         # 動画シーン → ⏭ スキップボタン探索 (タップ抑制)
                         _movie_btn = detect_movie_skip_button(img_path)
                         if _movie_btn:
-                            _ms_x, _ms_y = roi_to_device(_movie_btn[0], _movie_btn[1], state.game_roi)
+                            _ms_x = int(_movie_btn[0] * ANALYSIS_W / actual_w)
+                            _ms_y = int(_movie_btn[1] * ANALYSIS_H / actual_h)
                             tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
                             logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d)", _ms_x, _ms_y)
                             state.movie_wait_consecutive = 0
@@ -2543,7 +2548,9 @@ def main():
                             # ↓矢印ボタンをテンプレートマッチで検出
                             _aa_btn = ASSET_MANAGER.match_single("adv_next_btn", img_path)
                             if _aa_btn:
-                                _aa_x, _aa_y = _aa_btn[0], _aa_btn[1]
+                                # img_path はデバイス解像度 → 解析空間に変換
+                                _aa_x = int(_aa_btn[0] * ANALYSIS_W / actual_w)
+                                _aa_y = int(_aa_btn[1] * ANALYSIS_H / actual_h)
                             else:
                                 _aa_x, _aa_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
                             tap_device(_aa_x, _aa_y, state, "ADV_ADVANCE")
@@ -2556,7 +2563,8 @@ def main():
                         # 動画シーン → ⏭ スキップボタン探索
                         _movie_btn = detect_movie_skip_button(img_path)
                         if _movie_btn:
-                            _ms_x, _ms_y = roi_to_device(_movie_btn[0], _movie_btn[1], state.game_roi)
+                            _ms_x = int(_movie_btn[0] * ANALYSIS_W / actual_w)
+                            _ms_y = int(_movie_btn[1] * ANALYSIS_H / actual_h)
                             tap_device(_ms_x, _ms_y, state, "MOVIE_SKIP")
                             logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d) [phash stable]", _ms_x, _ms_y)
                             state.last_phash = ""
