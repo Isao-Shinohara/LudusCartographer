@@ -2427,14 +2427,25 @@ def main():
                         state.last_phash = cur_phash
                         continue
                     else:
-                        # MOVIE_SKIP 無効化 (ストーリースキップ禁止) — 動画は自然終了を待つ
-                        state.movie_wait_consecutive += 1
-                        logger.info("[iter %d] phash_dist=%d 動画再生中 → 待機 (%d/%d)",
-                                    i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
-                        state.last_action = "MOVIE_WAIT"
-                        state.last_phash = cur_phash
-                        time.sleep(0.5)
-                        continue
+                        # ツールバーなし → >| ボタン有無で動画判定
+                        _movie_btn = detect_movie_skip_button(img_path)
+                        if _movie_btn:
+                            # >| ボタンのみ存在 = 動画シーン → タップせず待機
+                            state.movie_wait_consecutive += 1
+                            logger.info("[iter %d] phash_dist=%d 動画検出(>|のみ) → 待機 (%d/%d)",
+                                        i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
+                            state.last_action = "MOVIE_WAIT"
+                            state.last_phash = cur_phash
+                            time.sleep(0.5)
+                            continue
+                        else:
+                            state.movie_wait_consecutive += 1
+                            logger.info("[iter %d] phash_dist=%d 動画再生中 → 待機 (%d/%d)",
+                                        i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
+                            state.last_action = "MOVIE_WAIT"
+                            state.last_phash = cur_phash
+                            time.sleep(0.5)
+                            continue
 
         else:
             # 画面変化なし
@@ -2531,8 +2542,12 @@ def main():
                             state.stall_start = 0.0
                             continue
                     else:
-                        # MOVIE_SKIP 無効化 (ストーリースキップ禁止) — 動画は自然終了を待つ
-                        logger.info("[MOVIE_WAIT] 動画再生中 → 待機 (phash stable)")
+                        # ツールバーなし → >| ボタン有無で動画判定
+                        _movie_btn = detect_movie_skip_button(img_path)
+                        if _movie_btn:
+                            logger.info("[MOVIE_WAIT] 動画検出(>|のみ) → 待機 (phash stable)")
+                        else:
+                            logger.info("[MOVIE_WAIT] 動画再生中 → 待機 (phash stable)")
                         state.last_action = "MOVIE_WAIT"
                         time.sleep(0.5)
                         continue
@@ -2821,17 +2836,18 @@ def main():
         )
         if _movie_candidate and not _has_ui_text and scene not in ("BATTLE", "MENU") and analysis_path:
             if not is_adv_toolbar_cached(analysis_path, state):
-                # MOVIE_SKIP 無効化 (ストーリースキップ禁止) — 動画は自然終了を待つ
-                if _is_movie_letterbox:
-                    # レターボックスあり + ⏭なし → 動画待機
+                # ツールバーなし → レターボックス or >| ボタン検出で動画判定
+                _movie_btn = detect_movie_skip_button(analysis_path)
+                if _is_movie_letterbox or _movie_btn:
+                    _reason = f"letterbox L={_roi_x}" if _is_movie_letterbox else ">|ボタン検出"
                     logger.info(
-                        "[MOVIE_GUARD] レターボックス(L=%d)+ツールバーなし → 待機",
-                        _roi_x)
+                        "[MOVIE_GUARD] %s+ツールバーなし → 待機 (タップ抑制)",
+                        _reason)
                     state.last_action = "MOVIE_WAIT"
                     time.sleep(0.5)
                     state.last_phash = cur_phash
                     continue
-                # レターボックスなし + ⏭なし → 動画ではない → detect_and_act へ
+                # レターボックスなし + >|なし → 動画ではない → detect_and_act へ
 
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         action, wait_sec = detect_and_act(ocr_results, state, analysis_path)
