@@ -38,15 +38,28 @@ def set_scrcpy_device(s: str) -> None:
 
 
 def _build_scrcpy_args(device_serial: str) -> list:
-    """scrcpy 起動引数を動的に構築する。"""
+    """
+    scrcpy 起動引数を動的に構築する。
+
+    ウィンドウサイズはデバイス実解像度から動的に算出する。
+    (旧実装は ANALYSIS_W/H=1520x720 に固定していたため他端末で極小ウィンドウになっていた)
+    """
+    # デバイス実解像度を取得 → ウィンドウは実機の半分サイズ
+    dev_w, dev_h = get_device_resolution()
+    win_w = dev_w // 2
+    win_h = dev_h // 2
+    # --max-size: 短辺を制限 (ストリーミング負荷軽減)
+    max_size = min(dev_w, dev_h)
+    logger.info("[SCRCPY] 実機解像度 %dx%d → window %dx%d, max-size %d",
+                dev_w, dev_h, win_w, win_h, max_size)
     return [
         "scrcpy",
         "-s", device_serial,
         "--turn-screen-off",   # 物理画面消灯
         "--stay-awake",
-        "--max-size", str(ANALYSIS_H),  # ストリーミング解像度を短辺720に制限
-        "--window-width", str(ANALYSIS_W // 2),
-        "--window-height", str(ANALYSIS_H // 2),
+        "--max-size", str(max_size),
+        "--window-width", str(win_w),
+        "--window-height", str(win_h),
     ]
 
 
