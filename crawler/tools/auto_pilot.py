@@ -1415,6 +1415,17 @@ def detect_and_act(ocr: list, state: PilotState,
             if state.home_nav_count > 0:
                 logger.info(">>> ホーム画面 + 遷移試行 %d回目 → 画面変化待ち", state.home_nav_count)
                 return "HOME_NAV_WAIT", 2.0
+        # ── 右上吹き出しセリフチェック: まだチュートリアルガイダンス中 ──
+        _bubble_texts = [r for r in ocr
+                         if r["center"][0] > W * 0.55 and r["center"][1] < H * 0.35
+                         and r["text"] not in ("AUTO", ">>", ">|", "D1", "×")]
+        if _bubble_texts:
+            _bt = _bubble_texts[0]
+            _btx, _bty = _bt["center"]
+            logger.info(">>> ホーム画面 + 吹き出しセリフ '%s' → チュートリアル継続 (%d,%d)",
+                        _bt["text"][:10], _btx, _bty)
+            tap_device(_btx, _bty, state, "BUBBLE_TAP")
+            return "BUBBLE_TAP", 0.3
         # ── 指アイコンも金枠もない → チュートリアル完了判定 ──
         # nav カウンタをリセット (チュートリアル指標消失)
         state.home_nav_count = 0
