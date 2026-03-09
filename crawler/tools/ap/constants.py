@@ -22,10 +22,10 @@ MAX_ITERATIONS = 2000
 POLL_INTERVAL = 0.3         # phash ポーリング間隔 (秒) — 高速化
 PHASH_THRESHOLD = 5         # phash 距離 >= 5 → 画面変化あり
 FORCE_ANALYZE_AFTER = 3     # phash 変化なし連続 N 回 → 強制 OCR — 高速化
-STALL_TIMEOUT = 20.0        # 強制OCRでもタップできず続く秒数 → スタック介入
+STALL_TIMEOUT = 15.0        # 強制OCRでもタップできず続く秒数 → スタック介入 (旧20.0)
 BATTLE_WAIT = 0.8           # バトル待機 — 高速化 (旧1.5)
 DOWNLOAD_WAIT = 10.0
-MIN_TAP_INTERVAL = 0.5      # 全場面共通: タップ間隔は最低0.5秒 (高速化)
+MIN_TAP_INTERVAL = 0.3      # 全場面共通: タップ間隔は最低0.3秒 (旧0.5)
 
 # ─── Watchdog: デッドロック自動復旧 ───
 WATCHDOG_DEADLOCK_THRESHOLD = 600.0  # 10分以上画面変化なし → デッドロック判定
@@ -120,7 +120,7 @@ SCENE_INTERVAL = {
     "BATTLE":  0.5,
     "ADV":     0.5,
     "STORY":   0.5,
-    "LOADING": 2.0,
+    "LOADING": 1.0,   # 旧2.0 → 高速化
     "MENU":    0.5,
     "UNKNOWN": 0.5,
 }

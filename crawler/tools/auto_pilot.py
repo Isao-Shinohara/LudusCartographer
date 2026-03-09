@@ -579,8 +579,8 @@ def detect_and_act(ocr: list, state: PilotState,
                 logger.info(">>> 【ご注意→phash計算失敗】 #%d → 次座標で再試行", _retry_i + 1)
 
         if _agree_changed:
-            logger.info(">>> 【Unity初期化待機】 60秒 Watchdog停止 (NOTICE_DISMISS exempt)")
-            return "NOTICE_DISMISS", 60.0
+            logger.info(">>> 【Unity初期化待機】 30秒 Watchdog停止 (NOTICE_DISMISS exempt)")
+            return "NOTICE_DISMISS", 30.0
         else:
             logger.info(">>> 【ご注意→リトライ上限(5回)】 次ループで再検出")
             return "NOTICE_DISMISS", 3.0
@@ -2316,9 +2316,9 @@ def main():
                 time.sleep(1.0)
                 # スキップ確認ダイアログが出る可能性 → 中央タップ
                 tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.6), state, "CINEMATIC_SKIP_CONFIRM")
-                time.sleep(2.0)
+                time.sleep(1.5)
             else:
-                time.sleep(2.0)
+                time.sleep(1.5)
             state.last_phash = ""
             state.same_phash_count = 0
             continue
@@ -2420,7 +2420,7 @@ def main():
                             logger.info("[iter %d] phash_dist=%d レターボックス動画 → 待機 (%d/%d)",
                                         i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
                             state.last_action = "MOVIE_WAIT"
-                            time.sleep(2.0)
+                            time.sleep(1.5)
                         state.last_phash = cur_phash
                         continue
                     # ADV vs 動画シーン判別: ツールバー有無で分岐
@@ -2454,7 +2454,7 @@ def main():
                                         i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
                             state.last_action = "MOVIE_WAIT"
                             state.last_phash = cur_phash
-                            time.sleep(2.0)
+                            time.sleep(1.5)
                             continue
 
         else:
@@ -2560,7 +2560,7 @@ def main():
                         else:
                             logger.info("[MOVIE_WAIT] 動画再生中 → 待機 (phash stable)")
                             state.last_action = "MOVIE_WAIT"
-                            time.sleep(2.0)
+                            time.sleep(1.5)
                             continue
                 state.last_phash = cur_phash
                 time.sleep(_poll)
@@ -2851,7 +2851,7 @@ def main():
                         "[MOVIE_GUARD] レターボックス(L=%d)+ツールバーなし → 待機",
                         _roi_x)
                     state.last_action = "MOVIE_WAIT"
-                    time.sleep(2.0)
+                    time.sleep(1.5)
                     state.last_phash = cur_phash
                     continue
                 # レターボックスなし + ⏭なし → 動画ではない → detect_and_act へ
@@ -2911,7 +2911,7 @@ def main():
                         state.last_action = "MOVIE_WAIT"
                         state.action_repeat_count = 0
                         state.scene_reeval_mode = False
-                        time.sleep(2.0)
+                        time.sleep(1.5)
                         continue
                 action, wait_sec = detect_and_act(_re_ocr, state, _re_analysis)
                 state.last_action = action
