@@ -1164,11 +1164,17 @@ def detect_and_act(ocr: list, state: PilotState,
             # バトル中は中央エリア(バトルフィールド)の肌色は誤検出なので無視
             # 優先順位: 左キャラカード(x<600,y>550) > 右パネル > 下部UI(y>H*0.8)
             if is_battle_screen:
+                # ── チュートリアル金枠+指: 大面積blob(area>10000)は最優先 ──
+                _tutorial_gold = [b for b in blobs if b[2] > 10000]
                 left_char = [b for b in blobs if b[0] < 600 and b[1] > H * 0.76]
                 # right_panel: スキルボタンは下半分(y>H*0.45)のみ。上部の蝶エネミーを排除
                 right_panel = [b for b in blobs if b[0] > _RIGHT_PANEL_X and b[1] > H * 0.45]
                 bottom_ui = [b for b in blobs if b[1] > H * 0.8 and b[0] >= 600]
-                if state.char_just_selected:
+                if _tutorial_gold:
+                    blobs = _tutorial_gold[:1]
+                    logger.info("  バトル: 金枠+指 (%d,%d) area=%.0f → チュートリアル最優先",
+                                blobs[0][0], blobs[0][1], blobs[0][2])
+                elif state.char_just_selected:
                     # 左キャラ選択済み → 右スキルを選択 (左キャラ再タップしない)
                     if right_panel:
                         blobs = right_panel
@@ -2756,11 +2762,23 @@ def main():
             _rapid_action = ""
             _rapid_double = False
 
+            # ── 共通: 指ブロブ検出 (Phase 0 / Phase B で共用) ──
+            _rapid_blobs = find_finger_blobs(analysis_path, min_area=200, dark_mode=True)
+            _rapid_blobs = [b for b in _rapid_blobs
+                            if b[1] > _SPATIAL_MARGIN_TOP and b[0] < ANALYSIS_W - _CLOSE_BTN_OFFSET]
+
+            # ── Phase 0: チュートリアル金枠+指 (area>10000) → 最優先タップ ──
+            _rapid_tutorial_gold = [b for b in _rapid_blobs if b[2] > 10000]
+            if _rapid_tutorial_gold:
+                _rapid_tx = _rapid_tutorial_gold[0][0]
+                _rapid_ty = _rapid_tutorial_gold[0][1]
+                _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
+
             # ── Phase A: アクティブキャラ検出 (赤/ピンク発光ハロー) ──
             # 【永続ルール】キャラ選択モヤ = 赤/ピンクの発光。明度差で識別。
             _active_char = detect_active_battle_char(analysis_path, ANALYSIS_W, ANALYSIS_H)
 
-            if not state.character_selected and _active_char is not None:
+            if not _rapid_action and not state.character_selected and _active_char is not None:
                 _rapid_tx, _rapid_ty = _active_char[0], _active_char[1]
                 _rapid_action = "BATTLE_RAPID_ACTIVE_P1"
                 _rapid_double = True
@@ -2771,9 +2789,6 @@ def main():
                     analysis_path, ANALYSIS_W, ANALYSIS_H, footer_ratio=0.30)
                 _rapid_right_g = [g for g in _rapid_glows if g["side"] == "right"]
 
-                _rapid_blobs = find_finger_blobs(analysis_path, min_area=200, dark_mode=True)
-                _rapid_blobs = [b for b in _rapid_blobs
-                                if b[1] > _SPATIAL_MARGIN_TOP and b[0] < ANALYSIS_W - _CLOSE_BTN_OFFSET]
                 _right_panel = [b for b in _rapid_blobs
                                 if b[0] > _RIGHT_PANEL_X and b[1] > ANALYSIS_H * 0.45]
 

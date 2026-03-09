@@ -185,13 +185,14 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
 
             blobs.append((cx, cy, area, bx, by, bw, bh))
         # ── 大面積ブロブ救済: 近傍に金枠があれば指+ゴールドUI融合と判定して採用 ──
-        if not blobs and _oversized:
+        # 通常ブロブの有無に関わらず、金枠付き大面積ブロブは常に最優先で挿入
+        if _oversized:
             for _ov in _oversized:
                 _gf = find_gold_frame_near(img_path, _ov[0], _ov[1], search_radius=200)
                 if _gf is not None:
                     logger.info("[FINGER_OVERSIZED_RESCUE] (%d,%d) area=%.0f + 金枠(%d,%d) → 採用",
                                 _ov[0], _ov[1], _ov[2], _gf[0], _gf[1])
-                    blobs.append(_ov)
+                    blobs.insert(0, _ov)  # 最優先 (先頭に挿入)
                     break  # 最初の1件で十分
         return sorted(blobs, key=lambda b: b[2], reverse=True)
     except ImportError:
