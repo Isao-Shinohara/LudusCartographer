@@ -558,9 +558,9 @@ def detect_and_act(ocr: list, state: PilotState,
             _tap_y = cy
             tap_device(_tap_x, _tap_y, state,
                        f"GO_CHUI_AGREE_R{_retry_i}({'OCR' if agree_btn else 'FB'})")
-            logger.info(">>> 【ご注意→phash監視】 #%d タップ(%d,%d) → 1s待機",
+            logger.info(">>> 【ご注意→phash監視】 #%d タップ(%d,%d) → 待機",
                         _retry_i + 1, _tap_x, _tap_y)
-            time.sleep(1.0)
+            time.sleep(0.3)
             _new_ss, _, _, _ = take_screenshot()
             _new_ph = compute_phash(_new_ss)
             if _base_ph and _new_ph:
@@ -671,7 +671,7 @@ def detect_and_act(ocr: list, state: PilotState,
                         logger.info(">>> [GoldSwipe] SWIPE_DOWN (%d,%d)→(%d,%d) %dms (試行%d)",
                                     _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
                         swipe(_sx, _fy, _sx, _ty, _dur, state=state)
-                    time.sleep(1.0)
+                    time.sleep(0.3)
                     _new_ss, _, _, _ = take_screenshot()
                     _new_ph = compute_phash(_new_ss)
                     if _base_ph_gs and _new_ph and phash_distance(_base_ph_gs, _new_ph) >= PHASH_THRESHOLD:
@@ -779,14 +779,14 @@ def detect_and_act(ocr: list, state: PilotState,
                         _fx, _fy,
                     )
                     tap_device(_fx, _fy, state, "TEXT_INPUT_FOCUS")
-                    time.sleep(1.0)
+                    time.sleep(0.3)
                     adb("shell input text MadoDora")
-                    time.sleep(1.0)
+                    time.sleep(0.3)
                     # IME変換確定 (ENTER) → キーボード閉じる (BACK) → ダイアログOKタップ
                     adb("shell input keyevent 66")   # KEYCODE_ENTER: IME変換確定
-                    time.sleep(0.5)
+                    time.sleep(0.2)
                     adb("shell input keyevent KEYCODE_BACK")  # keyboard dismiss
-                    time.sleep(1.0)
+                    time.sleep(0.3)
                     # ダイアログOKボタンを直接タップ (テンプレート位置より下方)
                     _ok_x = roi_to_device(int(W * 0.50), int(H * 0.77), state.game_roi)
                     tap_device(_ok_x[0], _ok_x[1], state, "NAME_INPUT_OK_DIRECT")
@@ -875,7 +875,7 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d)", _nf_x, _nf_y)
             tap_device(_nf_x, _nf_y, state, "NAME_INPUT_FOCUS")
             adb("shell input text MadoDora")
-            time.sleep(0.3)
+            time.sleep(0.2)
             adb("shell input keyevent 66")
             logger.info(">>> 【名前入力】 'MadoDora' 入力完了 → OK タップ待ち")
             return "NAME_INPUT_TEXT", 1.5
@@ -1198,7 +1198,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     logger.info(">>> [RECOVERY s%d] ジッタータップ (%d,%d)", _stg - 4, _jx, _jy)
                     tap_device(_jx, _jy, state, f"RECOVERY_JITTER_s{_stg - 4}")
                     if _stg == 7:
-                        time.sleep(1.5)
+                        time.sleep(0.5)
                     return "RECOVERY_JITTER", 0.5
                 # Stage 4-6 (count=8,9,10): キャッシュ破棄・広域金枠再スキャン
                 elif _stg <= 10:
@@ -1221,8 +1221,8 @@ def detect_and_act(ocr: list, state: PilotState,
                     return "RECOVERY_BLIND", 0.8
                 # Stage 10 (count>=14): 5秒待機 + リセット
                 else:
-                    logger.info(">>> [RECOVERY s10] 5秒待機 + カウンタリセット")
-                    time.sleep(5.0)
+                    logger.info(">>> [RECOVERY s10] 2秒待機 + カウンタリセット")
+                    time.sleep(2.0)
                     state.blob_same_count = 0
                     state.last_blob_xy = (0, 0)
                     return "RECOVERY_FINAL_WAIT", 0.5
@@ -1245,7 +1245,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     _SW_CHANGE_THRESHOLD = 20
                     for _sw_i in range(30):  # 最大30回 (約90秒)
                         swipe(fx, H - 50, fx, 50, 10000, state=state)
-                        time.sleep(0.3)
+                        time.sleep(0.2)
                         _sw_ss, _, _, _ = take_screenshot()
                         _sw_ph = compute_phash(_sw_ss)
                         if (_base_ph_sw and _sw_ph
@@ -1741,7 +1741,7 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.info(">>> 規約画面 — スクロール→同意")
         for _ in range(3):
             swipe(int(W * 0.46), int(H * 0.69), int(W * 0.46), int(H * 0.28), 500, state=state)
-            time.sleep(0.8)
+            time.sleep(0.3)
         agree_btn = has_any(ocr, ["同意"])
         if agree_btn:
             cx, cy = agree_btn["center"]
@@ -2323,12 +2323,10 @@ def main():
                 logger.info("[CINEMATIC_SKIP] 連続暗転 %d 回 → 右上スキップボタン試行 (%d,%d)",
                             state.consecutive_blackouts, skip_x, skip_y)
                 tap_device(skip_x, skip_y, state, "CINEMATIC_SKIP")
-                time.sleep(1.0)
                 # スキップ確認ダイアログが出る可能性 → 中央タップ
                 tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.6), state, "CINEMATIC_SKIP_CONFIRM")
-                time.sleep(1.5)
             else:
-                time.sleep(1.5)
+                time.sleep(0.5)
             state.last_phash = ""
             state.same_phash_count = 0
             continue
@@ -2655,7 +2653,6 @@ def main():
             state.total_loop_ms += _fms
             logger.info("  [PERF] Loop %.0fms (%s) [%d/15]",
                         _fms, _result_action[0], state.result_rapid_count)
-            time.sleep(_result_action[1])
             continue
         # RESULT状態リセット (Result画面を脱出した時)
         if state.last_action not in ("RESULT_TAP", "RESULT_NEXT",
@@ -2827,7 +2824,7 @@ def main():
         except Exception as e:
             logger.error("OCR failed: %s", e)
             state.last_phash = ""  # 次回も確実に解析
-            time.sleep(1)
+            time.sleep(0.3)
             continue
 
         texts = all_texts(ocr_results)
@@ -2882,7 +2879,7 @@ def main():
                         "[MOVIE_GUARD] レターボックス(L=%d)+ツールバーなし → 待機",
                         _roi_x)
                     state.last_action = "MOVIE_WAIT"
-                    time.sleep(1.5)
+                    time.sleep(0.5)
                     state.last_phash = cur_phash
                     continue
                 # レターボックスなし + ⏭なし → 動画ではない → detect_and_act へ
@@ -2942,7 +2939,7 @@ def main():
                         state.last_action = "MOVIE_WAIT"
                         state.action_repeat_count = 0
                         state.scene_reeval_mode = False
-                        time.sleep(1.5)
+                        time.sleep(0.5)
                         continue
                 action, wait_sec = detect_and_act(_re_ocr, state, _re_analysis)
                 state.last_action = action
