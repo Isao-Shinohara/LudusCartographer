@@ -2331,9 +2331,14 @@ def main():
             if state.total_blackout_skipped % 5 == 1:
                 logger.info("[iter %d] 暗転 — 3s 待機 (連続: %d)",
                             i, state.consecutive_blackouts)
-            # ── ムービースキップ: 無効化 (ストーリースキップ禁止) ──
-            # 連続暗転でも右上スキップボタンを押さず待機する。
-            time.sleep(0.5)
+            # ── 暗転復帰: 画面中央タップ (スキップボタンは押さない) ──
+            # 長時間暗転 (30回=~90秒) → 画面中央をタップして復帰を試みる
+            if state.consecutive_blackouts >= 30 and state.consecutive_blackouts % 10 == 0:
+                logger.info("[BLACKOUT_RECOVER] 連続暗転 %d 回 → 画面中央タップで復帰試行",
+                            state.consecutive_blackouts)
+                tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "BLACKOUT_RECOVER")
+            else:
+                time.sleep(0.5)
             state.last_phash = ""
             state.same_phash_count = 0
             continue
