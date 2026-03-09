@@ -403,20 +403,31 @@ class TestHandleDialogScreen:
         assert result[1] == 1.0
         mock_tap.assert_called_once()
 
-    @patch("tools.auto_pilot.process_paging_dialog", return_value="NOTICE_PAGING_DONE")
-    @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("next", 1400, 360))
-    def test_notice_popup_paging_bypasses_all_guards(self, mock_dlg, mock_paging,
-                                                       state, tmp_path):
-        """お知らせポップアップ: ページング検出時 → process_paging_dialog。"""
+    @patch("tools.auto_pilot.take_screenshot", return_value=(Path("/tmp/test.png"), 1520, 720, 0))
+    @patch("tools.auto_pilot.prepare_analysis_image", return_value=Path("/tmp/test.png"))
+    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.auto_pilot.count_page_dots", return_value=3)
+    @patch("tools.auto_pilot.detect_dialog_frame_and_nav")
+    def test_notice_popup_paging_bypasses_all_guards(self, mock_dlg, mock_dots,
+                                                       mock_tap, mock_prep,
+                                                       mock_ss, state, tmp_path):
+        """お知らせポップアップ: ドット数でページング → ×閉じ。"""
         from tools.auto_pilot import handle_dialog_screen
+        # 1回目: next, 2回目以降: close (最終ページ到達)
+        mock_dlg.side_effect = [
+            ("next", 1400, 360),  # 初回 (外側から渡される)
+            ("next", 1400, 360),  # ▷2回目
+            ("close", 1469, 44),  # 最終ページ → ×
+        ]
         analysis = tmp_path / "test.png"
         analysis.touch()
         result = handle_dialog_screen(state, analysis, [], [], False, True,
                                        is_notice_popup=True)
         assert result is not None
-        assert result[0] == "NOTICE_PAGING_DONE"
+        assert result[0] == "NOTICE_POPUP_CLOSE"
         assert result[1] == 1.0
-        mock_paging.assert_called_once()
+        # ドット3 → ▷2回 + ×1回 = 3タップ
+        assert mock_tap.call_count == 3
 
     @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("close", 100, 50))
     def test_battle_dialog_guard_skips_close_in_top(self, mock_dlg, state, tmp_path):

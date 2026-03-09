@@ -119,7 +119,8 @@ from tools.ap.image_proc import (  # noqa: E402
     find_gold_frame_near, is_adv_toolbar_cached, detect_adv_advance_icon,
     is_adv_toolbar_visible, detect_movie_skip_button,
     detect_tutorial_dialog_nav, detect_dialog_frame_and_nav,
-    process_paging_dialog, detect_notice_popup, detect_text_input_area,
+    process_paging_dialog, detect_notice_popup, count_page_dots,
+    detect_text_input_area,
     detect_tutorial_gold_swipe, detect_tutorial_gold_button_tap,
     smart_tap_button, find_golden_highlighted_button, find_3d_arrow,
     AssetManager, ASSET_MANAGER,
@@ -308,30 +309,54 @@ def handle_dialog_screen(
 
     _dlg_type, _dlg_x, _dlg_y = _dlg
 
-    # ── お知らせポップアップ: 全ガードバイパス → ページング or × 閉じ ──
+    # ── お知らせポップアップ: 全ガードバイパス → ドット数でページング → × 閉じ ──
     if is_notice_popup:
-        if _dlg_type in ("next", "bottom"):
-            logger.info(
-                ">>> 【お知らせポップアップ】ページング検出 %s(%d,%d) → process_paging_dialog",
-                _dlg_type, _dlg_x, _dlg_y,
-            )
-            _pg_result = process_paging_dialog(
-                analysis_path, W, H, state,
-                initial_dlg=(_dlg_type, _dlg_x, _dlg_y),
-                ocr_texts=texts,
-            )
-            state.pre_popup_tap_count = 0
-            state.dialog_close_total = 0
-            return _pg_result, 1.0
-        else:
-            logger.info(
-                ">>> 【お知らせポップアップ】×閉じ (%d,%d)",
-                _dlg_x, _dlg_y,
-            )
-            tap_device(_dlg_x, _dlg_y, state, "NOTICE_POPUP_CLOSE")
-            state.pre_popup_tap_count = 0
-            state.dialog_close_total = 0
-            return "NOTICE_POPUP_CLOSE", 1.0
+        # ページドット数からページ数を把握
+        _total_pages = count_page_dots(analysis_path)
+        _remaining = max(0, _total_pages - 1)  # 現在1ページ目 → 残りN-1回▷
+        logger.info(
+            ">>> 【お知らせポップアップ】ドット=%d → ▷%d回タップ後×閉じ",
+            _total_pages, _remaining,
+        )
+
+        # ▷ タップで最終ページまで進む
+        if _remaining > 0 and _dlg_type in ("next", "bottom"):
+            for _np in range(_remaining):
+                # 2回目以降は再検出して▷座標を取得
+                if _np > 0:
+                    _img_path, _aw, _ah, _ = take_screenshot()
+                    analysis_path = prepare_analysis_image(_img_path, _aw, _ah)
+                    _re_dlg = detect_dialog_frame_and_nav(
+                        analysis_path, W, H, ocr_texts=texts, roi=state.game_roi)
+                    if _re_dlg is None:
+                        logger.info("[NOTICE_POPUP] ダイアログ消失 (page=%d) → 完了", _np)
+                        break
+                    _dlg_type, _dlg_x, _dlg_y = _re_dlg
+                    if _dlg_type == "close":
+                        break  # もう▷がない → ×閉じへ
+                tap_device(_dlg_x, _dlg_y, state, "NOTICE_PAGING_NEXT")
+                logger.info("[NOTICE_POPUP] ▷タップ (%d/%d)", _np + 1, _remaining)
+                time.sleep(0.3)
+
+        # 最終ページ到達 → × で閉じる
+        _img_path, _aw, _ah, _ = take_screenshot()
+        analysis_path = prepare_analysis_image(_img_path, _aw, _ah)
+        _close_dlg = detect_dialog_frame_and_nav(
+            analysis_path, W, H, ocr_texts=texts, roi=state.game_roi)
+        if _close_dlg is not None:
+            _ct, _cx, _cy = _close_dlg
+            # close でも next でも × 位置を探してタップ
+            if _ct == "close":
+                tap_device(_cx, _cy, state, "NOTICE_POPUP_CLOSE")
+            else:
+                # ▷ しか見つからない場合 → 右上固定座標で × を狙う
+                _fx, _fy = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
+                tap_device(_fx, _fy, state, "NOTICE_POPUP_CLOSE_FB")
+            logger.info("[NOTICE_POPUP] ×閉じ完了 (total=%d pages)", _total_pages)
+
+        state.pre_popup_tap_count = 0
+        state.dialog_close_total = 0
+        return "NOTICE_POPUP_CLOSE", 1.0
 
     # ── 指ガード: ×のみダイアログは指がある場合スキップ ──
     # ページングダイアログ (▷) は SPATIAL_GATE に委任して指との距離で判断

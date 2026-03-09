@@ -996,15 +996,28 @@ def detect_dialog_frame_and_nav(
 # ─── お知らせポップアップ検出 ─────────────────────────────────────────────
 
 
-def _detect_page_dots(img, H: int, W: int) -> bool:
-    """画面下部にページドットインジケータ (● ○ ○ …) があるか検出。"""
+def count_page_dots(img_or_path, H: int = 720, W: int = 1520) -> int:
+    """画面下部のページドットインジケータ (● ○ ○ …) の個数を返す。
+
+    Args:
+        img_or_path: cv2画像(ndarray) または画像ファイルパス(Path)
+    Returns:
+        ドット数 (0 = 未検出)
+    """
+    if isinstance(img_or_path, (str, Path)):
+        img = cv2.imread(str(img_or_path))
+        if img is None:
+            return 0
+        H, W = img.shape[:2]
+    else:
+        img = img_or_path
     # ROI: 下部8%, 中央60%
     _y1 = int(H * 0.92)
     _x1 = int(W * 0.20)
     _x2 = int(W * 0.80)
     _roi = img[_y1:H, _x1:_x2]
     if _roi.size == 0:
-        return False
+        return 0
     _gray = cv2.cvtColor(_roi, cv2.COLOR_BGR2GRAY)
     _, _thr = cv2.threshold(_gray, 140, 255, cv2.THRESH_BINARY)
     _cnts, _ = cv2.findContours(_thr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -1017,7 +1030,12 @@ def _detect_page_dots(img, H: int, W: int) -> bool:
         _asp = _w / max(_h, 1)
         if 0.5 < _asp < 2.0:  # roughly circular
             _dot_count += 1
-    return _dot_count >= 3
+    return _dot_count
+
+
+def _detect_page_dots(img, H: int, W: int) -> bool:
+    """画面下部にページドットインジケータが3個以上あるか。"""
+    return count_page_dots(img, H, W) >= 3
 
 
 def _detect_background_blur(img, H: int, W: int) -> bool:
