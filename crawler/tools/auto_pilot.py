@@ -2716,11 +2716,13 @@ def main():
                     # キャラ選択済み → 右スキル優先
                     if _rapid_right_g:
                         _rr = max(_rapid_right_g, key=lambda g: g["area"])
-                        _rapid_tx, _rapid_ty = _rr["cx"], max(1, _rr["cy"] - _GLOW_CENTER_Y_OFFSET)
+                        # bbox上端 + 高さ1/3 = ボタン視覚中心
+                        _rapid_tx = _rr["cx"]
+                        _rapid_ty = max(1, _rr["by"] + _rr["bh"] // 3)
                         _rapid_action = "BATTLE_RAPID_GLOW_P2"
                     elif _right_panel:
                         _tb = max(_right_panel, key=lambda b: b[2])
-                        _rapid_tx, _rapid_ty = _tb[0], max(1, _tb[1] - _GLOW_CENTER_Y_OFFSET)
+                        _rapid_tx, _rapid_ty = _tb[0], _tb[1]
                         _rapid_action = "BATTLE_RAPID_MOYA_P2"
                     else:
                         _rapid_tx, _rapid_ty = roi_to_device(

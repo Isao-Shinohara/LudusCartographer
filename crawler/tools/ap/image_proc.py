@@ -20,6 +20,7 @@ from tools.ap.constants import (
 )
 from lc.utils import compute_phash, phash_distance
 from tools.ap.device import tap_device, take_screenshot
+from tools.ap.helpers import has_any
 
 logger = logging.getLogger("auto_pilot")
 
@@ -347,8 +348,11 @@ def _run_battle_glow_sm(
     # P1: 左キャラ発光 (キャラ未選択)
     if not state.character_selected and left:
         g = max(left, key=lambda g: g["area"])
-        gx, gy = g["cx"], max(1, g["cy"] - _GLOW_CENTER_Y_OFFSET)
-        logger.info("[%s P1] 左キャラ発光(%d,%d)→tap(%d,%d)", tag, g["cx"], g["cy"], gx, gy)
+        # bbox上端 + 高さ1/3 = ボタン視覚中心 (centroidはハロに引かれ下にずれる)
+        gx = g["cx"]
+        gy = max(1, g["by"] + g["bh"] // 3)
+        logger.info("[%s P1] 左キャラ発光 centroid(%d,%d) bbox_y=%d+%d → tap(%d,%d)",
+                    tag, g["cx"], g["cy"], g["by"], g["bh"], gx, gy)
         tap_device(gx, gy, state, "GLOW_LEFT_CHAR", rapid=True)
         tap_device(gx, gy, state, "GLOW_LEFT_CHAR")  # ダブルタップ
         state.character_selected = True
@@ -359,8 +363,11 @@ def _run_battle_glow_sm(
     # P2: 右スキル発光 (キャラ選択済み)
     if state.character_selected and right:
         g = max(right, key=lambda g: g["area"])
-        gx, gy = g["cx"], max(1, g["cy"] - _GLOW_CENTER_Y_OFFSET)
-        logger.info("[%s P2] 右発光(%d,%d)→tap(%d,%d)", tag, g["cx"], g["cy"], gx, gy)
+        # bbox上端 + 高さ1/3 = ボタン視覚中心
+        gx = g["cx"]
+        gy = max(1, g["by"] + g["bh"] // 3)
+        logger.info("[%s P2] 右発光 centroid(%d,%d) bbox_y=%d+%d → tap(%d,%d)",
+                    tag, g["cx"], g["cy"], g["by"], g["bh"], gx, gy)
         tap_device(gx, gy, state, "GLOW_RIGHT_SKILL")
         state.character_selected = False
         state.char_just_selected = False
@@ -373,7 +380,7 @@ def _run_battle_glow_sm(
         if na:
             nx, ny = na["center"]
             if nx > W * 0.5 and ny > H * 0.5:
-                ny = max(1, ny - _GLOW_CENTER_Y_OFFSET)
+                # OCRテキスト中心 ≈ ボタン視覚中心 (オフセット不要)
                 logger.info("[%s P3] 攻撃ボタンOCR '%s'(%d,%d) → tap", tag, na["text"], nx, ny)
                 tap_device(nx, ny, state, "NORMATK_TAP")
                 state.character_selected = False
