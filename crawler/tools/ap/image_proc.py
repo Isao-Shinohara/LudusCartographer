@@ -16,6 +16,7 @@ from tools.ap.constants import (
     _CHAR_HEAD_Y1, _CHAR_HEAD_Y2, _SINGLE_ONLY, _CRAWLER_ROOT,
     _DEBUG_SAVE_IMAGES,
 )
+from lc.utils import compute_phash
 
 logger = logging.getLogger("auto_pilot")
 
