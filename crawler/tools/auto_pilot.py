@@ -47,7 +47,7 @@ sys.path.insert(0, str(_CRAWLER_ROOT))
 from lc.ocr import run_ocr, find_best
 from lc.utils import (
     get_android_serial, compute_phash, phash_distance, ensure_adb_connection,
-    uninstall_app, is_app_installed, open_play_store,
+    uninstall_app, is_app_installed, open_play_store, WIFI_DEVICE_ADDR,
 )
 
 logging.basicConfig(
@@ -159,6 +159,15 @@ _OCR_BBOX_Y_PADDING = 30       # PaddleOCR bbox 下部パディング補正
 _GLOW_CENTER_Y_OFFSET = 35     # 発光ブロブ重心→ボタン視覚中心
 _GOLD_BTN_RETRY_Y_OFFSET = 30  # 金枠ボタン Y下方リトライ
 _FINGER_TIP_RATIO = 0.1        # 指ブロブ上端10% = 指先位置
+
+# ─── 解析空間レイアウト定数 (デバイス非依存: ANALYSIS_W/H 基準) ───
+_RIGHT_PANEL_X      = int(ANALYSIS_W * 0.69)    # 1050: 右パネル境界
+_CHAR_HEAD_X1       = int(ANALYSIS_W * 0.33)    # 500:  キャラ頭上エリア左端
+_CHAR_HEAD_X2       = int(ANALYSIS_W * 0.69)    # 1050: キャラ頭上エリア右端
+_CHAR_HEAD_Y1       = int(ANALYSIS_H * 0.17)    # 120:  キャラ頭上エリア上端
+_CHAR_HEAD_Y2       = int(ANALYSIS_H * 0.39)    # 280:  キャラ頭上エリア下端
+_SPATIAL_MARGIN_TOP = int(ANALYSIS_H * 0.05)    # 36:   上端システムUI除外マージン
+_CLOSE_BTN_OFFSET   = int(ANALYSIS_H * 0.056)   # 40:   右上×ボタンのオフセット
 
 # 排除された偽の指ブロブキャッシュ (debug_latest_tap.png への [REJECTED] 描画用)
 _rejected_finger_blobs: list = []
@@ -507,6 +516,34 @@ def get_device_resolution() -> tuple[int, int]:
     except Exception as _e:
         logger.warning("[WM_SIZE] 取得エラー: %s — フォールバック %dx%d", _e, ANALYSIS_W, ANALYSIS_H)
     return ANALYSIS_W, ANALYSIS_H
+
+
+def _query_status_bar_height() -> int:
+    """
+    `adb shell dumpsys display` から mStable top inset (ステータスバー高さ) を取得する。
+
+    非 immersive 画面 (ご注意画面等) での adb input tap Y座標補正に使用。
+    取得失敗時は解析解像度ベースのフォールバック値 int(ANALYSIS_H * 0.067) を返す。
+
+    Returns: ステータスバーの高さ (ピクセル, 解析空間ではなくデバイス空間)
+    """
+    _fallback = int(ANALYSIS_H * 0.067)  # 48/720 ≈ 0.067
+    try:
+        _out = subprocess.run(
+            ["adb", "-s", DEVICE_SERIAL, "shell", "dumpsys", "display"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+        # mStable=[0,48][1424,720] → top inset = 48
+        _m = re.search(r"mStable=\[(\d+),(\d+)\]\[(\d+),(\d+)\]", _out)
+        if _m:
+            _top = int(_m.group(2))
+            if _top > 0:
+                logger.debug("[STATUS_BAR] mStable top inset: %d", _top)
+                return _top
+        logger.debug("[STATUS_BAR] mStable パース失敗 → フォールバック %d", _fallback)
+    except Exception as _e:
+        logger.debug("[STATUS_BAR] dumpsys 取得エラー: %s → フォールバック %d", _e, _fallback)
+    return _fallback
 
 
 def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[Path], int, int, int]:
@@ -1162,8 +1199,10 @@ def is_adv_toolbar_cached(img_path: Path, state: "PilotState") -> bool:
 
 
 def detect_adv_advance_icon(img_path: Path,
-                             roi_x: int = 1330, roi_y: int = 610,
-                             roi_w: int = 170, roi_h: int = 90,
+                             roi_x: int = int(ANALYSIS_W * 0.875),
+                             roi_y: int = int(ANALYSIS_H * 0.847),
+                             roi_w: int = int(ANALYSIS_W * 0.112),
+                             roi_h: int = int(ANALYSIS_H * 0.125),
                              min_bright: int = 20) -> bool:
     """
     ADV送り待ちアイコン（◆/▼）を検出。
@@ -2083,9 +2122,9 @@ def find_3d_arrow(img_path: Path) -> Optional[tuple[int, int]]:
         img = cv2.imread(str(img_path))
         if img is None:
             return None
-        # キャラ頭上エリア (y=120-280, x=500-1050)
-        roi_y1, roi_y2 = 120, 280
-        roi_x1, roi_x2 = 500, 1050
+        # キャラ頭上エリア
+        roi_y1, roi_y2 = _CHAR_HEAD_Y1, _CHAR_HEAD_Y2
+        roi_x1, roi_x2 = _CHAR_HEAD_X1, _CHAR_HEAD_X2
         roi = img[roi_y1:roi_y2, roi_x1:roi_x2]
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         _, bright = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
@@ -2467,7 +2506,7 @@ def handle_dialog_screen(
     # ── [SPATIAL GATE] ▷ページングより指アイコンを最優先 ──────────────
     if _dlg_type in ("next", "bottom"):
         _sg_blobs = find_finger_blobs(analysis_path, min_area=400)
-        _sg_blobs = [b for b in _sg_blobs if b[1] > 36 and b[0] < W - 40]
+        _sg_blobs = [b for b in _sg_blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
         if _sg_blobs:
             _sg_best = max(_sg_blobs, key=lambda b: b[2])
             _sg_dist = ((_dlg_x - _sg_best[0]) ** 2 + (_dlg_y - _sg_best[1]) ** 2) ** 0.5
@@ -2688,7 +2727,7 @@ def detect_and_act(ocr: list, state: PilotState,
         # ご注意画面は非 immersive (ステータスバー表示中) のため、
         # adb input tap の Y 座標がスクリーンキャプチャより 48px 上にズレる。
         # 補正: OCR/フォールバック座標の Y からステータスバー高さを差し引く。
-        _STATUS_BAR_Y = 48  # mStable=[0,48][1424,720] のトップインセット
+        _STATUS_BAR_Y = _query_status_bar_height()
         agree_btn = (has_text(ocr, "同意してゲーム", min_conf=0.2) or
                      has_text(ocr, "同意して", min_conf=0.2) or
                      has_text(ocr, "ゲームを始める", min_conf=0.2))
@@ -2778,7 +2817,7 @@ def detect_and_act(ocr: list, state: PilotState,
     )
     if analysis_path is not None and not _is_result_screen:
         _pdg_blobs = find_finger_blobs(analysis_path, min_area=300, max_area=5000)
-        _pdg_blobs = [b for b in _pdg_blobs if b[1] > 36 and b[0] < W - 40]
+        _pdg_blobs = [b for b in _pdg_blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
         if _pdg_blobs:
             _pre_dialog_finger = True
             logger.info("[PRE_DIALOG_GUARD] 指ブロブ %d 個検出 → #0-DIALOG スキップ", len(_pdg_blobs))
@@ -3084,8 +3123,8 @@ def detect_and_act(ocr: list, state: PilotState,
         return "CLOSE_POPUP", 1.0
     close_popup = has_any(ocr, close_popup_kws)
     if close_popup:
-        close_x = W - 40  # 右上 × ボタン (1520-40=1480)
-        close_y = 40
+        close_x = W - _CLOSE_BTN_OFFSET  # 右上 × ボタン
+        close_y = _CLOSE_BTN_OFFSET
         logger.info(">>> 【%s ポップアップ】 → × (%d,%d) タップ", close_popup["text"][:6], close_x, close_y)
         tap_device(close_x, close_y, state, f"CLOSE_POPUP_{close_popup['text'][:6]}")
         return "CLOSE_POPUP", 1.0
@@ -3097,8 +3136,8 @@ def detect_and_act(ocr: list, state: PilotState,
                           has_text(ocr, "しましょう", min_conf=0.3))
         is_battle_guide = any(kw in joined for kw in _BATTLE_CORE_KWS)
         if tutorial_guide and not is_battle_guide:
-            close_x = W - 40  # 右上 × ボタン (1480, 40)
-            close_y = 40
+            close_x = W - _CLOSE_BTN_OFFSET  # 右上 × ボタン
+            close_y = _CLOSE_BTN_OFFSET
             logger.info(">>> 【チュートリアルガイド スタック】 '%s' → × (%d,%d) タップ",
                         tutorial_guide["text"][:10], close_x, close_y)
             tap_device(close_x, close_y, state, "TUTORIAL_GUIDE_CLOSE")
@@ -3244,15 +3283,15 @@ def detect_and_act(ocr: list, state: PilotState,
             blobs = find_finger_blobs(analysis_path,
                                       min_area=200 if _blob_dark else 400,
                                       dark_mode=_blob_dark)
-            # 画面端の誤検出を除去: y<36px(上端)または x>W-40px(右端最端)はシステムUI
-            blobs = [b for b in blobs if b[1] > 36 and b[0] < W - 40]
+            # 画面端の誤検出を除去: 上端/右端最端はシステムUI
+            blobs = [b for b in blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
         if blobs:
             # バトル中は中央エリア(バトルフィールド)の肌色は誤検出なので無視
-            # 優先順位: 左キャラカード(x<600,y>550) > 右パネル(x>1050) > 下部UI(y>H*0.8)
+            # 優先順位: 左キャラカード(x<600,y>550) > 右パネル > 下部UI(y>H*0.8)
             if is_battle_screen:
                 left_char = [b for b in blobs if b[0] < 600 and b[1] > H * 0.76]
                 # right_panel: スキルボタンは下半分(y>H*0.45)のみ。上部の蝶エネミーを排除
-                right_panel = [b for b in blobs if b[0] > 1050 and b[1] > H * 0.45]
+                right_panel = [b for b in blobs if b[0] > _RIGHT_PANEL_X and b[1] > H * 0.45]
                 bottom_ui = [b for b in blobs if b[1] > H * 0.8 and b[0] >= 600]
                 if state.char_just_selected:
                     # 左キャラ選択済み → 右スキルを選択 (左キャラ再タップしない)
@@ -3308,7 +3347,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     if _blob_with_gold is None:
                         _blob_with_gold = _b
                         _blob_gold_frame = _gf
-                if _blob_fallback is None and _b[0] > 1050:
+                if _blob_fallback is None and _b[0] > _RIGHT_PANEL_X:
                     _blob_fallback = _b  # 右側優先フォールバック
             if _blob_fallback is None and blobs:
                 _blob_fallback = blobs[0]
@@ -4184,6 +4223,8 @@ def parse_args():
                         help="adb pair 用ポート番号 (Android 11+)")
     parser.add_argument("--fresh-install", action="store_true",
                         help="アンインストール → Play Store 再インストール (新規アカウント)")
+    parser.add_argument("--wifi-addr", type=str, default=None,
+                        help="Wi-Fi ADB 接続先アドレス (IP:PORT, 例: 192.168.10.118:5555)")
     return parser.parse_args()
 
 
@@ -4326,6 +4367,7 @@ def main():
     # ─── ADB 自動接続: USB → Wi-Fi フォールバック ───
     try:
         _detected = ensure_adb_connection(
+            wifi_addr=args.wifi_addr or WIFI_DEVICE_ADDR,
             pairing_code=args.pairing_code,
             pairing_port=args.pairing_port,
         )
@@ -4871,9 +4913,9 @@ def main():
 
                 _rapid_blobs = find_finger_blobs(analysis_path, min_area=200, dark_mode=True)
                 _rapid_blobs = [b for b in _rapid_blobs
-                                if b[1] > 36 and b[0] < ANALYSIS_W - 40]
+                                if b[1] > _SPATIAL_MARGIN_TOP and b[0] < ANALYSIS_W - _CLOSE_BTN_OFFSET]
                 _right_panel = [b for b in _rapid_blobs
-                                if b[0] > 1050 and b[1] > ANALYSIS_H * 0.45]
+                                if b[0] > _RIGHT_PANEL_X and b[1] > ANALYSIS_H * 0.45]
 
                 if state.character_selected or state.char_just_selected:
                     # キャラ選択済み → 右スキル優先

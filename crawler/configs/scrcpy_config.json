@@ -1,6 +1,6 @@
 {
   "_comment": "scrcpy 標準フラグ — LudusCartographer まどドラ自律操縦用",
-  "device": "192.168.10.118:5555",
+  "device": "(auto-detected)",
   "flags": {
     "turn_screen_off": true,
     "always_on_top": true,

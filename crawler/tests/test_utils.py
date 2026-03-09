@@ -668,10 +668,10 @@ class TestEnsureAdbConnection:
                 ensure_adb_connection(wifi_addr=self.WIFI_ADDR)
 
     def test_backward_compatible_no_args(self):
-        """引数なし呼び出し (後方互換) — Wi-Fi デバイスあれば成功"""
-        with patch("lc.utils._find_wifi_device", return_value="192.168.10.118:5555"):
+        """引数なし呼び出し (後方互換) — wifi_addr 空 → _try_adb フォールバック"""
+        with patch("lc.utils._try_adb", return_value="f6b8cef7"):
             result = ensure_adb_connection()
-        assert result == "192.168.10.118:5555"
+        assert result == "f6b8cef7"
 
     def test_other_wifi_device_returned(self):
         """Wi-Fi アドレス不一致だが何らかのデバイスが接続中 → そのまま返す"""

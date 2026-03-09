@@ -36,7 +36,30 @@ except RuntimeError as e:
     sys.exit(1)
 SS_LOCAL = "/tmp/lc_bl.png"
 SS_REMOTE = "/sdcard/lc_bl.png"
-SCREEN_W, SCREEN_H = 1520, 720
+
+
+def _get_screen_size(serial: str) -> tuple:
+    """adb shell wm size で実機解像度を取得。landscape 保証。失敗時 (1520, 720)。"""
+    try:
+        r = subprocess.run(
+            ["adb", "-s", serial, "shell", "wm", "size"],
+            capture_output=True, text=True, timeout=5,
+        )
+        import re as _re
+        for prefix in ("Override size:", "Physical size:"):
+            m = _re.search(rf"{prefix}\s*(\d+)x(\d+)", r.stdout)
+            if m:
+                w, h = int(m.group(1)), int(m.group(2))
+                # landscape 保証: 幅 > 高さ
+                if h > w:
+                    w, h = h, w
+                return w, h
+    except Exception:
+        pass
+    return 1520, 720
+
+
+SCREEN_W, SCREEN_H = _get_screen_size(SERIAL)
 
 def adb(cmd):
     try:
