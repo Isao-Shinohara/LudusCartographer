@@ -21,7 +21,7 @@ EVIDENCE_DIR = _CRAWLER_ROOT / "evidence" / f"autopilot_{datetime.now().strftime
 MAX_ITERATIONS = 2000
 POLL_INTERVAL = 0.3         # phash ポーリング間隔 (秒) — 高速化
 PHASH_THRESHOLD = 5         # phash 距離 >= 5 → 画面変化あり
-FORCE_ANALYZE_AFTER = 3     # phash 変化なし連続 N 回 → 強制 OCR — 高速化
+FORCE_ANALYZE_AFTER = 1     # phash 変化なし連続 N 回 → 強制 OCR — 高速化
 STALL_TIMEOUT = 15.0        # 強制OCRでもタップできず続く秒数 → スタック介入 (旧20.0)
 BATTLE_WAIT = 0.8           # バトル待機 — 高速化 (旧1.5)
 DOWNLOAD_WAIT = 10.0
