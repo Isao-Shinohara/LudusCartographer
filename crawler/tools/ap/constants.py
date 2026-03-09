@@ -19,11 +19,11 @@ EVIDENCE_DIR = _CRAWLER_ROOT / "evidence" / f"autopilot_{datetime.now().strftime
 
 # ─── タイミング ───
 MAX_ITERATIONS = 2000
-POLL_INTERVAL = 0.3         # phash ポーリング間隔 (秒) — 高速化
+POLL_INTERVAL = 0.2         # phash ポーリング間隔 (秒)
 PHASH_THRESHOLD = 5         # phash 距離 >= 5 → 画面変化あり
-FORCE_ANALYZE_AFTER = 1     # phash 変化なし連続 N 回 → 強制 OCR — 高速化
-STALL_TIMEOUT = 15.0        # 強制OCRでもタップできず続く秒数 → スタック介入 (旧20.0)
-BATTLE_WAIT = 0.8           # バトル待機 — 高速化 (旧1.5)
+FORCE_ANALYZE_AFTER = 1     # phash 変化なし連続 N 回 → 強制 OCR
+STALL_TIMEOUT = 15.0        # 強制OCRでもタップできず続く秒数 → スタック介入
+BATTLE_WAIT = 0.0           # バトル待機 (tap_device の MIN_TAP_INTERVAL=1.0s が保証)
 DOWNLOAD_WAIT = 10.0
 MIN_TAP_INTERVAL = 1.0      # 全場面共通: タップ間隔は最低1.0秒
 
@@ -117,12 +117,12 @@ OCR_MIN_CONF = 0.3
 
 # ─── シーン分類ポーリング間隔 ───
 SCENE_INTERVAL = {
-    "BATTLE":  0.5,
+    "BATTLE":  0.2,
     "ADV":     0.2,
     "STORY":   0.2,
-    "LOADING": 1.0,   # 旧2.0 → 高速化
-    "MENU":    0.5,
-    "UNKNOWN": 0.5,
+    "LOADING": 1.0,
+    "MENU":    0.2,
+    "UNKNOWN": 0.2,
 }
 
 # テレメトリ定数

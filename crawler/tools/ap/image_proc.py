@@ -349,7 +349,7 @@ def _run_battle_glow_sm(
         g = max(left, key=lambda g: g["area"])
         gx, gy = g["cx"], max(1, g["cy"] - _GLOW_CENTER_Y_OFFSET)
         logger.info("[%s P1] 左キャラ発光(%d,%d)→tap(%d,%d)", tag, g["cx"], g["cy"], gx, gy)
-        tap_device(gx, gy, state, "GLOW_LEFT_CHAR", post_wait=0.3)
+        tap_device(gx, gy, state, "GLOW_LEFT_CHAR", rapid=True)
         tap_device(gx, gy, state, "GLOW_LEFT_CHAR")  # ダブルタップ
         state.character_selected = True
         state.char_just_selected = True
@@ -1056,7 +1056,7 @@ def process_paging_dialog(
         tap_device(_dx, _dy, state, "PAGING_NEXT")
         logger.info("[PAGING] ▷タップ (page=%d/%d)", _page + 1, max_pages)
         state.dialog_detections += 1
-        time.sleep(0.4)
+        time.sleep(0.2)
         # 次ページのスクリーンショットを取得して解析
         _img_path, _aw, _ah, _ = take_screenshot()
         analysis_path = prepare_analysis_image(_img_path, _aw, _ah)

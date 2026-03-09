@@ -214,9 +214,10 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
 
 def tap_device(x: int, y: int, state, desc: str = "",
                finger_box=None, gold_box=None,
-               post_wait: float = 0.5) -> None:
-    # ── 最低タップ間隔の強制 ──
-    if state.last_action_time > 0:
+               post_wait: float = 0.0,
+               rapid: bool = False) -> None:
+    # ── 最低タップ間隔の強制 (rapid=True でスキップ: ダブルタップ等) ──
+    if not rapid and state.last_action_time > 0:
         _elapsed = time.time() - state.last_action_time
         if _elapsed < MIN_TAP_INTERVAL:
             _wait = MIN_TAP_INTERVAL - _elapsed

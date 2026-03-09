@@ -243,7 +243,7 @@ def handle_result_screen(
         if btn:
             cx, cy = btn["center"]
             logger.info(">>> 【ガチャ結果】 OK (%d,%d) → ダブルタップ", cx, cy)
-            tap_device(cx, cy, state, "GACHA_RESULT_OK_1", post_wait=0.3)
+            tap_device(cx, cy, state, "GACHA_RESULT_OK_1", rapid=True)
             tap_device(cx, cy, state, "GACHA_RESULT_OK_2")
         else:
             _gc_x, _gc_y = roi_to_device(
@@ -251,7 +251,7 @@ def handle_result_screen(
             logger.info(">>> 【ガチャ結果初期】 OK未検出 → 画面中央ダブルタップ (%d,%d)",
                         _gc_x, _gc_y)
             tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_1",
-                       post_wait=0.3)
+                       rapid=True)
             tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_2")
         state.result_total_taps += 1
         return "GACHA_OK", 1.0
@@ -921,7 +921,7 @@ def detect_and_act(ocr: list, state: PilotState,
         # 最終ページへ移動 (右ナビゲーション × 6) → フレーム右上 × をタップ
         _cn_x, _cn_y = roi_to_device(int(W * 0.96), int(H * 0.5), state.game_roi)
         for _ in range(6):
-            tap_device(_cn_x, _cn_y, state, "CAROUSEL_NAV_RIGHT", post_wait=0.3)
+            tap_device(_cn_x, _cn_y, state, "CAROUSEL_NAV_RIGHT", rapid=True)
         close_x, close_y = roi_to_device(int(W * 0.94), int(H * 0.12), state.game_roi)
         logger.info(">>> 【カルーセルポップアップ】 '%s' → フレーム右上 (%d,%d) タップ",
                     carousel_match["text"][:10], close_x, close_y)
@@ -1524,18 +1524,18 @@ def detect_and_act(ocr: list, state: PilotState,
         if skill_tut:
             sx, sy = roi_to_device(int(W * 0.947), int(H * 0.722), state.game_roi)
             logger.info(">>> スキルチュートリアル (%d,%d)", sx, sy)
-            tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL", post_wait=0.8)
+            tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL", rapid=True)
             tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL confirm")
-            return "BATTLE_TUTORIAL", 0.5
+            return "BATTLE_TUTORIAL", 0.0
 
         # バトルチュートリアル: 必殺技
         hissatsu_tut = has_any(ocr, ["CTDアップ", "必殺技"])
         if hissatsu_tut:
             hx, hy = roi_to_device(int(W * 0.862), int(H * 0.778), state.game_roi)
             logger.info(">>> 必殺技チュートリアル (%d,%d)", hx, hy)
-            tap_device(hx, hy, state, "HISSATSU_TUTORIAL", post_wait=0.8)
+            tap_device(hx, hy, state, "HISSATSU_TUTORIAL", rapid=True)
             tap_device(hx, hy, state, "HISSATSU_TUTORIAL confirm")
-            return "BATTLE_TUTORIAL", 0.5
+            return "BATTLE_TUTORIAL", 0.0
 
         # バトルチュートリアル: 攻撃対象変更
         if has_any(ocr, ["攻撃対象を変更", "対象を変更"]):
@@ -1600,15 +1600,15 @@ def detect_and_act(ocr: list, state: PilotState,
             if stall_phase == 0:
                 sx, sy = roi_to_device(int(W * 0.947), int(H * 0.722), state.game_roi)
                 logger.info(">>> バトル停滞 — スキルタップ (%d,%d)", sx, sy)
-                tap_device(sx, sy, state, "STALL_SKILL", post_wait=0.8)
+                tap_device(sx, sy, state, "STALL_SKILL", rapid=True)
                 tap_device(sx, sy, state, "STALL_SKILL confirm")
-                return "BATTLE_STALL", 1.0
+                return "BATTLE_STALL", 0.0
             elif stall_phase == 4:
                 hx, hy = roi_to_device(int(W * 0.862), int(H * 0.778), state.game_roi)
                 logger.info(">>> バトル停滞 — 必殺技タップ (%d,%d)", hx, hy)
-                tap_device(hx, hy, state, "STALL_HISSATSU", post_wait=0.8)
+                tap_device(hx, hy, state, "STALL_HISSATSU", rapid=True)
                 tap_device(hx, hy, state, "STALL_HISSATSU confirm")
-                return "BATTLE_STALL", 1.0
+                return "BATTLE_STALL", 0.0
             elif stall_phase == 8:
                 # 探索バトル: 左パネルのキャラカードを再タップ (char_just_selected リセット)
                 state.char_just_selected = False
@@ -2432,7 +2432,7 @@ def main():
                             logger.info("[iter %d] phash_dist=%d レターボックス動画 → 待機 (%d/%d)",
                                         i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
                             state.last_action = "MOVIE_WAIT"
-                            time.sleep(1.5)
+                            time.sleep(0.5)
                         state.last_phash = cur_phash
                         continue
                     # ADV vs 動画シーン判別: ツールバー有無で分岐
@@ -2447,7 +2447,7 @@ def main():
                         else:
                             _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
                             logger.info("[iter %d] phash_dist=%d ADV_RAPID → 中央下フォールバック", i, dist)
-                        tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP", post_wait=0.3)
+                        tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP")
                         logger.info("  ACTION_TAKEN ADV_RAPID_TAP (%d,%d)", _adv_x, _adv_y)
                         state.movie_wait_consecutive = 0
                         state.last_phash = cur_phash
@@ -2469,7 +2469,7 @@ def main():
                                         i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
                             state.last_action = "MOVIE_WAIT"
                             state.last_phash = cur_phash
-                            time.sleep(1.5)
+                            time.sleep(0.5)
                             continue
 
         else:
@@ -2565,7 +2565,6 @@ def main():
                             state.last_phash = ""
                             state.same_phash_count = 0
                             state.stall_start = 0.0
-                            time.sleep(0.5)
                             continue
                     else:
                         # 動画シーン → ⏭ スキップボタン探索
@@ -2577,12 +2576,11 @@ def main():
                             logger.info("  ACTION_TAKEN MOVIE_SKIP (%d,%d) [phash stable]", _ms_x, _ms_y)
                             state.last_phash = ""
                             state.same_phash_count = 0
-                            time.sleep(1.0)
                             continue
                         else:
                             logger.info("[MOVIE_WAIT] 動画再生中 → 待機 (phash stable)")
                             state.last_action = "MOVIE_WAIT"
-                            time.sleep(1.5)
+                            time.sleep(0.5)
                             continue
                 state.last_phash = cur_phash
                 time.sleep(_poll)
@@ -2755,7 +2753,7 @@ def main():
                             _rapid_action, _rapid_tx, _rapid_ty,
                             " ダブルタップ" if _rapid_double else "")
                 tap_device(_rapid_tx, _rapid_ty, state, _rapid_action,
-                          post_wait=0.5 if _rapid_double else 1.0)
+                          rapid=_rapid_double)
                 if _rapid_double:
                     tap_device(_rapid_tx, _rapid_ty, state, _rapid_action)
                 # 状態更新
@@ -2997,9 +2995,11 @@ def main():
             generate_and_copy_report(state, _reason)
             return
 
-        # ── 8) 待機 (DOWNLOAD_WAIT は phash 監視付き適応ポーリング) ──
-        if wait_sec > 0:
-            if action == "DOWNLOAD_WAIT" and wait_sec >= 5.0:
+        # ── 8) 待機 ──
+        # 短い wait (< 5.0s) はスキップ: MIN_TAP_INTERVAL + phash ポーリングが制御
+        # 長い wait (>= 5.0s) のみ実施: ダウンロード/メンテ/ロード等
+        if wait_sec >= 5.0:
+            if action == "DOWNLOAD_WAIT":
                 # 適応ポーリング: 3秒ごとに phash チェック → 画面変化で早期脱出
                 _dl_remaining = wait_sec
                 _DL_POLL = 3.0
@@ -3022,8 +3022,8 @@ def main():
                     except Exception:
                         pass
             else:
-                logger.info("  [%s][%s] wait %.1fs | next_check: %.1fs",
-                            scene, action, wait_sec, next_interval)
+                logger.info("  [%s][%s] long wait %.1fs",
+                            scene, action, wait_sec)
                 time.sleep(wait_sec)
 
         _loop_elapsed_ms = (time.time() - _loop_t0) * 1000
