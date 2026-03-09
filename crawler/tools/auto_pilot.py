@@ -471,6 +471,17 @@ def detect_and_act(ocr: list, state: PilotState,
     _confirm_neg = has_any(ocr, _CONFIRM_NEG_KWS)
     _is_completion_dialog = _confirm_pos and not _confirm_neg and _dl_is_complete
     if (_confirm_pos and _confirm_neg) or _is_completion_dialog:
+        # ── ストーリースキップ確認ダイアログ → キャンセルをタップ (スキップ禁止) ──
+        _is_story_skip_dialog = any("スキップ" in t for t in texts)
+        if _is_story_skip_dialog and _confirm_neg:
+            _cn_x, _cn_y = _confirm_neg["center"]
+            _cn_y_adj = max(0, _cn_y - _OCR_BBOX_Y_PADDING)
+            logger.info(
+                "[ConfirmDialog] ストーリースキップ検出 → キャンセル '%s' (%d,%d→Y%d) タップ",
+                _confirm_neg["text"], _cn_x, _cn_y, _cn_y_adj,
+            )
+            tap_device(_cn_x, _cn_y_adj, state, f"STORY_SKIP_CANCEL '{_confirm_neg['text']}'")
+            return "STORY_SKIP_CANCEL", 1.0
         _cp_x, _cp_y = _confirm_pos["center"]
         # OCR bbox はテキスト下部パディングを含むため Y を上方補正
         _cp_y_adj = max(0, _cp_y - _OCR_BBOX_Y_PADDING)
@@ -482,18 +493,10 @@ def detect_and_act(ocr: list, state: PilotState,
         tap_device(_cp_x, _cp_y_adj, state, f"CONFIRM_DIALOG_OK '{_confirm_pos['text']}'")
         return "ADV_CHOICE", 1.0
 
-    # ── 【#-2.5】SKIP ボタン汎用ハンドラ (カットシーン/ムービー) ──
-    # "SKIP" / "スキップ" を検出 → 即タップでカットシーンをスキップ。
-    # バトル中 ("通常攻撃" 等) は除外 (スキルボタンとの誤検出防止)。
+    # ── 【#-2.5】SKIP ボタン汎用ハンドラ — 無効化 (ストーリースキップ禁止) ──
+    # ストーリースキップを防止するため、"SKIP"/"スキップ" OCR検出→タップを無効化。
+    # ムービーの⏭ボタンは detect_movie_skip_button() (HSV検出) で別途処理される。
     _in_battle_ctx = any(kw in joined for kw in _BATTLE_CORE_KWS)
-    if not _in_battle_ctx:
-        _skip_btn = has_any(ocr, ["SKIP", "スキップ", "SKP", "SKIR", "SKlP", "SKLP"])
-        if _skip_btn:
-            _sk_x, _sk_y = _skip_btn["center"]
-            logger.info(">>> [SKIP] カットシーンスキップ '%s' (%d,%d) タップ",
-                        _skip_btn["text"], _sk_x, _sk_y)
-            tap_device(_sk_x, _sk_y, state, f"CUTSCENE_SKIP '{_skip_btn['text']}'")
-            return "CUTSCENE_SKIP", 0.5
 
     # ── 【#-2.2】Android 権限ダイアログ (単独「許可」ボタン) ──
     # 通知許可等で「許可しない」なしの単独「許可」ダイアログが出ることがある。
@@ -1659,21 +1662,9 @@ def detect_and_act(ocr: list, state: PilotState,
         tap_device(cx, cy, state, "RESULT_TAP")
         return "RESULT_TAP", 1.0
 
-    # ─── スキップ ───
-    # OCRがSKIPを'SK'と短縮検出するケースも考慮: 右上エリア(x>1000, y<100)に限定
-    skip_match = has_any(ocr, ["スキップ", "SKIP", "Skip"])
-    if not skip_match:
-        _sk_match = has_any(ocr, ["SK", "Sk"])
-        if _sk_match:
-            _sk_cx, _sk_cy = _sk_match["center"]
-            if _sk_cx > 1000 and _sk_cy < 100:
-                skip_match = _sk_match
-    if skip_match:
-        cx, cy = skip_match["center"]
-        text = skip_match["text"]
-        logger.info(">>> スキップ '%s' (%d,%d)", text, cx, cy)
-        tap_device(cx, cy, state, f"SKIP '{text}'")
-        return "SKIP", 0.5
+    # ─── スキップ — 無効化 (ストーリースキップ禁止) ───
+    # ストーリースキップを防止するため、"スキップ"/"SKIP" テキストタップを無効化。
+    # ムービーの⏭ボタンは detect_movie_skip_button() (HSV検出) で別途処理される。
 
     # ─── 閉じるボタン ───
     close_match = has_any(ocr, ["閉じる", "Close", "CLOSE", "とじる"])
@@ -2316,17 +2307,9 @@ def main():
             if state.total_blackout_skipped % 5 == 1:
                 logger.info("[iter %d] 暗転 — 3s 待機 (連続: %d)",
                             i, state.consecutive_blackouts)
-            # ── ムービースキップ: 連続暗転 5回以上 → 右上スキップボタン試行 ──
-            if state.consecutive_blackouts >= 5 and state.consecutive_blackouts % 5 == 0:
-                skip_x = int(ANALYSIS_W * 0.97)  # 右上 ≈ (1474, 50)
-                skip_y = int(ANALYSIS_H * 0.07)
-                logger.info("[CINEMATIC_SKIP] 連続暗転 %d 回 → 右上スキップボタン試行 (%d,%d)",
-                            state.consecutive_blackouts, skip_x, skip_y)
-                tap_device(skip_x, skip_y, state, "CINEMATIC_SKIP")
-                # スキップ確認ダイアログが出る可能性 → 中央タップ
-                tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.6), state, "CINEMATIC_SKIP_CONFIRM")
-            else:
-                time.sleep(0.5)
+            # ── ムービースキップ: 無効化 (ストーリースキップ禁止) ──
+            # 連続暗転でも右上スキップボタンを押さず待機する。
+            time.sleep(0.5)
             state.last_phash = ""
             state.same_phash_count = 0
             continue
