@@ -593,3 +593,52 @@ class TestCoordinateConstants:
         from tools.auto_pilot import ANALYSIS_W, ANALYSIS_H
         assert ANALYSIS_W == 1520
         assert ANALYSIS_H == 720
+
+
+# ─── ADV Toolbar テンプレートマッチ テスト ─────────────────────────
+
+class TestDetectAdvToolbarButtons:
+    """detect_adv_toolbar_buttons のテンプレートマッチ検証。"""
+
+    def test_detect_adv_toolbar_buttons_positive(self, tmp_path):
+        """ADVシーン画像でAUTO/>>ボタンが検出される。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import detect_adv_toolbar_buttons, _ADV_AUTO_TEMPLATE, ANALYSIS_W, ANALYSIS_H
+
+        if not _ADV_AUTO_TEMPLATE.exists():
+            pytest.skip("ADV AUTO テンプレート画像が存在しません")
+
+        # テンプレートを読み込んで、解析空間画像の正しい位置に埋め込む
+        tpl = cv2.imread(str(_ADV_AUTO_TEMPLATE), cv2.IMREAD_GRAYSCALE)
+        assert tpl is not None, "テンプレート読み込み失敗"
+
+        # 解析空間サイズの黒画像を作成
+        img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        # AUTO ボタン位置 (右上) にテンプレートを埋め込む
+        th, tw = tpl.shape[:2]
+        cx, cy = 1364, 110  # AUTO center in analysis space
+        y1 = max(cy - th // 2, 0)
+        x1 = max(cx - tw // 2, 0)
+        # BGR に変換して埋め込む
+        tpl_bgr = cv2.cvtColor(tpl, cv2.COLOR_GRAY2BGR)
+        img[y1:y1 + th, x1:x1 + tw] = tpl_bgr
+
+        img_path = tmp_path / "adv_scene.png"
+        cv2.imwrite(str(img_path), img)
+
+        assert detect_adv_toolbar_buttons(img_path) is True
+
+    def test_detect_adv_toolbar_buttons_negative(self, tmp_path):
+        """非ADVシーン (無地画像) で誤検出しない。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import detect_adv_toolbar_buttons, ANALYSIS_W, ANALYSIS_H
+
+        # ランダムノイズ画像 (ボタンなし)
+        rng = np.random.RandomState(42)
+        img = rng.randint(30, 80, (ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        img_path = tmp_path / "non_adv.png"
+        cv2.imwrite(str(img_path), img)
+
+        assert detect_adv_toolbar_buttons(img_path) is False

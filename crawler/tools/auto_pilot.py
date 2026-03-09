@@ -2489,18 +2489,19 @@ def main():
                     state.movie_wait_consecutive = 0
                     # continue しない → 下の OCR パスへ落ちる
                 else:
-                    # レターボックス最優先: 左黒帯>=80px → 動画確定 (ツールバー誤検出を防ぐ)
+                    # レターボックス判定: 左黒帯>=80px
                     _rapid_roi_x = state.game_roi[0] if state.game_roi else 0
                     if _rapid_roi_x >= 80:
-                        # MOVIE_SKIP 無効化 (ストーリースキップ禁止) — 動画は自然終了を待つ
-                        if True:
+                        # ADVツールバー(AUTO/>>)があればADV_RAPIDへフォールスルー
+                        if not is_adv_toolbar_cached(img_path, state):
                             state.movie_wait_consecutive += 1
                             logger.info("[iter %d] phash_dist=%d レターボックス動画 → 待機 (%d/%d)",
                                         i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
                             state.last_action = "MOVIE_WAIT"
                             time.sleep(0.5)
-                        state.last_phash = cur_phash
-                        continue
+                            state.last_phash = cur_phash
+                            continue
+                        # ADVツールバーあり → ADV_RAPID へフォールスルー
                     # ADV vs 動画シーン判別: ツールバー有無で分岐
                     if is_adv_toolbar_cached(img_path, state):
                         # ↓矢印ボタンをテンプレートマッチで検出

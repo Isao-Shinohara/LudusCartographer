@@ -585,38 +585,40 @@ def detect_adv_advance_icon(img_path: Path,
         return False
 
 
-def is_adv_toolbar_visible(img_path: Path) -> bool:
-    """
-    ADVパートの右上ツールバー（5個のアイコン列: メニュー, ログ, AUTO, >>, >|）を検出。
-    動画シーン（⏭ 1個のみ）と区別するために使用。
+_ADV_AUTO_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "adv_auto_btn.png"
+_ADV_FF_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "adv_ff_btn.png"
 
-    手法: 右上ROI内でCanny edge密度を計測。
-    ADVツールバー: 複数アイコンの輪郭でedge密度が高い (>=0.04)
-    動画シーン: アイコン1個のみ or 空で低密度
-    """
+
+def detect_adv_toolbar_buttons(img_path: Path, threshold: float = 0.80) -> bool:
+    """AUTO/>> ボタンをテンプレートマッチでADV判定。タップはしない。"""
     try:
-        _img = cv2.imread(str(img_path))
-        if _img is None:
+        img = cv2.imread(str(img_path))
+        if img is None:
             return False
-        _H, _W = _img.shape[:2]
-        # ROI: 右上 78%~100% x, 0~10% y
-        _x1 = int(_W * 0.78)
-        _y2 = int(_H * 0.10)
-        if _y2 < 10 or _W - _x1 < 10:
-            return False
-        _roi = _img[0:_y2, _x1:_W]
-        _gray = cv2.cvtColor(_roi, cv2.COLOR_BGR2GRAY)
-        _edges = cv2.Canny(_gray, 50, 150)
-        _total = _roi.shape[0] * _roi.shape[1]
-        if _total == 0:
-            return False
-        _edge_ratio = cv2.countNonZero(_edges) / _total
-        _visible = _edge_ratio >= 0.04
-        if _visible:
-            logger.debug("[ADV_TOOLBAR] edge密度=%.3f → ADVパート確定", _edge_ratio)
-        return _visible
+        resized = cv2.resize(img, (ANALYSIS_W, ANALYSIS_H))
+        roi_x1 = int(ANALYSIS_W * 0.82)
+        roi_y2 = int(ANALYSIS_H * 0.22)
+        roi_gray = cv2.cvtColor(resized[0:roi_y2, roi_x1:ANALYSIS_W], cv2.COLOR_BGR2GRAY)
+        for tpl_path in (_ADV_AUTO_TEMPLATE, _ADV_FF_TEMPLATE):
+            if not tpl_path.exists():
+                continue
+            tpl = cv2.imread(str(tpl_path), cv2.IMREAD_GRAYSCALE)
+            if tpl is None or tpl.shape[0] > roi_gray.shape[0]:
+                continue
+            res = cv2.matchTemplate(roi_gray, tpl, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(res)
+            if max_val >= threshold:
+                logger.debug("[ADV_TOOLBAR] テンプレートマッチ %.3f >= %.2f → ADVパート確定 (%s)",
+                             max_val, threshold, tpl_path.stem)
+                return True
+        return False
     except Exception:
         return False
+
+
+def is_adv_toolbar_visible(img_path: Path) -> bool:
+    """ADVパートの右上ツールバー（AUTO/>>ボタン）をテンプレートマッチで検出。"""
+    return detect_adv_toolbar_buttons(img_path)
 
 
 def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
