@@ -2957,13 +2957,15 @@ def detect_and_act(ocr: list, state: PilotState,
                     time.sleep(1.0)
                     adb("shell input text MadoDora")
                     time.sleep(1.0)
-                    # キーボード確定 → 閉じる → ダイアログOKタップ
+                    # IME変換確定 (ENTER) → キーボード閉じる (BACK) → ダイアログOKタップ
+                    adb("shell input keyevent 66")   # KEYCODE_ENTER: IME変換確定
+                    time.sleep(0.5)
                     adb("shell input keyevent KEYCODE_BACK")  # keyboard dismiss
                     time.sleep(1.0)
                     # ダイアログOKボタンを直接タップ (テンプレート位置より下方)
                     _ok_x = roi_to_device(int(W * 0.50), int(H * 0.77), state.game_roi)
                     tap_device(_ok_x[0], _ok_x[1], state, "NAME_INPUT_OK_DIRECT")
-                    logger.info(">>> [TEXT_INPUT_AREA] 'MadoDora' 入力 → KB閉 → OK(%d,%d)", _ok_x[0], _ok_x[1])
+                    logger.info(">>> [TEXT_INPUT_AREA] 'MadoDora' 入力 → 確定 → KB閉 → OK(%d,%d)", _ok_x[0], _ok_x[1])
                     return "TEXT_INPUT_NAME", 2.0
             # その他のアセットアクション: タップして return (fallthrough なし)
             # GACHA_OK 入力フリーズ検出: 連続タップで応答がない場合 force-stop 復帰
