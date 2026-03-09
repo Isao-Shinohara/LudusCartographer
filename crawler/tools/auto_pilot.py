@@ -115,6 +115,13 @@ _SCENE_REEVAL_THRESHOLD = 5
 _CONFIRM_POS_KWS: list[str] = ["OK", "はい", "わかった", "了解", "決定", "許可", "Allow", "ALLOW", "リトライ", "Retry"]
 _CONFIRM_NEG_KWS: list[str] = ["キャンセル", "いいえ", "戻る", "やめる", "許可しない", "拒否", "Deny"]
 
+# ─── UI テキスト判定キーワード (動画ガード用) ────────────────────────────
+_UI_TEXT_KWS: tuple = ("利用規約", "同意", "規約", "プライバシー", "ダウンロード",
+                       "Download", "OK", "はい", "キャンセル", "設定", "お知らせ")
+
+# ─── match_single() 専用テンプレート (一般マッチから除外) ───
+_SINGLE_ONLY: frozenset = frozenset(["adv_next_btn"])
+
 # ─── ダイアログ・ファースト: 検知キーワード一覧 ───────────────────────────────
 # detect_and_act #0-DIALOG ブロックで使用。枠検出に失敗した場合の OCR 補助トリガー。
 _DIALOG_FIRST_KWS: frozenset = frozenset([
@@ -322,7 +329,7 @@ SCENE_INTERVAL = {
     "BATTLE":  0.5,   # バトル画面: 爆速反応
     "ADV":     0.5,   # アドベンチャー/会話: 高速化 (旧1.0)
     "STORY":   0.5,   # ストーリー(スキップなし): 爆速化
-    "LOADING": 3.0,   # ロード中: 負荷軽減 (旧5.0)
+    "LOADING": 2.0,   # ロード中: 負荷軽減 (旧3.0)
     "MENU":    0.5,   # ホーム/メニュー: 高速化 (旧1.0)
     "UNKNOWN": 0.5,   # 不明: 高速化 (旧1.0)
 }
@@ -659,16 +666,11 @@ def tap_device(x: int, y: int, state: PilotState, desc: str = "",
                                      cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 255), 1)
                 _out = str(Path(__file__).parent.parent / "debug_latest_tap.png")
                 cv2.imwrite(_out, _dbg)
-                logger.debug("  [DEBUG_TAP] Target=(%d,%d) → %s", x, y, _out)
         except Exception:
             pass
     logger.info(
         "  [DEBUG] TAP: 解析座標=(%d,%d) → デバイス座標=(%d,%d) | %s",
         x, y, real_x, real_y, desc
-    )
-    logger.debug(
-        "  [TELEMETRY] TAP: delta=(%d,%d) | %s",
-        real_x - x, real_y - y, desc
     )
     adb(f"shell input tap {real_x} {real_y}")
     state.total_taps += 1
@@ -769,7 +771,6 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
                     _ov_cy = int(M_ov["m01"] / M_ov["m00"])
                     _ov_bx, _ov_by, _ov_bw, _ov_bh = cv2.boundingRect(c)
                     _oversized.append((_ov_cx, _ov_cy, area, _ov_bx, _ov_by, _ov_bw, _ov_bh))
-                    logger.debug("[FINGER_OVERSIZED] (%d,%d) area=%.0f → 金枠救済候補", _ov_cx, _ov_cy, area)
                 continue
             M = cv2.moments(c)
             if M["m00"] <= 0:
@@ -785,7 +786,6 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
             solidity = area / hull_area if hull_area > 0 else 0.0
             if solidity < 0.35:
                 _rejected_finger_blobs.append((cx, cy, "SHAPE(sol=%.2f)" % solidity))
-                logger.debug("[REJECTED: SHAPE] (%d,%d) solidity=%.2f<0.35", cx, cy, solidity)
                 continue
 
             # ── 【形状検証 2】アスペクト比チェック ─────────────────────────────
@@ -793,7 +793,6 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
             asp = bw / bh if bh > 0 else 1.0
             if asp > 3.5 or asp < 0.28:
                 _rejected_finger_blobs.append((cx, cy, "SHAPE(asp=%.1f)" % asp))
-                logger.debug("[REJECTED: SHAPE] (%d,%d) asp=%.1f out of [0.28,3.5]", cx, cy, asp)
                 continue
 
             # ── 【空間的バイアス 3】バトル(dark_mode)上部30%の小面積ブロブ排除 ────
@@ -1488,23 +1487,6 @@ def detect_dialog_frame_and_nav(
                 _g,
             )
 
-        def _cross_center(lines):
-            """HoughLinesP 結果から × 形状の中心を返す"""
-            if lines is None or len(lines) < 2:
-                return None
-            _pd, _nd = [], []
-            for _ln in lines:
-                _x1, _y1, _x2, _y2 = _ln[0]
-                if _x2 == _x1:
-                    continue
-                _ang = np.degrees(np.arctan2(_y2 - _y1, _x2 - _x1))
-                if 20 < abs(_ang) < 75:
-                    (_pd if _ang > 0 else _nd).append(_ln[0])
-            if _pd and _nd:
-                _pts = _pd[0] + _nd[0]
-                return (int(sum(_pts[::2]) / 4), int(sum(_pts[1::2]) / 4))
-            return None
-
         def _chevron_tip(lines):
             """HoughLinesP 結果から ▷ 形状の先端を返す"""
             if lines is None or len(lines) < 2:
@@ -2198,8 +2180,6 @@ class AssetManager:
             return None
         best_score = 0.0
         best_result: Optional[tuple[int, int, str, tuple[int, int, int, int]]] = None
-        # match_single() 専用テンプレートは一般マッチから除外
-        _SINGLE_ONLY = frozenset(["adv_next_btn"])
         for name, data in self._templates.items():
             if name in _SINGLE_ONLY:
                 continue
@@ -2574,7 +2554,7 @@ def handle_dialog_screen(
             )
             tap_device(_dp_x, _dp_y, state, f"DIALOG_CONFIRM_OK '{_dlg_pos['text']}'")
             state.pre_popup_tap_count = 0
-            return "DIALOG_CONFIRM_OK", 1.5
+            return "DIALOG_CONFIRM_OK", 1.0
         # ── 4回連続失敗 → OK/確認ボタンを探してフォールバック ──
         if state.pre_popup_tap_count >= 4:
             _ok_ocr = has_any(ocr, ["OK", "確認", "決定", "おまかせ"])
@@ -2586,7 +2566,7 @@ def handle_dialog_screen(
                 )
                 tap_device(_ok_cx, _ok_cy, state, "DIALOG_OK_FALLBACK")
                 state.pre_popup_tap_count = 0
-                return "DIALOG_OK_FALLBACK", 1.5
+                return "DIALOG_OK_FALLBACK", 1.0
             # OCR で OK 未検出 → ダイアログ下部中央をタップ
             _ok_fb_x, _ok_fb_y = roi_to_device(int(W * 0.7), int(H * 0.92), state.game_roi)
             logger.info(
@@ -2595,7 +2575,7 @@ def handle_dialog_screen(
             )
             tap_device(_ok_fb_x, _ok_fb_y, state, "DIALOG_BOTTOM_FALLBACK")
             state.pre_popup_tap_count = 0
-            return "DIALOG_BOTTOM_FALLBACK", 1.5
+            return "DIALOG_BOTTOM_FALLBACK", 1.0
         logger.info(
             ">>> 【ダイアログ#0-DIALOG】%s(%d,%d) (試行%d回/累計%d)",
             _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count, state.dialog_close_total,
@@ -2668,7 +2648,7 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> [SKIP] カットシーンスキップ '%s' (%d,%d) タップ",
                         _skip_btn["text"], _sk_x, _sk_y)
             tap_device(_sk_x, _sk_y, state, f"CUTSCENE_SKIP '{_skip_btn['text']}'")
-            return "CUTSCENE_SKIP", 0.8
+            return "CUTSCENE_SKIP", 0.5
 
     # ── 【#-2.2】Android 権限ダイアログ (単独「許可」ボタン) ──
     # 通知許可等で「許可しない」なしの単独「許可」ダイアログが出ることがある。
@@ -3072,7 +3052,7 @@ def detect_and_act(ocr: list, state: PilotState,
         cx, cy = smart_tap_button(analysis_path, ocr_cx, ocr_cy, ocr_items=ocr)
         logger.info(">>> 【確認ダイアログ】 SmartTap OK (%d,%d)", cx, cy)
         tap_device(cx, cy, state, "CONFIRM_DIALOG_OK")
-        return "CONFIRM_DIALOG_OK", 1.5
+        return "CONFIRM_DIALOG_OK", 1.0
 
     # 「タップして次へ」: 報酬獲得画面の次へ進む
     tap_next = has_text(ocr, "タップして次へ", min_conf=0.3)
@@ -3168,7 +3148,7 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info("  タイトル画面検出 → TAP TO START (760,628) タップ")
             _tt_x, _tt_y = roi_to_device(int(W * 0.5), int(H * 0.87), state.game_roi)
             tap_device(_tt_x, _tt_y, state, "TITLE_TAP_START")
-            return "TITLE_TAP", 3.0
+            return "TITLE_TAP", 2.0
         # ホーム画面検出: ホームナビキーワードが2個以上 → キャラ画像のブロブ誤検出をスキップ
         _home_nav_kws = ["クエスト", "ショップ", "ガチャ", "ガシャ", "ユニオン",
                          "光の間", "パーティ", "プレイヤーマッチ", "お知らせ",
@@ -3215,7 +3195,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 if _cb_x > W * 0.5 and _cb_y > H * 0.5:
                     logger.info("[Challenge] '%s'(%d,%d) → 直接タップ", _chal_btn["text"], _cb_x, _cb_y)
                     tap_device(_cb_x, _cb_y, state, "CHALLENGE_TAP")
-                    return "CHALLENGE_TAP", 1.5
+                    return "CHALLENGE_TAP", 1.0
             # ── ホームチュートリアル: 指アイコン+金枠がある場合は優先タップ ──
             # ただし 10回超ループしたら LATE path (grind_mode処理) に委譲
             if state.home_tutorial_tap_count < 10:
@@ -3249,7 +3229,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     if _ht_target:
                         state.home_tutorial_tap_count += 1
                         tap_device(_ht_target[0], _ht_target[1], state, "HOME_TUTORIAL_TAP")
-                        return "HOME_TUTORIAL_TAP", 1.0
+                        return "HOME_TUTORIAL_TAP", 0.5
             else:
                 logger.info("  HOME_TUTORIAL %d回超 → LATE path (grind/ホーム到達) に委譲",
                             state.home_tutorial_tap_count)
@@ -3569,7 +3549,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 logger.info(">>> ホームチュートリアル継続: 指/金枠 → (%d,%d) タップ [%d回目]",
                             _tap_target[0], _tap_target[1], state.home_tutorial_tap_count)
                 tap_device(_tap_target[0], _tap_target[1], state, "HOME_TUTORIAL_TAP")
-                return "HOME_TUTORIAL_TAP", 1.0
+                return "HOME_TUTORIAL_TAP", 0.5
             # blob/gold検出あるがタップ対象なし → blob_same_count 処理へ
             if state.blob_same_count >= 5:
                 logger.info(">>> ホーム画面 + もやスタック → クエストへナビゲート")
@@ -3873,7 +3853,7 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.info(">>> 【システムダイアログ】 '%s' → SmartTap OK (%d,%d)",
                     sys_dlg_match["text"][:15], ok_x, ok_y)
         tap_device(ok_x, ok_y, state, "SYSTEM_DLG_OK")
-        return "SYSTEM_DLG_OK", 1.5
+        return "SYSTEM_DLG_OK", 1.0
 
     # ─── メンテナンス/アップデート検出 ───
     _maint_kws = ["メンテナンス", "Maintenance", "maintenance"]
@@ -3908,7 +3888,7 @@ def detect_and_act(ocr: list, state: PilotState,
             _tos_x, _tos_y = roi_to_device(int(W * 0.72), int(H * 0.89), state.game_roi)
             logger.info(">>> 【利用規約同意】 固定座標 (%d,%d) タップ", _tos_x, _tos_y)
             tap_device(_tos_x, _tos_y, state, "AGREE_TOS")
-        return "AGREE_TOS", 3.0
+        return "AGREE_TOS", 2.0
 
     # ─── 規約同意 ───
     agree_match = has_any(ocr, ["同意", "規約", "利用規約"])
@@ -5036,10 +5016,7 @@ def main():
         # ただし OCR で UI テキストが豊富な場合は動画ではない (利用規約画面等)
         _roi_x = state.game_roi[0] if state.game_roi else 0
         _is_movie_letterbox = _roi_x >= 80
-        _ocr_joined = " ".join(texts) if texts else ""
-        _UI_TEXT_KWS = ("利用規約", "同意", "規約", "プライバシー", "ダウンロード",
-                        "Download", "OK", "はい", "キャンセル", "設定", "お知らせ")
-        _has_ui_text = any(kw in _ocr_joined for kw in _UI_TEXT_KWS) or len(texts) >= 8
+        _has_ui_text = any(kw in _ocr_text_joined for kw in _UI_TEXT_KWS) or len(texts) >= 8
         _movie_candidate = (
             _is_movie_letterbox or (len(texts) <= 3 and scene not in ("BATTLE", "MENU"))
         )
