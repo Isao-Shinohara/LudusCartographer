@@ -371,6 +371,15 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="再開元の discovery_tree.json パスを明示指定 (--resume より優先)",
     )
+    parser.add_argument(
+        "--crawl",
+        action="store_true",
+        help=(
+            "DFS クロールモードで起動する。"
+            " --android 使用時のデフォルトは auto_pilot モード。"
+            " このフラグを指定すると ScreenCrawler ベースの DFS 探索を実行する。"
+        ),
+    )
     # 未知の引数（環境変数由来のフラグ等）を無視して続行
     args, _ = parser.parse_known_args()
     return args
@@ -468,6 +477,14 @@ def main() -> None:
             logger.error("ANDROID_APP_PACKAGE が設定されていません。")
             logger.error("  例: python main.py --android --package com.aniplex.magia.exedra.jp")
             sys.exit(1)
+
+        # --android のデフォルトは auto_pilot モード (--crawl で DFS モードに切替)
+        if not args.crawl:
+            logger.info("  Android → auto_pilot モードで起動します (DFS クロールは --crawl で)")
+            from tools.auto_pilot import main as auto_pilot_main
+            auto_pilot_main()
+            return
+
         # iOS 用 bundle_id のダミーをセット (driver_factory が IOS_BUNDLE_ID を参照する場合の保険)
         os.environ.setdefault("IOS_BUNDLE_ID", pkg)
         bundle_id = pkg

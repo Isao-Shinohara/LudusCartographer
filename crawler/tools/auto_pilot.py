@@ -2104,7 +2104,9 @@ def parse_args():
                         help="アンインストール → Play Store 再インストール (新規アカウント)")
     parser.add_argument("--wifi-addr", type=str, default=None,
                         help="Wi-Fi ADB 接続先アドレス (IP:PORT, 例: 192.168.10.118:5555)")
-    return parser.parse_args()
+    # parse_known_args: main.py 経由の場合に --android, --package 等の未知引数を無視
+    args, _ = parser.parse_known_args()
+    return args
 
 
 # ─── Play Store 再インストール ──────────────────────
