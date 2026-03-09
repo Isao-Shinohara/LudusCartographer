@@ -131,6 +131,8 @@ class PilotState:
     grind_cycles_completed: int = 0   # 周回完了回数
     normatk_fallback: StallCounter = field(
         default_factory=lambda: StallCounter("normatk_fallback", threshold=10))
+    battle_rapid_consecutive: StallCounter = field(
+        default_factory=lambda: StallCounter("battle_rapid_consecutive", threshold=50))
     # ─── MOVIE_WAIT 脱出カウンタ ───
     movie_wait_consecutive: int = 0
     # ─── キャッシュ (per-phash サイクル) ───

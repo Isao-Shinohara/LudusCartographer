@@ -2667,6 +2667,13 @@ def main():
         )
         if _speed_tip_in_last:
             _force_ocr_override = True
+        # BATTLE_RAPID 連続ループ上限: 50回 (~4分) で OCR 再評価を強制
+        # ムービーシーン等をバトルと誤分類し続ける問題を防止
+        if state.battle_rapid_consecutive.stalled:
+            logger.info("[BATTLE_RAPID] 連続 %d 回 → OCR で再評価 (シーン誤分類の可能性)",
+                        state.battle_rapid_consecutive.count)
+            state.battle_rapid_consecutive.reset()
+            _force_ocr_override = True
         if (state.current_scene == "BATTLE" and analysis_path is not None
                 and not _force_ocr_override):
             _rapid_tx = _rapid_ty = 0
@@ -2747,10 +2754,14 @@ def main():
                 state.stall_start = 0.0
                 state.stall_corner_tried = False
                 state.same_phash_count = 0
+                state.battle_rapid_consecutive.tick()
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
                 logger.info("  [PERF] Loop %.0fms (BATTLE_RAPID)", _fms)
                 continue  # OCR スキップ
+
+        # BATTLE_RAPID を通過 → カウンタリセット
+        state.battle_rapid_consecutive.reset()
 
         # ── 4.5) BATTLE 高速パス: OCR 前テンプレートマッチング ──
         # BATTLE シーンで GoldBtn/GoldSwipe が見つかれば OCR (6-8s) をスキップ
