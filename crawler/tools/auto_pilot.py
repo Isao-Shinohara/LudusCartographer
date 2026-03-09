@@ -80,51 +80,34 @@ from tools.ap.constants import (  # noqa: E402
     _TRANSITION_SLOW_SEC, _TRANSITION_HISTORY_MAX,
 )
 
-# ─── 設定 ────────────────────────────────────────────
-# ADB 接続は main() 内で実行する (CLI 引数 --pairing-code 等を受け取るため)
-DEVICE_SERIAL = ""  # main() で設定される
-
-# 排除された偽の指ブロブキャッシュ (debug_latest_tap.png への [REJECTED] 描画用)
-_rejected_finger_blobs: list = []
-
-# ─── scrcpy 管理 ───
-SCRCPY_DEVICE = ""  # main() で DEVICE_SERIAL から動的設定
-
-
-def _build_scrcpy_args(device_serial: str) -> list:
-    """scrcpy 起動引数を動的に構築する。"""
-    return [
-        "scrcpy",
-        "-s", device_serial,
-        "--turn-screen-off",   # 物理画面消灯
-        "--stay-awake",
-    ]
-
 # ─── 状態クラス: ap/state.py から import ───
 from tools.ap.state import PilotState, StallCounter  # noqa: E402
-
-# Ctrl+C シグナルハンドラ用: main() で設定する PilotState への参照
-_pilot_state_ref: Optional["PilotState"] = None
-
-
 # ─── ヘルパー: ap/helpers.py から import ───
 from tools.ap.helpers import (  # noqa: E402
     classify_scene, text_core_center, save_evidence,
     has_any, has_text, all_texts,
 )
+# ─── デバイス操作: ap/device.py から import ───
+import tools.ap.device as _ap_device  # noqa: E402
+from tools.ap.device import (  # noqa: E402
+    set_device_serial, set_scrcpy_device,
+    adb, tap_device, swipe, take_screenshot, manage_scrcpy,
+    get_device_resolution, _query_status_bar_height, check_adb_liveness,
+)
+# DEVICE_SERIAL / SCRCPY_DEVICE はモジュール変数 — 読取りは _ap_device 経由
+# 後方互換 re-export 用プロパティ代替
+def __getattr__(name):
+    if name == "DEVICE_SERIAL":
+        return _ap_device.DEVICE_SERIAL
+    if name == "SCRCPY_DEVICE":
+        return _ap_device.SCRCPY_DEVICE
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+# 排除された偽の指ブロブキャッシュ (debug_latest_tap.png への [REJECTED] 描画用)
+_rejected_finger_blobs: list = []
 
-# ─── ADB ユーティリティ ─────────────────────────────
-def adb(cmd: str) -> str:
-    full = f"adb -s {DEVICE_SERIAL} {cmd}"
-    try:
-        result = subprocess.run(
-            full, shell=True, capture_output=True, text=True, timeout=15
-        )
-        return result.stdout.strip()
-    except subprocess.TimeoutExpired:
-        logger.warning("adb timeout: %s", cmd)
-        return ""
+# Ctrl+C シグナルハンドラ用: main() で設定する PilotState への参照
+_pilot_state_ref: Optional["PilotState"] = None
 
 
 def detect_game_roi(img) -> tuple[int, int, int, int]:
@@ -182,241 +165,6 @@ def roi_to_device(ax: int, ay: int, roi: tuple) -> tuple[int, int]:
         int(ax / ANALYSIS_W * roi_w) + roi_x,
         int(ay / ANALYSIS_H * roi_h) + roi_y,
     )
-
-
-def get_device_resolution() -> tuple[int, int]:
-    """
-    `adb shell wm size` で実機の物理解像度を取得する。
-
-    - landscape デバイスでは "Physical size: 1520x720" のように返る
-    - Override がある場合は "Override size: ..." が優先される
-    - 取得失敗時は (ANALYSIS_W, ANALYSIS_H) をフォールバックとして返す
-
-    Returns: (width, height)
-    """
-    try:
-        _out = subprocess.run(
-            ["adb", "-s", DEVICE_SERIAL, "shell", "wm", "size"],
-            capture_output=True, text=True, timeout=5,
-        ).stdout.strip()
-        # "Override size: 1520x720" を優先、なければ "Physical size: 1520x720"
-        for _prefix in ("Override size:", "Physical size:"):
-            _m = re.search(rf"{_prefix}\s*(\d+)x(\d+)", _out)
-            if _m:
-                _w, _h = int(_m.group(1)), int(_m.group(2))
-                logger.info("[WM_SIZE] %s → %dx%d", _prefix.rstrip(":"), _w, _h)
-                return _w, _h
-        logger.warning("[WM_SIZE] パース失敗: %r — フォールバック %dx%d", _out, ANALYSIS_W, ANALYSIS_H)
-    except Exception as _e:
-        logger.warning("[WM_SIZE] 取得エラー: %s — フォールバック %dx%d", _e, ANALYSIS_W, ANALYSIS_H)
-    return ANALYSIS_W, ANALYSIS_H
-
-
-def _query_status_bar_height() -> int:
-    """
-    `adb shell dumpsys display` から mStable top inset (ステータスバー高さ) を取得する。
-
-    非 immersive 画面 (ご注意画面等) での adb input tap Y座標補正に使用。
-    取得失敗時は解析解像度ベースのフォールバック値 int(ANALYSIS_H * 0.067) を返す。
-
-    Returns: ステータスバーの高さ (ピクセル, 解析空間ではなくデバイス空間)
-    """
-    _fallback = int(ANALYSIS_H * 0.067)  # 48/720 ≈ 0.067
-    try:
-        _out = subprocess.run(
-            ["adb", "-s", DEVICE_SERIAL, "shell", "dumpsys", "display"],
-            capture_output=True, text=True, timeout=5,
-        ).stdout
-        # mStable=[0,48][1424,720] → top inset = 48
-        _m = re.search(r"mStable=\[(\d+),(\d+)\]\[(\d+),(\d+)\]", _out)
-        if _m:
-            _top = int(_m.group(2))
-            if _top > 0:
-                logger.debug("[STATUS_BAR] mStable top inset: %d", _top)
-                return _top
-        logger.debug("[STATUS_BAR] mStable パース失敗 → フォールバック %d", _fallback)
-    except Exception as _e:
-        logger.debug("[STATUS_BAR] dumpsys 取得エラー: %s → フォールバック %d", _e, _fallback)
-    return _fallback
-
-
-def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[Path], int, int, int]:
-    """
-    スクリーンショット取得。破損PNG によるSIGSEGV防止のためリトライ付き。
-
-    - retries: 破損検出時の再試行回数
-    - min_bytes: 正常PNGの最小ファイルサイズ (5KB未満は破損と判定。暗転シーン≈11KB)
-    Returns: (path, width, height, retry_count)
-            path=None の場合は全リトライ失敗（呼び出し側で continue すること）
-    """
-    path = Path(SCREENSHOT_PATH)
-    _retried = 0
-    for _attempt in range(retries):
-        # exec-out で直接パイプ → ファイル転送の中間ステップを省略 (高速化)
-        try:
-            _result = subprocess.run(
-                ["adb", "-s", DEVICE_SERIAL, "exec-out", "screencap", "-p"],
-                capture_output=True, timeout=10,
-            )
-            if _result.returncode == 0 and len(_result.stdout) >= min_bytes:
-                path.write_bytes(_result.stdout)
-            else:
-                # exec-out 失敗 → 従来の shell + pull にフォールバック
-                adb(f"shell screencap -p {REMOTE_PATH}")
-                subprocess.run(
-                    f"adb -s {DEVICE_SERIAL} pull {REMOTE_PATH} {SCREENSHOT_PATH}",
-                    shell=True, capture_output=True, timeout=10,
-                )
-        except Exception as _ss_exc:
-            logger.warning("[SCREENSHOT] 取得例外: %s (attempt %d/%d)", _ss_exc, _attempt + 1, retries)
-            _retried += 1
-            time.sleep(0.5)
-            continue
-        # ── 整合性チェック1: ファイルサイズ ──
-        _fsize = path.stat().st_size if path.exists() else 0
-        if _fsize < min_bytes:
-            logger.warning("[SCREENSHOT] 破損疑い: size=%d bytes (attempt %d/%d) — 再取得",
-                           _fsize, _attempt + 1, retries)
-            _retried += 1
-            time.sleep(0.5)
-            continue
-        # ── 整合性チェック2: OpenCV で読み込み確認 ──
-        _test = cv2.imread(str(path))
-        if _test is None or _test.size == 0:
-            logger.warning("[SCREENSHOT] cv2.imread 失敗/空 (attempt %d/%d) — 再取得",
-                           _attempt + 1, retries)
-            _retried += 1
-            time.sleep(0.5)
-            continue
-        # 正常
-        _h, _w = _test.shape[:2]
-        return path, _w, _h, _retried
-    # 全リトライ失敗: クラッシュせず None を返す (呼び出し側で continue)
-    logger.error("[WIFI_ERROR] Corrupted frame dropped (%d retries exhausted). Returning None.", retries)
-    return None, 0, 0, _retried
-
-
-def manage_scrcpy() -> Optional[subprocess.Popen]:
-    """scrcpy を規定オプションで起動。不整合プロセスは Kill → 再起動。"""
-    try:
-        ps = subprocess.run(
-            ["ps", "aux"], capture_output=True, text=True, timeout=5
-        )
-    except Exception as e:
-        logger.warning("[SCRCPY] ps aux 失敗: %s", e)
-        return None
-
-    conforming_pid = None
-    for line in ps.stdout.splitlines():
-        if "scrcpy" not in line or "grep" in line:
-            continue
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        # adb 子プロセス (scrcpy-server.jar) をスキップ — Kill 対象外
-        if "adb" in line and "scrcpy-server" in line:
-            continue
-        try:
-            pid = int(parts[1])
-        except ValueError:
-            continue
-        has_device = SCRCPY_DEVICE in line
-        has_screen_off = "--turn-screen-off" in line
-        if has_device and has_screen_off:
-            conforming_pid = pid
-            logger.info("[SCRCPY] 規定プロセス検出 PID=%d — 継続", pid)
-        else:
-            logger.info("[SCRCPY] 不整合プロセス Kill PID=%d (cmdline: ...%s)",
-                        pid, line[-80:])
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except OSError:
-                pass
-
-    if conforming_pid is not None:
-        return None  # 既に規定オプションで動作中
-
-    # 新規起動
-    scrcpy_args = _build_scrcpy_args(SCRCPY_DEVICE)
-    try:
-        proc = subprocess.Popen(
-            scrcpy_args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        logger.info("[SCRCPY] 規定オプションで起動 PID=%d (device=%s, --turn-screen-off)",
-                    proc.pid, SCRCPY_DEVICE)
-        return proc
-    except FileNotFoundError:
-        logger.warning("[SCRCPY] scrcpy が見つかりません — Stay Awake なしで続行 "
-                       "(brew install scrcpy で導入可能)")
-    except Exception as e:
-        logger.warning("[SCRCPY] 起動失敗: %s — Stay Awake なしで続行", e)
-    return None
-
-
-def tap_device(x: int, y: int, state: PilotState, desc: str = "",
-               finger_box: Optional[tuple] = None,
-               gold_box: Optional[tuple] = None,
-               post_wait: float = 0.5) -> None:
-    # ── 最低タップ間隔の強制 ──
-    if state.last_action_time > 0:
-        _elapsed = time.time() - state.last_action_time
-        if _elapsed < MIN_TAP_INTERVAL:
-            _wait = MIN_TAP_INTERVAL - _elapsed
-            time.sleep(_wait)
-    if state.device_w and state.device_h:
-        sx = state.device_w / ANALYSIS_W
-        sy = state.device_h / ANALYSIS_H
-        real_x = int(x * sx)
-        real_y = int(y * sy)
-    else:
-        real_x, real_y = x, y
-    # ─── デバッグオーバーレイ描画 (--verbose 時のみ) ───
-    if _DEBUG_SAVE_IMAGES:
-        try:
-            if state.last_screen is not None:
-                _dbg = state.last_screen.copy()
-                if finger_box is not None:
-                    fbx, fby, fbw, fbh = finger_box
-                    cv2.rectangle(_dbg, (fbx, fby), (fbx + fbw, fby + fbh),
-                                    (255, 0, 0), 2)
-                if gold_box is not None:
-                    gbx, gby, gbw, gbh = gold_box
-                    cv2.rectangle(_dbg, (gbx, gby), (gbx + gbw, gby + gbh),
-                                    (0, 255, 0), 2)
-                cv2.circle(_dbg, (x, y), 10, (0, 0, 255), -1)
-                if _rejected_finger_blobs:
-                    for _rx, _ry, _rr in _rejected_finger_blobs:
-                        cv2.drawMarker(_dbg, (_rx, _ry), (0, 0, 255),
-                                        cv2.MARKER_CROSS, 22, 2)
-                        cv2.putText(_dbg, "[REJECTED]", (_rx - 42, _ry - 14),
-                                     cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 255), 1)
-                _out = str(Path(__file__).parent.parent / "debug_latest_tap.png")
-                cv2.imwrite(_out, _dbg)
-        except Exception:
-            pass
-    logger.info(
-        "  [DEBUG] TAP: 解析座標=(%d,%d) → デバイス座標=(%d,%d) | %s",
-        x, y, real_x, real_y, desc
-    )
-    adb(f"shell input tap {real_x} {real_y}")
-    state.total_taps += 1
-    state.last_action_time = time.time()
-    time.sleep(post_wait)
-
-
-def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300,
-          state: "PilotState | None" = None) -> None:
-    if state and state.device_w and state.device_h:
-        sx = state.device_w / ANALYSIS_W
-        sy = state.device_h / ANALYSIS_H
-        rx1, ry1 = int(x1 * sx), int(y1 * sy)
-        rx2, ry2 = int(x2 * sx), int(y2 * sy)
-    else:
-        rx1, ry1, rx2, ry2 = x1, y1, x2, y2
-    adb(f"shell input swipe {rx1} {ry1} {rx2} {ry2} {duration_ms}")
-    logger.info("  SWIPE (%d,%d)->(%d,%d) %dms", rx1, ry1, rx2, ry2, duration_ms)
 
 
 def is_dark_screen(img_path: Path) -> bool:
@@ -3652,41 +3400,6 @@ def detect_and_act(ocr: list, state: PilotState,
     return "WAIT_FOR_CHANGE", 0
 
 
-# ─── Watchdog: 物理的 ADB 生存確認 ────────────────────────
-def check_adb_liveness() -> bool:
-    """
-    ADB 接続の物理的な生存を確認する。
-    - adb shell echo 1: 応答確認 (timeout 3s)
-    - adb shell screencap: 転送サービスのハング確認 (timeout 3s)
-    Returns: True=接続正常, False=タイムアウト/エラー(要再起動)
-    """
-    _serial_arg = ["-s", DEVICE_SERIAL] if DEVICE_SERIAL else []
-    try:
-        # echo テスト
-        _r1 = subprocess.run(
-            ["adb"] + _serial_arg + ["shell", "echo", "1"],
-            capture_output=True, timeout=3, text=True,
-        )
-        if _r1.returncode != 0 or _r1.stdout.strip() != "1":
-            logger.warning("[WATCHDOG] echo 応答異常: rc=%d out=%r", _r1.returncode, _r1.stdout.strip())
-            return False
-        # screencap パイプテスト (実際には読まない — ハングを検出するだけ)
-        _r2 = subprocess.run(
-            ["adb"] + _serial_arg + ["shell", "screencap", "-p", "/dev/null"],
-            capture_output=True, timeout=3,
-        )
-        if _r2.returncode != 0:
-            logger.warning("[WATCHDOG] screencap ハング検出: rc=%d", _r2.returncode)
-            return False
-        return True
-    except subprocess.TimeoutExpired:
-        logger.warning("[WATCHDOG] ADB コマンドタイムアウト — 物理診断失敗")
-        return False
-    except Exception as _e:
-        logger.warning("[WATCHDOG] 物理診断例外: %s", _e)
-        return False
-
-
 # ─── Watchdog: デッドロック自動復旧 ─────────────────────
 def watchdog_recover(state: PilotState) -> bool:
     """
@@ -4020,13 +3733,12 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
 
 # ─── メインループ ─────────────────────────────────
 def main():
-    global DEVICE_SERIAL, SCRCPY_DEVICE
+    import tools.ap.constants as _ap_const  # _DEBUG_SAVE_IMAGES 直接書換え用
 
     args = parse_args()
-    global _DEBUG_SAVE_IMAGES
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
-        _DEBUG_SAVE_IMAGES = True
+        _ap_const._DEBUG_SAVE_IMAGES = True
 
     # ─── ADB 自動接続: USB → Wi-Fi フォールバック ───
     try:
@@ -4037,13 +3749,14 @@ def main():
         )
         if not os.environ.get("ANDROID_UDID") and not os.environ.get("ANDROID_SERIAL"):
             os.environ["ANDROID_UDID"] = _detected
-        DEVICE_SERIAL = get_android_serial()
+        _serial = get_android_serial()
+        set_device_serial(_serial)
     except RuntimeError as e:
         logger.error(str(e))
         sys.exit(1)
 
     # scrcpy デバイスを接続済みシリアルから動的設定
-    SCRCPY_DEVICE = DEVICE_SERIAL
+    set_scrcpy_device(DEVICE_SERIAL)
 
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
     if args.fresh_install:
