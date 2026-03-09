@@ -16,7 +16,7 @@ from tools.ap.constants import (
     ANALYSIS_W, ANALYSIS_H, BLACKOUT_BRIGHTNESS, ANALYSIS_PATH,
     _GLOW_CENTER_Y_OFFSET, _CHAR_HEAD_X1, _CHAR_HEAD_X2,
     _CHAR_HEAD_Y1, _CHAR_HEAD_Y2, _SINGLE_ONLY, _CRAWLER_ROOT,
-    _DEBUG_SAVE_IMAGES,
+    _DEBUG_SAVE_IMAGES, _DIALOG_FIRST_KWS,
 )
 from lc.utils import compute_phash, phash_distance
 from tools.ap.device import tap_device, take_screenshot
