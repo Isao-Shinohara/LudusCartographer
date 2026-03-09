@@ -44,6 +44,7 @@ def _build_scrcpy_args(device_serial: str) -> list:
         "-s", device_serial,
         "--turn-screen-off",   # 物理画面消灯
         "--stay-awake",
+        "--max-size", str(ANALYSIS_W),  # ストリーミング解像度を制限
         "--window-width", str(ANALYSIS_W),
         "--window-height", str(ANALYSIS_H),
     ]
