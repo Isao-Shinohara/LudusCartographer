@@ -1,14 +1,14 @@
 {
   "action": "SWIPE_UP",
   "swipe_direction": "up",
-  "swipe_from_x": 1050,
-  "swipe_from_y": 580,
-  "swipe_to_x": 1050,
-  "swipe_to_y": 50,
-  "swipe_duration_ms": 3000,
+  "swipe_from_x_ratio": 0.691,
+  "swipe_from_y_ratio": 0.806,
+  "swipe_to_x_ratio": 0.691,
+  "swipe_to_y_ratio": 0.069,
+  "swipe_duration_ms": 10000,
   "repeat_until_change": true,
   "max_repeat": 10,
   "threshold": 0.86,
   "require_ocr": [],
-  "note": "threshold=0.86 (旧0.82)。0.828で会話画面のキャラ発光に誤マッチするため引上げ。"
+  "note": "ratio化: 旧(1050,580)→(1050,50) を 1520x720基準でratio変換。duration 3000→10000ms (長ホールドスワイプ)。"
 }

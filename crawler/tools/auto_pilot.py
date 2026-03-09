@@ -91,7 +91,7 @@ from tools.ap.helpers import (  # noqa: E402
 import tools.ap.device as _ap_device  # noqa: E402
 from tools.ap.device import (  # noqa: E402
     set_device_serial, set_scrcpy_device,
-    adb, tap_device, swipe, take_screenshot, manage_scrcpy,
+    adb, tap_device, swipe, swipe_device, take_screenshot, manage_scrcpy,
     get_device_resolution, _query_status_bar_height, check_adb_liveness,
 )
 # DEVICE_SERIAL / SCRCPY_DEVICE はモジュール変数 — 読取りは _ap_device 経由
@@ -732,14 +732,21 @@ def detect_and_act(ocr: list, state: PilotState,
                 state.gold_swipe.tick()
                 _base_ph_gs = compute_phash(analysis_path)
                 for _gs_retry in range(2):
+                    # 距離が短すぎる場合は最小距離を強制 (解像度差対策)
+                    _min_dist = int(ANALYSIS_H * 0.4)
+                    if abs(_fy - _ty) < _min_dist:
+                        if _dir == "UP":
+                            _fy = min(ANALYSIS_H - 50, _ty + _min_dist)
+                        else:
+                            _fy = max(50, _ty - _min_dist)
                     if _dir == "UP":
                         logger.info(">>> [GoldSwipe] SWIPE_UP (%d,%d)→(%d,%d) %dms (試行%d)",
                                     _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
-                        swipe(_sx, _fy, _sx, _ty, _dur, state=state)
+                        swipe_device(_sx, _fy, _sx, _ty, _dur, state=state, desc="GoldSwipe_UP")
                     else:
                         logger.info(">>> [GoldSwipe] SWIPE_DOWN (%d,%d)→(%d,%d) %dms (試行%d)",
                                     _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
-                        swipe(_sx, _fy, _sx, _ty, _dur, state=state)
+                        swipe_device(_sx, _fy, _sx, _ty, _dur, state=state, desc="GoldSwipe_DOWN")
                     time.sleep(0.3)
                     _new_ss, _, _, _ = take_screenshot()
                     _new_ph = compute_phash(_new_ss)
@@ -807,13 +814,18 @@ def detect_and_act(ocr: list, state: PilotState,
                 if not _swipe_skip:
                     state.gold_swipe.tick()
                     tmpl_meta = ASSET_MANAGER._templates.get("tutorial_swipe_pointer", {})
-                    sx = tmpl_meta.get("swipe_from_x", cx)
-                    sy = tmpl_meta.get("swipe_from_y", H - 50)
-                    ex = tmpl_meta.get("swipe_to_x", cx)
-                    ey = tmpl_meta.get("swipe_to_y", 50)
+                    # ratio ベース座標 (解像度非依存)
+                    _sw_fx_r = tmpl_meta.get("swipe_from_x_ratio", 0.691)
+                    _sw_fy_r = tmpl_meta.get("swipe_from_y_ratio", 0.806)
+                    _sw_tx_r = tmpl_meta.get("swipe_to_x_ratio", 0.691)
+                    _sw_ty_r = tmpl_meta.get("swipe_to_y_ratio", 0.069)
+                    sx = int(W * _sw_fx_r)
+                    sy = int(H * _sw_fy_r)
+                    ex = int(W * _sw_tx_r)
+                    ey = int(H * _sw_ty_r)
                     dur = tmpl_meta.get("swipe_duration_ms", 10000)
                     logger.info(">>> [SWIPE_UP] (%d,%d)→(%d,%d) %dms", sx, sy, ex, ey, dur)
-                    swipe(sx, sy, ex, ey, dur, state=state)
+                    swipe_device(sx, sy, ex, ey, dur, state=state, desc="SWIPE_UP_ASSET")
                     return "SWIPE_UP", 1.5
                 else:
                     logger.info(">>> [SWIPE_UP] ダイアログKW検出 → スキップ (#0-DIALOGへ)  ← safety net")
@@ -1262,7 +1274,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 # 移動シーン(OCR無し) + 10回以上 → SWIPE_UP 強制 (最優先)
                 if _stg >= 10 and len(texts) == 0:
                     logger.info(">>> [SWIPE_FALLBACK] フィンガースタック%d回+OCR無し → SWIPE_UP強制", _stg)
-                    swipe(fx, H - 50, fx, 50, 10000, state=state)
+                    swipe_device(fx, H - 50, fx, 50, 10000, state=state, desc="SWIPE_FALLBACK")
                     state.blob_same_count = 0
                     state.last_blob_xy = (0, 0)
                     return "SWIPE_FALLBACK", 1.5
@@ -1319,7 +1331,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     # (チェック柄中の微変化では止まらない: 閾値20)
                     _SW_CHANGE_THRESHOLD = 20
                     for _sw_i in range(30):  # 最大30回 (約90秒)
-                        swipe(fx, H - 50, fx, 50, 10000, state=state)
+                        swipe_device(fx, H - 50, fx, 50, 10000, state=state, desc="SWIPE_AUTO")
                         time.sleep(0.2)
                         _sw_ss, _, _, _ = take_screenshot()
                         _sw_ph = compute_phash(_sw_ss)
@@ -1814,7 +1826,7 @@ def detect_and_act(ocr: list, state: PilotState,
     if agree_match:
         logger.info(">>> 規約画面 — スクロール→同意")
         for _ in range(3):
-            swipe(int(W * 0.46), int(H * 0.69), int(W * 0.46), int(H * 0.28), 500, state=state)
+            swipe_device(int(W * 0.46), int(H * 0.69), int(W * 0.46), int(H * 0.28), 500, state=state, desc="TOS_SCROLL")
             time.sleep(0.3)
         agree_btn = has_any(ocr, ["同意"])
         if agree_btn:
@@ -2048,9 +2060,16 @@ def _battle_fast_check(analysis_path: Path,
     gs = None if _confirmed_battle_ui else detect_tutorial_gold_swipe(analysis_path)
     if gs:
         _dir, _sx, _fy, _ty, _dur = gs
+        # 距離が短すぎる場合は最小距離を強制 (解像度差対策)
+        _min_dist = int(ANALYSIS_H * 0.4)
+        if abs(_fy - _ty) < _min_dist:
+            if _dir == "UP":
+                _fy = min(ANALYSIS_H - 50, _ty + _min_dist)
+            else:
+                _fy = max(50, _ty - _min_dist)
         logger.info("[FAST] GoldSwipe %s → swipe (%d,%d)→(%d,%d) %dms",
                     _dir, _sx, _fy, _sx, _ty, _dur)
-        swipe(_sx, _fy, _sx, _ty, _dur, state=state)
+        swipe_device(_sx, _fy, _sx, _ty, _dur, state=state, desc=f"FAST_GoldSwipe_{_dir}")
         return ("GOLD_SWIPE_UP" if _dir == "UP" else "GOLD_SWIPE_DOWN"), BATTLE_WAIT
 
     # 2. GoldBtn (Type B) — バトルチュートリアルボタン (右半分)

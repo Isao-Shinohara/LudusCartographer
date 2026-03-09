@@ -39,6 +39,7 @@ from contextlib import contextmanager
 from typing import Generator
 
 from driver_adapter import BaseDriver, MirroringDriver, SimulatorDriver
+from lc.appium_manager import ensure_appium_server, AppiumNotInstalledError
 
 
 def _resolve_device_mode() -> str:
@@ -110,6 +111,7 @@ def _create_simulator_session() -> Generator[SimulatorDriver, None, None]:
     from lc.driver import ios_simulator_session
 
     sim_cfg = simulator_config_from_env()
+    ensure_appium_server(sim_cfg.appium_host, sim_cfg.appium_port)
     with ios_simulator_session(sim_cfg) as appium_driver:
         yield SimulatorDriver(appium_driver)
 
@@ -129,6 +131,7 @@ def _create_android_session() -> Generator[SimulatorDriver, None, None]:
         appium_host=os.environ.get("APPIUM_HOST", "127.0.0.1"),
         appium_port=int(os.environ.get("APPIUM_PORT", "4723")),
     )
+    ensure_appium_server(cfg.appium_host, cfg.appium_port)
     with android_session(cfg) as appium_driver:
         yield SimulatorDriver(appium_driver)
 
@@ -157,6 +160,7 @@ def _create_mirroring_session() -> Generator[MirroringDriver, None, None]:
     sim_cfg = simulator_config_from_env()
     sim_cfg.appium_host = os.environ.get("APPIUM_HOST", "127.0.0.1")
     sim_cfg.appium_port = int(os.environ.get("APPIUM_PORT", "4723"))
+    ensure_appium_server(sim_cfg.appium_host, sim_cfg.appium_port)
 
     with ios_simulator_session(sim_cfg) as appium_driver:
         yield MirroringDriver(

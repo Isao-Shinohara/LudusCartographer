@@ -610,7 +610,8 @@ def main() -> None:
 
     crawler: "ScreenCrawler | None" = None  # WindowNotFoundError 時の参照用
 
-    with create_driver_session() as driver:
+    try:
+      with create_driver_session() as driver:
         try:
             # モーダルダイアログを解除（起動直後のアラート等）
             for _ in range(3):
@@ -680,6 +681,12 @@ def main() -> None:
         if args.open_web:
             _open_web_dashboard(game_title)
 
+    except Exception as _startup_err:
+        from lc.appium_manager import AppiumNotInstalledError
+        if isinstance(_startup_err, AppiumNotInstalledError):
+            logger.error("Appium エラー: %s", _startup_err)
+            sys.exit(1)
+        raise
 
 
 if __name__ == "__main__":
