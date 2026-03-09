@@ -717,7 +717,7 @@ def detect_and_act(ocr: list, state: PilotState,
     # phash監視: スワイプ後2s待機 → 変化なければ再実行 (最大2回)
     # バトルUI（通常攻撃・単体攻撃・WAVE・Turn）が見えるとき はバトル中なのでスキップ
     _is_battle_ui = any(kw in joined for kw in _BATTLE_UI_KWS)
-    if analysis_path is not None and not _is_battle_ui:
+    if analysis_path is not None and not _is_battle_ui and not _adv_result.is_adv:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:
             # 連続スワイプ上限チェック: 閾値超えたら GoldSwipe をスキップして他の処理へ
