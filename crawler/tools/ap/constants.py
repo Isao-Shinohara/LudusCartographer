@@ -66,7 +66,10 @@ _UI_TEXT_KWS: tuple = ("利用規約", "同意", "規約", "プライバシー",
                        "Download", "OK", "はい", "キャンセル", "設定", "お知らせ")
 
 # ─── match_single() 専用テンプレート (一般マッチから除外) ───
-_SINGLE_ONLY: frozenset = frozenset(["adv_next_btn", "adv_toolbar_strip"])
+_SINGLE_ONLY: frozenset = frozenset([
+    "adv_next_btn", "adv_toolbar_strip",
+    "adv_icon_menu", "adv_icon_log", "adv_icon_auto", "adv_icon_ff", "adv_icon_skip",
+])
 
 # ─── ダイアログ・ファースト: 検知キーワード一覧 ───────────────────────────────
 _DIALOG_FIRST_KWS: frozenset = frozenset([

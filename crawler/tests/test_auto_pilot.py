@@ -598,31 +598,28 @@ class TestCoordinateConstants:
 # ─── ADV Toolbar テンプレートマッチ テスト ─────────────────────────
 
 class TestDetectAdvToolbarButtons:
-    """detect_adv_toolbar_buttons のテンプレートマッチ検証。"""
+    """detect_adv_toolbar_buttons の5アイコン全マッチ検証。"""
 
     def test_detect_adv_toolbar_buttons_positive(self, tmp_path):
-        """ADVシーン画像でAUTO/>>ボタンが検出される。"""
+        """5アイコン全埋め込み → 検出される。"""
         import cv2
         import numpy as np
-        from tools.ap.image_proc import detect_adv_toolbar_buttons, _ADV_AUTO_TEMPLATE, ANALYSIS_W, ANALYSIS_H
+        from tools.ap.image_proc import detect_adv_toolbar_buttons, ANALYSIS_W, ANALYSIS_H
+        from tools.ap.constants import _CRAWLER_ROOT
 
-        if not _ADV_AUTO_TEMPLATE.exists():
-            pytest.skip("ADV AUTO テンプレート画像が存在しません")
-
-        # テンプレートを読み込んで、解析空間画像の正しい位置に埋め込む
-        tpl = cv2.imread(str(_ADV_AUTO_TEMPLATE), cv2.IMREAD_GRAYSCALE)
-        assert tpl is not None, "テンプレート読み込み失敗"
-
-        # 解析空間サイズの黒画像を作成
+        icon_positions = [
+            ("adv_icon_menu", 1116, 45),
+            ("adv_icon_log", 1191, 45),
+            ("adv_icon_auto", 1274, 45),
+            ("adv_icon_ff", 1358, 45),
+            ("adv_icon_skip", 1446, 45),
+        ]
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
-        # AUTO ボタン位置 (右上) にテンプレートを埋め込む
-        th, tw = tpl.shape[:2]
-        cx, cy = 1364, 110  # AUTO center in analysis space
-        y1 = max(cy - th // 2, 0)
-        x1 = max(cx - tw // 2, 0)
-        # BGR に変換して埋め込む
-        tpl_bgr = cv2.cvtColor(tpl, cv2.COLOR_GRAY2BGR)
-        img[y1:y1 + th, x1:x1 + tw] = tpl_bgr
+        for name, cx, cy in icon_positions:
+            tpl_path = _CRAWLER_ROOT / "assets" / "templates" / f"{name}.png"
+            if not tpl_path.exists():
+                pytest.skip(f"{name}.png が存在しません")
+            _embed_template(img, tpl_path, cx, cy)
 
         img_path = tmp_path / "adv_scene.png"
         cv2.imwrite(str(img_path), img)
@@ -635,7 +632,6 @@ class TestDetectAdvToolbarButtons:
         import numpy as np
         from tools.ap.image_proc import detect_adv_toolbar_buttons, ANALYSIS_W, ANALYSIS_H
 
-        # ランダムノイズ画像 (ボタンなし)
         rng = np.random.RandomState(42)
         img = rng.randint(30, 80, (ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
         img_path = tmp_path / "non_adv.png"
@@ -760,7 +756,7 @@ class TestAdvScene:
     """detect_adv_scene 統一検出テスト。"""
 
     def test_toolbar_strip_positive(self, tmp_path):
-        """ツールバーストリップ埋め込み → is_adv=True, toolbar_score>=0.78。"""
+        """5アイコン全埋め込み → is_adv=True, toolbar_score>=0.65。"""
         import cv2
         import numpy as np
         from tools.ap.image_proc import (
@@ -768,25 +764,30 @@ class TestAdvScene:
         )
         from tools.ap.constants import _CRAWLER_ROOT
 
-        strip_path = _CRAWLER_ROOT / "assets" / "templates" / "adv_toolbar_strip.png"
-        if not strip_path.exists():
-            pytest.skip("adv_toolbar_strip.png が存在しません")
-
-        tpl = cv2.imread(str(strip_path), cv2.IMREAD_GRAYSCALE)
+        icon_positions = [
+            ("adv_icon_menu", 1116, 45),
+            ("adv_icon_log", 1191, 45),
+            ("adv_icon_auto", 1274, 45),
+            ("adv_icon_ff", 1358, 45),
+            ("adv_icon_skip", 1446, 45),
+        ]
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
-        # ツールバー位置 (右上) にストリップを埋め込む
-        _embed_template(img, strip_path, 1370, 90)
+        for name, cx, cy in icon_positions:
+            tpl_path = _CRAWLER_ROOT / "assets" / "templates" / f"{name}.png"
+            if not tpl_path.exists():
+                pytest.skip(f"{name}.png が存在しません")
+            _embed_template(img, tpl_path, cx, cy)
 
-        img_path = tmp_path / "adv_strip.png"
+        img_path = tmp_path / "adv_5icons.png"
         cv2.imwrite(str(img_path), img)
 
-        result = detect_adv_scene(img_path, threshold=0.78)
+        result = detect_adv_scene(img_path, icon_threshold=0.65)
         assert isinstance(result, AdvSceneResult)
         assert result.is_adv is True
-        assert result.toolbar_score >= 0.78
+        assert result.toolbar_score >= 0.65
 
     def test_next_btn_detected(self, tmp_path):
-        """↓ボタン+ツールバー埋め込み → next_btn_pos not None。"""
+        """↓ボタン+5アイコン埋め込み → next_btn_pos not None。"""
         import cv2
         import numpy as np
         from tools.ap.image_proc import (
@@ -794,14 +795,24 @@ class TestAdvScene:
         )
         from tools.ap.constants import _CRAWLER_ROOT
 
-        strip_path = _CRAWLER_ROOT / "assets" / "templates" / "adv_toolbar_strip.png"
+        icon_positions = [
+            ("adv_icon_menu", 1116, 45),
+            ("adv_icon_log", 1191, 45),
+            ("adv_icon_auto", 1274, 45),
+            ("adv_icon_ff", 1358, 45),
+            ("adv_icon_skip", 1446, 45),
+        ]
         next_path = _CRAWLER_ROOT / "assets" / "templates" / "adv_next_btn.png"
-        if not strip_path.exists() or not next_path.exists():
-            pytest.skip("テンプレート画像が存在しません")
+        if not next_path.exists():
+            pytest.skip("adv_next_btn.png が存在しません")
 
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
-        _embed_template(img, strip_path, 1370, 90)
-        _embed_template(img, next_path, 1430, 650)  # 右下の↓ボタン位置
+        for name, cx, cy in icon_positions:
+            tpl_path = _CRAWLER_ROOT / "assets" / "templates" / f"{name}.png"
+            if not tpl_path.exists():
+                pytest.skip(f"{name}.png が存在しません")
+            _embed_template(img, tpl_path, cx, cy)
+        _embed_template(img, next_path, 1430, 650)
 
         img_path = tmp_path / "adv_both.png"
         cv2.imwrite(str(img_path), img)
@@ -824,7 +835,7 @@ class TestAdvScene:
 
         result = detect_adv_scene(img_path)
         assert result.is_adv is False
-        assert result.toolbar_score < 0.78
+        assert result.toolbar_score < 0.65
 
     def test_name_line_detection(self, tmp_path):
         """OCR に ◇まどか◇ → has_name_line=True。"""
@@ -878,12 +889,19 @@ class TestAdvScene:
         )
         from tools.ap.constants import _CRAWLER_ROOT
 
-        strip_path = _CRAWLER_ROOT / "assets" / "templates" / "adv_toolbar_strip.png"
-        if not strip_path.exists():
-            pytest.skip("adv_toolbar_strip.png が存在しません")
-
+        icon_positions = [
+            ("adv_icon_menu", 1116, 45),
+            ("adv_icon_log", 1191, 45),
+            ("adv_icon_auto", 1274, 45),
+            ("adv_icon_ff", 1358, 45),
+            ("adv_icon_skip", 1446, 45),
+        ]
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
-        _embed_template(img, strip_path, 1370, 90)
+        for name, cx, cy in icon_positions:
+            tpl_path = _CRAWLER_ROOT / "assets" / "templates" / f"{name}.png"
+            if not tpl_path.exists():
+                pytest.skip(f"{name}.png が存在しません")
+            _embed_template(img, tpl_path, cx, cy)
         img_path = tmp_path / "adv_compat.png"
         cv2.imwrite(str(img_path), img)
 

@@ -593,8 +593,11 @@ def detect_adv_advance_icon(img_path: Path,
         return False
 
 
-_ADV_AUTO_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "adv_auto_btn.png"
-_ADV_FF_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "adv_ff_btn.png"
+# ─── ADV ツールバー: 5個別アイコン名 ──────────────────────────────
+_ADV_TOOLBAR_ICON_NAMES = (
+    "adv_icon_menu", "adv_icon_log", "adv_icon_auto",
+    "adv_icon_ff", "adv_icon_skip",
+)
 
 # ─── ADV シーン統一検出 ────────────────────────────────────────────
 
@@ -633,36 +636,39 @@ class AdvSceneResult:
 
 
 def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
-                     threshold: float = 0.78) -> AdvSceneResult:
-    """ADVシーンを統一的に検出。ツールバーストリップ + ↓ボタン + 補助信号。
+                     icon_threshold: float = 0.65) -> AdvSceneResult:
+    """ADVシーンを統一的に検出。5個別アイコン全マッチ + ↓ボタン + 補助信号。
 
     判定ロジック:
-      1. ツールバーストリップ (AUTO+>>) テンプレートマッチ → toolbar_score
+      1. ツールバー5アイコン (menu/log/AUTO/>>/>) 個別テンプレートマッチ
+         → 全アイコンが icon_threshold 以上で toolbar_score = 最小スコア
       2. ↓ボタン テンプレートマッチ → next_btn_score
       3. キャラ名行 (◇name◇) → has_name_line
       4. セリフテキスト (下部35%にかな4文字以上) → has_dialogue
       5. レターボックス (roi[0] >= 60) → has_letterbox
-      6. confidence = toolbar*0.6 + next_btn*0.25 + aux*0.05(各) clamp 1.0
-      7. is_adv = toolbar_score >= threshold (ストリップ一致が必須条件)
-
-    ストリップが存在しない場合は既存の AUTO/>> 個別マッチにフォールバック。
+      6. is_adv = 5アイコン全マッチ (全スコア >= icon_threshold)
     """
     result = AdvSceneResult()
 
-    # --- 1. ツールバーストリップ ---
-    try:
-        strip_match = ASSET_MANAGER.match_single("adv_toolbar_strip", img_path)
-        if strip_match:
-            result.toolbar_score = strip_match[2]
-            result.toolbar_pos = (strip_match[0], strip_match[1])
-    except Exception:
-        pass
+    # --- 1. ツールバー5アイコン個別マッチ ---
+    _icon_scores: list[float] = []
+    for _name in _ADV_TOOLBAR_ICON_NAMES:
+        try:
+            _m = ASSET_MANAGER.match_single(_name, img_path)
+            _icon_scores.append(_m[2] if _m else 0.0)
+        except Exception:
+            _icon_scores.append(0.0)
 
-    # フォールバック: ストリップ未検出 → 個別 AUTO/>> ボタンマッチ
-    if result.toolbar_score < threshold:
-        _fallback = _detect_adv_toolbar_individual(img_path, threshold)
-        if _fallback > result.toolbar_score:
-            result.toolbar_score = _fallback
+    _all_matched = all(s >= icon_threshold for s in _icon_scores)
+    result.toolbar_score = min(_icon_scores) if _icon_scores else 0.0
+    if _all_matched and _icon_scores:
+        # toolbar_pos = AUTO アイコンの位置 (3番目)
+        try:
+            _auto_m = ASSET_MANAGER.match_single("adv_icon_auto", img_path)
+            if _auto_m:
+                result.toolbar_pos = (_auto_m[0], _auto_m[1])
+        except Exception:
+            pass
 
     # --- 2. ↓ボタン ---
     try:
@@ -675,8 +681,6 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
 
     # --- 3〜5. 補助信号 ---
     if ocr_items:
-        _lower_items = [r for r in ocr_items
-                        if r.get("center", (0, 0))[1] > ANALYSIS_H * 0.60]
         # 3. キャラ名行: 下部40%で ◇name◇ パターン
         _name_items = [r for r in ocr_items
                        if r.get("center", (0, 0))[1] > ANALYSIS_H * 0.60]
@@ -708,47 +712,26 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
                             + result.next_btn_score * 0.25
                             + aux_score)
 
-    # --- 7. 判定 ---
-    result.is_adv = result.toolbar_score >= threshold
+    # --- 7. 判定: 5アイコン全マッチ ---
+    result.is_adv = _all_matched
 
     if result.is_adv:
-        logger.debug("[ADV_SCENE] 検出: toolbar=%.3f next_btn=%.3f conf=%.3f "
+        logger.debug("[ADV_SCENE] 検出: icons=[%s] min=%.3f next_btn=%.3f "
                      "name=%s dial=%s lbox=%s",
+                     ",".join(f"{s:.2f}" for s in _icon_scores),
                      result.toolbar_score, result.next_btn_score,
-                     result.confidence, result.has_name_line,
-                     result.has_dialogue, result.has_letterbox)
+                     result.has_name_line, result.has_dialogue,
+                     result.has_letterbox)
+    else:
+        logger.debug("[ADV_SCENE] 未検出: icons=[%s] min=%.3f",
+                     ",".join(f"{s:.2f}" for s in _icon_scores),
+                     result.toolbar_score)
     return result
 
 
-def _detect_adv_toolbar_individual(img_path: Path, threshold: float = 0.80) -> float:
-    """既存の AUTO/>> 個別テンプレートマッチ。最大スコアを返す。"""
-    best = 0.0
-    try:
-        img = cv2.imread(str(img_path))
-        if img is None:
-            return 0.0
-        resized = cv2.resize(img, (ANALYSIS_W, ANALYSIS_H))
-        roi_x1 = int(ANALYSIS_W * 0.82)
-        roi_y2 = int(ANALYSIS_H * 0.22)
-        roi_gray = cv2.cvtColor(resized[0:roi_y2, roi_x1:ANALYSIS_W], cv2.COLOR_BGR2GRAY)
-        for tpl_path in (_ADV_AUTO_TEMPLATE, _ADV_FF_TEMPLATE):
-            if not tpl_path.exists():
-                continue
-            tpl = cv2.imread(str(tpl_path), cv2.IMREAD_GRAYSCALE)
-            if tpl is None or tpl.shape[0] > roi_gray.shape[0]:
-                continue
-            res = cv2.matchTemplate(roi_gray, tpl, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(res)
-            if max_val > best:
-                best = max_val
-    except Exception:
-        pass
-    return best
-
-
-def detect_adv_toolbar_buttons(img_path: Path, threshold: float = 0.80) -> bool:
-    """AUTO/>> ボタンをテンプレートマッチでADV判定 (後方互換)。detect_adv_scene に委譲。"""
-    return detect_adv_scene(img_path, threshold=threshold).is_adv
+def detect_adv_toolbar_buttons(img_path: Path, threshold: float = 0.65) -> bool:
+    """5アイコン全マッチでADV判定 (後方互換)。detect_adv_scene に委譲。"""
+    return detect_adv_scene(img_path, icon_threshold=threshold).is_adv
 
 
 def is_adv_toolbar_visible(img_path: Path) -> bool:
