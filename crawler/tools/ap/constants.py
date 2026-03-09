@@ -67,7 +67,7 @@ _UI_TEXT_KWS: tuple = ("利用規約", "同意", "規約", "プライバシー",
 
 # ─── match_single() 専用テンプレート (一般マッチから除外) ───
 _SINGLE_ONLY: frozenset = frozenset([
-    "adv_next_btn", "adv_toolbar_strip",
+    "adv_next_btn",
     "adv_icon_menu", "adv_icon_log", "adv_icon_auto", "adv_icon_ff", "adv_icon_skip",
 ])
 

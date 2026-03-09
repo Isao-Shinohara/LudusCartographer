@@ -1,5 +1,0 @@
-{
-  "threshold": 0.78,
-  "action": "ADV_TOOLBAR_STRIP",
-  "note": "ADVシーン右上ツールバー AUTO+>> アイコンストリップ。detect_adv_scene()専用。"
-}
