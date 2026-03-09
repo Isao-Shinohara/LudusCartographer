@@ -137,7 +137,8 @@ class PilotState:
     movie_wait_consecutive: int = 0
     # ─── キャッシュ (per-phash サイクル) ───
     _adv_toolbar_cache_phash: str = ""     # キャッシュ有効な phash 値
-    _adv_toolbar_cache_result: bool = False # キャッシュされた結果
+    _adv_toolbar_cache_result: bool = False # 後方互換 (is_adv_toolbar_cached用)
+    _adv_scene_cache_result: object = None  # AdvSceneResult (循環import回避でobject型)
     # ─── テレメトリ (DEBUG レベル) ───
     last_action_time: float = 0.0          # 直近アクションの実行時刻
     transition_times: list = field(default_factory=list)  # 遷移時間ヒストリ (最大100件)

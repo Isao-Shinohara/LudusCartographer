@@ -737,3 +737,203 @@ class TestDetectMiniConversation:
         ocr = [_make_ocr_item("遠い", 100, 500)]  # バブル外
         result = detect_mini_conversation(img_path, ocr_items=ocr)
         assert result is None
+
+
+# ─── AdvScene 統一検出テスト ──────────────────────────────────────
+
+def _embed_template(img, tpl_path, cx, cy):
+    """テンプレート画像をBGR画像の指定中心座標に埋め込む。"""
+    import cv2
+    tpl = cv2.imread(str(tpl_path), cv2.IMREAD_GRAYSCALE)
+    if tpl is None:
+        return
+    th, tw = tpl.shape[:2]
+    y1 = max(cy - th // 2, 0)
+    x1 = max(cx - tw // 2, 0)
+    tpl_bgr = cv2.cvtColor(tpl, cv2.COLOR_GRAY2BGR)
+    y2 = min(y1 + th, img.shape[0])
+    x2 = min(x1 + tw, img.shape[1])
+    img[y1:y2, x1:x2] = tpl_bgr[:y2 - y1, :x2 - x1]
+
+
+class TestAdvScene:
+    """detect_adv_scene 統一検出テスト。"""
+
+    def test_toolbar_strip_positive(self, tmp_path):
+        """ツールバーストリップ埋め込み → is_adv=True, toolbar_score>=0.78。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import (
+            detect_adv_scene, AdvSceneResult, ANALYSIS_W, ANALYSIS_H,
+        )
+        from tools.ap.constants import _CRAWLER_ROOT
+
+        strip_path = _CRAWLER_ROOT / "assets" / "templates" / "adv_toolbar_strip.png"
+        if not strip_path.exists():
+            pytest.skip("adv_toolbar_strip.png が存在しません")
+
+        tpl = cv2.imread(str(strip_path), cv2.IMREAD_GRAYSCALE)
+        img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        # ツールバー位置 (右上) にストリップを埋め込む
+        _embed_template(img, strip_path, 1370, 90)
+
+        img_path = tmp_path / "adv_strip.png"
+        cv2.imwrite(str(img_path), img)
+
+        result = detect_adv_scene(img_path, threshold=0.78)
+        assert isinstance(result, AdvSceneResult)
+        assert result.is_adv is True
+        assert result.toolbar_score >= 0.78
+
+    def test_next_btn_detected(self, tmp_path):
+        """↓ボタン+ツールバー埋め込み → next_btn_pos not None。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import (
+            detect_adv_scene, ANALYSIS_W, ANALYSIS_H,
+        )
+        from tools.ap.constants import _CRAWLER_ROOT
+
+        strip_path = _CRAWLER_ROOT / "assets" / "templates" / "adv_toolbar_strip.png"
+        next_path = _CRAWLER_ROOT / "assets" / "templates" / "adv_next_btn.png"
+        if not strip_path.exists() or not next_path.exists():
+            pytest.skip("テンプレート画像が存在しません")
+
+        img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        _embed_template(img, strip_path, 1370, 90)
+        _embed_template(img, next_path, 1430, 650)  # 右下の↓ボタン位置
+
+        img_path = tmp_path / "adv_both.png"
+        cv2.imwrite(str(img_path), img)
+
+        result = detect_adv_scene(img_path)
+        assert result.is_adv is True
+        assert result.next_btn_pos is not None
+        assert result.next_btn_score > 0.0
+
+    def test_random_noise_negative(self, tmp_path):
+        """ランダムノイズ画像 → is_adv=False。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import detect_adv_scene, ANALYSIS_W, ANALYSIS_H
+
+        rng = np.random.RandomState(42)
+        img = rng.randint(30, 80, (ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        img_path = tmp_path / "noise.png"
+        cv2.imwrite(str(img_path), img)
+
+        result = detect_adv_scene(img_path)
+        assert result.is_adv is False
+        assert result.toolbar_score < 0.78
+
+    def test_name_line_detection(self, tmp_path):
+        """OCR に ◇まどか◇ → has_name_line=True。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import detect_adv_scene, ANALYSIS_W, ANALYSIS_H
+
+        img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        img_path = tmp_path / "name_line.png"
+        cv2.imwrite(str(img_path), img)
+
+        ocr_items = [
+            {"text": "◇まどか◇", "center": (760, 500), "confidence": 0.9,
+             "box": [[700, 490], [820, 490], [820, 510], [700, 510]]},
+        ]
+        result = detect_adv_scene(img_path, ocr_items=ocr_items)
+        assert result.has_name_line is True
+
+    def test_letterbox_detection(self, tmp_path):
+        """roi=(68,0,...) → has_letterbox=True。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import detect_adv_scene, ANALYSIS_W, ANALYSIS_H
+
+        img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        img_path = tmp_path / "letterbox.png"
+        cv2.imwrite(str(img_path), img)
+
+        result = detect_adv_scene(img_path, roi=(68, 0, 1384, 720))
+        assert result.has_letterbox is True
+
+    def test_letterbox_not_detected_small_roi(self, tmp_path):
+        """roi=(30,0,...) → has_letterbox=False。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import detect_adv_scene, ANALYSIS_W, ANALYSIS_H
+
+        img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        img_path = tmp_path / "no_letterbox.png"
+        cv2.imwrite(str(img_path), img)
+
+        result = detect_adv_scene(img_path, roi=(30, 0, 1460, 720))
+        assert result.has_letterbox is False
+
+    def test_backward_compat_wrapper(self, tmp_path):
+        """detect_adv_toolbar_buttons() が bool を返す (後方互換)。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import (
+            detect_adv_toolbar_buttons, ANALYSIS_W, ANALYSIS_H,
+        )
+        from tools.ap.constants import _CRAWLER_ROOT
+
+        strip_path = _CRAWLER_ROOT / "assets" / "templates" / "adv_toolbar_strip.png"
+        if not strip_path.exists():
+            pytest.skip("adv_toolbar_strip.png が存在しません")
+
+        img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        _embed_template(img, strip_path, 1370, 90)
+        img_path = tmp_path / "adv_compat.png"
+        cv2.imwrite(str(img_path), img)
+
+        result = detect_adv_toolbar_buttons(img_path)
+        assert isinstance(result, bool)
+        assert result is True
+
+    def test_dialogue_text_detection(self, tmp_path):
+        """OCR下部にかな文字テキスト → has_dialogue=True。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import detect_adv_scene, ANALYSIS_W, ANALYSIS_H
+
+        img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        img_path = tmp_path / "dialogue.png"
+        cv2.imwrite(str(img_path), img)
+
+        ocr_items = [
+            {"text": "それでは行きましょう", "center": (760, 600),
+             "confidence": 0.95,
+             "box": [[600, 590], [920, 590], [920, 610], [600, 610]]},
+        ]
+        result = detect_adv_scene(img_path, ocr_items=ocr_items)
+        assert result.has_dialogue is True
+
+    def test_dialogue_short_text_rejected(self, tmp_path):
+        """3文字以下のかなテキスト → has_dialogue=False。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import detect_adv_scene, ANALYSIS_W, ANALYSIS_H
+
+        img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        img_path = tmp_path / "short_text.png"
+        cv2.imwrite(str(img_path), img)
+
+        ocr_items = [
+            {"text": "はい", "center": (760, 600), "confidence": 0.9,
+             "box": [[740, 590], [780, 590], [780, 610], [740, 610]]},
+        ]
+        result = detect_adv_scene(img_path, ocr_items=ocr_items)
+        assert result.has_dialogue is False
+
+    def test_classify_scene_adv_detected(self):
+        """classify_scene(adv_detected=True) → ADV。"""
+        from tools.ap.helpers import classify_scene
+        scene, interval = classify_scene(["何かのテキスト"], "IDLE", adv_detected=True)
+        assert scene == "ADV"
+
+    def test_classify_scene_adv_not_detected(self):
+        """classify_scene(adv_detected=False) で ADV キーワードなし → UNKNOWN。"""
+        from tools.ap.helpers import classify_scene
+        scene, _ = classify_scene(["何かのテキスト"], "IDLE", adv_detected=False)
+        assert scene == "UNKNOWN"

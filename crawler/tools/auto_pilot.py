@@ -124,6 +124,7 @@ from tools.ap.image_proc import (  # noqa: E402
     detect_tutorial_gold_swipe, detect_tutorial_gold_button_tap,
     smart_tap_button, find_golden_highlighted_button, find_3d_arrow,
     AssetManager, ASSET_MANAGER,
+    detect_adv_scene, detect_adv_scene_cached, AdvSceneResult,
 )
 
 
@@ -497,6 +498,8 @@ def detect_and_act(ocr: list, state: PilotState,
     """
     texts = all_texts(ocr)
     W, H = ANALYSIS_W, ANALYSIS_H
+    # ADVシーン検出結果 (detect_adv_scene_cached で事前計算済み)
+    _adv_result: AdvSceneResult = state._adv_scene_cache_result or AdvSceneResult()
     joined = " ".join(texts)
 
     # ── 【#-3】ダウンロード画面の厳格判定 ──
@@ -1834,20 +1837,18 @@ def detect_and_act(ocr: list, state: PilotState,
     if lower_texts and len(ocr) <= 15:
         target = lower_texts[-1]
         cx, cy = target["center"]
-        # ADVツールバー検出時 → ↓矢印ボタンをテンプレートマッチで優先
-        if analysis_path and is_adv_toolbar_cached(analysis_path, state):
-            _next_btn = ASSET_MANAGER.match_single("adv_next_btn", analysis_path)
-            if _next_btn:
-                cx, cy = _next_btn[0], _next_btn[1]
-                logger.info(">>> ストーリー送り '%s' → ↓ボタン (%d,%d)", target["text"][:10], cx, cy)
-                tap_device(cx, cy, state, "STORY_TAP")
-                return "STORY_TAP", 0.3
+        # ADVツールバー検出時 → ↓矢印ボタン座標を再利用 (detect_adv_scene_cached)
+        if _adv_result.is_adv and _adv_result.next_btn_pos:
+            cx, cy = _adv_result.next_btn_pos
+            logger.info(">>> ストーリー送り '%s' → ↓ボタン (%d,%d)", target["text"][:10], cx, cy)
+            tap_device(cx, cy, state, "STORY_TAP")
+            return "STORY_TAP", 0.3
         logger.info(">>> ストーリー送り '%s' (%d,%d)", target["text"][:10], cx, cy)
         tap_device(cx, cy, state, "STORY_TAP")
         return "STORY_TAP", 0.3
 
     # ─── ミニ会話シーン (ADVツールバー有 + 上部白吹き出し) ───
-    if analysis_path and is_adv_toolbar_cached(analysis_path, state):
+    if _adv_result.is_adv and analysis_path:
         _mini = detect_mini_conversation(analysis_path, ocr_items=ocr)
         if _mini:
             _mx, _my = _mini[0], _mini[1]
@@ -2500,9 +2501,10 @@ def main():
                 else:
                     # レターボックス判定: 左黒帯>=80px
                     _rapid_roi_x = state.game_roi[0] if state.game_roi else 0
+                    _rapid_adv = detect_adv_scene_cached(img_path, state)
                     if _rapid_roi_x >= 80:
                         # ADVツールバー(AUTO/>>)があればADV_RAPIDへフォールスルー
-                        if not is_adv_toolbar_cached(img_path, state):
+                        if not _rapid_adv.is_adv:
                             state.movie_wait_consecutive += 1
                             logger.info("[iter %d] phash_dist=%d レターボックス動画 → 待機 (%d/%d)",
                                         i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
@@ -2512,14 +2514,13 @@ def main():
                             continue
                         # ADVツールバーあり → ADV_RAPID へフォールスルー
                     # ADV vs 動画シーン判別: ツールバー有無で分岐
-                    if is_adv_toolbar_cached(img_path, state):
-                        # ↓矢印ボタンをテンプレートマッチで検出
-                        _adv_btn = ASSET_MANAGER.match_single("adv_next_btn", img_path)
-                        if _adv_btn:
+                    if _rapid_adv.is_adv:
+                        # ↓矢印ボタン座標を再利用 (detect_adv_scene_cached)
+                        if _rapid_adv.next_btn_pos:
                             # img_path はデバイス解像度 → 解析空間に変換
-                            _adv_x = int(_adv_btn[0] * ANALYSIS_W / actual_w)
-                            _adv_y = int(_adv_btn[1] * ANALYSIS_H / actual_h)
-                            logger.info("[iter %d] phash_dist=%d ADV_RAPID → ↓ボタン (%.3f)", i, dist, _adv_btn[2])
+                            _adv_x = int(_rapid_adv.next_btn_pos[0] * ANALYSIS_W / actual_w)
+                            _adv_y = int(_rapid_adv.next_btn_pos[1] * ANALYSIS_H / actual_h)
+                            logger.info("[iter %d] phash_dist=%d ADV_RAPID → ↓ボタン (%.3f)", i, dist, _rapid_adv.next_btn_score)
                         else:
                             # ↓ボタンなし → ミニ会話シーン検出
                             _mini = detect_mini_conversation(img_path)
@@ -2638,15 +2639,14 @@ def main():
                 # ── ADV送り待ちアイコン検知: phash 安定中でも即タップ ──
                 # 動画シーンでは ADV ツールバーが無いためタップ抑制
                 if state.current_scene in ("STORY", "ADV"):
-                    if is_adv_toolbar_cached(img_path, state):
+                    _aa_adv = detect_adv_scene_cached(img_path, state)
+                    if _aa_adv.is_adv:
                         if detect_adv_advance_icon(img_path):
                             logger.info("[ADV_ADVANCE][iter %d] 送り待ちアイコン検出 → 即タップ", i)
-                            # ↓矢印ボタンをテンプレートマッチで検出
-                            _aa_btn = ASSET_MANAGER.match_single("adv_next_btn", img_path)
-                            if _aa_btn:
-                                # img_path はデバイス解像度 → 解析空間に変換
-                                _aa_x = int(_aa_btn[0] * ANALYSIS_W / actual_w)
-                                _aa_y = int(_aa_btn[1] * ANALYSIS_H / actual_h)
+                            # ↓矢印ボタン座標を再利用 (detect_adv_scene_cached)
+                            if _aa_adv.next_btn_pos:
+                                _aa_x = int(_aa_adv.next_btn_pos[0] * ANALYSIS_W / actual_w)
+                                _aa_y = int(_aa_adv.next_btn_pos[1] * ANALYSIS_H / actual_h)
                             else:
                                 _aa_x, _aa_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
                             tap_device(_aa_x, _aa_y, state, "ADV_ADVANCE")
@@ -2928,8 +2928,13 @@ def main():
             state.last_phash = ""
             continue
 
+        # ── ADVシーン検出 (キャッシュ付き) ──
+        _adv_result = detect_adv_scene_cached(
+            analysis_path or img_path, state, ocr_items=ocr_results)
+
         # ── シーン分類 ──
-        scene, next_interval = classify_scene(texts, state.last_action)
+        scene, next_interval = classify_scene(
+            texts, state.last_action, adv_detected=_adv_result.is_adv)
         state.current_scene = scene
         logger.info("[%s][iter %d] phash_dist=%d same=%d OCR(%d): %s",
                     scene, i, dist, state.same_phash_count, len(ocr_results), texts[:8])
@@ -2948,7 +2953,7 @@ def main():
             _is_movie_letterbox or (len(texts) <= 3 and scene not in ("BATTLE", "MENU"))
         )
         if _movie_candidate and not _has_ui_text and scene not in ("BATTLE", "MENU") and analysis_path:
-            if not is_adv_toolbar_cached(analysis_path, state):
+            if not _adv_result.is_adv:
                 # ツールバーなし → レターボックス or >| ボタン検出で動画判定
                 _movie_btn = detect_movie_skip_button(analysis_path)
                 if _is_movie_letterbox or _movie_btn:
@@ -3002,7 +3007,10 @@ def main():
                     _re_ocr = run_ocr(str(_re_analysis), lang=OCR_LANG,
                                       min_confidence=OCR_MIN_CONF)
                 _re_texts = all_texts(_re_ocr)
-                _re_scene, _ = classify_scene(_re_texts, action)
+                _re_adv = detect_adv_scene(_re_analysis, ocr_items=_re_ocr,
+                                            roi=state.game_roi)
+                _re_scene, _ = classify_scene(_re_texts, action,
+                                              adv_detected=_re_adv.is_adv)
                 if _re_scene != state.current_scene:
                     logger.warning(
                         "[SCENE_REEVAL] シーン不一致: %s → %s → 切替+再判定",
@@ -3012,7 +3020,7 @@ def main():
                 # レターボックスガード (動画シーンでのdetect_and_actバイパス)
                 _re_roi_x = state.game_roi[0] if state.game_roi else 0
                 if _re_roi_x >= 80 and _re_scene not in ("BATTLE", "MENU"):
-                    if not is_adv_toolbar_visible(_re_analysis):
+                    if not _re_adv.is_adv:
                         logger.info("[SCENE_REEVAL] レターボックス動画 → MOVIE_WAIT")
                         state.last_action = "MOVIE_WAIT"
                         state.action_repeat_count = 0

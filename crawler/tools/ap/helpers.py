@@ -17,7 +17,8 @@ from tools.ap.constants import (
 logger = logging.getLogger("auto_pilot")
 
 
-def classify_scene(texts: list[str], last_action: str) -> tuple[str, float]:
+def classify_scene(texts: list[str], last_action: str,
+                    adv_detected: bool = False) -> tuple[str, float]:
     """
     OCR テキストからシーンを分類し (scene_label, poll_interval) を返す。
     - BATTLE  : バトル画面 — 戦闘固有キーワードあり
@@ -26,6 +27,8 @@ def classify_scene(texts: list[str], last_action: str) -> tuple[str, float]:
     - LOADING : ロード/ダウンロード中
     - MENU    : ホーム/メニュー画面
     - UNKNOWN : 判定不能
+
+    adv_detected: True なら ADV シーンを確定で返す (detect_adv_scene 由来)。
     """
     joined = " ".join(texts)
     if any(kw in joined for kw in ["ダウンロード", "Loading", "Now Loading", "ロード中", "通信中"]):
@@ -35,8 +38,8 @@ def classify_scene(texts: list[str], last_action: str) -> tuple[str, float]:
     if any(kw in joined for kw in ["クエスト", "ショップ", "ガシャ", "ガチャ",
                                     "ホーム", "メニュー", "お知らせ", "編成", "光の間"]):
         return "MENU", SCENE_INTERVAL["MENU"]
-    # ADV = スキップボタンあり（能動的に会話が進む）
-    if any(kw in joined for kw in ["スキップ", "SKIP"]):
+    # ADV = ツールバー検出 or スキップボタンあり
+    if adv_detected or any(kw in joined for kw in ["スキップ", "SKIP"]):
         return "ADV", SCENE_INTERVAL["ADV"]
     # STORY = 直前アクションが会話送り、またはスキップなし会話テキスト
     if last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT"):
