@@ -248,3 +248,22 @@ export ANDROID_SERIAL=f6b8cef7
 - `.env` や認証情報ファイルをコミットすること
 - セッション終了時に `STATUS.md` を更新しないこと
 - ユーザーの確認なしに実機で連続操作を実行すること
+
+---
+
+## 12. まどドラ起動ルール
+
+まどドラの自律操縦を起動する際は **必ず `tools/auto_pilot.py` を直接実行** すること。
+`main.py` (DFS クロールモード) は使用しない。
+
+```bash
+cd ~/Desktop/LudusCartographer/crawler
+PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
+ANDROID_HOME=~/Library/Android/sdk \
+ANDROID_SDK_ROOT=~/Library/Android/sdk \
+PATH="$HOME/.nodebrew/current/bin:$PATH" \
+venv/bin/python -u tools/auto_pilot.py
+```
+
+- `main.py --android` は内部で `auto_pilot.main()` を呼ぶが、直接実行の方が確実
+- `--fresh-install` は **ユーザーが明示的に指示した場合のみ** 付与（§11 参照）
