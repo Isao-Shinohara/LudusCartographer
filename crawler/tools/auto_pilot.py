@@ -117,7 +117,7 @@ from tools.ap.image_proc import (  # noqa: E402
     find_finger_blobs, detect_white_hand_pointer, create_finger_mask_image,
     detect_guide_glow, _run_battle_glow_sm, detect_active_battle_char,
     find_gold_frame_near, is_adv_toolbar_cached, detect_adv_advance_icon,
-    is_adv_toolbar_visible, detect_movie_skip_button,
+    is_adv_toolbar_visible, detect_movie_skip_button, detect_mini_conversation,
     detect_tutorial_dialog_nav, detect_dialog_frame_and_nav,
     process_paging_dialog, detect_notice_popup, count_page_dots,
     detect_text_input_area,
@@ -1846,6 +1846,15 @@ def detect_and_act(ocr: list, state: PilotState,
         tap_device(cx, cy, state, "STORY_TAP")
         return "STORY_TAP", 0.3
 
+    # ─── ミニ会話シーン (ADVツールバー有 + 上部白吹き出し) ───
+    if analysis_path and is_adv_toolbar_cached(analysis_path, state):
+        _mini = detect_mini_conversation(analysis_path, ocr_items=ocr)
+        if _mini:
+            _mx, _my = _mini[0], _mini[1]
+            logger.info(">>> ミニ会話 吹き出しタップ (%d,%d) side=%s", _mx, _my, _mini[2])
+            tap_device(_mx, _my, state, "MINI_CONV_TAP")
+            return "MINI_CONV_TAP", 0.3
+
     # ─── 右上吹き出しセリフ (メニュー画面上のキャラガイダンス) ───
     # 右上エリア (x>55%, y<35%) にテキストがあり、AUTO/>> ボタン等のUI要素と共存
     # → セリフが止まっている (前回と同一テキスト or phash安定) ならタップで送る
@@ -2476,7 +2485,7 @@ def main():
                 for t in _last_texts
             )
             if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT", "BUBBLE_TAP",
-                                      "MOYA_TAP", "MOVIE_SKIP", "MOVIE_WAIT") and
+                                      "MINI_CONV_TAP", "MOYA_TAP", "MOVIE_SKIP", "MOVIE_WAIT") and
                     PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
                     state.current_scene not in ("MENU", "BATTLE") and
                     not _is_result_like):
@@ -2512,6 +2521,17 @@ def main():
                             _adv_y = int(_adv_btn[1] * ANALYSIS_H / actual_h)
                             logger.info("[iter %d] phash_dist=%d ADV_RAPID → ↓ボタン (%.3f)", i, dist, _adv_btn[2])
                         else:
+                            # ↓ボタンなし → ミニ会話シーン検出
+                            _mini = detect_mini_conversation(img_path)
+                            if _mini:
+                                _adv_x, _adv_y = _mini[0], _mini[1]
+                                logger.info("[iter %d] phash_dist=%d ADV_RAPID → MINI_CONV (%d,%d) %s",
+                                            i, dist, _adv_x, _adv_y, _mini[2])
+                                tap_device(_adv_x, _adv_y, state, "MINI_CONV_TAP")
+                                logger.info("  ACTION_TAKEN MINI_CONV_TAP (%d,%d)", _adv_x, _adv_y)
+                                state.movie_wait_consecutive = 0
+                                state.last_phash = cur_phash
+                                continue
                             _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
                             logger.info("[iter %d] phash_dist=%d ADV_RAPID → 中央下フォールバック", i, dist)
                         tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP")

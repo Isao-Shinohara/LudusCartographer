@@ -642,3 +642,98 @@ class TestDetectAdvToolbarButtons:
         cv2.imwrite(str(img_path), img)
 
         assert detect_adv_toolbar_buttons(img_path) is False
+
+
+# ─── ミニ会話シーン検出テスト ──────────────────────────────────────
+
+def _make_bubble_image(tmp_path, bubbles, bg_val=40):
+    """
+    テスト用ミニ会話画像を生成。
+
+    bubbles: list of (x, y, w, h, brightness)
+        brightness: 0-255 (V channel in white bubble → BGR (brightness, brightness, brightness))
+    bg_val: 背景輝度
+    """
+    import cv2
+    import numpy as np
+    from tools.ap.image_proc import ANALYSIS_W, ANALYSIS_H
+
+    img = np.full((ANALYSIS_H, ANALYSIS_W, 3), bg_val, dtype=np.uint8)
+    for bx, by, bw, bh, brightness in bubbles:
+        # 白い吹き出し (S<40, V>200 を満たす BGR)
+        cv2.rectangle(img, (bx, by), (bx + bw, by + bh),
+                      (brightness, brightness, brightness), -1)
+    img_path = tmp_path / "mini_conv.png"
+    cv2.imwrite(str(img_path), img)
+    return img_path
+
+
+class TestDetectMiniConversation:
+    """detect_mini_conversation() のテスト。"""
+
+    def test_right_bubble_detected(self, tmp_path):
+        """右上の白い吹き出し → (cx, cy, 'right') を返す。"""
+        from tools.ap.image_proc import detect_mini_conversation, ANALYSIS_W
+        # 右側 (x=900) に白い吹き出し
+        img_path = _make_bubble_image(tmp_path, [(900, 50, 300, 80, 240)])
+        ocr = [_make_ocr_item("セリフ", 1050, 90)]
+        result = detect_mini_conversation(img_path, ocr_items=ocr)
+        assert result is not None
+        cx, cy, side = result
+        assert side == "right"
+        assert cx > ANALYSIS_W // 2
+
+    def test_left_bubble_detected(self, tmp_path):
+        """左上の白い吹き出し → (cx, cy, 'left') を返す。"""
+        from tools.ap.image_proc import detect_mini_conversation, ANALYSIS_W
+        # 左側 (x=100) に白い吹き出し
+        img_path = _make_bubble_image(tmp_path, [(100, 50, 300, 80, 240)])
+        ocr = [_make_ocr_item("セリフ", 250, 90)]
+        result = detect_mini_conversation(img_path, ocr_items=ocr)
+        assert result is not None
+        cx, cy, side = result
+        assert side == "left"
+        assert cx < ANALYSIS_W // 2
+
+    def test_two_bubbles_selects_brighter(self, tmp_path):
+        """2バブル → 明るい方(アクティブ話者)を選択。"""
+        from tools.ap.image_proc import detect_mini_conversation
+        # 左: グレー(150), 右: 白(240) → 右を選択
+        img_path = _make_bubble_image(tmp_path, [
+            (100, 50, 300, 80, 150),   # 左: グレー (V=150 < 200 → マスクに入らない)
+            (900, 50, 300, 80, 240),   # 右: 白 (V=240 > 200)
+        ])
+        ocr = [_make_ocr_item("左", 250, 90),
+               _make_ocr_item("右", 1050, 90)]
+        result = detect_mini_conversation(img_path, ocr_items=ocr)
+        assert result is not None
+        _, _, side = result
+        assert side == "right"
+
+    def test_no_bubble_returns_none(self, tmp_path):
+        """暗い画像 → None (誤検出なし)。"""
+        from tools.ap.image_proc import detect_mini_conversation
+        # 全面暗い画像
+        img_path = _make_bubble_image(tmp_path, [], bg_val=30)
+        result = detect_mini_conversation(img_path)
+        assert result is None
+
+    def test_toolbar_zone_excluded(self, tmp_path):
+        """右上ADVツールバー領域 (x>82%, y<22%) の白要素は無視。"""
+        from tools.ap.image_proc import detect_mini_conversation, ANALYSIS_W, ANALYSIS_H
+        # ツールバー領域のみに白いブロック
+        tx = int(ANALYSIS_W * 0.85)
+        ty = 10
+        img_path = _make_bubble_image(tmp_path, [(tx, ty, 200, 60, 240)])
+        ocr = [_make_ocr_item("AUTO", tx + 100, ty + 30)]
+        result = detect_mini_conversation(img_path, ocr_items=ocr)
+        assert result is None
+
+    def test_ocr_empty_bubble_rejected(self, tmp_path):
+        """吹き出し内にテキストなし → None。"""
+        from tools.ap.image_proc import detect_mini_conversation
+        # 白い吹き出しあり、OCR はバブル外のみ
+        img_path = _make_bubble_image(tmp_path, [(900, 50, 300, 80, 240)])
+        ocr = [_make_ocr_item("遠い", 100, 500)]  # バブル外
+        result = detect_mini_conversation(img_path, ocr_items=ocr)
+        assert result is None

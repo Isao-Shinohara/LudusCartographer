@@ -653,6 +653,95 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
         return None
 
 
+def detect_mini_conversation(img_path: Path, ocr_items=None,
+                             min_bubble_area: int = 3000,
+                             upper_ratio: float = 0.45):
+    """
+    ミニ会話シーン（上部の白い吹き出し）を検出しアクティブ話者の中心座標を返す。
+
+    Returns: (cx, cy, "left"|"right") or None
+    """
+    try:
+        img = cv2.imread(str(img_path))
+        if img is None:
+            return None
+        resized = cv2.resize(img, (ANALYSIS_W, ANALYSIS_H))
+        h_cut = int(ANALYSIS_H * upper_ratio)
+        upper = resized[0:h_cut, :]
+
+        # HSV 白色マスク (S<40, V>200)
+        hsv = cv2.cvtColor(upper, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, (0, 0, 200), (180, 40, 255))
+
+        # morphology cleanup
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
+                                       cv2.CHAIN_APPROX_SIMPLE)
+
+        # ADVツールバー除外ゾーン (x>82%, y<22%)
+        toolbar_x = int(ANALYSIS_W * 0.82)
+        toolbar_y = int(ANALYSIS_H * 0.22)
+
+        candidates = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < min_bubble_area:
+                continue
+            x, y, w, bh = cv2.boundingRect(cnt)
+            if bh == 0:
+                continue
+            aspect = w / bh
+            if aspect < 1.2 or aspect > 8.0:
+                continue
+            # ツールバー除外
+            cx_cnt = x + w // 2
+            cy_cnt = y + bh // 2
+            if cx_cnt > toolbar_x and cy_cnt < toolbar_y:
+                continue
+
+            # 平均輝度 (V チャンネル)
+            cnt_mask = np.zeros(mask.shape, dtype=np.uint8)
+            cv2.drawContours(cnt_mask, [cnt], -1, 255, -1)
+            mean_v = float(cv2.mean(hsv[:, :, 2], mask=cnt_mask)[0])
+
+            side = "left" if cx_cnt < ANALYSIS_W // 2 else "right"
+            candidates.append({
+                "cx": cx_cnt, "cy": cy_cnt,
+                "x": x, "y": y, "w": w, "h": bh,
+                "mean_v": mean_v, "side": side, "area": area,
+            })
+
+        if not candidates:
+            return None
+
+        # 最も明るい = アクティブ話者
+        best = max(candidates, key=lambda c: c["mean_v"])
+
+        # OCR 検証: 吹き出し BBox 内にテキストが存在するか
+        if ocr_items is not None:
+            bx1, by1 = best["x"], best["y"]
+            bx2, by2 = bx1 + best["w"], by1 + best["h"]
+            has_text_inside = any(
+                bx1 <= r["center"][0] <= bx2 and by1 <= r["center"][1] <= by2
+                for r in ocr_items
+                if r["text"] not in ("AUTO", ">>", ">|", "D1", "×")
+            )
+            if not has_text_inside:
+                return None
+
+        logger.debug("[MINI_CONV] bubble (%d,%d) side=%s area=%d mean_v=%.1f",
+                     best["cx"], best["cy"], best["side"], best["area"],
+                     best["mean_v"])
+        return (best["cx"], best["cy"], best["side"])
+
+    except Exception:
+        logger.debug("[MINI_CONV] 例外発生", exc_info=True)
+        return None
+
+
 # ─── チュートリアルダイアログ ページ送り/閉じるボタン検出 ─────────────────
 # ダイアログにはページング可能な間 ◁▷ 矢印が表示され、
 # 最終ページでは × ボタンが右上に出現して閉じることができる。
