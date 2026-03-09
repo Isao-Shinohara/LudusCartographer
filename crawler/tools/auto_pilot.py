@@ -119,7 +119,7 @@ from tools.ap.image_proc import (  # noqa: E402
     find_gold_frame_near, is_adv_toolbar_cached, detect_adv_advance_icon,
     is_adv_toolbar_visible, detect_movie_skip_button,
     detect_tutorial_dialog_nav, detect_dialog_frame_and_nav,
-    process_paging_dialog, detect_text_input_area,
+    process_paging_dialog, detect_notice_popup, detect_text_input_area,
     detect_tutorial_gold_swipe, detect_tutorial_gold_button_tap,
     smart_tap_button, find_golden_highlighted_button, find_3d_arrow,
     AssetManager, ASSET_MANAGER,
@@ -618,13 +618,19 @@ def detect_and_act(ocr: list, state: PilotState,
         if _pre_result is not None:
             return _pre_result
 
+    # ── 【お知らせポップアップ検出】PRE_DIALOG_GUARD バイパス ──────────
+    _is_notice = False
+    if analysis_path is not None:
+        _is_notice = detect_notice_popup(analysis_path, texts)
+
     # ── 【#0-DIALOG 前ガード】指ブロブ検出時はダイアログ検出をスキップ ──────
+    # お知らせポップアップ検出時はガードをバイパス (×で確実に閉じるため)
     _pre_dialog_finger = False
     _is_result_screen = any(
         any(k in t for k in ("Result", "リザルト", "次へ"))
         for t in texts
     )
-    if analysis_path is not None and not _is_result_screen:
+    if analysis_path is not None and not _is_result_screen and not _is_notice:
         _pdg_blobs = find_finger_blobs(analysis_path, min_area=300, max_area=5000)
         _pdg_blobs = [b for b in _pdg_blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
         if _pdg_blobs:

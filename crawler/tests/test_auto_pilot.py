@@ -491,6 +491,37 @@ class TestRoiToDevice:
         assert abs(final_y - 843) <= 3
 
 
+# ─── お知らせポップアップ検出テスト ──────────────────────────────────────
+
+class TestDetectNoticePopup:
+    """detect_notice_popup() のテスト。"""
+
+    def test_ocr_keyword_triggers_detection(self):
+        """「今日は表示しない」が OCR にあれば True。"""
+        from tools.ap.image_proc import detect_notice_popup
+        # 画像不要 — OCR テキストだけで確定
+        assert detect_notice_popup(Path("/nonexistent.png"),
+                                   ["今日は表示しない", "ガチャへ"]) is True
+
+    def test_no_keyword_no_image_returns_false(self):
+        """OCR にキーワードなし + 画像なし → False。"""
+        from tools.ap.image_proc import detect_notice_popup
+        assert detect_notice_popup(Path("/nonexistent.png"),
+                                   ["ガチャへ", "限定"]) is False
+
+    def test_partial_keyword_no_match(self):
+        """部分一致しない文字列では検出しない。"""
+        from tools.ap.image_proc import detect_notice_popup
+        assert detect_notice_popup(Path("/nonexistent.png"),
+                                   ["今日は", "表示しない"]) is False
+
+    def test_exact_substring_match(self):
+        """長い文字列に含まれていても検出する。"""
+        from tools.ap.image_proc import detect_notice_popup
+        assert detect_notice_popup(Path("/nonexistent.png"),
+                                   ["✓今日は表示しない"]) is True
+
+
 # ─── 座標定数テスト ──────────────────────────────────────
 
 class TestCoordinateConstants:

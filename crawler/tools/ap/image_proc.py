@@ -993,6 +993,101 @@ def detect_dialog_frame_and_nav(
         return None
 
 
+# ─── お知らせポップアップ検出 ─────────────────────────────────────────────
+
+
+def _detect_page_dots(img, H: int, W: int) -> bool:
+    """画面下部にページドットインジケータ (● ○ ○ …) があるか検出。"""
+    # ROI: 下部8%, 中央60%
+    _y1 = int(H * 0.92)
+    _x1 = int(W * 0.20)
+    _x2 = int(W * 0.80)
+    _roi = img[_y1:H, _x1:_x2]
+    if _roi.size == 0:
+        return False
+    _gray = cv2.cvtColor(_roi, cv2.COLOR_BGR2GRAY)
+    _, _thr = cv2.threshold(_gray, 140, 255, cv2.THRESH_BINARY)
+    _cnts, _ = cv2.findContours(_thr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    _dot_count = 0
+    for _c in _cnts:
+        _a = cv2.contourArea(_c)
+        if _a < 15 or _a > 400:
+            continue
+        _x, _y, _w, _h = cv2.boundingRect(_c)
+        _asp = _w / max(_h, 1)
+        if 0.5 < _asp < 2.0:  # roughly circular
+            _dot_count += 1
+    return _dot_count >= 3
+
+
+def _detect_background_blur(img, H: int, W: int) -> bool:
+    """ポップアップ外の左端ストリップがぼかされているか (HSV彩度分散低下) を検出。"""
+    # 左端ストリップ: x=0~6%, y=15~85% (ポップアップ外の背景領域)
+    _lx2 = int(W * 0.06)
+    _ly1, _ly2 = int(H * 0.15), int(H * 0.85)
+    _left = img[_ly1:_ly2, 0:_lx2]
+    if _left.size == 0:
+        return False
+    _hsv = cv2.cvtColor(_left, cv2.COLOR_BGR2HSV)
+    _sat_var = float(_hsv[:, :, 1].var())
+    # ぼかし背景: 彩度の分散が低い (鮮明な画像は分散が大きい)
+    _is_blur = _sat_var < 800
+    logger.debug("[NOTICE_POPUP] 背景ぼかし: sat_var=%.1f (threshold=800) → %s",
+                 _sat_var, "blur" if _is_blur else "sharp")
+    return _is_blur
+
+
+def detect_notice_popup(
+    img_path: Path, ocr_texts: list[str], W: int = 1520, H: int = 720,
+) -> bool:
+    """お知らせポップアップを検出する。
+
+    判定条件 (いずれかで確定):
+      1. OCR で「今日は表示しない」を検出 (確定条件)
+      2. 補助条件: × ボタン + ページドット + 背景ぼかし の全組合せ
+    """
+    # ── 条件1: OCR テキスト (確定) ──
+    if any("今日は表示しない" in t for t in ocr_texts):
+        logger.info("[NOTICE_POPUP] 「今日は表示しない」検出 → お知らせポップアップ確定")
+        return True
+
+    # ── 条件2: 視覚的特徴の組合せ ──
+    try:
+        img = cv2.imread(str(img_path))
+        if img is None:
+            return False
+        _H, _W = img.shape[:2]
+
+        # 2a: × ボタン (右上テンプレートマッチ)
+        _has_close = False
+        if _DIALOG_CLOSE_TEMPLATE.exists():
+            _rx1 = int(_W * 0.85)
+            _ry2 = int(_H * 0.15)
+            _roi_x = img[0:_ry2, _rx1:_W]
+            if _roi_x.size > 0:
+                _tpl = cv2.imread(str(_DIALOG_CLOSE_TEMPLATE))
+                if (_roi_x.shape[0] >= _tpl.shape[0]
+                        and _roi_x.shape[1] >= _tpl.shape[1]):
+                    _r = cv2.matchTemplate(_roi_x, _tpl, cv2.TM_CCOEFF_NORMED)
+                    _, _mv, _, _ = cv2.minMaxLoc(_r)
+                    _has_close = _mv >= 0.65
+
+        # 2b: ページドット (画面下部中央の小円群)
+        _has_dots = _detect_page_dots(img, _H, _W)
+
+        # 2c: 背景ぼかし (HSV彩度低下)
+        _has_blur = _detect_background_blur(img, _H, _W)
+
+        if _has_close and _has_dots and _has_blur:
+            logger.info("[NOTICE_POPUP] 補助条件成立: ×=%s dots=%s blur=%s",
+                        _has_close, _has_dots, _has_blur)
+            return True
+    except Exception as _e:
+        logger.debug("[NOTICE_POPUP] 検出エラー: %s", _e)
+
+    return False
+
+
 # ─── ページング式ダイアログ完全処理 ────────────────────────────────────────
 def process_paging_dialog(
     analysis_path: Path, W: int, H: int,
