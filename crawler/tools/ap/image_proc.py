@@ -17,6 +17,7 @@ from tools.ap.constants import (
     _DEBUG_SAVE_IMAGES,
 )
 from lc.utils import compute_phash
+from tools.ap.device import tap_device
 
 logger = logging.getLogger("auto_pilot")
 

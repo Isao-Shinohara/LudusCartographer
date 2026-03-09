@@ -2240,6 +2240,10 @@ def main():
                 if _ap_device.DEVICE_SERIAL:
                     subprocess.run(["adb", "connect", _ap_device.DEVICE_SERIAL], timeout=5)
                     time.sleep(1)
+                # scrcpy が ADB 再起動で死んだ場合は再起動
+                if _scrcpy_proc is not None and _scrcpy_proc.poll() is not None:
+                    logger.info("[SCRCPY] WATCHDOG ADB reconnect 後に再起動")
+                    _scrcpy_proc = manage_scrcpy()
             else:
                 logger.info("[WATCHDOG] Periodic check OK")
 
@@ -2498,6 +2502,10 @@ def main():
                     if _ap_device.DEVICE_SERIAL:
                         subprocess.run(["adb", "connect", _ap_device.DEVICE_SERIAL], timeout=5)
                         time.sleep(1)
+                    # scrcpy が ADB 再起動で死んだ場合は再起動
+                    if _scrcpy_proc is not None and _scrcpy_proc.poll() is not None:
+                        logger.info("[SCRCPY] WATCHDOG ADB reconnect 後に再起動")
+                        _scrcpy_proc = manage_scrcpy()
                     state.consecutive_frozen_frames = 0
                     state.last_phash = ""  # 次ループで強制再取得
                 else:
