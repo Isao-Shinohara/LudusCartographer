@@ -22,6 +22,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from lc.ocr import run_ocr, center_of_box, find_text, find_best, format_results
 
+pytestmark = pytest.mark.slow
+
 # ============================================================
 # テスト対象スクリーンショット検索
 # ============================================================

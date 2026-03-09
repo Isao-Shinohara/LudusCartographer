@@ -31,6 +31,8 @@ from lc.crawler import CrawlerConfig, ScreenCrawler
 from lc.driver import ios_simulator_session
 from lc.ocr import find_best, run_ocr
 
+pytestmark = pytest.mark.integration
+
 # ============================================================
 # 定数
 # ============================================================

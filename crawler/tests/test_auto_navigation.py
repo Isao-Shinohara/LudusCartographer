@@ -47,6 +47,8 @@ from lc.capabilities import simulator_config_from_env
 from lc.driver import ios_simulator_session
 from lc.ocr import center_of_box, find_best, find_text, format_results, run_ocr
 
+pytestmark = pytest.mark.integration
+
 # ============================================================
 # 定数
 # ============================================================

@@ -36,6 +36,8 @@ requires_paddle = pytest.mark.skipif(
     reason="PaddleOCR がインストールされていないためスキップ"
 )
 
+pytestmark = pytest.mark.slow
+
 
 # ============================================================
 # テストスイート
@@ -103,21 +105,23 @@ class TestPaddleOCRBasic:
 class TestPaddleOCROutput:
     """OCR出力形式の検証テスト。"""
 
-    def test_run_ocr_returns_list(self):
-        results = run_ocr(FIXTURE_IMAGE)
-        assert isinstance(results, list)
+    @pytest.fixture(scope="class")
+    def ocr_results(self):
+        """クラスレベルで OCR を1回だけ実行してキャッシュする。"""
+        return run_ocr(FIXTURE_IMAGE)
 
-    def test_each_result_has_required_keys(self):
-        results = run_ocr(FIXTURE_IMAGE)
-        for r in results:
+    def test_run_ocr_returns_list(self, ocr_results):
+        assert isinstance(ocr_results, list)
+
+    def test_each_result_has_required_keys(self, ocr_results):
+        for r in ocr_results:
             assert "text" in r
             assert "confidence" in r
             assert "box" in r
             assert "center" in r
 
-    def test_text_is_non_empty_string(self):
-        results = run_ocr(FIXTURE_IMAGE)
-        for r in results:
+    def test_text_is_non_empty_string(self, ocr_results):
+        for r in ocr_results:
             assert isinstance(r["text"], str)
             assert len(r["text"]) > 0
 
