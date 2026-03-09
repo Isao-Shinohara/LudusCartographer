@@ -118,16 +118,26 @@ class ScreenCache:
     # インデックス構築
     # ----------------------------------------------------------
 
+    @staticmethod
+    def _is_phash_stem(stem: str) -> bool:
+        """stem が有効な pHash 16進文字列かどうかを判定。"""
+        try:
+            int(stem, 16)
+            return len(stem) >= 8
+        except ValueError:
+            return False
+
     def _load_index(self) -> None:
         """knowledge_dir/*.json を走査して _index を構築する。human_solved/ サブディレクトリも対象。"""
-        # root の human-curated エントリ
+        # root の human-curated エントリ (pHash 形式のファイル名のみ)
         for p in self.knowledge_dir.glob("*.json"):
-            self._index[p.stem] = p
+            if self._is_phash_stem(p.stem):
+                self._index[p.stem] = p
         # human_solved エントリ (同一ハッシュがあれば root 優先)
         hs_dir = self.knowledge_dir / "human_solved"
         if hs_dir.exists():
             for p in hs_dir.glob("*.json"):
-                if p.stem not in self._index:
+                if self._is_phash_stem(p.stem) and p.stem not in self._index:
                     self._index[p.stem] = p
         logger.info(
             "[CACHE] インデックス構築: %d 件  dir=%s",
