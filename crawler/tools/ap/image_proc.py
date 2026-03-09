@@ -6,6 +6,7 @@ from __future__ import annotations
 import cv2
 import json
 import logging
+import time
 import numpy as np
 from pathlib import Path
 from typing import Optional
