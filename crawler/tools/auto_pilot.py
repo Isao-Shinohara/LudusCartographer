@@ -281,11 +281,17 @@ def handle_dialog_screen(
     texts: list[str],
     is_battle_early: bool,
     has_finger_guard: bool,
+    is_notice_popup: bool = False,
 ) -> Optional[tuple[str, float]]:
     """ダイアログ検出ハンドラ (#0-DIALOG)。
 
     detect_dialog_frame_and_nav() で金色枠/×/▷ を検出し、
     Spatial Gate / White Hand ガード / エスカレーション を経てタップ実行。
+
+    is_notice_popup=True の場合:
+      - 全ガード (指/SPATIAL_GATE/バトル) をバイパス
+      - ページング可能 → 最終ページまで▷タップ後×で閉じる
+      - ページング不可 → そのまま×で閉じる (確認ダイアログ等への誤転送なし)
 
     Returns: (action_name, wait_sec) or None (非ダイアログ / ガード発動)
     """
@@ -301,6 +307,31 @@ def handle_dialog_screen(
         return None
 
     _dlg_type, _dlg_x, _dlg_y = _dlg
+
+    # ── お知らせポップアップ: 全ガードバイパス → ページング or × 閉じ ──
+    if is_notice_popup:
+        if _dlg_type in ("next", "bottom"):
+            logger.info(
+                ">>> 【お知らせポップアップ】ページング検出 %s(%d,%d) → process_paging_dialog",
+                _dlg_type, _dlg_x, _dlg_y,
+            )
+            _pg_result = process_paging_dialog(
+                analysis_path, W, H, state,
+                initial_dlg=(_dlg_type, _dlg_x, _dlg_y),
+                ocr_texts=texts,
+            )
+            state.pre_popup_tap_count = 0
+            state.dialog_close_total = 0
+            return _pg_result, 1.0
+        else:
+            logger.info(
+                ">>> 【お知らせポップアップ】×閉じ (%d,%d)",
+                _dlg_x, _dlg_y,
+            )
+            tap_device(_dlg_x, _dlg_y, state, "NOTICE_POPUP_CLOSE")
+            state.pre_popup_tap_count = 0
+            state.dialog_close_total = 0
+            return "NOTICE_POPUP_CLOSE", 1.0
 
     # ── 指ガード: ×のみダイアログは指がある場合スキップ ──
     # ページングダイアログ (▷) は SPATIAL_GATE に委任して指との距離で判断
@@ -647,7 +678,8 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── 【最優先 #0-DIALOG】ダイアログ・ファースト ────────────
     _dialog_result = handle_dialog_screen(
-        state, analysis_path, ocr, texts, _is_battle_early, _pre_dialog_finger)
+        state, analysis_path, ocr, texts, _is_battle_early, _pre_dialog_finger,
+        is_notice_popup=_is_notice)
     if _dialog_result is not None:
         return _dialog_result
 

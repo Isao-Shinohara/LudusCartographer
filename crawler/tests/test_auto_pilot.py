@@ -387,6 +387,37 @@ class TestHandleDialogScreen:
         assert result[1] == 1.0
         mock_paging.assert_called_once()
 
+    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("close", 1400, 50))
+    def test_notice_popup_close_bypasses_all_guards(self, mock_dlg, mock_tap,
+                                                      state, tmp_path):
+        """お知らせポップアップ: is_notice_popup=True → ガード全バイパスで×閉じ。"""
+        from tools.auto_pilot import handle_dialog_screen
+        analysis = tmp_path / "test.png"
+        analysis.touch()
+        # has_finger_guard=True でも is_notice_popup=True でバイパスされる
+        result = handle_dialog_screen(state, analysis, [], [], False, True,
+                                       is_notice_popup=True)
+        assert result is not None
+        assert result[0] == "NOTICE_POPUP_CLOSE"
+        assert result[1] == 1.0
+        mock_tap.assert_called_once()
+
+    @patch("tools.auto_pilot.process_paging_dialog", return_value="NOTICE_PAGING_DONE")
+    @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("next", 1400, 360))
+    def test_notice_popup_paging_bypasses_all_guards(self, mock_dlg, mock_paging,
+                                                       state, tmp_path):
+        """お知らせポップアップ: ページング検出時 → process_paging_dialog。"""
+        from tools.auto_pilot import handle_dialog_screen
+        analysis = tmp_path / "test.png"
+        analysis.touch()
+        result = handle_dialog_screen(state, analysis, [], [], False, True,
+                                       is_notice_popup=True)
+        assert result is not None
+        assert result[0] == "NOTICE_PAGING_DONE"
+        assert result[1] == 1.0
+        mock_paging.assert_called_once()
+
     @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("close", 100, 50))
     def test_battle_dialog_guard_skips_close_in_top(self, mock_dlg, state, tmp_path):
         from tools.auto_pilot import handle_dialog_screen
