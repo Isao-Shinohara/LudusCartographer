@@ -1816,6 +1816,16 @@ def detect_and_act(ocr: list, state: PilotState,
             tap_device(cx, cy, state, "AGREE")
         return "AGREE", 1.0
 
+    # ─── ADVシーン: ↓ボタンのみタップ、上部アイコンは無視 ───
+    if _adv_result.is_adv:
+        if _adv_result.next_btn_pos:
+            cx, cy = _adv_result.next_btn_pos
+            logger.info(">>> ADV ↓ボタンタップ (%d,%d)", cx, cy)
+            tap_device(cx, cy, state, "ADV_NEXT_TAP")
+            return "ADV_NEXT_TAP", 0.3
+        logger.info(">>> ADV ↓ボタン未検出 → 待機")
+        return "ADV_WAIT", 1.0
+
     # ─── 確認ダイアログ ───
     confirm_match = has_any(ocr, ["OK", "はい", "次へ", "確認", "完了", "決定",
                                    "受け取る", "受取", "了解", "わかった",
@@ -1837,24 +1847,9 @@ def detect_and_act(ocr: list, state: PilotState,
     if lower_texts and len(ocr) <= 15:
         target = lower_texts[-1]
         cx, cy = target["center"]
-        # ADVツールバー検出時 → ↓矢印ボタン座標を再利用 (detect_adv_scene_cached)
-        if _adv_result.is_adv and _adv_result.next_btn_pos:
-            cx, cy = _adv_result.next_btn_pos
-            logger.info(">>> ストーリー送り '%s' → ↓ボタン (%d,%d)", target["text"][:10], cx, cy)
-            tap_device(cx, cy, state, "STORY_TAP")
-            return "STORY_TAP", 0.3
         logger.info(">>> ストーリー送り '%s' (%d,%d)", target["text"][:10], cx, cy)
         tap_device(cx, cy, state, "STORY_TAP")
         return "STORY_TAP", 0.3
-
-    # ─── ミニ会話シーン (ADVツールバー有 + 上部白吹き出し) ───
-    if _adv_result.is_adv and analysis_path:
-        _mini = detect_mini_conversation(analysis_path, ocr_items=ocr)
-        if _mini:
-            _mx, _my = _mini[0], _mini[1]
-            logger.info(">>> ミニ会話 吹き出しタップ (%d,%d) side=%s", _mx, _my, _mini[2])
-            tap_device(_mx, _my, state, "MINI_CONV_TAP")
-            return "MINI_CONV_TAP", 0.3
 
     # ─── 右上吹き出しセリフ (メニュー画面上のキャラガイダンス) ───
     # 右上エリア (x>55%, y<35%) にテキストがあり、AUTO/>> ボタン等のUI要素と共存
@@ -2485,7 +2480,8 @@ def main():
                 any(k in t for k in ("Result", "EXP", "次へ"))
                 for t in _last_texts
             )
-            if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT", "BUBBLE_TAP",
+            if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "ADV_NEXT_TAP", "ADV_WAIT",
+                                      "STORY_TAP_HINT", "BUBBLE_TAP",
                                       "MINI_CONV_TAP", "MOYA_TAP", "MOVIE_SKIP", "MOVIE_WAIT") and
                     PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
                     state.current_scene not in ("MENU", "BATTLE") and
@@ -2515,28 +2511,17 @@ def main():
                         # ADVツールバーあり → ADV_RAPID へフォールスルー
                     # ADV vs 動画シーン判別: ツールバー有無で分岐
                     if _rapid_adv.is_adv:
-                        # ↓矢印ボタン座標を再利用 (detect_adv_scene_cached)
                         if _rapid_adv.next_btn_pos:
-                            # img_path はデバイス解像度 → 解析空間に変換
+                            # ↓矢印ボタン座標を再利用 (detect_adv_scene_cached)
                             _adv_x = int(_rapid_adv.next_btn_pos[0] * ANALYSIS_W / actual_w)
                             _adv_y = int(_rapid_adv.next_btn_pos[1] * ANALYSIS_H / actual_h)
                             logger.info("[iter %d] phash_dist=%d ADV_RAPID → ↓ボタン (%.3f)", i, dist, _rapid_adv.next_btn_score)
+                            tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP")
+                            logger.info("  ACTION_TAKEN ADV_RAPID_TAP (%d,%d)", _adv_x, _adv_y)
                         else:
-                            # ↓ボタンなし → ミニ会話シーン検出
-                            _mini = detect_mini_conversation(img_path)
-                            if _mini:
-                                _adv_x, _adv_y = _mini[0], _mini[1]
-                                logger.info("[iter %d] phash_dist=%d ADV_RAPID → MINI_CONV (%d,%d) %s",
-                                            i, dist, _adv_x, _adv_y, _mini[2])
-                                tap_device(_adv_x, _adv_y, state, "MINI_CONV_TAP")
-                                logger.info("  ACTION_TAKEN MINI_CONV_TAP (%d,%d)", _adv_x, _adv_y)
-                                state.movie_wait_consecutive = 0
-                                state.last_phash = cur_phash
-                                continue
-                            _adv_x, _adv_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
-                            logger.info("[iter %d] phash_dist=%d ADV_RAPID → 中央下フォールバック", i, dist)
-                        tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP")
-                        logger.info("  ACTION_TAKEN ADV_RAPID_TAP (%d,%d)", _adv_x, _adv_y)
+                            # ↓ボタンなし → タップせず待機
+                            logger.info("[iter %d] phash_dist=%d ADV_RAPID → ↓ボタン未検出 → 待機", i, dist)
+                            state.last_action = "ADV_WAIT"
                         state.movie_wait_consecutive = 0
                         state.last_phash = cur_phash
                         continue
@@ -2641,14 +2626,10 @@ def main():
                 if state.current_scene in ("STORY", "ADV"):
                     _aa_adv = detect_adv_scene_cached(img_path, state)
                     if _aa_adv.is_adv:
-                        if detect_adv_advance_icon(img_path):
-                            logger.info("[ADV_ADVANCE][iter %d] 送り待ちアイコン検出 → 即タップ", i)
-                            # ↓矢印ボタン座標を再利用 (detect_adv_scene_cached)
-                            if _aa_adv.next_btn_pos:
-                                _aa_x = int(_aa_adv.next_btn_pos[0] * ANALYSIS_W / actual_w)
-                                _aa_y = int(_aa_adv.next_btn_pos[1] * ANALYSIS_H / actual_h)
-                            else:
-                                _aa_x, _aa_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.9), state.game_roi)
+                        if detect_adv_advance_icon(img_path) and _aa_adv.next_btn_pos:
+                            logger.info("[ADV_ADVANCE][iter %d] 送り待ちアイコン検出 → ↓ボタンタップ", i)
+                            _aa_x = int(_aa_adv.next_btn_pos[0] * ANALYSIS_W / actual_w)
+                            _aa_y = int(_aa_adv.next_btn_pos[1] * ANALYSIS_H / actual_h)
                             tap_device(_aa_x, _aa_y, state, "ADV_ADVANCE")
                             state.last_phash = ""
                             state.same_phash_count = 0
