@@ -466,6 +466,30 @@ class TestRoiToDevice:
         assert dx == 68 + 1384
         assert dy == 53 + 614
 
+    def test_xperia_normalized_roi_no_double_scale(self):
+        """Xperia正規化ROI: roi_to_device + tap_device スケールで正しいデバイス座標。"""
+        from tools.auto_pilot import roi_to_device, ANALYSIS_W, ANALYSIS_H
+        # Xperia 2160x1080, 黒帯なし → 正規化ROI = (0,0,1520,720)
+        roi_norm = (0, 0, ANALYSIS_W, ANALYSIS_H)
+        ax, ay = roi_to_device(760, 360, roi_norm)
+        # tap_device scaling: ax * 2160/1520, ay * 1080/720
+        final_x = int(ax * 2160 / ANALYSIS_W)
+        final_y = int(ay * 1080 / ANALYSIS_H)
+        assert abs(final_x - 1080) <= 1
+        assert abs(final_y - 540) <= 1
+
+    def test_xperia_normalized_roi_with_letterbox(self):
+        """Xperia正規化ROI (黒帯あり): 2px以内の精度。"""
+        from tools.auto_pilot import roi_to_device, ANALYSIS_W, ANALYSIS_H
+        # デバイスROI (230,132,1689,816) → 正規化 (162,88,1189,544)
+        roi_norm = (162, 88, 1189, 544)
+        ax, ay = roi_to_device(760, 628, roi_norm)
+        final_x = int(ax * 2160 / ANALYSIS_W)
+        final_y = int(ay * 1080 / ANALYSIS_H)
+        # 期待値: ゲーム中央 (1074, 843)
+        assert abs(final_x - 1074) <= 3
+        assert abs(final_y - 843) <= 3
+
 
 # ─── 座標定数テスト ──────────────────────────────────────
 

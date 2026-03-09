@@ -2275,7 +2275,15 @@ def main():
             if state.last_screen is not None and _roi_needed:
                 _new_roi = detect_game_roi(state.last_screen)
                 # 非黒画面のときのみ ROI を更新 (暗転中は前の ROI を維持)
-                if _new_roi[2] >= ANALYSIS_W * 0.5:
+                if _new_roi[2] >= actual_w * 0.5:
+                    # デバイス空間 → 解析空間に正規化 (Xperia等の非1520x720デバイス対応)
+                    if actual_w != ANALYSIS_W or actual_h != ANALYSIS_H:
+                        _sx = ANALYSIS_W / actual_w
+                        _sy = ANALYSIS_H / actual_h
+                        _new_roi = (
+                            int(_new_roi[0] * _sx), int(_new_roi[1] * _sy),
+                            int(_new_roi[2] * _sx), int(_new_roi[3] * _sy),
+                        )
                     if _new_roi != state.game_roi:
                         logger.info("[ROI] ゲーム描画領域更新: x=%d y=%d w=%d h=%d (黒帯: L=%d R=%d T=%d B=%d)",
                                     _new_roi[0], _new_roi[1], _new_roi[2], _new_roi[3],
