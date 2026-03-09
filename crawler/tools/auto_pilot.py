@@ -1772,6 +1772,19 @@ def detect_and_act(ocr: list, state: PilotState,
         tap_device(cx, cy, state, "STORY_TAP")
         return "STORY_TAP", 0.3
 
+    # ─── 右上吹き出しセリフ (メニュー画面上のキャラガイダンス) ───
+    # 右上エリア (x>55%, y<35%) にテキストがあり、AUTO/>> ボタン等のUI要素と共存
+    # → セリフが止まっている (前回と同一テキスト or phash安定) ならタップで送る
+    _bubble_region = [r for r in ocr
+                      if r["center"][0] > W * 0.55 and r["center"][1] < H * 0.35
+                      and r["text"] not in ("AUTO", ">>", ">|", "D1", "×")]
+    if _bubble_region and len(ocr) <= 20:
+        _bubble = _bubble_region[0]
+        _bx, _by = _bubble["center"]
+        logger.info(">>> 吹き出しセリフ送り '%s' (%d,%d)", _bubble["text"][:10], _bx, _by)
+        tap_device(_bx, _by, state, "BUBBLE_TAP")
+        return "BUBBLE_TAP", 0.3
+
     # ─── ログインボーナス等 ───
     bonus_match = has_any(ocr, ["ログイン", "ボーナス", "プレゼント", "獲得"])
     if bonus_match:
@@ -2383,7 +2396,7 @@ def main():
                 any(k in t for k in ("Result", "EXP", "次へ"))
                 for t in _last_texts
             )
-            if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT",
+            if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT", "BUBBLE_TAP",
                                       "MOYA_TAP", "MOVIE_SKIP", "MOVIE_WAIT") and
                     PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
                     state.current_scene not in ("MENU", "BATTLE") and
