@@ -41,16 +41,16 @@ def _build_scrcpy_args(device_serial: str) -> list:
     """
     scrcpy 起動引数を動的に構築する。
 
-    ウィンドウサイズは 720x360 基準で、端末のアスペクト比を保ちつつ
-    幅720 または 高さ360 に収まるようにする。
+    ウィンドウサイズは 1080x540 基準で、端末のアスペクト比を保ちつつ
+    幅1080 または 高さ540 に収まるようにする。
     """
     # デバイス実解像度を取得 (wm size は portrait で返す場合がある)
     dev_w, dev_h = get_device_resolution()
     # ゲームはランドスケープ前提: 長辺=width, 短辺=height に正規化
     land_w = max(dev_w, dev_h)
     land_h = min(dev_w, dev_h)
-    # 720x360 基準: コンパクトな監視ウィンドウ
-    TARGET_W, TARGET_H = 720, 360
+    # 1080x540 基準: 見やすい監視ウィンドウ (端末非依存)
+    TARGET_W, TARGET_H = 1080, 540
     scale = min(TARGET_W / land_w, TARGET_H / land_h)
     win_w = int(land_w * scale)
     win_h = int(land_h * scale)
