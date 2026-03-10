@@ -114,7 +114,8 @@ _pilot_state_ref: Optional["PilotState"] = None
 
 # ─── 画像処理: ap/image_proc.py から import ───
 from tools.ap.image_proc import (  # noqa: E402
-    detect_game_roi, roi_to_device, is_dark_screen, prepare_analysis_image,
+    detect_game_roi, roi_to_device, is_dark_screen, is_tutorial_walk_scene,
+    prepare_analysis_image,
     find_finger_blobs, detect_white_hand_pointer, create_finger_mask_image,
     detect_guide_glow, _run_battle_glow_sm, detect_active_battle_char,
     find_gold_frame_near, is_adv_toolbar_cached, detect_adv_advance_icon,
@@ -805,6 +806,20 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── 【最優先 #0-aa】HSV金色ポインター検出 → ホールドスワイプ (Type A) ───
     # 縦長金色領域 h/w>=3.5 かつ幅<=100px のみ有効 (ボタン/カード誤検出防止)。
+    # ─── 【最優先 #0-walk】チュートリアル歩行シーン (白黒背景) → 上ホールドスワイプ ───
+    # 指アイコンが出ない場面でも白黒市松/階段背景なら上スワイプを強制実行。
+    # ADV検出ガードより先に評価する (ADV誤検出でブロックされるのを防ぐ)。
+    if (analysis_path is not None
+            and len(texts) <= 2
+            and is_tutorial_walk_scene(analysis_path)):
+        _sx = int(ANALYSIS_W * 0.5)
+        _fy = ANALYSIS_H - 50
+        _ty = 50
+        _dur = 10000
+        logger.info(">>> [TutorialWalk] 白黒背景検出 (OCR %d件) → 上ホールドスワイプ", len(texts))
+        swipe_device(_sx, _fy, _sx, _ty, _dur, state=state, desc="TutorialWalk_UP")
+        return "GOLD_SWIPE_UP", BATTLE_WAIT
+
     # チュートリアル3D移動シーン(チェッカー床/階段/廊下)で発火。
     # phash監視: スワイプ後2s待機 → 変化なければ再実行 (最大2回)
     # バトルUI（通常攻撃・単体攻撃・WAVE・Turn）が見えるとき はバトル中なのでスキップ

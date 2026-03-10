@@ -82,6 +82,23 @@ def roi_to_device(ax: int, ay: int, roi: tuple) -> tuple[int, int]:
     )
 
 
+def is_tutorial_walk_scene(img_path: Path) -> bool:
+    """チュートリアル歩行シーン (白黒市松/階段背景) を検出。
+
+    判定: 画像全体の平均彩度が非常に低い (< 25) → ほぼモノクロ。
+    このパターンはチュートリアル冒頭の歩行シーンに固有。
+    """
+    try:
+        img = cv2.imread(str(img_path))
+        if img is None:
+            return False
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        mean_sat = float(hsv[:, :, 1].mean())
+        return mean_sat < 25
+    except Exception:
+        return False
+
+
 def is_dark_screen(img_path: Path) -> bool:
     try:
         from PIL import Image
