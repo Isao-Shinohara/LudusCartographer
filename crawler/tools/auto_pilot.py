@@ -810,7 +810,10 @@ def detect_and_act(ocr: list, state: PilotState,
     # バトルUI（通常攻撃・単体攻撃・WAVE・Turn）が見えるとき はバトル中なのでスキップ
     _is_battle_ui = any(kw in joined for kw in _BATTLE_UI_KWS)
     _has_dialog_kw = any(kw in joined for kw in _DIALOG_FIRST_KWS)
-    if analysis_path is not None and not _is_battle_ui and not _adv_result.is_adv and not _has_dialog_kw:
+    _home_swipe_guard_kws = ["光の間", "ショップ", "ガチャ", "ガシャ", "パーティ",
+                             "クエスト", "ユニオン", "プレイヤーマッチ"]
+    _is_home_screen = sum(1 for h in _home_swipe_guard_kws if h in joined) >= 3
+    if analysis_path is not None and not _is_battle_ui and not _adv_result.is_adv and not _has_dialog_kw and not _is_home_screen:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:
             # 連続スワイプ上限チェック: 閾値超えたら GoldSwipe をスキップして他の処理へ
