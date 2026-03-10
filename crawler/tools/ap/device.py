@@ -179,7 +179,7 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
     """scrcpy を規定オプションで起動。不整合プロセスは Kill → 再起動。"""
     try:
         ps = subprocess.run(
-            ["ps", "aux"], capture_output=True, text=True, timeout=5
+            ["/bin/ps", "aux"], capture_output=True, text=True, timeout=5
         )
     except Exception as e:
         logger.warning("[SCRCPY] ps aux 失敗: %s", e)
