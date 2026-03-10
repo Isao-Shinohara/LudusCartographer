@@ -1560,8 +1560,8 @@ def detect_and_act(ocr: list, state: PilotState,
         state.home_reached = True
         # ── 指アイコン or 金枠がある場合 → まだホームチュートリアル中 ──
         # 「ホーム画面かつ指アイコン+金枠がない」状態が本当のチュートリアル終了
-        # 安全弁: HOME_TUTORIAL_TAP 15回超 → 偽検出と判断しチュートリアル完了扱い
-        _tutorial_tap_limit = state.home_tutorial_tap_count >= 15
+        # 安全弁: HOME_TUTORIAL_TAP 5回超 → 偽検出と判断しチュートリアル完了扱い
+        _tutorial_tap_limit = state.home_tutorial_tap_count >= 5
         if _tutorial_tap_limit:
             logger.info(">>> HOME_TUTORIAL_TAP %d回到達 → 偽検出と判断、チュートリアル完了扱い",
                         state.home_tutorial_tap_count)
