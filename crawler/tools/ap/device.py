@@ -44,14 +44,17 @@ def _build_scrcpy_args(device_serial: str) -> list:
     ウィンドウサイズはデバイス実解像度から動的に算出する。
     (旧実装は ANALYSIS_W/H=1520x720 に固定していたため他端末で極小ウィンドウになっていた)
     """
-    # デバイス実解像度を取得 → ウィンドウは実機の半分サイズ
+    # デバイス実解像度を取得 (wm size は portrait で返す場合がある)
     dev_w, dev_h = get_device_resolution()
-    win_w = dev_w // 2
-    win_h = dev_h // 2
+    # ゲームはランドスケープ前提: 長辺=width, 短辺=height に正規化
+    land_w = max(dev_w, dev_h)
+    land_h = min(dev_w, dev_h)
+    win_w = land_w // 2
+    win_h = land_h // 2
     # --max-size: 短辺を制限 (ストリーミング負荷軽減)
-    max_size = min(dev_w, dev_h)
-    logger.info("[SCRCPY] 実機解像度 %dx%d → window %dx%d, max-size %d",
-                dev_w, dev_h, win_w, win_h, max_size)
+    max_size = land_h
+    logger.info("[SCRCPY] 実機解像度 %dx%d → landscape %dx%d → window %dx%d, max-size %d",
+                dev_w, dev_h, land_w, land_h, win_w, win_h, max_size)
     return [
         "scrcpy",
         "-s", device_serial,
