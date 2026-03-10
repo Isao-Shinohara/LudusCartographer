@@ -2619,7 +2619,8 @@ def main():
             )
             if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "ADV_NEXT_TAP", "ADV_WAIT",
                                       "STORY_TAP_HINT", "BUBBLE_TAP",
-                                      "MINI_CONV_TAP", "MOYA_TAP", "MOVIE_SKIP", "MOVIE_WAIT") and
+                                      "MINI_CONV_TAP", "MOYA_TAP", "MOVIE_SKIP", "MOVIE_WAIT",
+                                      "SCENE_TAP") and
                     PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
                     state.current_scene not in ("MENU", "BATTLE") and
                     not _is_result_like):
@@ -2726,13 +2727,17 @@ def main():
                         state.last_action = "MOVIE_WAIT"
                         state.last_phash = cur_phash
                         continue
-                    else:
-                        state.movie_wait_consecutive += 1
-                        logger.info("[iter %d] phash_dist=%d 動画再生中 → 待機 (%d/%d)",
-                                    i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
-                        state.last_action = "MOVIE_WAIT"
-                        state.last_phash = cur_phash
-                        continue
+                    # 金色⏭なし + ツールバーなし + ↓なし + 吹き出しなし
+                    # → 動画ではない静止画面 (ガチャ演出等) → 画面タップで進む
+                    _st_x = int(ANALYSIS_W * 0.5)
+                    _st_y = int(ANALYSIS_H * 0.5)
+                    logger.info("[iter %d] phash_dist=%d 非動画静止画面 → SCENE_TAP (%d,%d)",
+                                i, dist, _st_x, _st_y)
+                    tap_device(_st_x, _st_y, state, "SCENE_TAP")
+                    state.last_action = "SCENE_TAP"
+                    state.movie_wait_consecutive = 0
+                    state.last_phash = cur_phash
+                    continue
 
         else:
             # 画面変化なし
@@ -2897,9 +2902,15 @@ def main():
                         _movie_btn = detect_movie_skip_button(img_path)
                         if _movie_btn:
                             logger.info("[MOVIE_WAIT] 動画検出(>|のみ) → 待機 (phash stable)")
-                        else:
-                            logger.info("[MOVIE_WAIT] 動画再生中 → 待機 (phash stable)")
-                        state.last_action = "MOVIE_WAIT"
+                            state.last_action = "MOVIE_WAIT"
+                            continue
+                        # 金色⏭なし → 動画ではない静止画面 → タップで進む
+                        _st_x = int(ANALYSIS_W * 0.5)
+                        _st_y = int(ANALYSIS_H * 0.5)
+                        logger.info("[iter %d] 静止画面(非動画) → SCENE_TAP (%d,%d)", i, _st_x, _st_y)
+                        tap_device(_st_x, _st_y, state, "SCENE_TAP")
+                        state.last_action = "SCENE_TAP"
+                        state.last_phash = cur_phash
                         continue
                 state.last_phash = cur_phash
                 time.sleep(_poll)
