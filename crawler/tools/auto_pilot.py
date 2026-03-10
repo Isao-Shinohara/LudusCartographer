@@ -2232,7 +2232,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     INSTALL_KEYWORDS = ["インストール", "Install", "install"]
     ACCEPT_KEYWORDS = ["同意する", "Accept", "OK"]
     OPEN_KEYWORDS = ["開く", "Open"]
-    MAX_OCR_ATTEMPTS = 5
+    MAX_OCR_ATTEMPTS = 10
     POLL_INTERVAL_SEC = 5
     MAX_POLL_COUNT = 60  # 5秒 × 60 = 5分
 
@@ -2322,8 +2322,15 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                     pass
             break
 
-        logger.info("[FRESH_INSTALL] インストールボタン未検出 — 待機")
-        time.sleep(3)
+        # ポップアップ (Google Play Games 等) が遮っている可能性 → BACK で閉じて再表示
+        logger.info("[FRESH_INSTALL] インストールボタン未検出 → BACK + Play Store 再表示")
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "input", "keyevent", "4"],
+            capture_output=True, timeout=5,
+        )
+        time.sleep(2)
+        open_play_store(serial, package)
+        time.sleep(5)
 
     # --- Step 4: インストール完了ポーリング ---
     logger.info("[FRESH_INSTALL] インストール完了を待機中... (最大%d秒)", POLL_INTERVAL_SEC * MAX_POLL_COUNT)
@@ -2375,6 +2382,13 @@ def main():
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
     if args.fresh_install:
         _fresh_install_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
+
+    # ─── ゲーム未インストール保護 ───
+    if not is_app_installed(_ap_device.DEVICE_SERIAL, APP_PACKAGE):
+        logger.error("[ABORT] ゲーム '%s' がインストールされていません。", APP_PACKAGE)
+        logger.error("[ABORT] --fresh-install でのインストールに失敗した可能性があります。")
+        logger.error("[ABORT] 手動でインストールしてから再実行してください。")
+        sys.exit(1)
 
     logger.info("=" * 62)
     logger.info("  まどドラ自律操縦 — Auto Pilot (ハイブリッド版)")
