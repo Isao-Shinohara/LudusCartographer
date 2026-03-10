@@ -9,6 +9,17 @@ from dataclasses import dataclass, field
 from tools.ap.constants import ANALYSIS_W, ANALYSIS_H
 
 
+@dataclass
+class TapCandidate:
+    """代替タップ候補。detect_and_act の主候補が空振りした際に順次試行する。"""
+    x: int
+    y: int
+    action: str
+    wait_sec: float = 1.0
+    priority: int = 50
+    desc: str = ""
+
+
 class StallCounter:
     """宣言的な停滞カウンタ。閾値到達時のアクションを簡潔に記述する。
 
@@ -142,3 +153,6 @@ class PilotState:
     # ─── テレメトリ (DEBUG レベル) ───
     last_action_time: float = 0.0          # 直近アクションの実行時刻
     transition_times: list = field(default_factory=list)  # 遷移時間ヒストリ (最大100件)
+    # ─── タップ候補リスト (OCR再解析省略) ───
+    pending_candidates: list = field(default_factory=list)   # list[TapCandidate]
+    pending_candidate_idx: int = 0

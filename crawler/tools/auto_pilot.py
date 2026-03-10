@@ -78,10 +78,11 @@ from tools.ap.constants import (  # noqa: E402
     _CHAR_HEAD_Y1, _CHAR_HEAD_Y2, _SPATIAL_MARGIN_TOP, _CLOSE_BTN_OFFSET,
     OCR_LANG, OCR_MIN_CONF, SCENE_INTERVAL,
     _TRANSITION_SLOW_SEC, _TRANSITION_HISTORY_MAX,
+    _IMMEDIATE_ACTIONS,
 )
 
 # ─── 状態クラス: ap/state.py から import ───
-from tools.ap.state import PilotState, StallCounter  # noqa: E402
+from tools.ap.state import PilotState, StallCounter, TapCandidate  # noqa: E402
 # ─── ヘルパー: ap/helpers.py から import ───
 from tools.ap.helpers import (  # noqa: E402
     classify_scene, text_core_center, save_evidence,
@@ -487,6 +488,95 @@ def handle_dialog_screen(
 
 
 
+# ─── 代替タップ候補収集 ──────────────────────────────
+_MAX_CANDIDATES = 5
+
+
+def collect_secondary_candidates(
+    ocr: list, state: PilotState,
+    analysis_path: Optional[Path], primary_action: str,
+) -> list[TapCandidate]:
+    """
+    detect_and_act() の主候補が空振りした際に試す代替タップ候補を収集する。
+    同じ OCR/画像データを使い回すため追加の OCR コストは発生しない。
+
+    主候補のカテゴリと重複する候補は除外する。
+    最大 _MAX_CANDIDATES 個、priority 昇順でソートして返す。
+    """
+    candidates: list[TapCandidate] = []
+    W, H = ANALYSIS_W, ANALYSIS_H
+    texts = all_texts(ocr)
+
+    # ── 1. ダイアログ ×/▷ (priority=10) ──
+    if not primary_action.startswith("DIALOG") and analysis_path is not None:
+        dlg_nav = detect_dialog_frame_and_nav(
+            analysis_path, W, H, ocr_texts=texts, roi=state.game_roi)
+        if dlg_nav:
+            _nav_type, _nx, _ny = dlg_nav
+            candidates.append(TapCandidate(
+                x=_nx, y=_ny, action=f"CAND_DIALOG_{_nav_type.upper()}",
+                priority=10, desc=f"dialog {_nav_type}"))
+
+    # ── 2. 金枠ボタン (priority=20) ──
+    if primary_action != "GOLD_BTN_TAP" and analysis_path is not None:
+        gold_btn = detect_tutorial_gold_button_tap(
+            analysis_path, right_half_only=False)
+        if gold_btn:
+            candidates.append(TapCandidate(
+                x=gold_btn[0], y=gold_btn[1], action="CAND_GOLD_BTN",
+                priority=20, desc="gold button"))
+
+    # ── 3. OCR 確認ボタン (OK/はい/次へ) (priority=30) ──
+    if not primary_action.startswith("CONFIRM") and primary_action != "ADV_CHOICE":
+        confirm_btn = has_any(ocr, _CONFIRM_POS_KWS)
+        if confirm_btn:
+            _cx, _cy = confirm_btn["center"]
+            _cy = max(0, _cy - _OCR_BBOX_Y_PADDING)
+            candidates.append(TapCandidate(
+                x=_cx, y=_cy, action="CAND_CONFIRM_OK",
+                priority=30, desc=f"confirm '{confirm_btn['text']}'"))
+
+    # ── 4. 代替指ブロブ (2番目以降) (priority=40) ──
+    if primary_action == "MOYA_TAP" and analysis_path is not None:
+        blobs = find_finger_blobs(analysis_path, min_area=300, max_area=15000)
+        blobs = [b for b in blobs
+                 if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
+        # 1番目は主候補で使用済み → 2番目以降を追加
+        for _bi, blob in enumerate(blobs[1:_MAX_CANDIDATES], start=2):
+            _tip_y = blob[4] + int(blob[6] * _FINGER_TIP_RATIO)
+            _tip_x = blob[3] + blob[5] // 2
+            candidates.append(TapCandidate(
+                x=_tip_x, y=_tip_y, action=f"CAND_FINGER_{_bi}",
+                priority=40, desc=f"finger blob #{_bi}"))
+
+    # ── 5. 閉じるボタン OCR (閉じる/Close) (priority=50) ──
+    if not primary_action.startswith("CLOSE"):
+        close_btn = has_any(ocr, ["閉じる", "Close", "CLOSE"])
+        if close_btn:
+            _clx, _cly = close_btn["center"]
+            _cly = max(0, _cly - _OCR_BBOX_Y_PADDING)
+            candidates.append(TapCandidate(
+                x=_clx, y=_cly, action="CAND_CLOSE",
+                priority=50, desc=f"close '{close_btn['text']}'"))
+
+    # ── 6. ストーリータップ (下部テキスト) (priority=60) ──
+    if primary_action != "STORY_TAP":
+        # 下部1/3にテキストがあればセリフ送りとしてタップ
+        _bottom_texts = [item for item in ocr
+                         if item.get("center", (0, 0))[1] > H * 0.7
+                         and len(item.get("text", "")) >= 3]
+        if _bottom_texts:
+            _st = _bottom_texts[0]
+            candidates.append(TapCandidate(
+                x=_st["center"][0], y=_st["center"][1],
+                action="CAND_STORY_TAP", priority=60,
+                desc=f"story '{_st['text'][:8]}'"))
+
+    # ソート & 制限
+    candidates.sort(key=lambda c: c.priority)
+    return candidates[:_MAX_CANDIDATES]
+
+
 # ─── 画面判定・アクション ──────────────────────────
 def detect_and_act(ocr: list, state: PilotState,
                    analysis_path: Optional[Path] = None) -> tuple[str, float]:
@@ -684,12 +774,14 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ── 【#0-DIALOG 前ガード】指ブロブ検出時はダイアログ検出をスキップ ──────
     # お知らせポップアップ検出時はガードをバイパス (×で確実に閉じるため)
+    # ADV/ミニ会話シーン検出時はスキップ (指アイコンは出ない — 背景装飾の誤検出防止)
     _pre_dialog_finger = False
+    _is_mini_conv = detect_mini_conversation(analysis_path) is not None if analysis_path else False
     _is_result_screen = any(
         any(k in t for k in ("Result", "リザルト", "次へ"))
         for t in texts
     )
-    if analysis_path is not None and not _is_result_screen and not _is_notice:
+    if analysis_path is not None and not _is_result_screen and not _is_notice and not _adv_result.is_adv and not _is_mini_conv:
         _pdg_blobs = find_finger_blobs(analysis_path, min_area=300, max_area=5000)
         _pdg_blobs = [b for b in _pdg_blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
         if _pdg_blobs:
@@ -751,6 +843,8 @@ def detect_and_act(ocr: list, state: PilotState,
                         swipe_device(_sx, _fy, _sx, _ty, _dur, state=state, desc="GoldSwipe_DOWN")
                     time.sleep(0.3)
                     _new_ss, _, _, _ = take_screenshot()
+                    if _new_ss is None:
+                        continue  # 破損スクリーンショット → リトライ
                     _new_ph = compute_phash(_new_ss)
                     if _base_ph_gs and _new_ph and phash_distance(_base_ph_gs, _new_ph) >= PHASH_THRESHOLD:
                         state.gold_swipe.reset()  # 画面変化 → リセット
@@ -1164,6 +1258,9 @@ def detect_and_act(ocr: list, state: PilotState,
             blobs = []
         elif _is_tos_screen or _is_system_dialog:
             logger.info("  システムダイアログ/利用規約検出 → MOYA_TAP スキップ")
+            blobs = []
+        elif _adv_result.is_adv or _is_mini_conv:
+            logger.info("  ADV/ミニ会話シーン検出 → 指ブロブ検出スキップ (背景装飾の誤検出防止)")
             blobs = []
         else:
             state.home_tutorial_tap_count = 0  # ホーム以外 → カウンタリセット
@@ -2483,6 +2580,8 @@ def main():
             state.stall_corner_tried = False
             state.pre_popup_tap_count = 0  # ポップアップ試行カウンタもリセット
             state.dialog_close_total = 0  # ダイアログclose累計もリセット
+            state.pending_candidates = []  # 候補リストクリア
+            state.pending_candidate_idx = 0
             # 指スワイプ判定: MOYA_TAP 後の微小変化 (dist<PHASH_THRESHOLD) では
             # リセットしない。チェック柄シーンのアニメーション中に永久リセットされる問題を防止。
             if not (state.last_action == "MOYA_TAP" and dist < PHASH_THRESHOLD):
@@ -2540,42 +2639,93 @@ def main():
                             state.last_phash = cur_phash
                             continue
                         # ADVツールバーあり → ADV_RAPID へフォールスルー
-                    # ADV vs 動画シーン判別: ツールバー有無で分岐
-                    if _rapid_adv.is_adv:
-                        if _rapid_adv.next_btn_pos:
-                            # ↓矢印ボタン座標を再利用 (detect_adv_scene_cached)
-                            _adv_x = int(_rapid_adv.next_btn_pos[0] * ANALYSIS_W / actual_w)
-                            _adv_y = int(_rapid_adv.next_btn_pos[1] * ANALYSIS_H / actual_h)
-                            logger.info("[iter %d] phash_dist=%d ADV_RAPID → ↓ボタン (%.3f)", i, dist, _rapid_adv.next_btn_score)
-                            tap_device(_adv_x, _adv_y, state, "ADV_RAPID_TAP")
-                            logger.info("  ACTION_TAKEN ADV_RAPID_TAP (%d,%d)", _adv_x, _adv_y)
-                        else:
-                            # ↓ボタンなし → タップせず待機
-                            logger.info("[iter %d] phash_dist=%d ADV_RAPID → ↓ボタン未検出 → 待機", i, dist)
-                            state.last_action = "ADV_WAIT"
+                    # ── ADV↓アイコン検出 (ツールバー判定に依存しない高速パス) ──
+                    # ADVシーンではセリフが連続するため、↓が見える限りバーストタップ
+                    _adv_tap_x = int(ANALYSIS_W * 0.93)
+                    _adv_tap_y = int(ANALYSIS_H * 0.91)
+                    if _rapid_adv.is_adv or detect_adv_advance_icon(img_path):
+                        # ── ADVバーストタップ: ↓が見える限り連続タップ (OCR/phashスキップ) ──
+                        _burst_count = 0
+                        _burst_max = 3  # 安全上限
+                        _burst_img = img_path
+                        while _burst_count < _burst_max:
+                            if detect_adv_advance_icon(_burst_img):
+                                _burst_count += 1
+                                logger.info("[ADV_BURST][iter %d] ↓検出 → タップ #%d (%d,%d)",
+                                            i, _burst_count, _adv_tap_x, _adv_tap_y)
+                                tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
+                                state.last_action = "ADV_RAPID_TAP"
+                                # 次のスクリーンショット (ROI/phash省略で高速)
+                                _b_path, _b_w, _b_h, _ = take_screenshot()
+                                if _b_path is None:
+                                    break
+                                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
+                                actual_w, actual_h = _b_w, _b_h
+                            elif _rapid_adv.is_adv and _rapid_adv.next_btn_pos and _burst_count == 0:
+                                # ↓アイコンHSV未検出だがADVツールバーあり+座標あり → 1回タップ
+                                _adv_nx = int(_rapid_adv.next_btn_pos[0] * ANALYSIS_W / actual_w)
+                                _adv_ny = int(_rapid_adv.next_btn_pos[1] * ANALYSIS_H / actual_h)
+                                logger.info("[iter %d] ADV_RAPID → ↓ボタン座標 (%d,%d)", i, _adv_nx, _adv_ny)
+                                tap_device(_adv_nx, _adv_ny, state, "ADV_RAPID_TAP")
+                                state.last_action = "ADV_RAPID_TAP"
+                                _burst_count += 1
+                                _b_path, _b_w, _b_h, _ = take_screenshot()
+                                if _b_path is None:
+                                    break
+                                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
+                                actual_w, actual_h = _b_w, _b_h
+                            else:
+                                break
+                        if _burst_count > 0:
+                            logger.info("[ADV_BURST] 完了: %d タップ", _burst_count)
                         state.movie_wait_consecutive = 0
+                        state.last_phash = ""  # バースト後はphashリセット
+                        img_path = _burst_img  # 最新画像で次の判定へ
+                        continue
+                    # ── ミニ会話バーストタップ: 吹き出しが見える限り連続タップ ──
+                    _mc = detect_mini_conversation(img_path)
+                    if _mc is not None:
+                        _burst_count = 0
+                        _burst_max = 3
+                        _burst_img = img_path
+                        while _burst_count < _burst_max:
+                            _mc_res = detect_mini_conversation(_burst_img)
+                            if _mc_res is not None:
+                                _mc_cx, _mc_cy, _mc_side = _mc_res
+                                _burst_count += 1
+                                logger.info("[MINI_CONV_BURST][iter %d] 吹き出し(%s) → タップ #%d (%d,%d)",
+                                            i, _mc_side, _burst_count, _mc_cx, _mc_cy)
+                                tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
+                                state.last_action = "MINI_CONV_TAP"
+                                _b_path, _b_w, _b_h, _ = take_screenshot()
+                                if _b_path is None:
+                                    break
+                                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
+                                actual_w, actual_h = _b_w, _b_h
+                            else:
+                                break
+                        if _burst_count > 0:
+                            logger.info("[MINI_CONV_BURST] 完了: %d タップ", _burst_count)
+                        state.movie_wait_consecutive = 0
+                        state.last_phash = ""
+                        img_path = _burst_img
+                        continue
+                    # ツールバーなし + ↓なし + 吹き出しなし → >| ボタン有無で動画判定
+                    _movie_btn = detect_movie_skip_button(img_path)
+                    if _movie_btn:
+                        state.movie_wait_consecutive += 1
+                        logger.info("[iter %d] phash_dist=%d 動画検出(>|のみ) → 待機 (%d/%d)",
+                                    i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
+                        state.last_action = "MOVIE_WAIT"
                         state.last_phash = cur_phash
                         continue
                     else:
-                        # ツールバーなし → >| ボタン有無で動画判定
-                        _movie_btn = detect_movie_skip_button(img_path)
-                        if _movie_btn:
-                            # >| ボタンのみ存在 = 動画シーン → タップせず待機
-                            state.movie_wait_consecutive += 1
-                            logger.info("[iter %d] phash_dist=%d 動画検出(>|のみ) → 待機 (%d/%d)",
-                                        i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
-                            state.last_action = "MOVIE_WAIT"
-                            state.last_phash = cur_phash
-                            time.sleep(0.5)
-                            continue
-                        else:
-                            state.movie_wait_consecutive += 1
-                            logger.info("[iter %d] phash_dist=%d 動画再生中 → 待機 (%d/%d)",
-                                        i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
-                            state.last_action = "MOVIE_WAIT"
-                            state.last_phash = cur_phash
-                            time.sleep(0.5)
-                            continue
+                        state.movie_wait_consecutive += 1
+                        logger.info("[iter %d] phash_dist=%d 動画再生中 → 待機 (%d/%d)",
+                                    i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
+                        state.last_action = "MOVIE_WAIT"
+                        state.last_phash = cur_phash
+                        continue
 
         else:
             # 画面変化なし
@@ -2640,6 +2790,20 @@ def main():
                         return  # 復旧不能 → 終了
                     continue   # 復旧後は次のイテレーションから
 
+            # ── 候補リトライ: 残り候補があれば OCR なしで次の候補をタップ ──
+            if (state.pending_candidates
+                    and state.pending_candidate_idx < len(state.pending_candidates)):
+                _cand = state.pending_candidates[state.pending_candidate_idx]
+                state.pending_candidate_idx += 1
+                logger.info("[CANDIDATE_RETRY] #%d/%d: %s (%d,%d) — %s",
+                            state.pending_candidate_idx, len(state.pending_candidates),
+                            _cand.action, _cand.x, _cand.y, _cand.desc)
+                tap_device(_cand.x, _cand.y, state, _cand.desc or _cand.action)
+                state.last_action = _cand.action
+                state.same_phash_count = 0
+                state.last_phash = cur_phash
+                continue
+
             # N 回変化なし → 強制 OCR (デッドロック防止の核心)
             if state.same_phash_count >= FORCE_ANALYZE_AFTER:
                 logger.info("[iter %d] phash_dist=%d same=%d → 強制 OCR",
@@ -2652,13 +2816,68 @@ def main():
                 if i % 3 == 0:
                     logger.info("[%s][iter %d] phash_dist=%d same=%d — polling (%.1fs)...",
                                 state.current_scene, i, dist, state.same_phash_count, _poll)
-                # ── ADV送り待ちアイコン検知: phash 安定中でも即タップ ──
+                # ── ADV送り待ちアイコン検知: phash 安定中でもバーストタップ ──
+                _adv_tap_x = int(ANALYSIS_W * 0.93)
+                _adv_tap_y = int(ANALYSIS_H * 0.91)
+                if detect_adv_advance_icon(img_path):
+                    _burst_count = 0
+                    _burst_max = 3
+                    _burst_img = img_path
+                    while _burst_count < _burst_max:
+                        if detect_adv_advance_icon(_burst_img):
+                            _burst_count += 1
+                            logger.info("[ADV_BURST][iter %d] ↓検出 → タップ #%d", i, _burst_count)
+                            tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
+                            state.last_action = "ADV_RAPID_TAP"
+                            _b_path, _b_w, _b_h, _ = take_screenshot()
+                            if _b_path is None:
+                                break
+                            _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
+                            actual_w, actual_h = _b_w, _b_h
+                        else:
+                            break
+                    if _burst_count > 0:
+                        logger.info("[ADV_BURST] 完了: %d タップ", _burst_count)
+                    state.last_phash = ""
+                    state.same_phash_count = 0
+                    state.stall_start = 0.0
+                    img_path = _burst_img
+                    continue
+                # ── ミニ会話バーストタップ (phash安定時) ──
+                _mc = detect_mini_conversation(img_path)
+                if _mc is not None:
+                    _burst_count = 0
+                    _burst_max = 3
+                    _burst_img = img_path
+                    while _burst_count < _burst_max:
+                        _mc_res = detect_mini_conversation(_burst_img)
+                        if _mc_res is not None:
+                            _mc_cx, _mc_cy, _mc_side = _mc_res
+                            _burst_count += 1
+                            logger.info("[MINI_CONV_BURST][iter %d] 吹き出し(%s) → タップ #%d (%d,%d)",
+                                        i, _mc_side, _burst_count, _mc_cx, _mc_cy)
+                            tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
+                            state.last_action = "MINI_CONV_TAP"
+                            _b_path, _b_w, _b_h, _ = take_screenshot()
+                            if _b_path is None:
+                                break
+                            _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
+                            actual_w, actual_h = _b_w, _b_h
+                        else:
+                            break
+                    if _burst_count > 0:
+                        logger.info("[MINI_CONV_BURST] 完了: %d タップ", _burst_count)
+                    state.last_phash = ""
+                    state.same_phash_count = 0
+                    state.stall_start = 0.0
+                    img_path = _burst_img
+                    continue
                 # 動画シーンでは ADV ツールバーが無いためタップ抑制
-                if state.current_scene in ("STORY", "ADV"):
+                if state.current_scene in ("STORY", "ADV", "UNKNOWN"):
                     _aa_adv = detect_adv_scene_cached(img_path, state)
                     if _aa_adv.is_adv:
-                        if detect_adv_advance_icon(img_path) and _aa_adv.next_btn_pos:
-                            logger.info("[ADV_ADVANCE][iter %d] 送り待ちアイコン検出 → ↓ボタンタップ", i)
+                        if _aa_adv.next_btn_pos:
+                            logger.info("[ADV_ADVANCE][iter %d] ADVツールバー検出 → ↓ボタンタップ", i)
                             _aa_x = int(_aa_adv.next_btn_pos[0] * ANALYSIS_W / actual_w)
                             _aa_y = int(_aa_adv.next_btn_pos[1] * ANALYSIS_H / actual_h)
                             tap_device(_aa_x, _aa_y, state, "ADV_ADVANCE")
@@ -2674,7 +2893,6 @@ def main():
                         else:
                             logger.info("[MOVIE_WAIT] 動画再生中 → 待機 (phash stable)")
                         state.last_action = "MOVIE_WAIT"
-                        time.sleep(0.5)
                         continue
                 state.last_phash = cur_phash
                 time.sleep(_poll)
@@ -2991,9 +3209,63 @@ def main():
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         action, wait_sec = detect_and_act(ocr_results, state, analysis_path)
         state.last_action = action
+        # 副作用アクション以外なら代替候補を収集
+        if action not in _IMMEDIATE_ACTIONS:
+            state.pending_candidates = collect_secondary_candidates(
+                ocr_results, state, analysis_path, primary_action=action)
+            state.pending_candidate_idx = 0
+            if state.pending_candidates:
+                logger.info("[CANDIDATES] %d 個の代替候補を収集: %s",
+                            len(state.pending_candidates),
+                            [(c.action, c.x, c.y) for c in state.pending_candidates])
+        else:
+            state.pending_candidates = []
+            state.pending_candidate_idx = 0
         # フルOCR解析に到達 → MOVIE_WAIT脱出カウンタリセット
         if action != "MOVIE_WAIT":
             state.movie_wait_consecutive = 0
+
+        # ── 7) フルOCR後バースト再突入: ↓アイコン/吹き出しが残っていれば即連打 ──
+        # バトル/メニュー画面ではバーストしない (ボタン装飾の誤検出防止)
+        # ADVシーン(↓検出済み)ではミニ会話をスキップ (ツールバー誤検出防止)
+        _post_burst_img = analysis_path or img_path
+        _post_burst_count = 0
+        _post_burst_max = 3
+        _post_adv_x = int(ANALYSIS_W * 0.93)
+        _post_adv_y = int(ANALYSIS_H * 0.91)
+        _post_is_adv = _adv_result.is_adv  # ADVシーンならミニ会話をスキップ
+        while _post_burst_count < _post_burst_max and scene not in ("BATTLE", "MENU"):
+            # ADV ↓アイコン
+            if detect_adv_advance_icon(_post_burst_img):
+                _post_burst_count += 1
+                _post_is_adv = True  # ↓検出 = ADVシーン確定
+                logger.info("[POST_OCR_BURST] ↓アイコン → タップ #%d", _post_burst_count)
+                tap_device(_post_adv_x, _post_adv_y, state, "ADV_ADVANCE_TAP")
+                state.last_action = "ADV_RAPID_TAP"
+            elif not _post_is_adv:
+                # ADVシーンでない場合のみミニ会話吹き出しを検出
+                _post_mc = detect_mini_conversation(_post_burst_img)
+                if _post_mc is not None:
+                    _post_burst_count += 1
+                    _pm_cx, _pm_cy, _pm_side = _post_mc
+                    logger.info("[POST_OCR_BURST] 吹き出し(%s) → タップ #%d (%d,%d)",
+                                _pm_side, _post_burst_count, _pm_cx, _pm_cy)
+                    tap_device(_pm_cx, _pm_cy, state, "MINI_CONV_TAP")
+                    state.last_action = "MINI_CONV_TAP"
+                else:
+                    break
+            else:
+                break
+            _pb_path, _pb_w, _pb_h, _ = take_screenshot()
+            if _pb_path is None:
+                break
+            _post_burst_img = prepare_analysis_image(_pb_path, _pb_w, _pb_h)
+            actual_w, actual_h = _pb_w, _pb_h
+        if _post_burst_count > 0:
+            logger.info("[POST_OCR_BURST] 完了: %d タップ", _post_burst_count)
+            state.last_phash = ""
+            img_path = _post_burst_img
+            continue
 
         # ── シーン再評価: 同一アクション連続時にシーン認識を疑う ──
         if action == state.last_action and action not in (
