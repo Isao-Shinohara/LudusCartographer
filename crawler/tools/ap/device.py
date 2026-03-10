@@ -236,6 +236,14 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
     return None
 
 
+def _to_device(x: int, y: int, state) -> tuple[int, int]:
+    """解析座標 (ANALYSIS_W×ANALYSIS_H) → デバイス実座標。"""
+    if state and state.device_w and state.device_h:
+        return (int(x * state.device_w / ANALYSIS_W),
+                int(y * state.device_h / ANALYSIS_H))
+    return x, y
+
+
 def tap_device(x: int, y: int, state, desc: str = "",
                finger_box=None, gold_box=None,
                post_wait: float = 0.0,
@@ -246,13 +254,7 @@ def tap_device(x: int, y: int, state, desc: str = "",
         if _elapsed < MIN_TAP_INTERVAL:
             _wait = MIN_TAP_INTERVAL - _elapsed
             time.sleep(_wait)
-    if state.device_w and state.device_h:
-        sx = state.device_w / ANALYSIS_W
-        sy = state.device_h / ANALYSIS_H
-        real_x = int(x * sx)
-        real_y = int(y * sy)
-    else:
-        real_x, real_y = x, y
+    real_x, real_y = _to_device(x, y, state)
     # ─── デバッグオーバーレイ描画 (--verbose 時のみ) ───
     if _DEBUG_SAVE_IMAGES:
         try:
@@ -284,33 +286,17 @@ def tap_device(x: int, y: int, state, desc: str = "",
 
 def swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300,
           state=None) -> None:
-    if state and state.device_w and state.device_h:
-        sx = state.device_w / ANALYSIS_W
-        sy = state.device_h / ANALYSIS_H
-        rx1, ry1 = int(x1 * sx), int(y1 * sy)
-        rx2, ry2 = int(x2 * sx), int(y2 * sy)
-    else:
-        rx1, ry1, rx2, ry2 = x1, y1, x2, y2
+    rx1, ry1 = _to_device(x1, y1, state)
+    rx2, ry2 = _to_device(x2, y2, state)
     adb(f"shell input swipe {rx1} {ry1} {rx2} {ry2} {duration_ms}")
     logger.info("  SWIPE (%d,%d)->(%d,%d) %dms", rx1, ry1, rx2, ry2, duration_ms)
 
 
 def swipe_device(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300,
                  state=None, desc: str = "") -> None:
-    """
-    ROI 補正付きスワイプ。tap_device() のスワイプ版。
-
-    解析座標 (ANALYSIS_W x ANALYSIS_H 空間) を ROI オフセット考慮で
-    デバイス実座標に変換してからスワイプを実行する。
-    """
-    # tap_device と同一のスケーリング (device_w / ANALYSIS_W)
-    if state and state.device_w and state.device_h:
-        sx = state.device_w / ANALYSIS_W
-        sy = state.device_h / ANALYSIS_H
-        rx1, ry1 = int(x1 * sx), int(y1 * sy)
-        rx2, ry2 = int(x2 * sx), int(y2 * sy)
-    else:
-        rx1, ry1, rx2, ry2 = x1, y1, x2, y2
+    """解析座標 → デバイス実座標に変換してスワイプ (tap_device のスワイプ版)。"""
+    rx1, ry1 = _to_device(x1, y1, state)
+    rx2, ry2 = _to_device(x2, y2, state)
     logger.info("  SWIPE_DEVICE (%d,%d)->(%d,%d) %dms | %s", rx1, ry1, rx2, ry2, duration_ms, desc)
     adb(f"shell input swipe {rx1} {ry1} {rx2} {ry2} {duration_ms}")
 
