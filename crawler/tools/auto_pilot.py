@@ -1973,6 +1973,16 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> ADV ↓未検出 → SKIP '%s' (%d,%d)", _skip_match["text"], sx, sy)
             tap_device(sx, sy, state, "ADV_SKIP_TAP")
             return "ADV_SKIP_TAP", 1.0
+        # ↓もSKIPもなし → 吹き出しセリフがあればタップ (ADV AUTO再生中)
+        _adv_bubble = [r for r in ocr
+                       if r["center"][0] > W * 0.55 and r["center"][1] < H * 0.35
+                       and r["text"] not in ("AUTO", ">>", ">|", "D1", "×")]
+        if _adv_bubble and len(ocr) <= 20:
+            _ab = _adv_bubble[0]
+            _abx, _aby = _ab["center"]
+            logger.info(">>> ADV ↓未検出 → 吹き出し '%s' (%d,%d)", _ab["text"][:10], _abx, _aby)
+            tap_device(_abx, _aby, state, "BUBBLE_TAP")
+            return "BUBBLE_TAP", 0.3
         logger.info(">>> ADV ↓ボタン未検出 → 待機")
         return "ADV_WAIT", 1.0
 
@@ -2761,8 +2771,8 @@ def main():
                         continue
                     # ツールバーなし + ↓なし + 吹き出しなし → >| ボタン有無で動画判定
                     _movie_btn = detect_movie_skip_button(img_path)
-                    # >| 誤検知ガード: 直前OCRテキストが4件以上ならUI画面 (動画は0-3件)
-                    if _movie_btn and len(state.last_ocr_texts) >= 4:
+                    # >| 誤検知ガード: 直前OCRテキストが2件以上ならUI画面 (動画は0-1件)
+                    if _movie_btn and len(state.last_ocr_texts) >= 2:
                         logger.info("[iter %d] >|検出だがOCR%d件 → UI画面 (非動画) → SCENE_TAP",
                                     i, len(state.last_ocr_texts))
                         _movie_btn = None  # 誤検知として取り消し
@@ -2946,7 +2956,7 @@ def main():
                     else:
                         # ツールバーなし → >| ボタン有無で動画判定
                         _movie_btn = detect_movie_skip_button(img_path)
-                        if _movie_btn and len(state.last_ocr_texts) >= 4:
+                        if _movie_btn and len(state.last_ocr_texts) >= 2:
                             logger.info("[iter %d] >|検出だがOCR%d件 → UI画面 → SCENE_TAP",
                                         i, len(state.last_ocr_texts))
                             _movie_btn = None
@@ -3380,7 +3390,7 @@ def main():
         # ── シーン再評価: 同一アクション連続時にシーン認識を疑う ──
         if action == state.last_action and action not in (
             "WAIT_FOR_CHANGE", "BATTLE_WAIT", "DOWNLOAD_WAIT",
-            "MOVIE_WAIT", "LOADING_WAIT",
+            "MOVIE_WAIT", "LOADING_WAIT", "ADV_WAIT",
         ):
             state.action_repeat_count += 1
         else:
