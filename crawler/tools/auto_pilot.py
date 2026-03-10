@@ -731,14 +731,16 @@ def detect_and_act(ocr: list, state: PilotState,
                 _dir, _sx, _fy, _ty, _dur = _gold
                 state.gold_swipe.tick()
                 _base_ph_gs = compute_phash(analysis_path)
+                # 距離が短すぎる場合はフルスクリーンスワイプを強制 (解像度差対策)
+                _min_dist = int(ANALYSIS_H * 0.6)
+                if abs(_fy - _ty) < _min_dist:
+                    if _dir == "UP":
+                        _fy = ANALYSIS_H - 50   # 画面下端
+                        _ty = 50                 # 画面上端
+                    else:
+                        _fy = 50
+                        _ty = ANALYSIS_H - 50
                 for _gs_retry in range(2):
-                    # 距離が短すぎる場合は最小距離を強制 (解像度差対策)
-                    _min_dist = int(ANALYSIS_H * 0.4)
-                    if abs(_fy - _ty) < _min_dist:
-                        if _dir == "UP":
-                            _fy = min(ANALYSIS_H - 50, _ty + _min_dist)
-                        else:
-                            _fy = max(50, _ty - _min_dist)
                     if _dir == "UP":
                         logger.info(">>> [GoldSwipe] SWIPE_UP (%d,%d)→(%d,%d) %dms (試行%d)",
                                     _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
@@ -2060,13 +2062,15 @@ def _battle_fast_check(analysis_path: Path,
     gs = None if _confirmed_battle_ui else detect_tutorial_gold_swipe(analysis_path)
     if gs:
         _dir, _sx, _fy, _ty, _dur = gs
-        # 距離が短すぎる場合は最小距離を強制 (解像度差対策)
-        _min_dist = int(ANALYSIS_H * 0.4)
+        # 距離が短すぎる場合はフルスクリーンスワイプを強制 (解像度差対策)
+        _min_dist = int(ANALYSIS_H * 0.6)
         if abs(_fy - _ty) < _min_dist:
             if _dir == "UP":
-                _fy = min(ANALYSIS_H - 50, _ty + _min_dist)
+                _fy = ANALYSIS_H - 50
+                _ty = 50
             else:
-                _fy = max(50, _ty - _min_dist)
+                _fy = 50
+                _ty = ANALYSIS_H - 50
         logger.info("[FAST] GoldSwipe %s → swipe (%d,%d)→(%d,%d) %dms",
                     _dir, _sx, _fy, _sx, _ty, _dur)
         swipe_device(_sx, _fy, _sx, _ty, _dur, state=state, desc=f"FAST_GoldSwipe_{_dir}")
