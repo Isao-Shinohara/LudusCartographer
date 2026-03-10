@@ -1975,7 +1975,7 @@ def detect_and_act(ocr: list, state: PilotState,
             return "ADV_SKIP_TAP", 1.0
         # ↓テンプレ不一致でもADVツールバーは確定 → ↓想定位置にフォールバックタップ
         # NOTE: BUBBLE_TAP は ADV ツールバー誤タップのリスクがあるためここでは使わない
-        _fb_x, _fb_y = int(W * 0.855), int(H * 0.903)
+        _fb_x, _fb_y = roi_to_device(int(W * 0.855), int(H * 0.903), state.game_roi)
         logger.info(">>> ADV ↓未検出 → フォールバックタップ (%d,%d)", _fb_x, _fb_y)
         tap_device(_fb_x, _fb_y, state, "ADV_NEXT_FALLBACK")
         return "ADV_NEXT_FALLBACK", 0.3
@@ -2662,6 +2662,7 @@ def main():
                 for t in _last_texts
             )
             if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "ADV_NEXT_TAP", "ADV_WAIT",
+                                      "ADV_NEXT_FALLBACK", "ADV_SKIP_TAP",
                                       "STORY_TAP_HINT", "BUBBLE_TAP",
                                       "MINI_CONV_TAP", "MOYA_TAP", "MOVIE_SKIP", "MOVIE_WAIT",
                                       "SCENE_TAP") and
