@@ -3293,18 +3293,47 @@ def main():
             if not _adv_result.is_adv:
                 # ツールバーなし → レターボックス or >| ボタン検出で動画判定
                 if _is_movie_letterbox or _movie_btn:
+                    # ダウンロード直後のみ動画SKIP許可 (通常ストーリー動画は視聴)
+                    if state.post_download:
+                        _skip_item = next(
+                            (item for item in ocr_results
+                             if "SKIP" in item.get("text", "").upper()
+                             or item.get("text", "").upper() == "SK"),
+                            None)
+                        if _skip_item:
+                            _sk_x, _sk_y = _skip_item["center"]
+                            _sk_x, _sk_y = roi_to_device(_sk_x, _sk_y, state.game_roi)
+                            logger.info(
+                                "[MOVIE_SKIP_OCR] DL直後動画SKIP '%s' → タップ (%d,%d)",
+                                _skip_item["text"], _sk_x, _sk_y)
+                            tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP_OCR")
+                            state.last_action = "MOVIE_SKIP"
+                            state.movie_wait_consecutive = 0
+                            state.last_phash = ""
+                            continue
                     state.movie_wait_consecutive += 1
                     _MOVIE_WAIT_ESCAPE = 8
                     if state.movie_wait_consecutive >= _MOVIE_WAIT_ESCAPE:
-                        # 長時間静止 → 画面中央タップで再開試行 (⏭は使わない)
-                        logger.warning(
-                            "[MOVIE_GUARD_ESCAPE] 動画待機 %d 回連続 → 画面タップで再開試行",
-                            state.movie_wait_consecutive)
-                        state.movie_wait_consecutive = 0
-                        _resume_x, _resume_y = roi_to_device(
-                            int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state.game_roi)
-                        tap_device(_resume_x, _resume_y, state, "MOVIE_RESUME_TAP")
-                        state.last_action = "SCENE_TAP"
+                        if state.post_download:
+                            # DL直後 → SKIP想定位置 (右上) をタップ
+                            logger.warning(
+                                "[MOVIE_GUARD_ESCAPE] DL直後+動画待機 %d 回 → SKIPタップ",
+                                state.movie_wait_consecutive)
+                            state.movie_wait_consecutive = 0
+                            _resume_x, _resume_y = roi_to_device(
+                                int(ANALYSIS_W * 0.93), int(ANALYSIS_H * 0.06), state.game_roi)
+                            tap_device(_resume_x, _resume_y, state, "MOVIE_SKIP_ESCAPE")
+                            state.last_action = "MOVIE_SKIP"
+                        else:
+                            # 通常動画 → 画面中央タップで再開試行
+                            logger.warning(
+                                "[MOVIE_GUARD_ESCAPE] 動画待機 %d 回 → 画面中央タップ",
+                                state.movie_wait_consecutive)
+                            state.movie_wait_consecutive = 0
+                            _resume_x, _resume_y = roi_to_device(
+                                int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state.game_roi)
+                            tap_device(_resume_x, _resume_y, state, "MOVIE_RESUME_TAP")
+                            state.last_action = "SCENE_TAP"
                         state.last_phash = ""
                         state.same_phash_count = 0
                         continue
@@ -3448,6 +3477,12 @@ def main():
             state.stall_start = 0.0
             state.stall_corner_tried = False
             state.same_phash_count = 0
+
+        # ── ダウンロード中フラグ管理 ──
+        if action == "DOWNLOAD_WAIT":
+            state.post_download = True
+        elif action in ("HOME_REACHED", "GRIND_COMPLETE"):
+            state.post_download = False
 
         # ── ダウンロード進捗ログ (30秒ごとに生存確認) ──
         if action == "DOWNLOAD_WAIT":

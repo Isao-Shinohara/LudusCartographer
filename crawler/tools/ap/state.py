@@ -146,6 +146,8 @@ class PilotState:
         default_factory=lambda: StallCounter("battle_rapid_consecutive", threshold=50))
     # ─── MOVIE_WAIT 脱出カウンタ ───
     movie_wait_consecutive: int = 0
+    # ─── ダウンロード直後フラグ (動画SKIP許可) ───
+    post_download: bool = False
     # ─── キャッシュ (per-phash サイクル) ───
     _adv_toolbar_cache_phash: str = ""     # キャッシュ有効な phash 値
     _adv_toolbar_cache_result: bool = False # 後方互換 (is_adv_toolbar_cached用)
