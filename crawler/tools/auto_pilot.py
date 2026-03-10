@@ -3335,7 +3335,9 @@ def main():
         _post_adv_x = int(ANALYSIS_W * 0.93)
         _post_adv_y = int(ANALYSIS_H * 0.91)
         _post_is_adv = _adv_result.is_adv  # ADVシーンならミニ会話をスキップ
-        while _post_burst_count < _post_burst_max and scene not in ("BATTLE", "MENU"):
+        _skip_burst = scene in ("BATTLE", "MENU") or action in (
+            "DOWNLOAD_WAIT", "LOADING_WAIT", "MOVIE_WAIT", "MAIN_STORY_LOADING")
+        while _post_burst_count < _post_burst_max and not _skip_burst:
             # ADV ↓アイコン
             if detect_adv_advance_icon(_post_burst_img):
                 _post_burst_count += 1
