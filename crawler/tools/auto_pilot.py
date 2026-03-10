@@ -620,27 +620,13 @@ def detect_and_act(ocr: list, state: PilotState,
     _confirm_neg = has_any(ocr, _CONFIRM_NEG_KWS)
     _is_completion_dialog = _confirm_pos and not _confirm_neg and _dl_is_complete
     if (_confirm_pos and _confirm_neg) or _is_completion_dialog:
-        # ── スキップ確認ダイアログ ──
-        # ムービースキップ → OK (動画はスキップして進行)
-        # ストーリースキップ → キャンセル (ADV/ストーリーはスキップ禁止)
-        _is_skip_dialog = any("スキップ" in t for t in texts)
-        _is_movie_skip = any("ムービー" in t for t in texts)
-        if _is_skip_dialog and _confirm_neg:
-            if _is_movie_skip and _confirm_pos:
-                # ムービースキップ → OK をタップ
-                _mp_x, _mp_y = _confirm_pos["center"]
-                _mp_y_adj = max(0, _mp_y - _OCR_BBOX_Y_PADDING)
-                logger.info(
-                    "[ConfirmDialog] ムービースキップ検出 → OK '%s' (%d,%d→Y%d) タップ",
-                    _confirm_pos["text"], _mp_x, _mp_y, _mp_y_adj,
-                )
-                tap_device(_mp_x, _mp_y_adj, state, f"MOVIE_SKIP_OK '{_confirm_pos['text']}'")
-                return "MOVIE_SKIP", 2.0
-            # ストーリースキップ → キャンセル
+        # ── スキップ確認ダイアログ → キャンセルをタップ (スキップ禁止) ──
+        _is_story_skip_dialog = any("スキップ" in t for t in texts)
+        if _is_story_skip_dialog and _confirm_neg:
             _cn_x, _cn_y = _confirm_neg["center"]
             _cn_y_adj = max(0, _cn_y - _OCR_BBOX_Y_PADDING)
             logger.info(
-                "[ConfirmDialog] ストーリースキップ検出 → キャンセル '%s' (%d,%d→Y%d) タップ",
+                "[ConfirmDialog] スキップ検出 → キャンセル '%s' (%d,%d→Y%d) タップ",
                 _confirm_neg["text"], _cn_x, _cn_y, _cn_y_adj,
             )
             tap_device(_cn_x, _cn_y_adj, state, f"STORY_SKIP_CANCEL '{_confirm_neg['text']}'")
@@ -3266,15 +3252,15 @@ def main():
                     state.movie_wait_consecutive += 1
                     _MOVIE_WAIT_ESCAPE = 8
                     if state.movie_wait_consecutive >= _MOVIE_WAIT_ESCAPE:
-                        # 長時間静止 → ⏭ タップでスキップ試行
+                        # 長時間静止 → 画面中央タップで再開試行 (⏭は使わない)
                         logger.warning(
-                            "[MOVIE_GUARD_ESCAPE] 動画待機 %d 回連続 → ⏭スキップ試行",
+                            "[MOVIE_GUARD_ESCAPE] 動画待機 %d 回連続 → 画面タップで再開試行",
                             state.movie_wait_consecutive)
                         state.movie_wait_consecutive = 0
-                        _skip_x = roi_to_device(
-                            int(ANALYSIS_W * 0.92), int(ANALYSIS_H * 0.06), state.game_roi)
-                        tap_device(_skip_x[0], _skip_x[1], state, "MOVIE_SKIP_BTN")
-                        state.last_action = "MOVIE_SKIP"
+                        _resume_x, _resume_y = roi_to_device(
+                            int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state.game_roi)
+                        tap_device(_resume_x, _resume_y, state, "MOVIE_RESUME_TAP")
+                        state.last_action = "SCENE_TAP"
                         state.last_phash = ""
                         state.same_phash_count = 0
                         continue
