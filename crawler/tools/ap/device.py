@@ -185,6 +185,10 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
         logger.warning("[SCRCPY] ps aux 失敗: %s", e)
         return None
 
+    # 期待するウィンドウサイズを事前計算 (ループ外で1回だけ)
+    _expected_args = _build_scrcpy_args(SCRCPY_DEVICE)
+    _expected_w = _expected_args[_expected_args.index("--window-width") + 1]
+
     conforming_pid = None
     for line in ps.stdout.splitlines():
         if "scrcpy" not in line or "grep" in line:
@@ -200,7 +204,8 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
             continue
         has_device = SCRCPY_DEVICE in line
         has_screen_off = "--turn-screen-off" in line
-        if has_device and has_screen_off:
+        has_correct_size = f"--window-width {_expected_w}" in line
+        if has_device and has_screen_off and has_correct_size:
             conforming_pid = pid
             logger.info("[SCRCPY] 規定プロセス検出 PID=%d — 継続", pid)
         else:
@@ -214,10 +219,9 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
     if conforming_pid is not None:
         return None
 
-    scrcpy_args = _build_scrcpy_args(SCRCPY_DEVICE)
     try:
         proc = subprocess.Popen(
-            scrcpy_args,
+            _expected_args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
