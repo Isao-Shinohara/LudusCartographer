@@ -1973,17 +1973,8 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> ADV ↓未検出 → SKIP '%s' (%d,%d)", _skip_match["text"], sx, sy)
             tap_device(sx, sy, state, "ADV_SKIP_TAP")
             return "ADV_SKIP_TAP", 1.0
-        # ↓もSKIPもなし → 吹き出しセリフがあればタップ (ADV AUTO再生中)
-        _adv_bubble = [r for r in ocr
-                       if r["center"][0] > W * 0.55 and r["center"][1] < H * 0.35
-                       and r["text"] not in ("AUTO", ">>", ">|", "D1", "×")]
-        if _adv_bubble and len(ocr) <= 20:
-            _ab = _adv_bubble[0]
-            _abx, _aby = _ab["center"]
-            logger.info(">>> ADV ↓未検出 → 吹き出し '%s' (%d,%d)", _ab["text"][:10], _abx, _aby)
-            tap_device(_abx, _aby, state, "BUBBLE_TAP")
-            return "BUBBLE_TAP", 0.3
         # ↓テンプレ不一致でもADVツールバーは確定 → ↓想定位置にフォールバックタップ
+        # NOTE: BUBBLE_TAP は ADV ツールバー誤タップのリスクがあるためここでは使わない
         _fb_x, _fb_y = int(W * 0.855), int(H * 0.903)
         logger.info(">>> ADV ↓未検出 → フォールバックタップ (%d,%d)", _fb_x, _fb_y)
         tap_device(_fb_x, _fb_y, state, "ADV_NEXT_FALLBACK")
