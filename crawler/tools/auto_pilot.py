@@ -620,9 +620,23 @@ def detect_and_act(ocr: list, state: PilotState,
     _confirm_neg = has_any(ocr, _CONFIRM_NEG_KWS)
     _is_completion_dialog = _confirm_pos and not _confirm_neg and _dl_is_complete
     if (_confirm_pos and _confirm_neg) or _is_completion_dialog:
-        # ── ストーリースキップ確認ダイアログ → キャンセルをタップ (スキップ禁止) ──
-        _is_story_skip_dialog = any("スキップ" in t for t in texts)
-        if _is_story_skip_dialog and _confirm_neg:
+        # ── スキップ確認ダイアログ ──
+        # ムービースキップ → OK (動画はスキップして進行)
+        # ストーリースキップ → キャンセル (ADV/ストーリーはスキップ禁止)
+        _is_skip_dialog = any("スキップ" in t for t in texts)
+        _is_movie_skip = any("ムービー" in t for t in texts)
+        if _is_skip_dialog and _confirm_neg:
+            if _is_movie_skip and _confirm_pos:
+                # ムービースキップ → OK をタップ
+                _mp_x, _mp_y = _confirm_pos["center"]
+                _mp_y_adj = max(0, _mp_y - _OCR_BBOX_Y_PADDING)
+                logger.info(
+                    "[ConfirmDialog] ムービースキップ検出 → OK '%s' (%d,%d→Y%d) タップ",
+                    _confirm_pos["text"], _mp_x, _mp_y, _mp_y_adj,
+                )
+                tap_device(_mp_x, _mp_y_adj, state, f"MOVIE_SKIP_OK '{_confirm_pos['text']}'")
+                return "MOVIE_SKIP", 2.0
+            # ストーリースキップ → キャンセル
             _cn_x, _cn_y = _confirm_neg["center"]
             _cn_y_adj = max(0, _cn_y - _OCR_BBOX_Y_PADDING)
             logger.info(
@@ -2644,6 +2658,7 @@ def main():
                             logger.info("[iter %d] phash_dist=%d レターボックス動画 → 待機 (%d/%d)",
                                         i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
                             state.last_action = "MOVIE_WAIT"
+                            state.stall_start = 0.0  # ムービー待機中はスタックタイマー抑制
                             time.sleep(0.5)
                             state.last_phash = cur_phash
                             continue
@@ -2913,6 +2928,7 @@ def main():
                         if _movie_btn:
                             logger.info("[MOVIE_WAIT] 動画検出(>|のみ) → 待機 (phash stable)")
                             state.last_action = "MOVIE_WAIT"
+                            state.stall_start = 0.0  # ムービー待機中はスタックタイマー抑制
                             continue
                         # 金色⏭なし → 動画ではない静止画面 → タップで進む
                         _st_x = int(ANALYSIS_W * 0.5)
@@ -3252,6 +3268,7 @@ def main():
                         "[MOVIE_GUARD] %s+ツールバーなし → 待機 (タップ抑制)",
                         _reason)
                     state.last_action = "MOVIE_WAIT"
+                    state.stall_start = 0.0  # ムービー待機中はスタックタイマー抑制
                     time.sleep(0.5)
                     state.last_phash = cur_phash
                     continue
