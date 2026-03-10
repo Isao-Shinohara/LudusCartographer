@@ -2911,10 +2911,19 @@ def main():
             stall_elapsed = time.time() - state.stall_start
 
             if stall_elapsed >= STALL_TIMEOUT and not state.stall_corner_tried:
-                logger.warning(">>> %.0f秒スタック — 右上×ボタン試行", stall_elapsed)
-                save_evidence(img_path, [], "STALL_CORNER", state)
-                _sc_x, _sc_y = roi_to_device(int(ANALYSIS_W * 0.97), int(ANALYSIS_H * 0.06), state.game_roi)
-                tap_device(_sc_x, _sc_y, state, "STALL_CORNER")
+                # ADVシーン中は右上タップ禁止 (ツールバー >| スキップを押してしまうため)
+                _stall_is_adv = is_adv_toolbar_cached(img_path, state) if img_path else False
+                if _stall_is_adv:
+                    logger.info(">>> %.0f秒スタック — ADVシーン → 右上×スキップ (セリフ送り代用)",
+                                stall_elapsed)
+                    # ADVでは画面中央下部をタップしてセリフ送りを試みる
+                    _sc_x, _sc_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.85), state.game_roi)
+                    tap_device(_sc_x, _sc_y, state, "STALL_ADV_TAP")
+                else:
+                    logger.warning(">>> %.0f秒スタック — 右上×ボタン試行", stall_elapsed)
+                    save_evidence(img_path, [], "STALL_CORNER", state)
+                    _sc_x, _sc_y = roi_to_device(int(ANALYSIS_W * 0.97), int(ANALYSIS_H * 0.06), state.game_roi)
+                    tap_device(_sc_x, _sc_y, state, "STALL_CORNER")
                 state.stall_corner_tried = True
                 state.last_phash = ""
                 state.same_phash_count = 0
@@ -3197,6 +3206,17 @@ def main():
         _has_ui_text = any(kw in _ocr_text_joined for kw in _UI_TEXT_KWS) or len(texts) >= 8
         # ⏭ ボタン検出を先に実行 (レターボックスなし+OCR多めでも動画を検出するため)
         _movie_btn = detect_movie_skip_button(analysis_path) if analysis_path else None
+        # D: ADVアイコン安全弁 — menu/log/ff のどれか1個でもマッチすれば
+        # >| は ADV ツールバーの一部であり動画⏭ではないと判断
+        if _movie_btn and not _adv_result.is_adv and analysis_path:
+            from tools.ap.image_proc import ASSET_MANAGER as _AM
+            _adv_icon_check = any(
+                _AM.match_single(n, analysis_path) is not None
+                for n in ("adv_icon_menu", "adv_icon_log", "adv_icon_ff")
+            )
+            if _adv_icon_check:
+                logger.info("[MOVIE_GUARD] >|検出だがADVアイコンも検出 → 動画ではなくADV")
+                _movie_btn = None  # 動画⏭判定を取り消し
         _movie_candidate = (
             _is_movie_letterbox
             or _movie_btn is not None

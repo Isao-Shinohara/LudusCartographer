@@ -93,19 +93,31 @@ def is_dark_screen(img_path: Path) -> bool:
 
 
 def prepare_analysis_image(img_path: Path, actual_w: int, actual_h: int) -> Path:
-    from PIL import Image
     needs_transform = (actual_w < actual_h) or \
         ((actual_w, actual_h) != (ANALYSIS_W, ANALYSIS_H) and
          (actual_h, actual_w) != (ANALYSIS_W, ANALYSIS_H))
     if not needs_transform:
         return img_path
     analysis_path = ANALYSIS_PATH
-    img = Image.open(img_path)
-    if img.width < img.height:
-        img = img.rotate(90, expand=True)
-    if img.size != (ANALYSIS_W, ANALYSIS_H):
-        img = img.resize((ANALYSIS_W, ANALYSIS_H), Image.LANCZOS)
-    img.save(analysis_path)
+    try:
+        from PIL import Image
+        img = Image.open(img_path)
+        if img.width < img.height:
+            img = img.rotate(90, expand=True)
+        if img.size != (ANALYSIS_W, ANALYSIS_H):
+            img = img.resize((ANALYSIS_W, ANALYSIS_H), Image.LANCZOS)
+        img.save(analysis_path)
+    except Exception:
+        # PIL が破損 PNG で SyntaxError を投げる場合 cv2 にフォールバック
+        _cv_img = cv2.imread(str(img_path))
+        if _cv_img is None:
+            return img_path  # 完全に読めない → 元画像をそのまま返す
+        h, w = _cv_img.shape[:2]
+        if w < h:
+            _cv_img = cv2.rotate(_cv_img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        if (_cv_img.shape[1], _cv_img.shape[0]) != (ANALYSIS_W, ANALYSIS_H):
+            _cv_img = cv2.resize(_cv_img, (ANALYSIS_W, ANALYSIS_H), interpolation=cv2.INTER_LANCZOS4)
+        cv2.imwrite(str(analysis_path), _cv_img)
     return analysis_path
 
 
@@ -660,7 +672,8 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
         except Exception:
             _icon_scores.append(0.0)
 
-    _all_matched = all(s >= icon_threshold for s in _icon_scores)
+    _matched_count = sum(1 for s in _icon_scores if s >= icon_threshold)
+    _all_matched = _matched_count >= 3  # 5個中3個以上で ADV 判定 (背景変動に堅牢)
     result.toolbar_score = min(_icon_scores) if _icon_scores else 0.0
     if _all_matched and _icon_scores:
         # toolbar_pos = AUTO アイコンの位置 (3番目)
@@ -717,16 +730,16 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
     result.is_adv = _all_matched
 
     if result.is_adv:
-        logger.debug("[ADV_SCENE] 検出: icons=[%s] min=%.3f next_btn=%.3f "
+        logger.debug("[ADV_SCENE] 検出: icons=[%s] matched=%d/5 min=%.3f next_btn=%.3f "
                      "name=%s dial=%s lbox=%s",
                      ",".join(f"{s:.2f}" for s in _icon_scores),
-                     result.toolbar_score, result.next_btn_score,
+                     _matched_count, result.toolbar_score, result.next_btn_score,
                      result.has_name_line, result.has_dialogue,
                      result.has_letterbox)
     else:
-        logger.debug("[ADV_SCENE] 未検出: icons=[%s] min=%.3f",
+        logger.debug("[ADV_SCENE] 未検出: icons=[%s] matched=%d/5 min=%.3f",
                      ",".join(f"{s:.2f}" for s in _icon_scores),
-                     result.toolbar_score)
+                     _matched_count, result.toolbar_score)
     return result
 
 
