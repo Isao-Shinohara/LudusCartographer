@@ -3263,10 +3263,25 @@ def main():
             if not _adv_result.is_adv:
                 # ツールバーなし → レターボックス or >| ボタン検出で動画判定
                 if _is_movie_letterbox or _movie_btn:
+                    state.movie_wait_consecutive += 1
+                    _MOVIE_WAIT_ESCAPE = 8
+                    if state.movie_wait_consecutive >= _MOVIE_WAIT_ESCAPE:
+                        # 長時間静止 → ⏭ タップでスキップ試行
+                        logger.warning(
+                            "[MOVIE_GUARD_ESCAPE] 動画待機 %d 回連続 → ⏭スキップ試行",
+                            state.movie_wait_consecutive)
+                        state.movie_wait_consecutive = 0
+                        _skip_x = roi_to_device(
+                            int(ANALYSIS_W * 0.92), int(ANALYSIS_H * 0.06), state.game_roi)
+                        tap_device(_skip_x[0], _skip_x[1], state, "MOVIE_SKIP_BTN")
+                        state.last_action = "MOVIE_SKIP"
+                        state.last_phash = ""
+                        state.same_phash_count = 0
+                        continue
                     _reason = f"letterbox L={_roi_x}" if _is_movie_letterbox else ">|ボタン検出"
                     logger.info(
-                        "[MOVIE_GUARD] %s+ツールバーなし → 待機 (タップ抑制)",
-                        _reason)
+                        "[MOVIE_GUARD] %s+ツールバーなし → 待機 (%d/%d)",
+                        _reason, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
                     state.last_action = "MOVIE_WAIT"
                     state.stall_start = 0.0  # ムービー待機中はスタックタイマー抑制
                     time.sleep(0.5)
