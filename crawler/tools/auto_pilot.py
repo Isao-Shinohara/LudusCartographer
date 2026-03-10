@@ -3190,18 +3190,21 @@ def main():
         # 動画中にタップするとUIが一時停止/再生を繰り返すため抑制する
         # 検出条件:
         #   A) レターボックス (左黒帯>=80px) + ADVツールバーなし
-        #   B) レターボックスなしでも ⏭スキップボタン検出 + ADVツールバーなし
+        #   B) ⏭スキップボタン検出 + ADVツールバーなし (レターボックス不問)
         # ただし OCR で UI テキストが豊富な場合は動画ではない (利用規約画面等)
         _roi_x = state.game_roi[0] if state.game_roi else 0
         _is_movie_letterbox = _roi_x >= 80
         _has_ui_text = any(kw in _ocr_text_joined for kw in _UI_TEXT_KWS) or len(texts) >= 8
+        # ⏭ ボタン検出を先に実行 (レターボックスなし+OCR多めでも動画を検出するため)
+        _movie_btn = detect_movie_skip_button(analysis_path) if analysis_path else None
         _movie_candidate = (
-            _is_movie_letterbox or (len(texts) <= 3 and scene not in ("BATTLE", "MENU"))
+            _is_movie_letterbox
+            or _movie_btn is not None
+            or (len(texts) <= 3 and scene not in ("BATTLE", "MENU"))
         )
         if _movie_candidate and not _has_ui_text and scene not in ("BATTLE", "MENU") and analysis_path:
             if not _adv_result.is_adv:
                 # ツールバーなし → レターボックス or >| ボタン検出で動画判定
-                _movie_btn = detect_movie_skip_button(analysis_path)
                 if _is_movie_letterbox or _movie_btn:
                     _reason = f"letterbox L={_roi_x}" if _is_movie_letterbox else ">|ボタン検出"
                     logger.info(
