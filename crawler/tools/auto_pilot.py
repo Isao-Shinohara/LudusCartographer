@@ -1983,8 +1983,11 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> ADV ↓未検出 → 吹き出し '%s' (%d,%d)", _ab["text"][:10], _abx, _aby)
             tap_device(_abx, _aby, state, "BUBBLE_TAP")
             return "BUBBLE_TAP", 0.3
-        logger.info(">>> ADV ↓ボタン未検出 → 待機")
-        return "ADV_WAIT", 1.0
+        # ↓テンプレ不一致でもADVツールバーは確定 → ↓想定位置にフォールバックタップ
+        _fb_x, _fb_y = int(W * 0.855), int(H * 0.903)
+        logger.info(">>> ADV ↓未検出 → フォールバックタップ (%d,%d)", _fb_x, _fb_y)
+        tap_device(_fb_x, _fb_y, state, "ADV_NEXT_FALLBACK")
+        return "ADV_NEXT_FALLBACK", 0.3
 
     # ─── 確認ダイアログ ───
     confirm_match = has_any(ocr, ["OK", "はい", "次へ", "確認", "完了", "決定",
