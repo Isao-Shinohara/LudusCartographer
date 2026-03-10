@@ -790,7 +790,7 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
         # 金色: H=15-40, S>50, V>130
         _mask = cv2.inRange(_hsv, (15, 50, 130), (40, 255, 255))
         _gold_count = int(cv2.countNonZero(_mask))
-        if _gold_count >= 30:
+        if _gold_count >= 80:
             _coords = cv2.findNonZero(_mask)
             if _coords is not None:
                 _mx = int(np.mean(_coords[:, 0, 0])) + _x1
