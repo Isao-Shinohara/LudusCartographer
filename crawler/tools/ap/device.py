@@ -303,11 +303,8 @@ def swipe_device(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300,
     解析座標 (ANALYSIS_W x ANALYSIS_H 空間) を ROI オフセット考慮で
     デバイス実座標に変換してからスワイプを実行する。
     """
-    from tools.ap.image_proc import roi_to_device
-    if state and state.game_roi:
-        rx1, ry1 = roi_to_device(x1, y1, state.game_roi)
-        rx2, ry2 = roi_to_device(x2, y2, state.game_roi)
-    elif state and state.device_w and state.device_h:
+    # tap_device と同一のスケーリング (device_w / ANALYSIS_W)
+    if state and state.device_w and state.device_h:
         sx = state.device_w / ANALYSIS_W
         sy = state.device_h / ANALYSIS_H
         rx1, ry1 = int(x1 * sx), int(y1 * sy)
