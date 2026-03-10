@@ -1171,11 +1171,17 @@ def detect_and_act(ocr: list, state: PilotState,
             _tt_x, _tt_y = roi_to_device(int(W * 0.5), int(H * 0.87), state.game_roi)
             tap_device(_tt_x, _tt_y, state, "TITLE_TAP_START")
             return "TITLE_TAP", 2.0
-        # ホーム画面検出: ホームナビキーワードが2個以上 → キャラ画像のブロブ誤検出をスキップ
+        # ホーム画面検出: フッターエリア (y > H*0.85) のナビキーワードが2個以上
+        # フッター以外 (編成メニュー内の「パーティ」等) は誤検出になるため除外
         _home_nav_kws = ["クエスト", "ショップ", "ガチャ", "ガシャ", "ユニオン",
                          "光の間", "パーティ", "プレイヤーマッチ", "お知らせ",
                          "イベント", "マイページ", "編成", "MAGIA EXEDRA"]
-        _home_kw_count = sum(1 for h in _home_nav_kws if any(h in t for t in texts))
+        _footer_y_min = int(H * 0.85)
+        _footer_ocr = [item for item in ocr
+                       if item.get("center", (0, 0))[1] >= _footer_y_min]
+        _footer_texts = [item.get("text", "") for item in _footer_ocr]
+        _home_kw_count = sum(1 for h in _home_nav_kws
+                             if any(h in t for t in _footer_texts))
         # ── Result画面ハンドラ (OCR mode) ──
         if not is_battle_screen:
             _result_ocr = handle_result_screen(state, analysis_path, ocr, state.last_phash_dist, mode="OCR")
@@ -1204,7 +1210,8 @@ def detect_and_act(ocr: list, state: PilotState,
                                 ["画質を設定", "高画質", "省エネ", "省工ネ", "データ引き継ぎ",
                                  "サポート", "お問い合わせ", "キャッシュクリア"])
         if _home_kw_count >= 2:
-            logger.info("  ホーム画面検出 (nav×%d) → MOYA_TAP スキップ", _home_kw_count)
+            logger.info("  ホーム画面検出 (footer nav×%d: %s) → MOYA_TAP スキップ",
+                        _home_kw_count, _footer_texts)
             # ── 【最優先】ダンジョン挑戦ボタン: 「挑戦」OCR検出 → 直接タップ (ホーム誤検出突破) ──
             _chal_btn = has_text(ocr, "挑戦", min_conf=0.3)
             if _chal_btn:
