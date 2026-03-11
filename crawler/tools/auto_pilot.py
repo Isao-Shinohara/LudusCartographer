@@ -2262,6 +2262,14 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             else:
                 return "MOVIE"
 
+    # MOVIE 慣性: 直前が動画アクション → 非動画の明確な証拠がなければ MOVIE 継続
+    # ⏭ ボタンが一時的に非表示でも GoldSwipe 等の誤発動を防止
+    _MOVIE_ACTIONS = ("MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_RESUME_TAP", "MOVIE_SKIP_ESCAPE")
+    if state.last_action in _MOVIE_ACTIONS:
+        adv = detect_adv_scene_cached(img_path, state)
+        if not adv.is_adv and state.current_scene not in ("BATTLE", "MENU"):
+            return "MOVIE"
+
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     if state.current_scene == "BATTLE" and dist < 30:
         return "BATTLE"
@@ -2321,7 +2329,7 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
             state.movie_wait_consecutive = 0
             _x, _y = roi_to_device(int(W * 0.5), int(H * 0.5), state.game_roi)
             tap_device(_x, _y, state, "MOVIE_RESUME_TAP")
-            state.last_action = "SCENE_TAP"
+            state.last_action = "MOVIE_RESUME_TAP"
         state.last_phash = ""
         state.same_phash_count = 0
         return True
@@ -3683,7 +3691,7 @@ def main():
                             _resume_x, _resume_y = roi_to_device(
                                 int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state.game_roi)
                             tap_device(_resume_x, _resume_y, state, "MOVIE_RESUME_TAP")
-                            state.last_action = "SCENE_TAP"
+                            state.last_action = "MOVIE_RESUME_TAP"
                         state.last_phash = ""
                         state.same_phash_count = 0
                         continue
