@@ -1011,10 +1011,20 @@ class TestAdvSceneWithAdvanceIcon:
     """detect_adv_scene() の 2 アイコン + ↓ ボタン救済テスト。"""
 
     def _mock_match_single(self, match_names):
-        """match_names に含まれるアイコン名だけスコア 0.9 を返す mock。"""
+        """match_names に含まれるアイコン名だけスコア 0.9 を返す mock。
+        座標はツールバー領域 (右上: x>70%, y<15%) に配置。"""
+        # ANALYSIS_W=1520, ANALYSIS_H=720 → x>1064, y<108
+        _positions = {
+            "adv_icon_menu": (1116, 45),
+            "adv_icon_log": (1191, 45),
+            "adv_icon_auto": (1274, 45),
+            "adv_icon_ff": (1358, 45),
+            "adv_icon_skip": (1446, 45),
+        }
         def _side_effect(name, img_path):
             if name in match_names:
-                return (100, 45, 0.9)
+                cx, cy = _positions.get(name, (1274, 45))
+                return (cx, cy, 0.9)
             return None
         return _side_effect
 

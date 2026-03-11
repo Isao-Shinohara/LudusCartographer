@@ -590,13 +590,15 @@ def detect_adv_advance_icon(img_path: Path,
                              roi_y: int = int(ANALYSIS_H * 0.847),
                              roi_w: int = int(ANALYSIS_W * 0.112),
                              roi_h: int = int(ANALYSIS_H * 0.125),
-                             min_bright: int = 20) -> bool:
+                             min_bright: int = 20,
+                             max_bright: int = 500) -> bool:
     """
     ADV送り待ちアイコン（◆/▼）を検出。
     テキストボックス右下 ROI 内に孤立した明るい小クラスターを探す。
 
     ROI デフォルト: x=1330-1500, y=610-700 (landscape 1520x720)
-    明るい白/淡色ピクセル: HSV V>210, S<60 が min_bright 個以上 → True
+    明るい白/淡色ピクセル: HSV V>210, S<60 が min_bright〜max_bright 個 → True
+    max_bright で大量の白テキスト (利用規約画面等) を排除。
     """
     try:
         _img = cv2.imread(str(img_path))
@@ -613,10 +615,12 @@ def detect_adv_advance_icon(img_path: Path,
         _hsv = cv2.cvtColor(_roi, cv2.COLOR_BGR2HSV)
         _mask = cv2.inRange(_hsv, (0, 0, 210), (180, 60, 255))
         _bright = int(cv2.countNonZero(_mask))
-        if _bright >= min_bright:
+        if _bright >= min_bright and _bright <= max_bright:
             logger.debug("[ADV_ADVANCE] 明るいピクセル %d 個 @ ROI(%d,%d,%d,%d)",
                          _bright, roi_x, roi_y, roi_w, roi_h)
             return True
+        if _bright > max_bright:
+            logger.debug("[ADV_ADVANCE] 白テキスト排除: bright=%d > max=%d", _bright, max_bright)
         return False
     except Exception as _e:
         logger.debug("detect_adv_advance_icon error: %s", _e)
@@ -684,18 +688,32 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
 
     # --- 1. ツールバー5アイコン個別マッチ ---
     _icon_scores: list[float] = []
+    _icon_matches: list[Optional[tuple]] = []  # (cx, cy, score) or None
     for _name in _ADV_TOOLBAR_ICON_NAMES:
         try:
             _m = ASSET_MANAGER.match_single(_name, img_path)
             _icon_scores.append(_m[2] if _m else 0.0)
+            _icon_matches.append(_m)
         except Exception:
             _icon_scores.append(0.0)
+            _icon_matches.append(None)
 
     _matched_count = sum(1 for s in _icon_scores if s >= icon_threshold)
     # 2アイコン + ↓ボタン = ADV 救済 (AUTO + >> のみの場合を救う)
+    # ただし2アイコンがツールバー領域 (右上: x>70%, y<15%) にあることを検証
     _has_advance_icon = False
     if _matched_count >= 2 and _matched_count < 3:
-        _has_advance_icon = detect_adv_advance_icon(img_path)
+        _toolbar_region_count = 0
+        for _idx, _s in enumerate(_icon_scores):
+            if _s >= icon_threshold and _icon_matches[_idx]:
+                _mx, _my = _icon_matches[_idx][0], _icon_matches[_idx][1]
+                if _mx > ANALYSIS_W * 0.70 and _my < ANALYSIS_H * 0.15:
+                    _toolbar_region_count += 1
+        if _toolbar_region_count >= 2:
+            _has_advance_icon = detect_adv_advance_icon(img_path)
+        else:
+            logger.debug("[ADV_SCENE] 2-icon rescue 却下: ツールバー領域外 (region=%d/2)",
+                         _toolbar_region_count)
     _all_matched = _matched_count >= 3 or (_matched_count >= 2 and _has_advance_icon)
     result.toolbar_score = min(_icon_scores) if _icon_scores else 0.0
     if _all_matched and _icon_scores:
