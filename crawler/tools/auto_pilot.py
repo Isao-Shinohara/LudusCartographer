@@ -2585,6 +2585,42 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             pass
         return False
 
+    def _uiautomator_find_button(content_desc: str) -> Optional[tuple]:
+        """uiautomator dump でボタンの中心座標を取得 (OCR フォールバック用)。"""
+        try:
+            subprocess.run(
+                ["adb", "-s", serial, "shell", "uiautomator", "dump", "/sdcard/ui.xml"],
+                capture_output=True, timeout=10,
+            )
+            r = subprocess.run(
+                ["adb", "-s", serial, "shell", "cat", "/sdcard/ui.xml"],
+                capture_output=True, timeout=10, text=True,
+            )
+            if r.returncode != 0:
+                return None
+            # content-desc="インストール" の親 clickable を探す
+            import re as _re
+            # clickable ボタンの bounds を探す
+            for m in _re.finditer(r'clickable="true"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', r.stdout):
+                x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+                # この bounds 内に content_desc が含まれるか確認
+                # ボタン全体の幅が画面の 90% 以上 → インストールボタン候補
+                if (x2 - x1) > 900 and 1200 < y1 < 1500:
+                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                    logger.info("[FRESH_INSTALL] uiautomator フォールバック: bounds=[%d,%d][%d,%d] → (%d,%d)",
+                                x1, y1, x2, y2, cx, cy)
+                    return (cx, cy)
+            # content-desc で直接検索
+            for m in _re.finditer(r'content-desc="' + _re.escape(content_desc) + r'"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', r.stdout):
+                x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                logger.info("[FRESH_INSTALL] uiautomator content-desc: bounds=[%d,%d][%d,%d] → (%d,%d)",
+                            x1, y1, x2, y2, cx, cy)
+                return (cx, cy)
+        except Exception as e:
+            logger.warning("[FRESH_INSTALL] uiautomator dump 失敗: %s", e)
+        return None
+
     # --- Step 1: アンインストール ---
     logger.info("[FRESH_INSTALL] === アプリ再インストール開始 ===")
     uninstall_app(serial, package)
@@ -2632,8 +2668,35 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 cx, cy = hit["center"]
                 logger.info("[FRESH_INSTALL] 「%s」検出 → タップ (%d, %d)", kw, cx, cy)
                 _adb_tap(cx, cy)
-                installed_via_tap = True
                 time.sleep(3)
+
+                # --- タップ検証: インストールが開始されたか確認 ---
+                _tap_ok = False
+                if _adb_screenshot(tmp_ss):
+                    try:
+                        _verify_ocr = run_ocr(tmp_ss)
+                        # 「インストール」がまだ見える → タップ失敗
+                        _still_visible = any(
+                            find_best(_verify_ocr, ik) for ik in INSTALL_KEYWORDS
+                        )
+                        if not _still_visible:
+                            _tap_ok = True
+                            logger.info("[FRESH_INSTALL] タップ成功 — インストール開始を確認")
+                    except Exception:
+                        _tap_ok = True  # OCR 失敗 → 成功と仮定
+
+                if not _tap_ok:
+                    # OCR タップ失敗 → uiautomator fallback
+                    logger.warning("[FRESH_INSTALL] OCR タップ空振り — uiautomator フォールバック")
+                    _ui_pos = _uiautomator_find_button("インストール")
+                    if _ui_pos:
+                        _adb_tap(_ui_pos[0], _ui_pos[1])
+                        time.sleep(3)
+                    else:
+                        logger.warning("[FRESH_INSTALL] uiautomator でもボタン未検出 — リトライ")
+                        continue
+
+                installed_via_tap = True
                 break
         if installed_via_tap:
             # 権限ダイアログ処理
