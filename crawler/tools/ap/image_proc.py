@@ -1700,7 +1700,7 @@ def detect_tutorial_gold_button_tap(img_path: Path,
         candidates = []
         for c in contours:
             area = cv2.contourArea(c)
-            if area < 8000 or area > 150000:
+            if area < 8000 or area > 50000:
                 continue
             x, y, w, h = cv2.boundingRect(c)
             if w < 100:
