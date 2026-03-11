@@ -49,8 +49,8 @@ def _build_scrcpy_args(device_serial: str) -> list:
     # ゲームはランドスケープ前提: 長辺=width, 短辺=height に正規化
     land_w = max(dev_w, dev_h)
     land_h = min(dev_w, dev_h)
-    # 1080x540 基準: 見やすい監視ウィンドウ (端末非依存)
-    TARGET_W, TARGET_H = 1080, 540
+    # 720x360 基準: コンパクトな監視ウィンドウ (端末非依存)
+    TARGET_W, TARGET_H = 720, 360
     scale = min(TARGET_W / land_w, TARGET_H / land_h)
     win_w = int(land_w * scale)
     win_h = int(land_h * scale)

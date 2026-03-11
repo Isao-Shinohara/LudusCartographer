@@ -2288,13 +2288,11 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     """動画シーン専用ハンドラ。指アイコン / GoldSwipe / 金枠ボタン検出なし。
 
     - post_download なら SKIP ボタンを HSV で探してタップ
-    - そうでなければ待機 (MOVIE_WAIT)
-    - 8 回連続待機でエスケープ (post_download → SKIP 位置, 通常 → 中央タップ)
+    - そうでなければ待機のみ (動画は自動で終わるのでタップ不要)
 
     Returns: True if handled (caller should continue), False for fallthrough.
     """
     W, H = ANALYSIS_W, ANALYSIS_H
-    _MOVIE_WAIT_ESCAPE = 8
 
     # ── post_download → SKIP ボタン検出 ──
     if state.post_download:
@@ -2312,32 +2310,10 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     # ── 待機カウンタ ──
     state.movie_wait_consecutive += 1
 
-    # ── エスケープ: 連続待機上限到達 ──
-    if state.movie_wait_consecutive >= _MOVIE_WAIT_ESCAPE:
-        if state.post_download:
-            logger.warning(
-                "[MOVIE] DL直後+動画待機 %d 回 → SKIP タップ",
-                state.movie_wait_consecutive)
-            state.movie_wait_consecutive = 0
-            _x, _y = roi_to_device(int(W * 0.93), int(H * 0.06), state.game_roi)
-            tap_device(_x, _y, state, "MOVIE_SKIP_ESCAPE")
-            state.last_action = "MOVIE_SKIP"
-        else:
-            logger.warning(
-                "[MOVIE] 動画待機 %d 回 → 画面中央タップ",
-                state.movie_wait_consecutive)
-            state.movie_wait_consecutive = 0
-            _x, _y = roi_to_device(int(W * 0.5), int(H * 0.5), state.game_roi)
-            tap_device(_x, _y, state, "MOVIE_RESUME_TAP")
-            state.last_action = "MOVIE_RESUME_TAP"
-        state.last_phash = ""
-        state.same_phash_count = 0
-        return True
-
-    # ── 通常待機 ──
+    # ── 通常待機 (動画は自動終了するのでタップせず待つ) ──
     roi_x = state.game_roi[0] if state.game_roi else 0
-    logger.info("[MOVIE] letterbox L=%d → 待機 (%d/%d)",
-                roi_x, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
+    logger.info("[MOVIE] letterbox L=%d → 待機 (%d)",
+                roi_x, state.movie_wait_consecutive)
     state.last_action = "MOVIE_WAIT"
     state.stall_start = 0.0
     time.sleep(0.5)
