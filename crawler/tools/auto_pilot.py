@@ -2268,7 +2268,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     if state.last_action in _MOVIE_ACTIONS:
         adv = detect_adv_scene_cached(img_path, state)
         if not adv.is_adv and state.current_scene not in ("BATTLE", "MENU"):
-            return "MOVIE"
+            # ↓ ボタンがあれば ADV (ツールバーが少なくても ADV 確定)
+            _adv_down = detect_adv_advance_icon(img_path)
+            if _adv_down is None:
+                return "MOVIE"
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     if state.current_scene == "BATTLE" and dist < 30:
