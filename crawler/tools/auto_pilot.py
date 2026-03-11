@@ -3782,6 +3782,7 @@ def main():
             state.scene_reeval_mode = False
 
         if state.action_repeat_count >= _SCENE_REEVAL_THRESHOLD:
+            _pre_reeval_action = action
             logger.warning(
                 "[SCENE_REEVAL] '%s' が %d 回連続 → シーン再評価 (ガード緩和)",
                 action, state.action_repeat_count,
@@ -3819,6 +3820,18 @@ def main():
                 state.last_action = action
                 state.action_repeat_count = 0
                 logger.info("[SCENE_REEVAL] 再判定結果: %s", action)
+                # 再判定後も同じアクション → 動画字幕等でスタックの可能性
+                # → 画面中央タップでエスケープ (動画は字幕位置タップでは進まない)
+                if action == _pre_reeval_action and action in (
+                    "STORY_TAP", "MOYA_TAP", "ADV_NEXT_FALLBACK",
+                ):
+                    logger.warning(
+                        "[SCENE_REEVAL_ESCAPE] 再判定でも '%s' → 中央タップでエスケープ",
+                        action,
+                    )
+                    tap_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state,
+                               desc="REEVAL_CENTER_ESCAPE")
+                    state.last_action = "REEVAL_CENTER_ESCAPE"
             except Exception as _re_err:
                 logger.debug("[SCENE_REEVAL] 再評価例外: %s", _re_err)
             state.scene_reeval_mode = False
