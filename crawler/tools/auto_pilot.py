@@ -2228,28 +2228,34 @@ def _battle_fast_check(analysis_path: Path,
     return "", 0.0
 
 
-# ─── 早期シーン判定 (Phase A: MOVIE のみ) ──────────────────────
+# ─── 早期シーン判定 ─────────────────────────────────
 def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     """OCR 前にシーンを判定する。
 
     利用する信号 (すべて OCR 不要):
     - レターボックス (ROI 左端 >= 80) + ADV ツールバーなし → MOVIE
-    - 前回シーン == BATTLE + phash 小変化 → UNKNOWN (既存 BATTLE_RAPID に委譲)
+    - 前回シーン == BATTLE + phash 小変化 → BATTLE
+    - ADV ツールバー検出 → ADV
+    - それ以外 → UNKNOWN (フルOCR 必要)
 
-    Phase B/C で BATTLE / ADV ハンドラを追加予定。現段階では UNKNOWN にフォールスルー。
-
-    Returns: "MOVIE" | "UNKNOWN"
+    Returns: "MOVIE" | "BATTLE" | "ADV" | "UNKNOWN"
     """
-    # BATTLE シーン継続中は横取りしない (BATTLE_RAPID に委譲)
-    if state.current_scene == "BATTLE" and dist < 30:
-        return "UNKNOWN"
-
     # MOVIE: レターボックス (左黒帯 >= 80px) + ADV ツールバーなし
     roi_x = state.game_roi[0] if state.game_roi else 0
     if roi_x >= 80:
         adv = detect_adv_scene_cached(img_path, state)
         if not adv.is_adv:
             return "MOVIE"
+
+    # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
+    if state.current_scene == "BATTLE" and dist < 30:
+        return "BATTLE"
+
+    # ADV: ツールバー検出 (MENU シーンは OCR でボタン検出が必要)
+    if state.current_scene != "MENU":
+        adv = detect_adv_scene_cached(img_path, state)
+        if adv.is_adv:
+            return "ADV"
 
     return "UNKNOWN"
 
@@ -2314,6 +2320,201 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     time.sleep(0.5)
     state.last_phash = cur_phash
     return True
+
+
+def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
+    """バトルシーン専用ハンドラ。発光/モヤ/通常攻撃のみ。GoldSwipe なし。
+
+    既存 BATTLE_RAPID のロジックを関数化。
+    - Phase 0: チュートリアル金枠 + 指ブロブ
+    - Phase A: アクティブキャラ (赤/ピンク発光)
+    - Phase B: 右側スキル/攻撃ボタン
+    - Phase C: 通常攻撃フォールバック
+
+    Returns: True if handled, False for fallthrough to OCR.
+    """
+    # ── force OCR override: phash 静止 → ダイアログ可能性 ──
+    if dist <= 2 and state.same_phash_count >= FORCE_ANALYZE_AFTER:
+        logger.info("[BATTLE] force_ocr (dist=%d, same=%d) → OCR フォールスルー",
+                    dist, state.same_phash_count)
+        return False
+
+    # 速度チュートリアル表示中は OCR で処理
+    if any(any(k in t for k in ("このボタンでバトル", "進行速度を変更"))
+           for t in state.last_ocr_texts):
+        return False
+
+    # BATTLE_RAPID 連続ループ上限
+    if state.battle_rapid_consecutive.stalled:
+        logger.info("[BATTLE] 連続 %d 回 → OCR で再評価",
+                    state.battle_rapid_consecutive.count)
+        state.battle_rapid_consecutive.reset()
+        return False
+
+    _rapid_tx = _rapid_ty = 0
+    _rapid_action = ""
+    _rapid_double = False
+
+    # ── 共通: 指ブロブ検出 ──
+    _rapid_blobs = find_finger_blobs(analysis_path, min_area=200, dark_mode=True)
+    _rapid_blobs = [b for b in _rapid_blobs
+                    if b[1] > _SPATIAL_MARGIN_TOP and b[0] < ANALYSIS_W - _CLOSE_BTN_OFFSET]
+
+    # ── Phase 0: チュートリアル金枠+指 → 最優先タップ ──
+    _rapid_tutorial_gold = [b for b in _rapid_blobs if b[2] > 10000]
+    if _rapid_tutorial_gold:
+        _gold_tap = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False)
+        if _gold_tap:
+            _rapid_tx, _rapid_ty = _gold_tap
+            _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
+
+    # ── Phase A: アクティブキャラ検出 (赤/ピンク発光) ──
+    _active_char = detect_active_battle_char(analysis_path, ANALYSIS_W, ANALYSIS_H)
+    if not _rapid_action and not state.character_selected and _active_char is not None:
+        _rapid_tx, _rapid_ty = _active_char[0], _active_char[1]
+        _rapid_action = "BATTLE_RAPID_ACTIVE_P1"
+        _rapid_double = True
+
+    # ── Phase B: 右側スキル/攻撃ボタン ──
+    if not _rapid_action:
+        _rapid_glows = detect_guide_glow(
+            analysis_path, ANALYSIS_W, ANALYSIS_H, footer_ratio=0.30)
+        _rapid_right_g = [g for g in _rapid_glows if g["side"] == "right"]
+        _right_panel = [b for b in _rapid_blobs
+                        if b[0] > _RIGHT_PANEL_X and b[1] > ANALYSIS_H * 0.45]
+        if state.character_selected or state.char_just_selected:
+            if _rapid_right_g:
+                _rr = max(_rapid_right_g, key=lambda g: g["area"])
+                _rapid_tx = _rr["cx"]
+                _rapid_ty = max(1, _rr["by"] + _rr["bh"] // 3)
+                _rapid_action = "BATTLE_RAPID_GLOW_P2"
+            elif _right_panel:
+                _tb = max(_right_panel, key=lambda b: b[2])
+                _rapid_tx, _rapid_ty = _tb[0], _tb[1]
+                _rapid_action = "BATTLE_RAPID_MOYA_P2"
+            else:
+                _rapid_tx, _rapid_ty = roi_to_device(
+                    int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
+                _rapid_action = "BATTLE_RAPID_NORMATK_P2"
+
+    # ── Phase C: フォールバック → 右側攻撃ボタン ──
+    if not _rapid_action:
+        if state.normatk_fallback.stalled:
+            logger.info("[BATTLE] FALLBACK %d回連続 → OCR で再評価",
+                        state.normatk_fallback.count)
+            state.normatk_fallback.reset()
+            return False
+        _rapid_tx, _rapid_ty = roi_to_device(
+            int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
+        _rapid_action = "BATTLE_RAPID_NORMATK_FALLBACK"
+        state.normatk_fallback.tick()
+    else:
+        state.normatk_fallback.reset()
+
+    # ── 共通タップ実行 ──
+    if _rapid_action:
+        logger.info("[%s] tap(%d,%d)%s",
+                    _rapid_action, _rapid_tx, _rapid_ty,
+                    " ダブルタップ" if _rapid_double else "")
+        tap_device(_rapid_tx, _rapid_ty, state, _rapid_action,
+                   rapid=_rapid_double)
+        if _rapid_double:
+            tap_device(_rapid_tx, _rapid_ty, state, _rapid_action)
+        # 状態更新
+        if "P1" in _rapid_action:
+            state.character_selected = True
+            state.char_just_selected = True
+        else:
+            state.character_selected = False
+            state.char_just_selected = False
+        state.finger_detections += 1
+        state.last_action = _rapid_action
+        state.stall_start = 0.0
+        state.stall_corner_tried = False
+        state.same_phash_count = 0
+        state.battle_rapid_consecutive.tick()
+        return True
+
+    return False
+
+
+def handle_adv(img_path: Path, state: PilotState, dist: int,
+               cur_phash: str, actual_w: int, actual_h: int) -> bool:
+    """ADV シーン専用ハンドラ。↓ボタン / バーストタップ / ミニ会話。
+
+    GoldSwipe / 指アイコン / バトル判定なし。
+
+    Returns: True if handled, False for fallthrough to OCR.
+    """
+    W, H = ANALYSIS_W, ANALYSIS_H
+    adv = detect_adv_scene_cached(img_path, state)
+    _adv_tap_x = int(W * 0.93)
+    _adv_tap_y = int(H * 0.91)
+
+    # ── ↓アイコン or ADV ツールバー → バーストタップ ──
+    if adv.is_adv or detect_adv_advance_icon(img_path):
+        _burst_count = 0
+        _burst_max = 3
+        _burst_img = img_path
+        while _burst_count < _burst_max:
+            if detect_adv_advance_icon(_burst_img):
+                _burst_count += 1
+                logger.info("[ADV] ↓検出 → タップ #%d (%d,%d)",
+                            _burst_count, _adv_tap_x, _adv_tap_y)
+                tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
+                state.last_action = "ADV_RAPID_TAP"
+                _b_path, _b_w, _b_h, _ = take_screenshot()
+                if _b_path is None:
+                    break
+                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
+            elif adv.is_adv and adv.next_btn_pos and _burst_count == 0:
+                _adv_nx = int(adv.next_btn_pos[0] * W / actual_w)
+                _adv_ny = int(adv.next_btn_pos[1] * H / actual_h)
+                logger.info("[ADV] ↓ボタン座標 (%d,%d)", _adv_nx, _adv_ny)
+                tap_device(_adv_nx, _adv_ny, state, "ADV_RAPID_TAP")
+                state.last_action = "ADV_RAPID_TAP"
+                _burst_count += 1
+                _b_path, _b_w, _b_h, _ = take_screenshot()
+                if _b_path is None:
+                    break
+                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
+            else:
+                break
+        if _burst_count > 0:
+            logger.info("[ADV] バースト完了: %d タップ", _burst_count)
+            state.movie_wait_consecutive = 0
+            state.last_phash = ""
+            return True
+
+    # ── ミニ会話バーストタップ ──
+    _mc = detect_mini_conversation(img_path)
+    if _mc is not None:
+        _burst_count = 0
+        _burst_max = 3
+        _burst_img = img_path
+        while _burst_count < _burst_max:
+            _mc_res = detect_mini_conversation(_burst_img)
+            if _mc_res is not None:
+                _mc_cx, _mc_cy, _mc_side = _mc_res
+                _burst_count += 1
+                logger.info("[ADV] 吹き出し(%s) → タップ #%d (%d,%d)",
+                            _mc_side, _burst_count, _mc_cx, _mc_cy)
+                tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
+                state.last_action = "MINI_CONV_TAP"
+                _b_path, _b_w, _b_h, _ = take_screenshot()
+                if _b_path is None:
+                    break
+                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
+            else:
+                break
+        if _burst_count > 0:
+            logger.info("[ADV] 吹き出しバースト完了: %d タップ", _burst_count)
+            state.movie_wait_consecutive = 0
+            state.last_phash = ""
+            return True
+
+    # ↓ なし + 吹き出しなし → フォールスルー
+    return False
 
 
 # ─── コマンドライン引数 ───────────────────────────────
@@ -2713,16 +2914,39 @@ def main():
             state.last_screen_change_time = time.time()
             state.stall_start = 0.0
 
-        # ── 早期シーン判定 (Phase A: MOVIE のみ) ──
-        # OCR 前にレターボックス + ADV ツールバー不在で動画シーンを検出し、
-        # 指アイコン / GoldSwipe 等の誤発動を根本的に防止する。
+        # ── 早期シーン判定 ──
+        # OCR 前にシーンを分類し、シーン別ハンドラへルーティングする。
+        # MOVIE: 指/GoldSwipe 誤発動を防止
+        # BATTLE: GoldSwipe/ADV チェックをスキップ
+        # ADV: 指/GoldSwipe/バトル判定をスキップ
+        # UNKNOWN: フルOCR → detect_and_act() (既存フロー)
         _early_scene = detect_scene_early(img_path, state, dist)
+        _skip_rapid = False  # True: 早期ハンドラがフォールスルー → インライン RAPID をスキップ
+        _early_analysis = None  # BATTLE 用に先行計算した analysis_path を再利用
+
         if _early_scene == "MOVIE":
             if handle_movie(img_path, state, dist, cur_phash):
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
                 logger.info("  [PERF] Loop %.0fms (MOVIE_EARLY)", _fms)
                 continue
+
+        elif _early_scene == "BATTLE":
+            _early_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
+            if handle_battle(_early_analysis, state, dist):
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                logger.info("  [PERF] Loop %.0fms (BATTLE_EARLY)", _fms)
+                continue
+            _skip_rapid = True  # BATTLE ハンドラがフォールスルー → OCR へ直行
+
+        elif _early_scene == "ADV":
+            if handle_adv(img_path, state, dist, cur_phash, actual_w, actual_h):
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                logger.info("  [PERF] Loop %.0fms (ADV_EARLY)", _fms)
+                continue
+            _skip_rapid = True  # ADV ハンドラがフォールスルー → OCR へ直行
 
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
@@ -2762,7 +2986,8 @@ def main():
                 any(k in t for k in ("Result", "EXP", "次へ"))
                 for t in _last_texts
             )
-            if (state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "ADV_NEXT_TAP", "ADV_WAIT",
+            if (not _skip_rapid and
+                    state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "ADV_NEXT_TAP", "ADV_WAIT",
                                       "ADV_NEXT_FALLBACK", "ADV_SKIP_TAP",
                                       "STORY_TAP_HINT", "BUBBLE_TAP",
                                       "MINI_CONV_TAP", "MOYA_TAP", "MOVIE_SKIP", "MOVIE_WAIT",
@@ -3140,7 +3365,7 @@ def main():
 
         # ── 4) 解析用画像の準備 ──
         state.last_phash = cur_phash
-        analysis_path = prepare_analysis_image(img_path, actual_w, actual_h)
+        analysis_path = _early_analysis or prepare_analysis_image(img_path, actual_w, actual_h)
 
         # ── 4.2) Result画面ハンドラ (RAPID mode) ──
         _result_action = handle_result_screen(
@@ -3189,7 +3414,7 @@ def main():
             state.battle_rapid_consecutive.reset()
             _force_ocr_override = True
         if (state.current_scene == "BATTLE" and analysis_path is not None
-                and not _force_ocr_override):
+                and not _force_ocr_override and not _skip_rapid):
             _rapid_tx = _rapid_ty = 0
             _rapid_action = ""
             _rapid_double = False
@@ -3292,7 +3517,7 @@ def main():
         # ── 4.5) BATTLE 高速パス: OCR 前テンプレートマッチング ──
         # BATTLE シーンで GoldBtn/GoldSwipe が見つかれば OCR (6-8s) をスキップ
         # ※ 強制 OCR 時はスキップ (ダイアログ検出を優先)
-        if state.current_scene == "BATTLE" and not _force_ocr_override:
+        if state.current_scene == "BATTLE" and not _force_ocr_override and not _skip_rapid:
             _fast_action, _fast_wait = _battle_fast_check(analysis_path, state)
             if _fast_action:
                 # GoldSwipe 連続回数制限: 6回超えたら OCR へフォールバック
