@@ -49,8 +49,8 @@ def _build_scrcpy_args(device_serial: str) -> list:
     # ゲームはランドスケープ前提: 長辺=width, 短辺=height に正規化
     land_w = max(dev_w, dev_h)
     land_h = min(dev_w, dev_h)
-    # ウィンドウ幅 1080px 固定、高さは端末アスペクト比から算出
-    WINDOW_W = 1080
+    # ウィンドウ幅 720px 固定、高さは端末アスペクト比から算出
+    WINDOW_W = 720
     win_w = WINDOW_W
     win_h = int(WINDOW_W * land_h / land_w)
     # --max-size: 短辺を制限 (ストリーミング負荷軽減)

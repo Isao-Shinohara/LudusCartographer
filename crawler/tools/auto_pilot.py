@@ -2241,10 +2241,11 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     Returns: "MOVIE" | "BATTLE" | "ADV" | "UNKNOWN"
     """
     # MOVIE: (レターボックス OR ⏭ボタン) + ADV ツールバーなし
-    # レターボックスは左黒帯 >= 80px (1520x720 ネイティブデバイス向け)
+    # レターボックスは左黒帯が解析幅の 13% 以上 (デバイス非依存)
+    # 2:1デバイスのアスペクト差 (L≈161=10.6%) を除外し、映画的黒帯のみ検出
     # ⏭ボタンは HSV 金色検出 (ワイドデバイスではレターボックスなしでも動画あり)
     roi_x = state.game_roi[0] if state.game_roi else 0
-    _is_letterbox = roi_x >= 80
+    _is_letterbox = roi_x >= int(ANALYSIS_W * 0.13)
     _movie_btn = None if _is_letterbox else detect_movie_skip_button(img_path)
     if _is_letterbox or _movie_btn is not None:
         adv = detect_adv_scene_cached(img_path, state)
