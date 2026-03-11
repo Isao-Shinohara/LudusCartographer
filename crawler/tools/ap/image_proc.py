@@ -621,6 +621,15 @@ def detect_adv_advance_icon(img_path: Path,
             return True
         if _bright > max_bright:
             logger.debug("[ADV_ADVANCE] 白テキスト排除: bright=%d > max=%d", _bright, max_bright)
+        # HSV 失敗時: テンプレートマッチフォールバック
+        try:
+            _tmpl = ASSET_MANAGER.match_single("adv_next_btn", img_path,
+                                                roi=(roi_x, roi_y, roi_w, roi_h))
+            if _tmpl and _tmpl[2] >= 0.65:
+                logger.debug("[ADV_ADVANCE] テンプレートFB: score=%.3f → True", _tmpl[2])
+                return True
+        except Exception:
+            pass
         return False
     except Exception as _e:
         logger.debug("detect_adv_advance_icon error: %s", _e)
@@ -837,6 +846,100 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
         return None
     except Exception:
         return None
+
+
+class MovieSceneResult:
+    """動画シーン判定結果。"""
+    __slots__ = ("is_movie", "confidence", "has_skip_btn", "skip_btn_pos")
+
+    def __init__(self, is_movie=False, confidence=0.0,
+                 has_skip_btn=False, skip_btn_pos=None):
+        self.is_movie = is_movie
+        self.confidence = confidence
+        self.has_skip_btn = has_skip_btn
+        self.skip_btn_pos = skip_btn_pos
+
+    def __repr__(self):
+        return (f"MovieSceneResult(is_movie={self.is_movie}, "
+                f"conf={self.confidence:.2f}, skip={self.has_skip_btn})")
+
+
+# バトルキーワード (動画即棄却用)
+_MOVIE_REJECT_BATTLE_KWS = frozenset([
+    "通常攻撃", "単体攻撃", "单体攻撃", "全体攻撃",
+    "必殺技", "BREAK", "WAVE", "Turn",
+])
+
+# UI テキスト (減点用)
+_MOVIE_UI_PENALTY_KWS = (
+    "利用規約", "同意", "規約", "プライバシー", "ダウンロード",
+    "Download", "OK", "はい", "キャンセル", "設定", "お知らせ",
+    "クエスト", "ショップ", "ガチャ", "編成",
+)
+
+
+def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
+                       phash_dist=0):
+    """動画シーン判定 (重み付きスコアリング)。
+
+    正の信号:
+      ⏭ スキップボタン検出          +0.40
+      ADV ツールバーなし             +0.25
+      OCR テキスト少ない (<=1件)     +0.15
+      phash 変化大 (アニメーション)  +0.10
+
+    負の信号 (即棄却):
+      ADV ツールバーあり             → 即 False
+      バトルキーワード               → 即 False
+
+    減点:
+      UI キーワード (OK, ダウンロード等) → -0.30
+
+    閾値: confidence >= 0.50 → is_movie = True
+    """
+    texts = ocr_texts or []
+    joined = " ".join(texts) if texts else ""
+
+    # 即棄却: ADV ツールバーあり
+    if adv_result is not None and adv_result.is_adv:
+        return MovieSceneResult()
+
+    # 即棄却: バトルキーワード
+    if any(kw in joined for kw in _MOVIE_REJECT_BATTLE_KWS):
+        return MovieSceneResult()
+
+    score = 0.0
+    # ⏭ スキップボタン
+    skip_btn = detect_movie_skip_button(img_path) if img_path else None
+    has_skip = skip_btn is not None
+    if has_skip:
+        score += 0.40
+
+    # ADV ツールバーなし
+    if adv_result is None or not adv_result.is_adv:
+        score += 0.25
+
+    # OCR テキスト少ない
+    if len(texts) <= 1:
+        score += 0.15
+    elif len(texts) <= 3:
+        score += 0.05  # 字幕程度
+
+    # phash 変化大 (アニメーション)
+    if phash_dist >= 8:
+        score += 0.10
+
+    # 減点: UI テキスト
+    if any(kw in joined for kw in _MOVIE_UI_PENALTY_KWS):
+        score -= 0.30
+
+    is_movie = score >= 0.50
+    logger.debug("[MOVIE_SCENE] score=%.2f skip=%s texts=%d → %s",
+                 score, has_skip, len(texts), is_movie)
+    return MovieSceneResult(
+        is_movie=is_movie, confidence=score,
+        has_skip_btn=has_skip, skip_btn_pos=skip_btn,
+    )
 
 
 def detect_mini_conversation(img_path: Path, ocr_items=None,

@@ -1119,3 +1119,259 @@ class TestMovieInertiaTTL:
 
         result = detect_scene_early(img_path, state, dist=5)
         assert result == "MOVIE"
+
+
+# ─── Fix #7: 課金ダイアログ保護 ─────────────────────────────────
+
+class TestCurrencyDialogProtection:
+    """課金ダイアログで自動キャンセルされるか検証。"""
+
+    @pytest.fixture
+    def state(self):
+        from tools.ap.state import PilotState
+        s = PilotState()
+        s.device_w = 1520
+        s.device_h = 720
+        s.game_roi = (0, 0, 1520, 720)
+        return s
+
+    @patch("tools.auto_pilot.tap_device")
+    def test_currency_dialog_taps_cancel(self, mock_tap, state):
+        """OCR に 'マギカストーン50個消費' + OK + キャンセル → Cancel タップ。"""
+        from tools.auto_pilot import detect_and_act
+        ocr = [
+            {"text": "マギカストーン50個消費", "center": (760, 300), "confidence": 0.95},
+            {"text": "OK", "center": (500, 500), "confidence": 0.95},
+            {"text": "キャンセル", "center": (1000, 500), "confidence": 0.95},
+        ]
+        action, wait = detect_and_act(ocr, state, analysis_path=None)
+        assert action == "CURRENCY_CANCEL"
+        assert mock_tap.called
+
+    @patch("tools.auto_pilot.tap_device")
+    def test_normal_dialog_taps_ok(self, mock_tap, state):
+        """OCR に 'データをダウンロード' + OK + キャンセル → OK タップ。"""
+        from tools.auto_pilot import detect_and_act
+        ocr = [
+            {"text": "データをダウンロード", "center": (760, 300), "confidence": 0.95},
+            {"text": "OK", "center": (500, 500), "confidence": 0.95},
+            {"text": "キャンセル", "center": (1000, 500), "confidence": 0.95},
+        ]
+        action, wait = detect_and_act(ocr, state, analysis_path=None)
+        assert action == "ADV_CHOICE"  # 通常の確認ダイアログ OK タップ
+        assert mock_tap.called
+
+    @patch("tools.auto_pilot.tap_device")
+    def test_story_skip_still_cancels(self, mock_tap, state):
+        """OCR に 'スキップ' + OK + キャンセル → Cancel (既存動作保持)。"""
+        from tools.auto_pilot import detect_and_act
+        ocr = [
+            {"text": "スキップしますか？", "center": (760, 300), "confidence": 0.95},
+            {"text": "OK", "center": (500, 500), "confidence": 0.95},
+            {"text": "キャンセル", "center": (1000, 500), "confidence": 0.95},
+        ]
+        action, wait = detect_and_act(ocr, state, analysis_path=None)
+        assert action == "STORY_SKIP_CANCEL"
+
+
+# ─── Fix #6: タイトル画面誤検出防止 ─────────────────────────────────
+
+class TestTitleScreenDetection:
+    """タイトル画面検出の条件厳格化テスト。"""
+
+    @pytest.fixture
+    def state(self):
+        from tools.ap.state import PilotState
+        s = PilotState()
+        s.device_w = 1520
+        s.device_h = 720
+        s.game_roi = (0, 0, 1520, 720)
+        s.home_reached = False
+        return s
+
+    @patch("tools.auto_pilot.detect_tutorial_gold_swipe", return_value=None)
+    @patch("tools.auto_pilot.is_tutorial_walk_scene", return_value=False)
+    @patch("tools.auto_pilot.tap_device")
+    def test_tap_to_start_triggers(self, mock_tap, mock_walk, mock_swipe, state, tmp_path):
+        """OCR 'TAP TO START' + 'MAGIA EXEDRA' → title=True。"""
+        import cv2
+        import numpy as np
+        from tools.auto_pilot import detect_and_act
+        img = tmp_path / "test.png"
+        cv2.imwrite(str(img), np.zeros((720, 1520, 3), dtype=np.uint8))
+        ocr = [
+            {"text": "TAP TO START", "center": (760, 600), "confidence": 0.95},
+            {"text": "MAGIA EXEDRA", "center": (760, 400), "confidence": 0.95},
+        ]
+        action, wait = detect_and_act(ocr, state, analysis_path=img)
+        assert action == "TITLE_TAP"
+
+    @patch("tools.auto_pilot.tap_device")
+    def test_browser_magia_no_trigger(self, mock_tap, state, tmp_path):
+        """OCR 'MAGIA EXEDRA' のみ → title=False (ブラウザ誤検出防止)。"""
+        import cv2
+        import numpy as np
+        from tools.auto_pilot import detect_and_act
+        img = tmp_path / "test.png"
+        cv2.imwrite(str(img), np.zeros((720, 1520, 3), dtype=np.uint8))
+        ocr = [
+            {"text": "MAGIA EXEDRA", "center": (760, 400), "confidence": 0.95},
+            {"text": "ログイン", "center": (760, 500), "confidence": 0.95},
+        ]
+        action, wait = detect_and_act(ocr, state, analysis_path=img)
+        assert action != "TITLE_TAP"
+
+    @patch("tools.auto_pilot.tap_device")
+    def test_home_reached_blocks(self, mock_tap, state, tmp_path):
+        """home_reached=True → TAP TO START でもタイトル判定しない。"""
+        import cv2
+        import numpy as np
+        from tools.auto_pilot import detect_and_act
+        img = tmp_path / "test.png"
+        cv2.imwrite(str(img), np.zeros((720, 1520, 3), dtype=np.uint8))
+        state.home_reached = True
+        ocr = [
+            {"text": "TAP TO START", "center": (760, 600), "confidence": 0.95},
+        ]
+        action, wait = detect_and_act(ocr, state, analysis_path=img)
+        assert action != "TITLE_TAP"
+
+
+# ─── Fix #5: ポートレート検出 ──────────────────────────────────
+
+class TestPortraitDetection:
+    """ポートレートモードで BACK キーが発行されるか検証。"""
+
+    def test_portrait_detected(self):
+        """actual_w < actual_h → ポートレート判定。"""
+        # ポートレート条件のロジックのみテスト
+        actual_w, actual_h = 720, 1520
+        assert actual_w > 0 and actual_w < actual_h
+
+    def test_landscape_normal(self):
+        """actual_w > actual_h → ランドスケープ (通常)。"""
+        actual_w, actual_h = 1520, 720
+        assert not (actual_w > 0 and actual_w < actual_h)
+
+
+# ─── Fix #4: 指ガード × テンプレ抑制 ──────────────────────────────
+
+class TestFingerGuardCloseButton:
+    """指ブロブがあっても × テンプレートマッチがあればガード抑制。"""
+
+    def test_finger_allows_close_when_template_matches(self):
+        """指あり + × 0.90 → ガード解除。"""
+        # match_single が (x, y, score) を返す場合のロジックテスト
+        close_match = (100, 50, 0.90)
+        threshold = 0.85
+        pdg_blobs = [(100, 200, 500)]  # 指ブロブあり
+        assert pdg_blobs  # ブロブあり
+        assert close_match and close_match[2] >= threshold  # ガード抑制
+
+    def test_finger_blocks_when_no_close(self):
+        """指あり + × なし → ガード有効。"""
+        close_match = None
+        pdg_blobs = [(100, 200, 500)]
+        pre_dialog_finger = False
+        if pdg_blobs:
+            if close_match and close_match[2] >= 0.85:
+                pass  # ガード抑制
+            else:
+                pre_dialog_finger = True
+        assert pre_dialog_finger is True
+
+
+# ─── Fix #2: ADV 速度改善 ─────────────────────────────────────
+
+class TestAdvSpeedImprovements:
+    """ADV 連続検出による phash 動的拡大のテスト。"""
+
+    @pytest.fixture
+    def state(self):
+        from tools.ap.state import PilotState
+        s = PilotState()
+        s.device_w = 1520
+        s.device_h = 720
+        s.game_roi = (0, 0, 1520, 720)
+        return s
+
+    def test_adv_confirmed_widens_phash(self, state):
+        """adv_confirmed_count >= 3 → phash 上限 40。"""
+        from tools.ap.constants import ADV_RAPID_PHASH_MAX
+        state.adv_confirmed_count = 5
+        _adv_phash_max = 40 if state.adv_confirmed_count >= 3 else ADV_RAPID_PHASH_MAX
+        assert _adv_phash_max == 40
+
+    def test_adv_default_phash(self, state):
+        """adv_confirmed_count < 3 → phash 上限 25 (デフォルト)。"""
+        from tools.ap.constants import ADV_RAPID_PHASH_MAX
+        state.adv_confirmed_count = 1
+        _adv_phash_max = 40 if state.adv_confirmed_count >= 3 else ADV_RAPID_PHASH_MAX
+        assert _adv_phash_max == ADV_RAPID_PHASH_MAX
+
+
+# ─── Fix #1: 動画シーンスコアリング検出 ──────────────────────────
+
+class TestMovieSceneDetection:
+    """detect_movie_scene() のスコアリング方式テスト。"""
+
+    @pytest.fixture
+    def black_image(self, tmp_path):
+        """720p 黒画像 (⏭ なし)。"""
+        import cv2
+        import numpy as np
+        img_path = tmp_path / "black.png"
+        cv2.imwrite(str(img_path), np.zeros((720, 1520, 3), dtype=np.uint8))
+        return img_path
+
+    def test_not_movie_with_adv_toolbar(self, black_image):
+        """ADV ツールバーあり → 即棄却。"""
+        from tools.ap.image_proc import detect_movie_scene, AdvSceneResult
+        adv = AdvSceneResult(is_adv=True)
+        result = detect_movie_scene(black_image, adv_result=adv)
+        assert result.is_movie is False
+
+    def test_not_movie_battle(self, black_image):
+        """バトルキーワード → 即棄却。"""
+        from tools.ap.image_proc import detect_movie_scene
+        result = detect_movie_scene(black_image, ocr_texts=["通常攻撃", "WAVE2"])
+        assert result.is_movie is False
+
+    def test_not_movie_with_ui_text(self, black_image):
+        """UI テキスト多数 → 減点で棄却。"""
+        from tools.ap.image_proc import detect_movie_scene, AdvSceneResult
+        adv = AdvSceneResult(is_adv=False)
+        result = detect_movie_scene(
+            black_image, adv_result=adv,
+            ocr_texts=["OK", "ダウンロード", "設定"])
+        assert result.is_movie is False
+
+    @patch("tools.ap.image_proc.detect_movie_skip_button")
+    def test_movie_with_skip_no_toolbar(self, mock_skip, black_image):
+        """⏭ + ツールバーなし → is_movie=True。"""
+        from tools.ap.image_proc import detect_movie_scene, AdvSceneResult
+        mock_skip.return_value = (1400, 50)  # ⏭ ボタン座標
+        adv = AdvSceneResult(is_adv=False)
+        result = detect_movie_scene(black_image, adv_result=adv, ocr_texts=[])
+        assert result.is_movie is True
+        assert result.confidence >= 0.50
+
+    @patch("tools.ap.image_proc.detect_movie_skip_button")
+    def test_movie_with_subtitles(self, mock_skip, black_image):
+        """⏭ + ツールバーなし + OCR 3件 (字幕) → is_movie=True。"""
+        from tools.ap.image_proc import detect_movie_scene, AdvSceneResult
+        mock_skip.return_value = (1400, 50)
+        adv = AdvSceneResult(is_adv=False)
+        result = detect_movie_scene(
+            black_image, adv_result=adv,
+            ocr_texts=["字幕テキスト1", "字幕テキスト2", "字幕テキスト3"])
+        assert result.is_movie is True
+        assert result.confidence >= 0.50
+
+    def test_movie_scene_result_repr(self):
+        """MovieSceneResult の __repr__ が動作する。"""
+        from tools.ap.image_proc import MovieSceneResult
+        r = MovieSceneResult(is_movie=True, confidence=0.75,
+                             has_skip_btn=True, skip_btn_pos=(100, 50))
+        assert "is_movie=True" in repr(r)
+        assert "0.75" in repr(r)

@@ -69,7 +69,8 @@ from tools.ap.constants import (  # noqa: E402
     WATCHDOG_MAX_TOTAL_RECOVERIES, APP_PACKAGE, APP_ACTIVITY,
     WATCHDOG_EXEMPT_ACTIONS, ADV_RAPID_PHASH_MAX, BLACKOUT_BRIGHTNESS,
     _DEBUG_SAVE_IMAGES, _GOLD_UI_ACTIONS, _SCENE_REEVAL_THRESHOLD,
-    _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS, _UI_TEXT_KWS, _SINGLE_ONLY,
+    _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS, _CURRENCY_SPEND_KWS,
+    _UI_TEXT_KWS, _SINGLE_ONLY,
     _DIALOG_FIRST_KWS, _BATTLE_CORE_KWS, _BATTLE_UI_KWS,
     ANALYSIS_W, ANALYSIS_H,
     _OCR_BBOX_Y_PADDING, _GLOW_CENTER_Y_OFFSET,
@@ -127,6 +128,7 @@ from tools.ap.image_proc import (  # noqa: E402
     smart_tap_button, find_golden_highlighted_button, find_3d_arrow,
     AssetManager, ASSET_MANAGER,
     detect_adv_scene, detect_adv_scene_cached, AdvSceneResult,
+    detect_movie_scene, MovieSceneResult,
 )
 
 
@@ -621,6 +623,16 @@ def detect_and_act(ocr: list, state: PilotState,
     _confirm_neg = has_any(ocr, _CONFIRM_NEG_KWS)
     _is_completion_dialog = _confirm_pos and not _confirm_neg and _dl_is_complete
     if (_confirm_pos and _confirm_neg) or _is_completion_dialog:
+        # ── 課金保護: 通貨消費キーワード → キャンセル ──
+        _is_currency = any(kw in joined for kw in _CURRENCY_SPEND_KWS)
+        if _is_currency and _confirm_neg:
+            _cn_x, _cn_y = _confirm_neg["center"]
+            _cn_y_adj = max(0, _cn_y - _OCR_BBOX_Y_PADDING)
+            logger.info("[ConfirmDialog] 課金保護: → キャンセル '%s' タップ",
+                        _confirm_neg["text"])
+            tap_device(_cn_x, _cn_y_adj, state,
+                       f"CURRENCY_CANCEL '{_confirm_neg['text']}'")
+            return "CURRENCY_CANCEL", 1.0
         # ── スキップ確認ダイアログ → キャンセルをタップ (スキップ禁止) ──
         _is_story_skip_dialog = any("スキップ" in t for t in texts)
         if _is_story_skip_dialog and _confirm_neg:
@@ -786,8 +798,15 @@ def detect_and_act(ocr: list, state: PilotState,
         _pdg_blobs = find_finger_blobs(analysis_path, min_area=300, max_area=5000)
         _pdg_blobs = [b for b in _pdg_blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
         if _pdg_blobs:
-            _pre_dialog_finger = True
-            logger.info("[PRE_DIALOG_GUARD] 指ブロブ %d 個検出 → #0-DIALOG スキップ", len(_pdg_blobs))
+            # × ボタンが高信頼度で存在する場合は指ガードを抑制
+            _close_match = ASSET_MANAGER.match_single("tutorial_dialog_close", analysis_path)
+            if _close_match and _close_match[2] >= 0.85:
+                logger.info("[PRE_DIALOG_GUARD] 指 %d 個だが ×(%.3f) → ガード抑制",
+                            len(_pdg_blobs), _close_match[2])
+            else:
+                _pre_dialog_finger = True
+                logger.info("[PRE_DIALOG_GUARD] 指ブロブ %d 個検出 → #0-DIALOG スキップ",
+                            len(_pdg_blobs))
         if not _pre_dialog_finger:
             _white_hand_pos = detect_white_hand_pointer(analysis_path, threshold=0.90)
             if _white_hand_pos is not None:
@@ -1170,8 +1189,8 @@ def detect_and_act(ocr: list, state: PilotState,
         _title_kws_game = ["魔法", "少女", "まどか", "マギカ", "まどかハ", "MADOKA", "MAGICA"]
         is_title_screen = (
             not state.home_reached and not _is_tos_screen and (
-                any(kw in _nav_joined for kw in ["TAP TO START", "Magia Exedra",
-                                                  "MAGIA EXEDRA", "TAPTOSTART"]) or
+                # 条件A: TAP TO START は確実にタイトル (Magia Exedra 単独は除外)
+                any(kw in _nav_joined for kw in ["TAP TO START", "TAPTOSTART"]) or
                 # 「動画配信設定」「Ver.」はタイトル画面固有の上部 UI
                 (any(kw in _nav_joined for kw in ["動画配信", "勤画配信", "Ver.2", "Ver.2."])
                  and any(kw in _nav_joined for kw in _title_kws_game + ["PUELLA"])) or
@@ -2262,6 +2281,14 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 if not _adv_down:
                     return "MOVIE"
 
+    # MOVIE 初回検出 (慣性でない場合): スコアリング方式
+    if state.last_action not in _MOVIE_ACTIONS:
+        _adv = detect_adv_scene_cached(img_path, state)
+        _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist)
+        if _movie.is_movie:
+            logger.info("[SCENE_EARLY] Movie初回検出 (conf=%.2f) → MOVIE", _movie.confidence)
+            return "MOVIE"
+
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     if state.current_scene == "BATTLE" and dist < 30:
         return "BATTLE"
@@ -2481,7 +2508,7 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
     _mc = detect_mini_conversation(img_path)
     if _mc is not None:
         _burst_count = 0
-        _burst_max = 3
+        _burst_max = 5
         _burst_img = img_path
         while _burst_count < _burst_max:
             _mc_res = detect_mini_conversation(_burst_img)
@@ -2878,6 +2905,13 @@ def main():
             time.sleep(1.0)
             continue
         state.wifi_fail_streak = 0  # 成功時リセット
+        # ── Portrait 検出: ブラウザ等の外部アプリ → BACK キーで復帰 ──
+        if actual_w > 0 and actual_w < actual_h:
+            logger.warning("[PORTRAIT] 縦画面 (%dx%d) → BACK キー", actual_w, actual_h)
+            adb("shell input keyevent 4")  # KEYCODE_BACK
+            time.sleep(1.5)
+            state.last_phash = ""
+            continue
         # メモリ上に最新画像を保持 + ROI更新 (スロットル: 画面変化時 or 50iter毎)
         try:
             state.last_screen = cv2.imread(str(img_path))
@@ -2977,6 +3011,11 @@ def main():
         _early_scene = detect_scene_early(img_path, state, dist)
         _skip_rapid = False  # True: 早期ハンドラがフォールスルー → インライン RAPID をスキップ
         _early_analysis = None  # BATTLE 用に先行計算した analysis_path を再利用
+        # ADV 連続検出カウンタ (phash 動的拡大用)
+        if _early_scene == "ADV":
+            state.adv_confirmed_count += 1
+        elif _early_scene not in ("UNKNOWN",):
+            state.adv_confirmed_count = 0
 
         if _early_scene == "MOVIE":
             if handle_movie(img_path, state, dist, cur_phash):
@@ -3040,13 +3079,15 @@ def main():
                 any(k in t for k in ("Result", "EXP", "次へ"))
                 for t in _last_texts
             )
+            # ADV 連続3回以上確認 → phash 上限拡大 (背景変更でも OCR スキップ)
+            _adv_phash_max = 40 if state.adv_confirmed_count >= 3 else ADV_RAPID_PHASH_MAX
             if (not _skip_rapid and
                     state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "ADV_NEXT_TAP", "ADV_WAIT",
                                       "ADV_NEXT_FALLBACK", "ADV_SKIP_TAP",
                                       "STORY_TAP_HINT", "BUBBLE_TAP",
                                       "MINI_CONV_TAP", "MOYA_TAP", "MOVIE_SKIP", "MOVIE_WAIT",
                                       "SCENE_TAP") and
-                    PHASH_THRESHOLD <= dist <= ADV_RAPID_PHASH_MAX and
+                    PHASH_THRESHOLD <= dist <= _adv_phash_max and
                     state.current_scene not in ("MENU", "BATTLE") and
                     not _is_result_like):
                 # ── MOVIE_WAIT 脱出: 8回連続 (~24秒) 動画待機ならフルOCRへフォールスルー ──
@@ -3106,7 +3147,7 @@ def main():
                     _mc = detect_mini_conversation(img_path)
                     if _mc is not None:
                         _burst_count = 0
-                        _burst_max = 3
+                        _burst_max = 5
                         _burst_img = img_path
                         while _burst_count < _burst_max:
                             _mc_res = detect_mini_conversation(_burst_img)
@@ -3130,21 +3171,20 @@ def main():
                         state.last_phash = ""
                         img_path = _burst_img
                         continue
-                    # ツールバーなし + ↓なし + 吹き出しなし → >| ボタン有無で動画判定
-                    _movie_btn = detect_movie_skip_button(img_path)
-                    # >| 誤検知ガード: テキスト2件以上 → UI画面の可能性
-                    if _movie_btn and len(state.last_ocr_texts) >= 2:
-                        logger.info("[iter %d] >|検出だがOCR%d件+レターボックスなし → UI画面 → SCENE_TAP",
-                                    i, len(state.last_ocr_texts))
-                        _movie_btn = None  # 誤検知として取り消し
-                    if _movie_btn:
+                    # ツールバーなし + ↓なし + 吹き出しなし → スコアリング動画判定
+                    _adv_cached = detect_adv_scene_cached(img_path, state)
+                    _rapid_movie = detect_movie_scene(
+                        img_path, adv_result=_adv_cached,
+                        ocr_texts=state.last_ocr_texts, phash_dist=dist)
+                    if _rapid_movie.is_movie:
                         state.movie_wait_consecutive += 1
-                        logger.info("[iter %d] phash_dist=%d 動画検出(>|のみ) → 待機 (%d/%d)",
-                                    i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
+                        logger.info("[iter %d] phash_dist=%d 動画検出(conf=%.2f) → 待機 (%d/%d)",
+                                    i, dist, _rapid_movie.confidence,
+                                    state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
                         state.last_action = "MOVIE_WAIT"
                         state.last_phash = cur_phash
                         continue
-                    # 金色⏭なし + ツールバーなし + ↓なし + 吹き出しなし
+                    # スコアリングで動画なし
                     # → 動画ではない静止画面 (ガチャ演出等) → 画面タップで進む
                     _st_x = int(ANALYSIS_W * 0.5)
                     _st_y = int(ANALYSIS_H * 0.5)
@@ -3629,84 +3669,62 @@ def main():
                     scene, i, dist, state.same_phash_count, len(ocr_results), texts[:8])
         state.last_ocr_texts = texts
 
-        # ── 動画シーン検出: detect_and_act 前にガード ──
+        # ── 動画シーン検出 (スコアリング方式): detect_and_act 前にガード ──
         # 動画中にタップするとUIが一時停止/再生を繰り返すため抑制する
-        # 検出条件:
-        #   ⏭スキップボタン検出 + ADVツールバーなし
-        # レターボックス (黒帯) は判定に使わない — 2:1デバイスのアスペクト差で常時誤検出するため
-        # ただし OCR で UI テキストが豊富な場合は動画ではない (利用規約画面等)
-        _has_ui_kw = any(kw in _ocr_text_joined for kw in _UI_TEXT_KWS)
-        _has_ui_text = _has_ui_kw or len(texts) >= 2
-        _movie_btn = detect_movie_skip_button(analysis_path) if analysis_path else None
-        # D: ADVアイコン安全弁 — menu/log/ff のどれか1個でもマッチすれば
-        # >| は ADV ツールバーの一部であり動画⏭ではないと判断
-        if _movie_btn and not _adv_result.is_adv and analysis_path:
-            from tools.ap.image_proc import ASSET_MANAGER as _AM
-            _adv_upper_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
-            _adv_icon_check = any(
-                _AM.match_single(n, analysis_path, roi=_adv_upper_roi) is not None
-                for n in ("adv_icon_menu", "adv_icon_log", "adv_icon_ff")
-            )
-            if _adv_icon_check:
-                logger.info("[MOVIE_GUARD] >|検出だがADVアイコンも検出 → 動画ではなくADV")
-                _movie_btn = None  # 動画⏭判定を取り消し
-        _movie_candidate = _movie_btn is not None
-        if _movie_candidate and not _has_ui_text and scene not in ("BATTLE", "MENU") and analysis_path:
-            if not _adv_result.is_adv:
-                if _movie_btn:
-                    # ダウンロード直後のみ動画SKIP許可 (通常ストーリー動画は視聴)
-                    if state.post_download:
-                        _skip_item = next(
-                            (item for item in ocr_results
-                             if "SKIP" in item.get("text", "").upper()
-                             or item.get("text", "").upper() == "SK"),
-                            None)
-                        if _skip_item:
-                            _sk_x, _sk_y = _skip_item["center"]
-                            _sk_x, _sk_y = roi_to_device(_sk_x, _sk_y, state.game_roi)
-                            logger.info(
-                                "[MOVIE_SKIP_OCR] DL直後動画SKIP '%s' → タップ (%d,%d)",
-                                _skip_item["text"], _sk_x, _sk_y)
-                            tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP_OCR")
-                            state.last_action = "MOVIE_SKIP"
-                            state.movie_wait_consecutive = 0
-                            state.last_phash = ""
-                            continue
-                    state.movie_wait_consecutive += 1
-                    _MOVIE_WAIT_ESCAPE = 8
-                    if state.movie_wait_consecutive >= _MOVIE_WAIT_ESCAPE:
-                        if state.post_download:
-                            # DL直後 → SKIP想定位置 (右上) をタップ
-                            logger.warning(
-                                "[MOVIE_GUARD_ESCAPE] DL直後+動画待機 %d 回 → SKIPタップ",
-                                state.movie_wait_consecutive)
-                            state.movie_wait_consecutive = 0
-                            _resume_x, _resume_y = roi_to_device(
-                                int(ANALYSIS_W * 0.93), int(ANALYSIS_H * 0.06), state.game_roi)
-                            tap_device(_resume_x, _resume_y, state, "MOVIE_SKIP_ESCAPE")
-                            state.last_action = "MOVIE_SKIP"
-                        else:
-                            # 通常動画 → 画面中央タップで再開試行
-                            logger.warning(
-                                "[MOVIE_GUARD_ESCAPE] 動画待機 %d 回 → 画面中央タップ",
-                                state.movie_wait_consecutive)
-                            state.movie_wait_consecutive = 0
-                            _resume_x, _resume_y = roi_to_device(
-                                int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state.game_roi)
-                            tap_device(_resume_x, _resume_y, state, "MOVIE_RESUME_TAP")
-                            state.last_action = "MOVIE_RESUME_TAP"
-                        state.last_phash = ""
-                        state.same_phash_count = 0
-                        continue
+        _movie_detect = detect_movie_scene(
+            analysis_path, adv_result=_adv_result,
+            ocr_texts=texts, phash_dist=dist)
+        if _movie_detect.is_movie and scene not in ("BATTLE", "MENU"):
+            # ダウンロード直後のみ動画SKIP許可 (通常ストーリー動画は視聴)
+            if state.post_download:
+                _skip_item = next(
+                    (item for item in ocr_results
+                     if "SKIP" in item.get("text", "").upper()
+                     or item.get("text", "").upper() == "SK"),
+                    None)
+                if _skip_item:
+                    _sk_x, _sk_y = _skip_item["center"]
+                    _sk_x, _sk_y = roi_to_device(_sk_x, _sk_y, state.game_roi)
                     logger.info(
-                        "[MOVIE_GUARD] >|ボタン検出+ツールバーなし → 待機 (%d/%d)",
-                        state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
-                    state.last_action = "MOVIE_WAIT"
-                    state.stall_start = 0.0  # ムービー待機中はスタックタイマー抑制
-                    time.sleep(0.5)
-                    state.last_phash = cur_phash
+                        "[MOVIE_SKIP_OCR] DL直後動画SKIP '%s' → タップ (%d,%d)",
+                        _skip_item["text"], _sk_x, _sk_y)
+                    tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP_OCR")
+                    state.last_action = "MOVIE_SKIP"
+                    state.movie_wait_consecutive = 0
+                    state.last_phash = ""
                     continue
-                # レターボックスなし + >|なし → 動画ではない → detect_and_act へ
+            state.movie_wait_consecutive += 1
+            _MOVIE_WAIT_ESCAPE = 8
+            if state.movie_wait_consecutive >= _MOVIE_WAIT_ESCAPE:
+                if state.post_download:
+                    logger.warning(
+                        "[MOVIE_GUARD_ESCAPE] DL直後+動画待機 %d 回 → SKIPタップ",
+                        state.movie_wait_consecutive)
+                    state.movie_wait_consecutive = 0
+                    _resume_x, _resume_y = roi_to_device(
+                        int(ANALYSIS_W * 0.93), int(ANALYSIS_H * 0.06), state.game_roi)
+                    tap_device(_resume_x, _resume_y, state, "MOVIE_SKIP_ESCAPE")
+                    state.last_action = "MOVIE_SKIP"
+                else:
+                    logger.warning(
+                        "[MOVIE_GUARD_ESCAPE] 動画待機 %d 回 → 画面中央タップ",
+                        state.movie_wait_consecutive)
+                    state.movie_wait_consecutive = 0
+                    _resume_x, _resume_y = roi_to_device(
+                        int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state.game_roi)
+                    tap_device(_resume_x, _resume_y, state, "MOVIE_RESUME_TAP")
+                    state.last_action = "MOVIE_RESUME_TAP"
+                state.last_phash = ""
+                state.same_phash_count = 0
+                continue
+            logger.info(
+                "[MOVIE_GUARD] スコアリング動画検出 (conf=%.2f) → 待機 (%d/%d)",
+                _movie_detect.confidence, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
+            state.last_action = "MOVIE_WAIT"
+            state.stall_start = 0.0
+            time.sleep(0.5)
+            state.last_phash = cur_phash
+            continue
 
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         action, wait_sec = detect_and_act(ocr_results, state, analysis_path)
@@ -3732,7 +3750,7 @@ def main():
         # ADVシーン(↓検出済み)ではミニ会話をスキップ (ツールバー誤検出防止)
         _post_burst_img = analysis_path or img_path
         _post_burst_count = 0
-        _post_burst_max = 3
+        _post_burst_max = 5
         _post_adv_x = int(ANALYSIS_W * 0.93)
         _post_adv_y = int(ANALYSIS_H * 0.91)
         _post_is_adv = _adv_result.is_adv  # ADVシーンならミニ会話をスキップ
