@@ -3093,12 +3093,13 @@ def main():
             _rapid_blobs = [b for b in _rapid_blobs
                             if b[1] > _SPATIAL_MARGIN_TOP and b[0] < ANALYSIS_W - _CLOSE_BTN_OFFSET]
 
-            # ── Phase 0: チュートリアル金枠+指 (area>10000) → 最優先タップ ──
+            # ── Phase 0: チュートリアル金枠+指 (area>10000 かつ金枠ボタン検出) → 最優先タップ ──
             _rapid_tutorial_gold = [b for b in _rapid_blobs if b[2] > 10000]
             if _rapid_tutorial_gold:
-                _rapid_tx = _rapid_tutorial_gold[0][0]
-                _rapid_ty = _rapid_tutorial_gold[0][1]
-                _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
+                _gold_tap = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False)
+                if _gold_tap:
+                    _rapid_tx, _rapid_ty = _gold_tap
+                    _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
 
             # ── Phase A: アクティブキャラ検出 (赤/ピンク発光ハロー) ──
             # 【永続ルール】キャラ選択モヤ = 赤/ピンクの発光。明度差で識別。
