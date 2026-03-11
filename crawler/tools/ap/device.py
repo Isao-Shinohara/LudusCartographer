@@ -49,11 +49,10 @@ def _build_scrcpy_args(device_serial: str) -> list:
     # ゲームはランドスケープ前提: 長辺=width, 短辺=height に正規化
     land_w = max(dev_w, dev_h)
     land_h = min(dev_w, dev_h)
-    # 720x360 基準: コンパクトな監視ウィンドウ (端末非依存)
-    TARGET_W, TARGET_H = 720, 360
-    scale = min(TARGET_W / land_w, TARGET_H / land_h)
-    win_w = int(land_w * scale)
-    win_h = int(land_h * scale)
+    # ウィンドウ幅 1080px 固定、高さは端末アスペクト比から算出
+    WINDOW_W = 1080
+    win_w = WINDOW_W
+    win_h = int(WINDOW_W * land_h / land_w)
     # --max-size: 短辺を制限 (ストリーミング負荷軽減)
     max_size = land_h
     logger.info("[SCRCPY] 実機解像度 %dx%d → landscape %dx%d → window %dx%d, max-size %d",
