@@ -51,7 +51,7 @@ def _build_scrcpy_args(device_serial: str) -> list:
     land_h = min(dev_w, dev_h)
     # ウィンドウ幅固定、高さは端末アスペクト比から算出
     # --max-size を win_w に揃えて、ストリーム解像度とウィンドウサイズを一致させる
-    WINDOW_W = 1080
+    WINDOW_W = 720
     win_w = WINDOW_W
     win_h = int(WINDOW_W * land_h / land_w)
     max_size = win_w
@@ -187,6 +187,7 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
     # 期待するウィンドウサイズを事前計算 (ループ外で1回だけ)
     _expected_args = _build_scrcpy_args(SCRCPY_DEVICE)
     _expected_w = _expected_args[_expected_args.index("--window-width") + 1]
+    _expected_ms = _expected_args[_expected_args.index("--max-size") + 1]
 
     conforming_pid = None
     for line in ps.stdout.splitlines():
@@ -203,7 +204,8 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
             continue
         has_device = SCRCPY_DEVICE in line
         has_screen_off = "--turn-screen-off" in line
-        has_correct_size = f"--window-width {_expected_w}" in line
+        has_correct_size = (f"--window-width {_expected_w}" in line
+                            and f"--max-size {_expected_ms}" in line)
         if has_device and has_screen_off and has_correct_size:
             conforming_pid = pid
             logger.info("[SCRCPY] 規定プロセス検出 PID=%d — 継続", pid)
