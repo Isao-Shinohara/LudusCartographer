@@ -2233,28 +2233,24 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     """OCR 前にシーンを判定する。
 
     利用する信号 (すべて OCR 不要):
-    - レターボックス (ROI 左端 >= 80) OR ⏭ ボタン検出 + ADV ツールバーなし → MOVIE
+    - ⏭ ボタン検出 + ADV ツールバーなし → MOVIE
     - 前回シーン == BATTLE + phash 小変化 → BATTLE
     - ADV ツールバー検出 → ADV
     - それ以外 → UNKNOWN (フルOCR 必要)
 
     Returns: "MOVIE" | "BATTLE" | "ADV" | "UNKNOWN"
     """
-    # MOVIE: (レターボックス OR ⏭ボタン) + ADV ツールバーなし
-    # レターボックスは左黒帯が解析幅の 13% 以上 (デバイス非依存)
-    # 2:1デバイスのアスペクト差 (L≈161=10.6%) を除外し、映画的黒帯のみ検出
-    # ⏭ボタンは HSV 金色検出 (ワイドデバイスではレターボックスなしでも動画あり)
-    roi_x = state.game_roi[0] if state.game_roi else 0
-    _is_letterbox = roi_x >= int(ANALYSIS_W * 0.13)
-    _movie_btn = None if _is_letterbox else detect_movie_skip_button(img_path)
-    if _is_letterbox or _movie_btn is not None:
+    # MOVIE: ⏭ボタン検出 + ADV ツールバーなし
+    # レターボックス (黒帯) は判定に使わない — 黒帯なし動画も存在するため
+    _movie_btn = detect_movie_skip_button(img_path)
+    if _movie_btn is not None:
         adv = detect_adv_scene_cached(img_path, state)
         if not adv.is_adv:
             # ADV 安全弁: ↓ ボタンがあれば確実に ADV (MOVIE ではない)
             _adv_down = detect_adv_advance_icon(img_path)
             if _adv_down:
                 pass  # ↓ ボタンあり → ADV 確定、MOVIE 判定しない
-            elif _movie_btn is not None and not _is_letterbox:
+            else:
                 # ADV 個別アイコン安全弁: ⏭ が ADV ツールバーの >| でないか確認
                 _adv_icon_check = any(
                     ASSET_MANAGER.match_single(n, img_path) is not None
@@ -2264,8 +2260,6 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                     pass  # ADV ツールバーの一部 → MOVIE ではない
                 else:
                     return "MOVIE"
-            else:
-                return "MOVIE"
 
     # MOVIE 慣性: 直前が動画アクション → 非動画の明確な証拠がなければ MOVIE 継続
     # ⏭ ボタンが一時的に非表示でも GoldSwipe 等の誤発動を防止
