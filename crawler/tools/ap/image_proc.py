@@ -686,12 +686,14 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
     """
     result = AdvSceneResult()
 
-    # --- 1. ツールバー5アイコン個別マッチ ---
+    # --- 1. ツールバー5アイコン個別マッチ (上部15%のみ) ---
+    # ADV ツールバーは右上にあるため、下部のバトル UI 等への偽マッチを防ぐ
+    _adv_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
     _icon_scores: list[float] = []
     _icon_matches: list[Optional[tuple]] = []  # (cx, cy, score) or None
     for _name in _ADV_TOOLBAR_ICON_NAMES:
         try:
-            _m = ASSET_MANAGER.match_single(_name, img_path)
+            _m = ASSET_MANAGER.match_single(_name, img_path, roi=_adv_roi)
             _icon_scores.append(_m[2] if _m else 0.0)
             _icon_matches.append(_m)
         except Exception:
@@ -699,22 +701,11 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
             _icon_matches.append(None)
 
     _matched_count = sum(1 for s in _icon_scores if s >= icon_threshold)
-    # ツールバー領域 (右上: x>50%, y<15%) にあるマッチ数をカウント
-    # バトル UI 等の下部アイコンが ADV テンプレートに偽マッチするのを防ぐ
-    _toolbar_region_count = 0
-    for _idx, _s in enumerate(_icon_scores):
-        if _s >= icon_threshold and _icon_matches[_idx]:
-            _mx, _my = _icon_matches[_idx][0], _icon_matches[_idx][1]
-            if _mx > ANALYSIS_W * 0.50 and _my < ANALYSIS_H * 0.15:
-                _toolbar_region_count += 1
-    # 3+ アイコンでもツールバー領域に2つ以上なければ ADV ではない
+    # 2アイコン + ↓ボタン = ADV 救済 (AUTO + >> のみの場合を救う)
     _has_advance_icon = False
-    if _matched_count >= 2 and _matched_count < 3 and _toolbar_region_count >= 2:
+    if _matched_count >= 2 and _matched_count < 3:
         _has_advance_icon = detect_adv_advance_icon(img_path)
-    elif _matched_count >= 2 and _toolbar_region_count < 2:
-        logger.debug("[ADV_SCENE] ツールバー領域外マッチ排除: matched=%d region=%d",
-                     _matched_count, _toolbar_region_count)
-    _all_matched = (_matched_count >= 3 and _toolbar_region_count >= 2) or (_matched_count >= 2 and _has_advance_icon)
+    _all_matched = _matched_count >= 3 or (_matched_count >= 2 and _has_advance_icon)
     result.toolbar_score = min(_icon_scores) if _icon_scores else 0.0
     if _all_matched and _icon_scores:
         # toolbar_pos = AUTO アイコンの位置 (3番目)
@@ -2026,14 +2017,25 @@ class AssetManager:
             logger.info("[Asset] HIT: '%s' score=%.3f → (%d,%d)", action, best_score, cx, cy)
         return best_result
 
-    def match_single(self, name: str, screenshot_path: Path) -> Optional[tuple[int, int, float]]:
-        """指定テンプレート1枚だけをマッチング。Returns (cx, cy, score) or None."""
+    def match_single(self, name: str, screenshot_path: Path,
+                     roi: Optional[tuple[int, int, int, int]] = None,
+                     ) -> Optional[tuple[int, int, float]]:
+        """指定テンプレート1枚だけをマッチング。Returns (cx, cy, score) or None.
+
+        roi: (x, y, w, h) — 検索領域を制限。座標は元画像基準で返す。
+        """
         data = self._templates.get(name)
         if data is None:
             return None
         img = cv2.imread(str(screenshot_path), cv2.IMREAD_GRAYSCALE)
         if img is None:
             return None
+        # ROI 切り出し (指定時)
+        _roi_ox, _roi_oy = 0, 0
+        if roi is not None:
+            _rx, _ry, _rw, _rh = roi
+            img = img[_ry:_ry + _rh, _rx:_rx + _rw]
+            _roi_ox, _roi_oy = _rx, _ry
         tmpl = data["img"]
         if tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
             return None
@@ -2042,8 +2044,8 @@ class AssetManager:
             _, max_val, _, max_loc = cv2.minMaxLoc(res)
             if max_val >= data["threshold"]:
                 h, w = tmpl.shape
-                cx = max_loc[0] + w // 2
-                cy = max_loc[1] + h // 2
+                cx = max_loc[0] + w // 2 + _roi_ox
+                cy = max_loc[1] + h // 2 + _roi_oy
                 return (cx, cy, max_val)
         except Exception:
             pass

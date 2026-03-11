@@ -2252,8 +2252,9 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 pass  # ↓ ボタンあり → ADV 確定、MOVIE 判定しない
             else:
                 # ADV 個別アイコン安全弁: ⏭ が ADV ツールバーの >| でないか確認
+                _adv_upper_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
                 _adv_icon_check = any(
-                    ASSET_MANAGER.match_single(n, img_path) is not None
+                    ASSET_MANAGER.match_single(n, img_path, roi=_adv_upper_roi) is not None
                     for n in ("adv_icon_menu", "adv_icon_log", "adv_icon_ff")
                 )
                 if _adv_icon_check:
@@ -3683,8 +3684,9 @@ def main():
         # >| は ADV ツールバーの一部であり動画⏭ではないと判断
         if _movie_btn and not _adv_result.is_adv and analysis_path:
             from tools.ap.image_proc import ASSET_MANAGER as _AM
+            _adv_upper_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
             _adv_icon_check = any(
-                _AM.match_single(n, analysis_path) is not None
+                _AM.match_single(n, analysis_path, roi=_adv_upper_roi) is not None
                 for n in ("adv_icon_menu", "adv_icon_log", "adv_icon_ff")
             )
             if _adv_icon_check:

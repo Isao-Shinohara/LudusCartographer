@@ -1021,7 +1021,7 @@ class TestAdvSceneWithAdvanceIcon:
             "adv_icon_ff": (1358, 45),
             "adv_icon_skip": (1446, 45),
         }
-        def _side_effect(name, img_path):
+        def _side_effect(name, img_path, **kwargs):
             if name in match_names:
                 cx, cy = _positions.get(name, (1274, 45))
                 return (cx, cy, 0.9)
