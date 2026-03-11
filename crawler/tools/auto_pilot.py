@@ -2233,34 +2233,18 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     """OCR 前にシーンを判定する。
 
     利用する信号 (すべて OCR 不要):
-    - ⏭ ボタン検出 + ADV ツールバーなし → MOVIE
+    - MOVIE 慣性 (前回 MOVIE + ADV/BATTLE 証拠なし) → MOVIE
     - 前回シーン == BATTLE + phash 小変化 → BATTLE
     - ADV ツールバー検出 → ADV
     - それ以外 → UNKNOWN (フルOCR 必要)
 
+    初回 MOVIE 判定は OCR パス (classify_scene) に委任。
+
     Returns: "MOVIE" | "BATTLE" | "ADV" | "UNKNOWN"
     """
-    # MOVIE: ⏭ボタン検出 + ADV ツールバーなし
-    # レターボックス (黒帯) は判定に使わない — 黒帯なし動画も存在するため
-    _movie_btn = detect_movie_skip_button(img_path)
-    if _movie_btn is not None:
-        adv = detect_adv_scene_cached(img_path, state)
-        if not adv.is_adv:
-            # ADV 安全弁: ↓ ボタンがあれば確実に ADV (MOVIE ではない)
-            _adv_down = detect_adv_advance_icon(img_path)
-            if _adv_down:
-                pass  # ↓ ボタンあり → ADV 確定、MOVIE 判定しない
-            else:
-                # ADV 個別アイコン安全弁: ⏭ が ADV ツールバーの >| でないか確認
-                _adv_upper_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
-                _adv_icon_check = any(
-                    ASSET_MANAGER.match_single(n, img_path, roi=_adv_upper_roi) is not None
-                    for n in ("adv_icon_menu", "adv_icon_log", "adv_icon_ff")
-                )
-                if _adv_icon_check:
-                    pass  # ADV ツールバーの一部 → MOVIE ではない
-                else:
-                    return "MOVIE"
+    # MOVIE: detect_scene_early では初回 MOVIE 判定しない (⏭ HSV 検出の偽陽性が多い)
+    # 初回 MOVIE は OCR パス (classify_scene) で判定。
+    # ここでは慣性パスのみ: 前回 MOVIE → 非動画の証拠がなければ継続。
 
     # MOVIE 慣性: 直前が動画アクション → 非動画の明確な証拠がなければ MOVIE 継続
     # ⏭ ボタンが一時的に非表示でも GoldSwipe 等の誤発動を防止
