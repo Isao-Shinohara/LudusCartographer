@@ -2766,9 +2766,12 @@ def main():
                         continue
                     # ツールバーなし + ↓なし + 吹き出しなし → >| ボタン有無で動画判定
                     _movie_btn = detect_movie_skip_button(img_path)
-                    # >| 誤検知ガード: 直前OCRテキストが2件以上ならUI画面 (動画は0-1件)
-                    if _movie_btn and len(state.last_ocr_texts) >= 2:
-                        logger.info("[iter %d] >|検出だがOCR%d件 → UI画面 (非動画) → SCENE_TAP",
+                    # >| 誤検知ガード: レターボックスなし + テキスト2件以上 → UI画面
+                    # レターボックスありなら字幕2件でも動画 (UIキーワードで判定)
+                    _rapid_roi_x = state.game_roi[0] if state.game_roi else 0
+                    _rapid_letterbox = _rapid_roi_x >= 80
+                    if _movie_btn and not _rapid_letterbox and len(state.last_ocr_texts) >= 2:
+                        logger.info("[iter %d] >|検出だがOCR%d件+レターボックスなし → UI画面 → SCENE_TAP",
                                     i, len(state.last_ocr_texts))
                         _movie_btn = None  # 誤検知として取り消し
                     if _movie_btn:
@@ -2951,8 +2954,10 @@ def main():
                     else:
                         # ツールバーなし → >| ボタン有無で動画判定
                         _movie_btn = detect_movie_skip_button(img_path)
-                        if _movie_btn and len(state.last_ocr_texts) >= 2:
-                            logger.info("[iter %d] >|検出だがOCR%d件 → UI画面 → SCENE_TAP",
+                        _stable_roi_x = state.game_roi[0] if state.game_roi else 0
+                        _stable_letterbox = _stable_roi_x >= 80
+                        if _movie_btn and not _stable_letterbox and len(state.last_ocr_texts) >= 2:
+                            logger.info("[iter %d] >|検出だがOCR%d件+レターボックスなし → UI画面 → SCENE_TAP",
                                         i, len(state.last_ocr_texts))
                             _movie_btn = None
                         if _movie_btn:
@@ -3271,7 +3276,10 @@ def main():
         # ただし OCR で UI テキストが豊富な場合は動画ではない (利用規約画面等)
         _roi_x = state.game_roi[0] if state.game_roi else 0
         _is_movie_letterbox = _roi_x >= 80
-        _has_ui_text = any(kw in _ocr_text_joined for kw in _UI_TEXT_KWS) or len(texts) >= 2
+        _has_ui_kw = any(kw in _ocr_text_joined for kw in _UI_TEXT_KWS)
+        # レターボックスあり: 字幕2件程度は動画。UIキーワードのみで判定。
+        # レターボックスなし: テキスト2件以上ならUI画面の可能性が高い。
+        _has_ui_text = _has_ui_kw if _is_movie_letterbox else (_has_ui_kw or len(texts) >= 2)
         # ⏭ ボタン検出を先に実行 (レターボックスなし+OCR多めでも動画を検出するため)
         _movie_btn = detect_movie_skip_button(analysis_path) if analysis_path else None
         # D: ADVアイコン安全弁 — menu/log/ff のどれか1個でもマッチすれば
