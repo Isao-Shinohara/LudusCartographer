@@ -639,7 +639,7 @@ class AdvSceneResult:
     __slots__ = (
         "is_adv", "confidence", "toolbar_score", "toolbar_pos",
         "next_btn_score", "next_btn_pos", "has_name_line",
-        "has_dialogue", "has_letterbox",
+        "has_dialogue", "has_letterbox", "matched_count",
     )
 
     def __init__(
@@ -653,6 +653,7 @@ class AdvSceneResult:
         has_name_line: bool = False,
         has_dialogue: bool = False,
         has_letterbox: bool = False,
+        matched_count: int = 0,
     ):
         self.is_adv = is_adv
         self.confidence = confidence
@@ -663,6 +664,7 @@ class AdvSceneResult:
         self.has_name_line = has_name_line
         self.has_dialogue = has_dialogue
         self.has_letterbox = has_letterbox
+        self.matched_count = matched_count
 
 
 def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
@@ -690,7 +692,11 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
             _icon_scores.append(0.0)
 
     _matched_count = sum(1 for s in _icon_scores if s >= icon_threshold)
-    _all_matched = _matched_count >= 3  # 5個中3個以上で ADV 判定 (背景変動に堅牢)
+    # 2アイコン + ↓ボタン = ADV 救済 (AUTO + >> のみの場合を救う)
+    _has_advance_icon = False
+    if _matched_count >= 2 and _matched_count < 3:
+        _has_advance_icon = detect_adv_advance_icon(img_path)
+    _all_matched = _matched_count >= 3 or (_matched_count >= 2 and _has_advance_icon)
     result.toolbar_score = min(_icon_scores) if _icon_scores else 0.0
     if _all_matched and _icon_scores:
         # toolbar_pos = AUTO アイコンの位置 (3番目)
@@ -743,8 +749,9 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
                             + result.next_btn_score * 0.25
                             + aux_score)
 
-    # --- 7. 判定: 5アイコン全マッチ ---
+    # --- 7. 判定 ---
     result.is_adv = _all_matched
+    result.matched_count = _matched_count
 
     if result.is_adv:
         logger.debug("[ADV_SCENE] 検出: icons=[%s] matched=%d/5 min=%.3f next_btn=%.3f "
@@ -791,12 +798,26 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
         _mask = cv2.inRange(_hsv, (15, 50, 130), (40, 255, 255))
         _gold_count = int(cv2.countNonZero(_mask))
         if _gold_count >= 80:
-            _coords = cv2.findNonZero(_mask)
-            if _coords is not None:
+            # コンター分析: 散在金色 (ADV ツールバー等) を排除
+            _contours, _ = cv2.findContours(_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if not _contours:
+                return None
+            _largest = max(_contours, key=cv2.contourArea)
+            _blob_area = cv2.contourArea(_largest)
+            if _blob_area < 60:
+                logger.debug("[MOVIE_SKIP_BTN] 散在金色を排除 gold_px=%d blob_area=%.0f", _gold_count, _blob_area)
+                return None
+            # 最大ブロブの重心で座標をより正確に返す
+            _moments = cv2.moments(_largest)
+            if _moments["m00"] > 0:
+                _mx = int(_moments["m10"] / _moments["m00"]) + _x1
+                _my = int(_moments["m01"] / _moments["m00"])
+            else:
+                _coords = cv2.findNonZero(_mask)
                 _mx = int(np.mean(_coords[:, 0, 0])) + _x1
                 _my = int(np.mean(_coords[:, 0, 1]))
-                logger.debug("[MOVIE_SKIP_BTN] 金色ボタン検出 (%d,%d) gold_px=%d", _mx, _my, _gold_count)
-                return (_mx, _my)
+            logger.debug("[MOVIE_SKIP_BTN] 金色ボタン検出 (%d,%d) gold_px=%d blob=%.0f", _mx, _my, _gold_count, _blob_area)
+            return (_mx, _my)
         return None
     except Exception:
         return None

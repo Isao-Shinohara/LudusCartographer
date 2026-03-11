@@ -955,3 +955,157 @@ class TestAdvScene:
         from tools.ap.helpers import classify_scene
         scene, _ = classify_scene(["何かのテキスト"], "IDLE", adv_detected=False)
         assert scene == "UNKNOWN"
+
+
+# ─── Fix 1: detect_movie_skip_button コンター分析テスト ───────────────
+
+class TestMovieSkipButton:
+    """detect_movie_skip_button() のコンター分析テスト。"""
+
+    def test_scattered_gold_rejected(self, tmp_path):
+        """散在する小さな金色ピクセル → None (ADV ツールバー誤検出防止)。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import detect_movie_skip_button, ANALYSIS_W, ANALYSIS_H
+
+        img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        # ROI: 右上 (88%~100% x, 0~12% y) に散在する小さな金色ドット
+        _x1 = int(ANALYSIS_W * 0.88)
+        _y2 = int(ANALYSIS_H * 0.12)
+        # 100個の 1px 金色ドットを散布 (各ブロブ面積 ~1)
+        rng = np.random.RandomState(42)
+        for _ in range(100):
+            _x = rng.randint(_x1, ANALYSIS_W - 1)
+            _y = rng.randint(0, _y2 - 1)
+            # HSV 金色 (H=25, S=150, V=200) → BGR
+            img[_y, _x] = (50, 165, 210)  # BGR: ~金色
+
+        img_path = tmp_path / "scattered_gold.png"
+        cv2.imwrite(str(img_path), img)
+        assert detect_movie_skip_button(img_path) is None
+
+    def test_solid_gold_circle_detected(self, tmp_path):
+        """コンパクトな金色円 (⏭ ボタン相当) → 座標返却。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import detect_movie_skip_button, ANALYSIS_W, ANALYSIS_H
+
+        img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        # ROI 内に金色の円を描画 (半径 12px, 面積 ~452)
+        _cx = int(ANALYSIS_W * 0.94)
+        _cy = int(ANALYSIS_H * 0.06)
+        # HSV 金色 → BGR (H=25, S=150, V=200)
+        cv2.circle(img, (_cx, _cy), 12, (50, 165, 210), -1)
+
+        img_path = tmp_path / "solid_gold.png"
+        cv2.imwrite(str(img_path), img)
+        result = detect_movie_skip_button(img_path)
+        assert result is not None
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+
+# ─── Fix 2: detect_adv_scene 2アイコン+↓ボタン救済テスト ──────────────
+
+class TestAdvSceneWithAdvanceIcon:
+    """detect_adv_scene() の 2 アイコン + ↓ ボタン救済テスト。"""
+
+    def _mock_match_single(self, match_names):
+        """match_names に含まれるアイコン名だけスコア 0.9 を返す mock。"""
+        def _side_effect(name, img_path):
+            if name in match_names:
+                return (100, 45, 0.9)
+            return None
+        return _side_effect
+
+    @patch("tools.ap.image_proc.detect_adv_advance_icon", return_value=True)
+    @patch("tools.ap.image_proc.ASSET_MANAGER")
+    def test_two_icons_plus_advance(self, mock_am, mock_adv_down, tmp_path):
+        """2 アイコン + detect_adv_advance_icon=True → is_adv=True。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import detect_adv_scene, ANALYSIS_W, ANALYSIS_H
+
+        mock_am.match_single.side_effect = self._mock_match_single(
+            {"adv_icon_auto", "adv_icon_ff"})
+
+        img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        img_path = tmp_path / "two_icons_advance.png"
+        cv2.imwrite(str(img_path), img)
+
+        result = detect_adv_scene(img_path)
+        assert result.is_adv is True
+        assert result.matched_count == 2
+
+    @patch("tools.ap.image_proc.detect_adv_advance_icon", return_value=False)
+    @patch("tools.ap.image_proc.ASSET_MANAGER")
+    def test_two_icons_without_advance(self, mock_am, mock_adv_down, tmp_path):
+        """2 アイコンのみ (↓ ボタンなし) → is_adv=False。"""
+        import cv2
+        import numpy as np
+        from tools.ap.image_proc import detect_adv_scene, ANALYSIS_W, ANALYSIS_H
+
+        mock_am.match_single.side_effect = self._mock_match_single(
+            {"adv_icon_auto", "adv_icon_ff"})
+
+        img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
+        img_path = tmp_path / "two_icons_only.png"
+        cv2.imwrite(str(img_path), img)
+
+        result = detect_adv_scene(img_path)
+        assert result.is_adv is False
+        assert result.matched_count == 2
+
+
+# ─── Fix 3: Movie inertia TTL テスト ──────────────────────────────────
+
+class TestMovieInertiaTTL:
+    """detect_scene_early() の Movie inertia TTL テスト。"""
+
+    @pytest.fixture
+    def state(self):
+        from tools.auto_pilot import PilotState
+        s = PilotState()
+        s.last_action = "MOVIE_WAIT"
+        s.current_scene = "MOVIE"
+        s.movie_wait_consecutive = 0
+        return s
+
+    @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
+    @patch("tools.auto_pilot.detect_adv_scene_cached")
+    def test_inertia_expires(self, mock_adv_cached, mock_adv_down, state, tmp_path):
+        """consecutive >= 20 → UNKNOWN (慣性解除)。"""
+        from tools.auto_pilot import detect_scene_early
+        from tools.ap.image_proc import AdvSceneResult
+
+        mock_adv_cached.return_value = AdvSceneResult(is_adv=False)
+        state.movie_wait_consecutive = 20
+        state.game_roi = (0, 0, 1520, 720)
+
+        img_path = tmp_path / "test.png"
+        import cv2
+        import numpy as np
+        cv2.imwrite(str(img_path), np.zeros((720, 1520, 3), dtype=np.uint8))
+
+        result = detect_scene_early(img_path, state, dist=5)
+        assert result == "UNKNOWN"
+        assert state.movie_wait_consecutive == 0  # リセットされる
+
+    @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
+    @patch("tools.auto_pilot.detect_adv_scene_cached")
+    def test_inertia_continues(self, mock_adv_cached, mock_adv_down, state, tmp_path):
+        """consecutive < 20 → MOVIE (慣性継続)。"""
+        from tools.auto_pilot import detect_scene_early
+        from tools.ap.image_proc import AdvSceneResult
+
+        mock_adv_cached.return_value = AdvSceneResult(is_adv=False)
+        state.movie_wait_consecutive = 10
+        state.game_roi = (0, 0, 1520, 720)
+
+        img_path = tmp_path / "test.png"
+        import cv2
+        import numpy as np
+        cv2.imwrite(str(img_path), np.zeros((720, 1520, 3), dtype=np.uint8))
+
+        result = detect_scene_early(img_path, state, dist=5)
+        assert result == "MOVIE"

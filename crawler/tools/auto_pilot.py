@@ -2251,7 +2251,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         if not adv.is_adv:
             # ADV 安全弁: ↓ ボタンがあれば確実に ADV (MOVIE ではない)
             _adv_down = detect_adv_advance_icon(img_path)
-            if _adv_down is not None:
+            if _adv_down:
                 pass  # ↓ ボタンあり → ADV 確定、MOVIE 判定しない
             elif _movie_btn is not None and not _is_letterbox:
                 # ADV 個別アイコン安全弁: ⏭ が ADV ツールバーの >| でないか確認
@@ -2268,14 +2268,21 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
     # MOVIE 慣性: 直前が動画アクション → 非動画の明確な証拠がなければ MOVIE 継続
     # ⏭ ボタンが一時的に非表示でも GoldSwipe 等の誤発動を防止
+    # TTL: 20回 (~10秒) で慣性強制解除 → 誤分類の永久固定化を防止
     _MOVIE_ACTIONS = ("MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_RESUME_TAP", "MOVIE_SKIP_ESCAPE")
+    _MOVIE_INERTIA_TTL = 20
     if state.last_action in _MOVIE_ACTIONS:
-        adv = detect_adv_scene_cached(img_path, state)
-        if not adv.is_adv and state.current_scene not in ("BATTLE", "MENU"):
-            # ↓ ボタンがあれば ADV (ツールバーが少なくても ADV 確定)
-            _adv_down = detect_adv_advance_icon(img_path)
-            if _adv_down is None:
-                return "MOVIE"
+        if state.movie_wait_consecutive >= _MOVIE_INERTIA_TTL:
+            logger.info("[SCENE_EARLY] Movie inertia TTL expired (consecutive=%d) → UNKNOWN",
+                        state.movie_wait_consecutive)
+            state.movie_wait_consecutive = 0
+        else:
+            adv = detect_adv_scene_cached(img_path, state)
+            if not adv.is_adv and state.current_scene not in ("BATTLE", "MENU"):
+                # ↓ ボタンがあれば ADV (ツールバーが少なくても ADV 確定)
+                _adv_down = detect_adv_advance_icon(img_path)
+                if not _adv_down:
+                    return "MOVIE"
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     if state.current_scene == "BATTLE" and dist < 30:
