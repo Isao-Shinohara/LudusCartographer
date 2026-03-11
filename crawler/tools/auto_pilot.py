@@ -3060,21 +3060,7 @@ def main():
                     state.movie_wait_consecutive = 0
                     # continue しない → 下の OCR パスへ落ちる
                 else:
-                    # レターボックス判定: 左黒帯>=80px
-                    _rapid_roi_x = state.game_roi[0] if state.game_roi else 0
                     _rapid_adv = detect_adv_scene_cached(img_path, state)
-                    if _rapid_roi_x >= 80:
-                        # ADVツールバー(AUTO/>>)があればADV_RAPIDへフォールスルー
-                        if not _rapid_adv.is_adv:
-                            state.movie_wait_consecutive += 1
-                            logger.info("[iter %d] phash_dist=%d レターボックス動画 → 待機 (%d/%d)",
-                                        i, dist, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
-                            state.last_action = "MOVIE_WAIT"
-                            state.stall_start = 0.0  # ムービー待機中はスタックタイマー抑制
-                            time.sleep(0.5)
-                            state.last_phash = cur_phash
-                            continue
-                        # ADVツールバーあり → ADV_RAPID へフォールスルー
                     # ── ADV↓アイコン検出 (ツールバー判定に依存しない高速パス) ──
                     # ADVシーンではセリフが連続するため、↓が見える限りバーストタップ
                     _adv_tap_x = int(ANALYSIS_W * 0.93)
@@ -3148,11 +3134,8 @@ def main():
                         continue
                     # ツールバーなし + ↓なし + 吹き出しなし → >| ボタン有無で動画判定
                     _movie_btn = detect_movie_skip_button(img_path)
-                    # >| 誤検知ガード: レターボックスなし + テキスト2件以上 → UI画面
-                    # レターボックスありなら字幕2件でも動画 (UIキーワードで判定)
-                    _rapid_roi_x = state.game_roi[0] if state.game_roi else 0
-                    _rapid_letterbox = _rapid_roi_x >= 80
-                    if _movie_btn and not _rapid_letterbox and len(state.last_ocr_texts) >= 2:
+                    # >| 誤検知ガード: テキスト2件以上 → UI画面の可能性
+                    if _movie_btn and len(state.last_ocr_texts) >= 2:
                         logger.info("[iter %d] >|検出だがOCR%d件+レターボックスなし → UI画面 → SCENE_TAP",
                                     i, len(state.last_ocr_texts))
                         _movie_btn = None  # 誤検知として取り消し
@@ -3336,9 +3319,7 @@ def main():
                     else:
                         # ツールバーなし → >| ボタン有無で動画判定
                         _movie_btn = detect_movie_skip_button(img_path)
-                        _stable_roi_x = state.game_roi[0] if state.game_roi else 0
-                        _stable_letterbox = _stable_roi_x >= 80
-                        if _movie_btn and not _stable_letterbox and len(state.last_ocr_texts) >= 2:
+                        if _movie_btn and len(state.last_ocr_texts) >= 2:
                             logger.info("[iter %d] >|検出だがOCR%d件+レターボックスなし → UI画面 → SCENE_TAP",
                                         i, len(state.last_ocr_texts))
                             _movie_btn = None
@@ -3653,16 +3634,11 @@ def main():
         # ── 動画シーン検出: detect_and_act 前にガード ──
         # 動画中にタップするとUIが一時停止/再生を繰り返すため抑制する
         # 検出条件:
-        #   A) レターボックス (左黒帯>=80px) + ADVツールバーなし
-        #   B) ⏭スキップボタン検出 + ADVツールバーなし (レターボックス不問)
+        #   ⏭スキップボタン検出 + ADVツールバーなし
+        # レターボックス (黒帯) は判定に使わない — 2:1デバイスのアスペクト差で常時誤検出するため
         # ただし OCR で UI テキストが豊富な場合は動画ではない (利用規約画面等)
-        _roi_x = state.game_roi[0] if state.game_roi else 0
-        _is_movie_letterbox = _roi_x >= 80
         _has_ui_kw = any(kw in _ocr_text_joined for kw in _UI_TEXT_KWS)
-        # レターボックスあり: 字幕2件程度は動画。UIキーワードのみで判定。
-        # レターボックスなし: テキスト2件以上ならUI画面の可能性が高い。
-        _has_ui_text = _has_ui_kw if _is_movie_letterbox else (_has_ui_kw or len(texts) >= 2)
-        # ⏭ ボタン検出を先に実行 (レターボックスなし+OCR多めでも動画を検出するため)
+        _has_ui_text = _has_ui_kw or len(texts) >= 2
         _movie_btn = detect_movie_skip_button(analysis_path) if analysis_path else None
         # D: ADVアイコン安全弁 — menu/log/ff のどれか1個でもマッチすれば
         # >| は ADV ツールバーの一部であり動画⏭ではないと判断
@@ -3676,15 +3652,10 @@ def main():
             if _adv_icon_check:
                 logger.info("[MOVIE_GUARD] >|検出だがADVアイコンも検出 → 動画ではなくADV")
                 _movie_btn = None  # 動画⏭判定を取り消し
-        _movie_candidate = (
-            _is_movie_letterbox
-            or _movie_btn is not None
-            or (len(texts) <= 3 and scene not in ("BATTLE", "MENU"))
-        )
+        _movie_candidate = _movie_btn is not None
         if _movie_candidate and not _has_ui_text and scene not in ("BATTLE", "MENU") and analysis_path:
             if not _adv_result.is_adv:
-                # ツールバーなし → レターボックス or >| ボタン検出で動画判定
-                if _is_movie_letterbox or _movie_btn:
+                if _movie_btn:
                     # ダウンロード直後のみ動画SKIP許可 (通常ストーリー動画は視聴)
                     if state.post_download:
                         _skip_item = next(
@@ -3729,10 +3700,9 @@ def main():
                         state.last_phash = ""
                         state.same_phash_count = 0
                         continue
-                    _reason = f"letterbox L={_roi_x}" if _is_movie_letterbox else ">|ボタン検出"
                     logger.info(
-                        "[MOVIE_GUARD] %s+ツールバーなし → 待機 (%d/%d)",
-                        _reason, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
+                        "[MOVIE_GUARD] >|ボタン検出+ツールバーなし → 待機 (%d/%d)",
+                        state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
                     state.last_action = "MOVIE_WAIT"
                     state.stall_start = 0.0  # ムービー待機中はスタックタイマー抑制
                     time.sleep(0.5)
@@ -3846,16 +3816,7 @@ def main():
                         state.current_scene, _re_scene,
                     )
                     state.current_scene = _re_scene
-                # レターボックスガード (動画シーンでのdetect_and_actバイパス)
-                _re_roi_x = state.game_roi[0] if state.game_roi else 0
-                if _re_roi_x >= 80 and _re_scene not in ("BATTLE", "MENU"):
-                    if not _re_adv.is_adv:
-                        logger.info("[SCENE_REEVAL] レターボックス動画 → MOVIE_WAIT")
-                        state.last_action = "MOVIE_WAIT"
-                        state.action_repeat_count = 0
-                        state.scene_reeval_mode = False
-                        time.sleep(0.5)
-                        continue
+                # レターボックスガードは廃止 (2:1デバイスで常時誤検出するため)
                 action, wait_sec = detect_and_act(_re_ocr, state, _re_analysis)
                 state.last_action = action
                 state.action_repeat_count = 0
