@@ -822,8 +822,8 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
                 return None
             _largest = max(_contours, key=cv2.contourArea)
             _blob_area = cv2.contourArea(_largest)
-            if _blob_area < 60:
-                logger.debug("[MOVIE_SKIP_BTN] 散在金色を排除 gold_px=%d blob_area=%.0f", _gold_count, _blob_area)
+            if _blob_area < 150:
+                logger.debug("[MOVIE_SKIP_BTN] 小ブロブを排除 gold_px=%d blob_area=%.0f", _gold_count, _blob_area)
                 return None
             # 円形度チェック: ⏭ボタンは円形 (>=0.3), テキスト/枠は細長い (<0.3)
             _perimeter = cv2.arcLength(_largest, True)
