@@ -2228,6 +2228,94 @@ def _battle_fast_check(analysis_path: Path,
     return "", 0.0
 
 
+# ─── 早期シーン判定 (Phase A: MOVIE のみ) ──────────────────────
+def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
+    """OCR 前にシーンを判定する。
+
+    利用する信号 (すべて OCR 不要):
+    - レターボックス (ROI 左端 >= 80) + ADV ツールバーなし → MOVIE
+    - 前回シーン == BATTLE + phash 小変化 → UNKNOWN (既存 BATTLE_RAPID に委譲)
+
+    Phase B/C で BATTLE / ADV ハンドラを追加予定。現段階では UNKNOWN にフォールスルー。
+
+    Returns: "MOVIE" | "UNKNOWN"
+    """
+    # BATTLE シーン継続中は横取りしない (BATTLE_RAPID に委譲)
+    if state.current_scene == "BATTLE" and dist < 30:
+        return "UNKNOWN"
+
+    # MOVIE: レターボックス (左黒帯 >= 80px) + ADV ツールバーなし
+    roi_x = state.game_roi[0] if state.game_roi else 0
+    if roi_x >= 80:
+        adv = detect_adv_scene_cached(img_path, state)
+        if not adv.is_adv:
+            return "MOVIE"
+
+    return "UNKNOWN"
+
+
+def handle_movie(img_path: Path, state: PilotState, dist: int,
+                 cur_phash: str) -> bool:
+    """動画シーン専用ハンドラ。指アイコン / GoldSwipe / 金枠ボタン検出なし。
+
+    - post_download なら SKIP ボタンを HSV で探してタップ
+    - そうでなければ待機 (MOVIE_WAIT)
+    - 8 回連続待機でエスケープ (post_download → SKIP 位置, 通常 → 中央タップ)
+
+    Returns: True if handled (caller should continue), False for fallthrough.
+    """
+    W, H = ANALYSIS_W, ANALYSIS_H
+    _MOVIE_WAIT_ESCAPE = 8
+
+    # ── post_download → SKIP ボタン検出 ──
+    if state.post_download:
+        _movie_btn = detect_movie_skip_button(img_path)
+        if _movie_btn:
+            _sk_x, _sk_y = _movie_btn
+            _sk_x, _sk_y = roi_to_device(_sk_x, _sk_y, state.game_roi)
+            logger.info("[MOVIE] DL直後 SKIP ボタン検出 → タップ (%d,%d)", _sk_x, _sk_y)
+            tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP")
+            state.last_action = "MOVIE_SKIP"
+            state.movie_wait_consecutive = 0
+            state.last_phash = ""
+            return True
+
+    # ── 待機カウンタ ──
+    state.movie_wait_consecutive += 1
+
+    # ── エスケープ: 連続待機上限到達 ──
+    if state.movie_wait_consecutive >= _MOVIE_WAIT_ESCAPE:
+        if state.post_download:
+            logger.warning(
+                "[MOVIE] DL直後+動画待機 %d 回 → SKIP タップ",
+                state.movie_wait_consecutive)
+            state.movie_wait_consecutive = 0
+            _x, _y = roi_to_device(int(W * 0.93), int(H * 0.06), state.game_roi)
+            tap_device(_x, _y, state, "MOVIE_SKIP_ESCAPE")
+            state.last_action = "MOVIE_SKIP"
+        else:
+            logger.warning(
+                "[MOVIE] 動画待機 %d 回 → 画面中央タップ",
+                state.movie_wait_consecutive)
+            state.movie_wait_consecutive = 0
+            _x, _y = roi_to_device(int(W * 0.5), int(H * 0.5), state.game_roi)
+            tap_device(_x, _y, state, "MOVIE_RESUME_TAP")
+            state.last_action = "SCENE_TAP"
+        state.last_phash = ""
+        state.same_phash_count = 0
+        return True
+
+    # ── 通常待機 ──
+    roi_x = state.game_roi[0] if state.game_roi else 0
+    logger.info("[MOVIE] letterbox L=%d → 待機 (%d/%d)",
+                roi_x, state.movie_wait_consecutive, _MOVIE_WAIT_ESCAPE)
+    state.last_action = "MOVIE_WAIT"
+    state.stall_start = 0.0
+    time.sleep(0.5)
+    state.last_phash = cur_phash
+    return True
+
+
 # ─── コマンドライン引数 ───────────────────────────────
 def parse_args():
     parser = argparse.ArgumentParser(description="まどドラ自律操縦")
@@ -2624,6 +2712,17 @@ def main():
                 and state.auto_activated):
             state.last_screen_change_time = time.time()
             state.stall_start = 0.0
+
+        # ── 早期シーン判定 (Phase A: MOVIE のみ) ──
+        # OCR 前にレターボックス + ADV ツールバー不在で動画シーンを検出し、
+        # 指アイコン / GoldSwipe 等の誤発動を根本的に防止する。
+        _early_scene = detect_scene_early(img_path, state, dist)
+        if _early_scene == "MOVIE":
+            if handle_movie(img_path, state, dist, cur_phash):
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                logger.info("  [PERF] Loop %.0fms (MOVIE_EARLY)", _fms)
+                continue
 
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
