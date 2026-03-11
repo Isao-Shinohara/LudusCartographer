@@ -3737,7 +3737,8 @@ def main():
         _post_adv_y = int(ANALYSIS_H * 0.91)
         _post_is_adv = _adv_result.is_adv  # ADVシーンならミニ会話をスキップ
         _skip_burst = scene in ("BATTLE", "MENU") or action in (
-            "DOWNLOAD_WAIT", "LOADING_WAIT", "MOVIE_WAIT", "MAIN_STORY_LOADING")
+            "DOWNLOAD_WAIT", "LOADING_WAIT", "MOVIE_WAIT", "MAIN_STORY_LOADING",
+            "WAIT_FOR_CHANGE")
         while _post_burst_count < _post_burst_max and not _skip_burst:
             # ADV ↓アイコン
             if detect_adv_advance_icon(_post_burst_img):
@@ -3770,6 +3771,22 @@ def main():
             state.last_phash = ""
             img_path = _post_burst_img
             continue
+
+        # ── WAIT_FOR_CHANGE スタック脱出: 3 回連続で中央タップ ──
+        if action == "WAIT_FOR_CHANGE":
+            state._wfc_consecutive = getattr(state, "_wfc_consecutive", 0) + 1
+            if state._wfc_consecutive >= 3:
+                logger.warning(
+                    "[WFC_ESCAPE] WAIT_FOR_CHANGE %d 回連続 → 中央タップでエスケープ",
+                    state._wfc_consecutive,
+                )
+                tap_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state,
+                           desc="WFC_CENTER_ESCAPE")
+                state._wfc_consecutive = 0
+                state.last_phash = ""
+                continue
+        else:
+            state._wfc_consecutive = 0
 
         # ── シーン再評価: 同一アクション連続時にシーン認識を疑う ──
         if action == state.last_action and action not in (
