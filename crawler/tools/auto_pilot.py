@@ -2249,8 +2249,12 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     if _is_letterbox or _movie_btn is not None:
         adv = detect_adv_scene_cached(img_path, state)
         if not adv.is_adv:
-            # ADV 個別アイコン安全弁: ⏭ が ADV ツールバーの >| でないか確認
-            if _movie_btn is not None and not _is_letterbox:
+            # ADV 安全弁: ↓ ボタンがあれば確実に ADV (MOVIE ではない)
+            _adv_down = detect_adv_advance_icon(img_path)
+            if _adv_down is not None:
+                pass  # ↓ ボタンあり → ADV 確定、MOVIE 判定しない
+            elif _movie_btn is not None and not _is_letterbox:
+                # ADV 個別アイコン安全弁: ⏭ が ADV ツールバーの >| でないか確認
                 _adv_icon_check = any(
                     ASSET_MANAGER.match_single(n, img_path) is not None
                     for n in ("adv_icon_menu", "adv_icon_log", "adv_icon_ff")
