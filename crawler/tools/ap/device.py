@@ -51,7 +51,7 @@ def _build_scrcpy_args(device_serial: str) -> list:
     land_h = min(dev_w, dev_h)
     # ウィンドウ幅固定、高さは端末アスペクト比から算出
     # --max-size を win_w に揃えて、ストリーム解像度とウィンドウサイズを一致させる
-    WINDOW_W = 720
+    WINDOW_W = 1080
     win_w = WINDOW_W
     win_h = int(WINDOW_W * land_h / land_w)
     max_size = win_w
