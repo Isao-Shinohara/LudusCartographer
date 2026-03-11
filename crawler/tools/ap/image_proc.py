@@ -699,22 +699,22 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
             _icon_matches.append(None)
 
     _matched_count = sum(1 for s in _icon_scores if s >= icon_threshold)
-    # 2アイコン + ↓ボタン = ADV 救済 (AUTO + >> のみの場合を救う)
-    # ただし2アイコンがツールバー領域 (右上: x>70%, y<15%) にあることを検証
+    # ツールバー領域 (右上: x>50%, y<15%) にあるマッチ数をカウント
+    # バトル UI 等の下部アイコンが ADV テンプレートに偽マッチするのを防ぐ
+    _toolbar_region_count = 0
+    for _idx, _s in enumerate(_icon_scores):
+        if _s >= icon_threshold and _icon_matches[_idx]:
+            _mx, _my = _icon_matches[_idx][0], _icon_matches[_idx][1]
+            if _mx > ANALYSIS_W * 0.50 and _my < ANALYSIS_H * 0.15:
+                _toolbar_region_count += 1
+    # 3+ アイコンでもツールバー領域に2つ以上なければ ADV ではない
     _has_advance_icon = False
-    if _matched_count >= 2 and _matched_count < 3:
-        _toolbar_region_count = 0
-        for _idx, _s in enumerate(_icon_scores):
-            if _s >= icon_threshold and _icon_matches[_idx]:
-                _mx, _my = _icon_matches[_idx][0], _icon_matches[_idx][1]
-                if _mx > ANALYSIS_W * 0.70 and _my < ANALYSIS_H * 0.15:
-                    _toolbar_region_count += 1
-        if _toolbar_region_count >= 2:
-            _has_advance_icon = detect_adv_advance_icon(img_path)
-        else:
-            logger.debug("[ADV_SCENE] 2-icon rescue 却下: ツールバー領域外 (region=%d/2)",
-                         _toolbar_region_count)
-    _all_matched = _matched_count >= 3 or (_matched_count >= 2 and _has_advance_icon)
+    if _matched_count >= 2 and _matched_count < 3 and _toolbar_region_count >= 2:
+        _has_advance_icon = detect_adv_advance_icon(img_path)
+    elif _matched_count >= 2 and _toolbar_region_count < 2:
+        logger.debug("[ADV_SCENE] ツールバー領域外マッチ排除: matched=%d region=%d",
+                     _matched_count, _toolbar_region_count)
+    _all_matched = (_matched_count >= 3 and _toolbar_region_count >= 2) or (_matched_count >= 2 and _has_advance_icon)
     result.toolbar_score = min(_icon_scores) if _icon_scores else 0.0
     if _all_matched and _icon_scores:
         # toolbar_pos = AUTO アイコンの位置 (3番目)
