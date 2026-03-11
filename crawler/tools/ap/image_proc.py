@@ -1548,7 +1548,7 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
             if _tpl is not None and img.shape[0] >= _tpl.shape[0] and img.shape[1] >= _tpl.shape[1]:
                 _r = cv2.matchTemplate(img, _tpl, cv2.TM_CCOEFF_NORMED)
                 _, _mv, _, _ml = cv2.minMaxLoc(_r)
-                if _mv >= 0.60:
+                if _mv >= 0.75:
                     _th, _tw = _tpl.shape[:2]
                     _fx = _ml[0] + _tw // 2  # 指アイコン中心X
                     _fy = _ml[1] + _th // 2  # 指アイコン中心Y
