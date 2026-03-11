@@ -828,7 +828,9 @@ def detect_and_act(ocr: list, state: PilotState,
     _home_swipe_guard_kws = ["光の間", "ショップ", "ガチャ", "ガシャ", "パーティ",
                              "クエスト", "ユニオン", "プレイヤーマッチ"]
     _is_home_screen = sum(1 for h in _home_swipe_guard_kws if h in joined) >= 3
-    if analysis_path is not None and not _is_battle_ui and not _adv_result.is_adv and not _has_dialog_kw and not _is_home_screen:
+    _gs_roi_x = state.game_roi[0] if state.game_roi else 0
+    _gs_letterbox = _gs_roi_x >= 80  # レターボックス動画中はスワイプ抑制
+    if analysis_path is not None and not _is_battle_ui and not _adv_result.is_adv and not _has_dialog_kw and not _is_home_screen and not _gs_letterbox:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:
             # 連続スワイプ上限チェック: 閾値超えたら GoldSwipe をスキップして他の処理へ
