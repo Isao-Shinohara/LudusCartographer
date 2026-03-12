@@ -148,6 +148,8 @@ class PilotState:
     movie_wait_consecutive: int = 0
     # ─── ADV 連続検出カウンタ (phash 動的拡大用) ───
     adv_confirmed_count: int = 0
+    # ─── ADV_EARLY 連続ハンドル回数 (スタック脱出用) ───
+    adv_early_consecutive: int = 0
     # ─── ダウンロード直後フラグ (動画SKIP許可) ───
     post_download: bool = False
     # ─── キャッシュ (per-phash サイクル) ───

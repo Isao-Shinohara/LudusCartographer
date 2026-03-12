@@ -3055,12 +3055,26 @@ def main():
             _skip_rapid = True  # BATTLE ハンドラがフォールスルー → OCR へ直行
 
         elif _early_scene == "ADV":
-            if handle_adv(img_path, state, dist, cur_phash, actual_w, actual_h):
+            # ADV_EARLY スタック脱出: 10回連続で画面変化なし → OCR フォールスルー
+            _ADV_EARLY_STALL = 10
+            if not screen_changed:
+                state.adv_early_consecutive += 1
+            else:
+                state.adv_early_consecutive = 0
+            if state.adv_early_consecutive >= _ADV_EARLY_STALL:
+                logger.warning("[ADV_EARLY] %d 回連続変化なし → OCR フォールスルー",
+                               state.adv_early_consecutive)
+                state.adv_early_consecutive = 0
+                state.adv_confirmed_count = 0
+                state.current_scene = "UNKNOWN"
+                _skip_rapid = True
+            elif handle_adv(img_path, state, dist, cur_phash, actual_w, actual_h):
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
                 logger.info("  [PERF] Loop %.0fms (ADV_EARLY)", _fms)
                 continue
-            _skip_rapid = True  # ADV ハンドラがフォールスルー → OCR へ直行
+            else:
+                _skip_rapid = True  # ADV ハンドラがフォールスルー → OCR へ直行
 
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
