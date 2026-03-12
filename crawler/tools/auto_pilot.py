@@ -1206,9 +1206,17 @@ def detect_and_act(ocr: list, state: PilotState,
         return "CLOSE_POPUP", 1.0
     close_popup = has_any(ocr, close_popup_kws)
     if close_popup:
-        close_x = W - _CLOSE_BTN_OFFSET  # 右上 × ボタン
-        close_y = _CLOSE_BTN_OFFSET
-        logger.info(">>> 【%s ポップアップ】 → × (%d,%d) タップ", close_popup["text"][:6], close_x, close_y)
+        # テンプレートマッチングで正確な × 位置を取得 (固定座標より優先)
+        _close_match = ASSET_MANAGER.match_single("close_btn", analysis_path) if analysis_path else None
+        if _close_match and _close_match[2] >= 0.60:
+            close_x, close_y = _close_match[0], _close_match[1]
+            logger.info(">>> 【%s ポップアップ】 → × テンプレ(%.2f) (%d,%d) タップ",
+                        close_popup["text"][:6], _close_match[2], close_x, close_y)
+        else:
+            close_x = W - _CLOSE_BTN_OFFSET  # 右上 × ボタン
+            close_y = _CLOSE_BTN_OFFSET
+            logger.info(">>> 【%s ポップアップ】 → × 固定座標 (%d,%d) タップ",
+                        close_popup["text"][:6], close_x, close_y)
         tap_device(close_x, close_y, state, f"CLOSE_POPUP_{close_popup['text'][:6]}")
         return "CLOSE_POPUP", 1.0
 
