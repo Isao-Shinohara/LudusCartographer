@@ -2252,9 +2252,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     優先順位 (特定要素が多い順):
     1. MOVIE 慣性 (前回 MOVIE + ADV/BATTLE 証拠なし) → MOVIE
     2. BATTLE 継続 (前回 BATTLE + phash 小変化) → BATTLE
-    3. ADV ツールバー検出 → ADV
-    4. MOVIE 初回検出 (⏭ 必須) → MOVIE  ← 最後 (特定要素が最も少ない)
-    5. それ以外 → UNKNOWN (フルOCR 必要)
+    3. ADV 継続 (前回 ADV + AUTO アイコン) → ADV
+    4. ADV ツールバー初回検出 (3/5 アイコン) → ADV
+    5. MOVIE 初回検出 (⏭ 必須) → MOVIE  ← 最後 (特定要素が最も少ない)
+    6. それ以外 → UNKNOWN (フルOCR 必要)
 
     Returns: "MOVIE" | "BATTLE" | "ADV" | "UNKNOWN"
     """
@@ -2292,6 +2293,18 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     if state.current_scene == "BATTLE" and dist < 30:
         return "BATTLE"
+
+    # ADV 継続: 前回 ADV + AUTO アイコン単独検出 (~10ms) → ADV 高速パス維持
+    # (ツールバー全体 3/5 は検出不安定なため、AUTO 単独で十分)
+    if state.current_scene == "ADV":
+        from tools.ap.image_proc import ASSET_MANAGER as _AM_adv
+        try:
+            _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+            _auto_m = _AM_adv.match_single("adv_icon_auto", img_path, roi=_auto_roi)
+            if _auto_m and _auto_m[2] >= 0.50:
+                return "ADV"
+        except Exception:
+            pass
 
     # ADV: ツールバー検出 (MENU シーンは OCR でボタン検出が必要)
     if state.current_scene != "MENU":
