@@ -2481,7 +2481,9 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     # NOTE: character_selected 時はスキップ — キャラ選択後は必殺技/攻撃ボタン
     # の発光を金枠と誤検出するため、Phase B を優先する
     if not state.character_selected and not state.char_just_selected:
-        _gold_tap = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False)
+        # BATTLE: 右半分のみ (左側キャラアイコンの歯車装飾を金枠と誤検出するため)
+        _gold_rho = True if state.current_scene == "BATTLE" else False
+        _gold_tap = detect_tutorial_gold_button_tap(analysis_path, right_half_only=_gold_rho)
         if _gold_tap:
             _rapid_tx, _rapid_ty = _gold_tap
             _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
