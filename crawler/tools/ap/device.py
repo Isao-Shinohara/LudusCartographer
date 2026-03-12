@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import cv2
 import logging
+import numpy as np
 import os
 import re
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -20,9 +22,19 @@ from tools.ap.constants import (
 
 logger = logging.getLogger("auto_pilot")
 
+# ─── Quartz (macOS window capture) ───
+_HAS_QUARTZ = False
+try:
+    if sys.platform == "darwin":
+        import Quartz as _Quartz
+        _HAS_QUARTZ = True
+except ImportError:
+    pass
+
 # ─── 設定 (main() で動的に設定) ───
 DEVICE_SERIAL = ""   # main() で設定される
 SCRCPY_DEVICE = ""   # main() で DEVICE_SERIAL から動的設定
+_SCRCPY_WINDOW_ID: int = 0   # キャッシュ (0=未取得)
 
 
 def set_device_serial(s: str) -> None:
@@ -129,12 +141,73 @@ def _query_status_bar_height() -> int:
     return _fallback
 
 
+def _find_scrcpy_window_id() -> int:
+    """Quartz API で scrcpy ウィンドウ ID を取得。見つからなければ 0。"""
+    global _SCRCPY_WINDOW_ID
+    if not _HAS_QUARTZ:
+        return 0
+    try:
+        windows = _Quartz.CGWindowListCopyWindowInfo(
+            _Quartz.kCGWindowListOptionOnScreenOnly, _Quartz.kCGNullWindowID)
+        for w in windows:
+            if "scrcpy" in w.get("kCGWindowOwnerName", "").lower():
+                wid = w.get("kCGWindowNumber", 0)
+                if wid:
+                    _SCRCPY_WINDOW_ID = wid
+                    return wid
+    except Exception:
+        pass
+    _SCRCPY_WINDOW_ID = 0
+    return 0
+
+
+def _capture_scrcpy_window(wid: int, path: Path) -> Optional[np.ndarray]:
+    """Quartz で scrcpy ウィンドウをキャプチャ → BGR numpy + PNG 保存。"""
+    try:
+        image = _Quartz.CGWindowListCreateImage(
+            _Quartz.CGRectNull,
+            _Quartz.kCGWindowListOptionIncludingWindow,
+            wid,
+            _Quartz.kCGWindowImageBoundsIgnoreFraming,
+        )
+        if image is None:
+            return None
+        width = _Quartz.CGImageGetWidth(image)
+        height = _Quartz.CGImageGetHeight(image)
+        if width < 100 or height < 100:
+            return None
+        bpr = _Quartz.CGImageGetBytesPerRow(image)
+        data_provider = _Quartz.CGImageGetDataProvider(image)
+        data = _Quartz.CGDataProviderCopyData(data_provider)
+        arr = np.frombuffer(data, dtype=np.uint8).reshape(height, bpr // 4, 4)[:, :width, :]
+        bgr = arr[:, :, [2, 1, 0]].copy()  # BGRA → BGR
+        cv2.imwrite(str(path), bgr)
+        return bgr
+    except Exception:
+        return None
+
+
 def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[Path], int, int, int]:
     """
-    スクリーンショット取得。破損PNG によるSIGSEGV防止のためリトライ付き。
+    スクリーンショット取得。2段構え:
+    1. scrcpy ウィンドウキャプチャ (Quartz, ~100ms)
+    2. adb screencap フォールバック (~1.5-2s)
     """
     path = Path(SCREENSHOT_PATH)
     _retried = 0
+
+    # ── Tier 1: scrcpy ウィンドウキャプチャ (macOS + Quartz) ──
+    if _HAS_QUARTZ:
+        wid = _SCRCPY_WINDOW_ID or _find_scrcpy_window_id()
+        if wid:
+            bgr = _capture_scrcpy_window(wid, path)
+            if bgr is not None:
+                _h, _w = bgr.shape[:2]
+                return path, _w, _h, 0
+            # キャプチャ失敗 → ウィンドウ ID リセットして再取得
+            _find_scrcpy_window_id()
+
+    # ── Tier 2: adb screencap フォールバック ──
     for _attempt in range(retries):
         try:
             _result = subprocess.run(
@@ -228,6 +301,9 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
         )
         logger.info("[SCRCPY] 規定オプションで起動 PID=%d (device=%s, --turn-screen-off)",
                     proc.pid, SCRCPY_DEVICE)
+        # ウィンドウ ID キャッシュをリセット (次回キャプチャ時に再取得)
+        global _SCRCPY_WINDOW_ID
+        _SCRCPY_WINDOW_ID = 0
         return proc
     except FileNotFoundError:
         logger.warning("[SCRCPY] scrcpy が見つかりません — Stay Awake なしで続行 "
