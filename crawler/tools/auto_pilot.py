@@ -859,6 +859,16 @@ def detect_and_act(ocr: list, state: PilotState,
     if _dialog_result is not None:
         return _dialog_result
 
+    # ─── 【指+金枠ボタン】PRE_DIALOG_GUARD で指ブロブ検出 → ゴールドボタン直タップ ───
+    # ダイアログ×ボタンがない画面 (プレゼントボックス等) で指が金色ボタンを指している場合
+    if _pre_dialog_finger and analysis_path is not None:
+        _finger_gold_pos = find_golden_highlighted_button(analysis_path)
+        if _finger_gold_pos:
+            _fg_x, _fg_y = _finger_gold_pos
+            logger.info(">>> [FINGER_GOLD_TAP] 指ブロブ+金色ボタン → (%d,%d)", _fg_x, _fg_y)
+            tap_device(_fg_x, _fg_y, state, "GOLD_BTN_TAP")
+            return "GOLD_BTN_TAP", 1.0
+
     # ─── 【最優先 #0-aa】HSV金色ポインター検出 → ホールドスワイプ (Type A) ───
     # 縦長金色領域 h/w>=3.5 かつ幅<=100px のみ有効 (ボタン/カード誤検出防止)。
     # ─── 【最優先 #0-walk】チュートリアル歩行シーン (白黒背景) → 上ホールドスワイプ ───
@@ -1187,7 +1197,7 @@ def detect_and_act(ocr: list, state: PilotState,
     # 限界突破/強化完了/レベルアップ系ポップアップ → 右上 × ボタンで閉じる
     close_popup_kws = ["限界突破", "強化完了", "レベルアップ", "称号獲得", "エピソード解放",
                        "ランクアップ", "新しいコンテンツ", "アンロック",
-                       "マギアボックス", "ボックス", "ミッション達成", "デイリーミッション",
+                       "マギアボックス", "ミッション達成", "デイリーミッション",
                        "ログインボーナス", "初心者ログイン", "キャンペーン"]
 
     # カルーセル型チュートリアルポップアップ (「メインクエストをPLAYして」等の複数ページ説明)
@@ -1206,8 +1216,8 @@ def detect_and_act(ocr: list, state: PilotState,
         return "CLOSE_POPUP", 1.0
     close_popup = has_any(ocr, close_popup_kws)
     if close_popup:
-        # CLOSE_POPUP スタック脱出: 8回以上同じアクション → BACK キーで閉じる
-        if state.last_action and state.last_action.startswith("CLOSE_POPUP") and state.dialog_close_total >= 8:
+        # CLOSE_POPUP スタック脱出: 8回以上累計失敗 → BACK キーで閉じる
+        if state.dialog_close_total >= 8:
             logger.warning(">>> 【%s ポップアップ】 × が8回空振り → BACK キーで脱出",
                            close_popup["text"][:6])
             try:
