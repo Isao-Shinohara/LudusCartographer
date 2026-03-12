@@ -721,13 +721,18 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
     # AUTO アイコン (index=2) スコア取得
     _auto_score = _icon_scores[2] if len(_icon_scores) > 2 else 0.0
     _has_auto = _auto_score >= 0.50
-    # ↓ボタン検出 (AUTO あり or 2アイコン救済時のみ実行)
+    # ADV固有アイコン判定: AUTO(2)/FF(3)/SKIP(4) — menu/log は汎用UIで偽陽性多い
+    _has_adv_specific = any(
+        _icon_scores[i] >= icon_threshold
+        for i in (2, 3, 4) if i < len(_icon_scores)
+    )
+    # ↓ボタン検出 (AUTO あり or ADV固有アイコン含む2アイコン救済時のみ実行)
     _has_advance_icon = False
-    if _has_auto or (_matched_count >= 2 and _matched_count < 3):
+    if _has_auto or (_matched_count >= 2 and _matched_count < 3 and _has_adv_specific):
         _has_advance_icon = detect_adv_advance_icon(img_path)
-    # 判定: 3アイコン | 2アイコン+↓ | AUTO+↓ (アイコン数不問)
+    # 判定: 3アイコン | 2アイコン(ADV固有含む)+↓ | AUTO+↓
     _all_matched = (_matched_count >= 3
-                    or (_matched_count >= 2 and _has_advance_icon)
+                    or (_matched_count >= 2 and _has_advance_icon and _has_adv_specific)
                     or (_has_auto and _has_advance_icon))
     result.toolbar_score = min(_icon_scores) if _icon_scores else 0.0
     if _all_matched and _icon_scores:
