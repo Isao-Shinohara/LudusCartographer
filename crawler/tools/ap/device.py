@@ -36,6 +36,8 @@ DEVICE_SERIAL = ""   # main() で設定される
 SCRCPY_DEVICE = ""   # main() で DEVICE_SERIAL から動的設定
 _SCRCPY_WINDOW_ID: int = 0   # キャッシュ (0=未取得)
 _LAST_SCRCPY_BGR: Optional[np.ndarray] = None  # scrcpy キャプチャの BGR キャッシュ (二重読み防止)
+_SCRCPY_FAIL_COUNT: int = 0  # scrcpy キャプチャ連続失敗回数 (自動復帰用)
+_SCRCPY_FAIL_RESTART_THRESHOLD: int = 3  # N回連続失敗でscrcpy再起動
 
 
 def set_device_serial(s: str) -> None:
@@ -319,15 +321,27 @@ def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[
     1. scrcpy ウィンドウキャプチャ (Quartz, ~100ms)
     2. adb screencap フォールバック (~1.5-2s)
 
+    scrcpy キャプチャが連続失敗した場合、自動的に scrcpy を再起動する。
+
     Returns: (path, device_w, device_h, retry_count)
     ※ device_w/h は常に実機の物理解像度 (wm size) を返す
     """
+    global _SCRCPY_FAIL_COUNT
     path = Path(SCREENSHOT_PATH)
 
     # ── Tier 1: scrcpy ウィンドウキャプチャ ──
     _scrcpy = _take_screenshot_scrcpy(path)
     if _scrcpy is not None:
+        _SCRCPY_FAIL_COUNT = 0
         return _scrcpy[0], _scrcpy[1], _scrcpy[2], 0
+
+    # scrcpy 失敗カウント: 連続失敗で自動復帰
+    _SCRCPY_FAIL_COUNT += 1
+    if _SCRCPY_FAIL_COUNT == _SCRCPY_FAIL_RESTART_THRESHOLD:
+        logger.warning("[SCRCPY] %d 回連続キャプチャ失敗 → scrcpy 自動再起動",
+                       _SCRCPY_FAIL_COUNT)
+        manage_scrcpy()
+        _SCRCPY_FAIL_COUNT = 0
 
     # ── Tier 2: adb screencap フォールバック ──
     return _take_screenshot_adb(path, retries=retries, min_bytes=min_bytes)
