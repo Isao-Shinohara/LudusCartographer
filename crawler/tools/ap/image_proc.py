@@ -1941,6 +1941,31 @@ def detect_tutorial_gold_button_tap(img_path: Path,
         return None
 
 
+# ─── チュートリアルオーバーレイ（暗転）検出 ──────────────────────────
+
+
+def detect_tutorial_overlay(img_path: Path, brightness_threshold: int = 90) -> bool:
+    """チュートリアル中の暗転オーバーレイを検出する。
+
+    チュートリアル時は指アイコン+金枠のハイライト以外が半透明の暗いオーバーレイで覆われる。
+    画面全体の中央値輝度が低い (< brightness_threshold) なら暗転中と判定。
+
+    Returns: True = 暗転オーバーレイあり（チュートリアル中の可能性が高い）
+    """
+    try:
+        img = imread_cached(img_path)
+        if img is None:
+            return False
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        median_brightness = int(np.median(gray))
+        logger.debug("[TutOverlay] median_brightness=%d threshold=%d",
+                     median_brightness, brightness_threshold)
+        return median_brightness < brightness_threshold
+    except Exception as e:
+        logger.debug("detect_tutorial_overlay error: %s", e)
+        return False
+
+
 # ─── Smart Tap: 金色ボタン矩形の幾何学的中心を検出 ──────────────────
 
 

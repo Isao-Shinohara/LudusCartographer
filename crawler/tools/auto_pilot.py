@@ -125,7 +125,7 @@ from tools.ap.image_proc import (  # noqa: E402
     detect_tutorial_dialog_nav, detect_dialog_frame_and_nav,
     process_paging_dialog, detect_notice_popup, count_page_dots,
     detect_text_input_area,
-    detect_tutorial_gold_swipe, detect_tutorial_gold_button_tap,
+    detect_tutorial_gold_swipe, detect_tutorial_gold_button_tap, detect_tutorial_overlay,
     smart_tap_button, find_golden_highlighted_button, find_3d_arrow,
     AssetManager, ASSET_MANAGER,
     detect_adv_scene, detect_adv_scene_cached, AdvSceneResult,
@@ -1284,42 +1284,53 @@ def detect_and_act(ocr: list, state: PilotState,
                     tap_device(_cb_x, _cb_y, state, "CHALLENGE_TAP")
                     return "CHALLENGE_TAP", 1.0
             # ── ホームチュートリアル: 指アイコン+金枠がある場合は優先タップ ──
-            # ただし 10回超ループしたら LATE path (grind_mode処理) に委譲
-            if state.home_tutorial_tap_count < 10:
-                _ht_blobs = find_finger_blobs(analysis_path) if analysis_path else []
-                _ht_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
-                if _ht_blobs or _ht_gold:
-                    _ht_target = None
-                    if _ht_blobs:
-                        _ht_chosen = max(_ht_blobs, key=lambda b: b[2])
-                        _ht_bx, _ht_by = _ht_chosen[0], _ht_chosen[1]
-                        _ht_gf = find_gold_frame_near(analysis_path, _ht_bx, _ht_by) if analysis_path else None
-                        if _ht_gf:
-                            _ht_fg_dist = ((_ht_bx - _ht_gf[0]) ** 2 + (_ht_by - _ht_gf[1]) ** 2) ** 0.5
-                            if _ht_fg_dist <= 200:
-                                _ht_target = (_ht_gf[0], _ht_gf[1])
-                                logger.info("  ホームチュートリアル: 指(%d,%d)→金枠(%d,%d) dist=%.0f タップ",
-                                            _ht_bx, _ht_by, _ht_gf[0], _ht_gf[1], _ht_fg_dist)
-                            else:
-                                _ht_tip_y = _ht_chosen[4] + int(_ht_chosen[6] * 0.1)
-                                _ht_target = (_ht_chosen[3] + _ht_chosen[5] // 2, _ht_tip_y)
-                                logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠(%d,%d) dist=%.0f>200 無視]",
-                                            _ht_bx, _ht_by, *_ht_target, _ht_gf[0], _ht_gf[1], _ht_fg_dist)
-                        else:
+            # 回数制限なし: 指+金枠が実在する限り何回でもタップ
+            _ht_blobs = find_finger_blobs(analysis_path) if analysis_path else []
+            _ht_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
+            # 暗転オーバーレイ検出 (チュートリアル中は非ハイライト部分が暗い)
+            _ht_dimmed = detect_tutorial_overlay(analysis_path) if analysis_path else False
+            if _ht_blobs or _ht_gold:
+                _ht_target = None
+                if _ht_blobs:
+                    _ht_chosen = max(_ht_blobs, key=lambda b: b[2])
+                    _ht_bx, _ht_by = _ht_chosen[0], _ht_chosen[1]
+                    _ht_gf = find_gold_frame_near(analysis_path, _ht_bx, _ht_by) if analysis_path else None
+                    if _ht_gf:
+                        _ht_fg_dist = ((_ht_bx - _ht_gf[0]) ** 2 + (_ht_by - _ht_gf[1]) ** 2) ** 0.5
+                        if _ht_fg_dist <= 200:
+                            _ht_target = (_ht_gf[0], _ht_gf[1])
+                            logger.info("  ホームチュートリアル: 指(%d,%d)→金枠(%d,%d) dist=%.0f dimmed=%s",
+                                        _ht_bx, _ht_by, _ht_gf[0], _ht_gf[1], _ht_fg_dist, _ht_dimmed)
+                        elif _ht_dimmed:
+                            # 金枠遠い+暗転あり → 指先タップ
                             _ht_tip_y = _ht_chosen[4] + int(_ht_chosen[6] * 0.1)
                             _ht_target = (_ht_chosen[3] + _ht_chosen[5] // 2, _ht_tip_y)
-                            logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) タップ",
-                                        _ht_bx, _ht_by, *_ht_target)
-                    elif _ht_gold:
+                            logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠(%d,%d) dist=%.0f>200+暗転あり]",
+                                        _ht_bx, _ht_by, *_ht_target, _ht_gf[0], _ht_gf[1], _ht_fg_dist)
+                        else:
+                            logger.info("  ホーム指検出: 指(%d,%d) 金枠(%d,%d) dist=%.0f>200+暗転なし → スキップ",
+                                        _ht_bx, _ht_by, _ht_gf[0], _ht_gf[1], _ht_fg_dist)
+                    elif _ht_dimmed:
+                        # 金枠なしだが暗転あり → 指先タップ (チュートリアルの可能性高い)
+                        _ht_tip_y = _ht_chosen[4] + int(_ht_chosen[6] * 0.1)
+                        _ht_target = (_ht_chosen[3] + _ht_chosen[5] // 2, _ht_tip_y)
+                        logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠なし+暗転あり]",
+                                    _ht_bx, _ht_by, *_ht_target)
+                    else:
+                        # 金枠なし+暗転なし → 偽検出の可能性 → スキップ
+                        logger.info("  ホーム指検出: 指(%d,%d) 金枠なし+暗転なし → 偽検出疑い、スキップ",
+                                    _ht_bx, _ht_by)
+                elif _ht_gold:
+                    # 金枠のみ (指なし) → 暗転があればチュートリアル
+                    if _ht_dimmed:
                         _ht_target = _ht_gold
-                        logger.info("  ホームチュートリアル: 金ボタン(%d,%d) タップ", *_ht_gold)
-                    if _ht_target:
-                        state.home_tutorial_tap_count += 1
-                        tap_device(_ht_target[0], _ht_target[1], state, "HOME_TUTORIAL_TAP")
-                        return "HOME_TUTORIAL_TAP", 0.5
-            else:
-                logger.info("  HOME_TUTORIAL %d回超 → LATE path (grind/ホーム到達) に委譲",
-                            state.home_tutorial_tap_count)
+                        logger.info("  ホームチュートリアル: 金ボタン(%d,%d) [暗転あり]", *_ht_gold)
+                    else:
+                        logger.info("  ホーム金枠検出: (%d,%d) 暗転なし → 通常ホーム、スキップ", *_ht_gold)
+                if _ht_target:
+                    state.home_tutorial_tap_count += 1
+                    tap_device(_ht_target[0], _ht_target[1], state, "HOME_TUTORIAL_TAP")
+                    return "HOME_TUTORIAL_TAP", 0.5
             blobs = []
         elif _is_tos_screen or _is_system_dialog:
             logger.info("  システムダイアログ/利用規約検出 → MOYA_TAP スキップ")
@@ -1618,40 +1629,39 @@ def detect_and_act(ocr: list, state: PilotState,
     home_count = sum(1 for h in home_indicators if any(h in t for t in texts))
     if home_count >= 3:
         state.home_reached = True
-        # ── 指アイコン or 金枠がある場合 → まだホームチュートリアル中 ──
-        # 「ホーム画面かつ指アイコン+金枠がない」状態が本当のチュートリアル終了
-        # 安全弁: HOME_TUTORIAL_TAP 15回超 → 偽検出と判断しチュートリアル完了扱い
-        # NOTE: ホームチュートリアルは複数ステップ (編成→育成→クエスト等) あるため
-        #       5回では早すぎた
-        _tutorial_tap_limit = state.home_tutorial_tap_count >= 15
-        if _tutorial_tap_limit:
-            logger.info(">>> HOME_TUTORIAL_TAP %d回到達 → 偽検出と判断、チュートリアル完了扱い",
-                        state.home_tutorial_tap_count)
-        _home_blobs = [] if _tutorial_tap_limit else (
-            find_finger_blobs(analysis_path) if analysis_path else [])
-        # ホーム画面ではナビバーが中央付近に来るため right_half_only=False で全域検索
-        _home_gold = None if _tutorial_tap_limit else (
-            detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None)
+        # ── 指アイコン+金枠 → まだホームチュートリアル中 ──
+        # 「ホーム画面かつ指+金枠がない」= チュートリアル終了
+        # 回数制限なし: 指+金枠+暗転オーバーレイで判定 (カウンタ偽検出は廃止)
+        _home_blobs = find_finger_blobs(analysis_path) if analysis_path else []
+        _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
+        _home_dimmed = detect_tutorial_overlay(analysis_path) if analysis_path else False
         if _home_blobs or _home_gold:
-            # 指アイコン+金枠が存在 → ガイドに従いタップして続行
             _tap_target = None
             if _home_blobs:
                 _chosen_blob = max(_home_blobs, key=lambda b: b[2])  # area最大
                 _bx, _by = _chosen_blob[0], _chosen_blob[1]
-                # 金枠があれば金枠中心を優先
                 _gf = find_gold_frame_near(analysis_path, _bx, _by) if analysis_path else None
                 if _gf:
-                    _tap_target = (_gf[0], _gf[1])  # (frame_cx, frame_cy)
-                else:
-                    # blob tuple: (cx, cy, area, bx, by, bw, bh) → 指先は bx+bw/2, by+bh*0.1
+                    _tap_target = (_gf[0], _gf[1])
+                    logger.info(">>> ホームチュートリアル: 指(%d,%d)→金枠(%d,%d) dimmed=%s [%d回目]",
+                                _bx, _by, _gf[0], _gf[1], _home_dimmed, state.home_tutorial_tap_count + 1)
+                elif _home_dimmed:
+                    # 金枠なし+暗転あり → チュートリアル (指先タップ)
                     _tip_y = _chosen_blob[4] + int(_chosen_blob[6] * 0.1)
                     _tap_target = (_chosen_blob[3] + _chosen_blob[5] // 2, _tip_y)
+                    logger.info(">>> ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠なし+暗転あり]",
+                                _bx, _by, *_tap_target)
+                else:
+                    logger.info(">>> ホーム指検出: 指(%d,%d) 金枠なし+暗転なし → 偽検出疑い、スキップ",
+                                _bx, _by)
             elif _home_gold:
-                _tap_target = _home_gold
+                if _home_dimmed:
+                    _tap_target = _home_gold
+                    logger.info(">>> ホームチュートリアル: 金ボタン(%d,%d) [暗転あり]", *_home_gold)
+                else:
+                    logger.info(">>> ホーム金枠検出: (%d,%d) 暗転なし → 通常ホーム、スキップ", *_home_gold)
             if _tap_target:
                 state.home_tutorial_tap_count += 1
-                logger.info(">>> ホームチュートリアル継続: 指/金枠 → (%d,%d) タップ [%d回目]",
-                            _tap_target[0], _tap_target[1], state.home_tutorial_tap_count)
                 tap_device(_tap_target[0], _tap_target[1], state, "HOME_TUTORIAL_TAP")
                 return "HOME_TUTORIAL_TAP", 0.5
             # blob/gold検出あるがタップ対象なし → blob_same_count 処理へ
