@@ -54,30 +54,24 @@ def _build_scrcpy_args(device_serial: str) -> list:
     """
     scrcpy 起動引数を動的に構築する。
 
-    ウィンドウサイズは 1080x540 基準で、端末のアスペクト比を保ちつつ
-    幅1080 または 高さ540 に収まるようにする。
+    短辺を 720px に固定し、--max-size のみで制御。
+    --window-width/height は指定しない (回転時に scrcpy が自動リサイズ)。
+    - 縦画面: 720 x 1440  (短辺=720)
+    - 横画面: 1440 x 720   (そのまま縦横スワップ)
     """
-    # デバイス実解像度を取得 (wm size は portrait で返す場合がある)
     dev_w, dev_h = get_device_resolution()
-    # ゲームはランドスケープ前提: 長辺=width, 短辺=height に正規化
     land_w = max(dev_w, dev_h)
     land_h = min(dev_w, dev_h)
-    # ウィンドウ幅固定、高さは端末アスペクト比から算出
-    # --max-size を win_w に揃えて、ストリーム解像度とウィンドウサイズを一致させる
-    WINDOW_W = 720
-    win_w = WINDOW_W
-    win_h = int(WINDOW_W * land_h / land_w)
-    max_size = win_w
-    logger.info("[SCRCPY] 実機解像度 %dx%d → landscape %dx%d → window %dx%d, max-size %d",
-                dev_w, dev_h, land_w, land_h, win_w, win_h, max_size)
+    # 横幅 max 720px、縦はアスペクト比固定
+    MAX_WIDTH = 720
+    logger.info("[SCRCPY] 実機解像度 %dx%d → landscape %dx%d → max-size %d",
+                dev_w, dev_h, land_w, land_h, MAX_WIDTH)
     return [
         "scrcpy",
         "-s", device_serial,
         "--turn-screen-off",   # 物理画面消灯
         "--stay-awake",
-        "--max-size", str(max_size),
-        "--window-width", str(win_w),
-        "--window-height", str(win_h),
+        "--max-size", str(MAX_WIDTH),
     ]
 
 
@@ -349,9 +343,8 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
         logger.warning("[SCRCPY] ps aux 失敗: %s", e)
         return None
 
-    # 期待するウィンドウサイズを事前計算 (ループ外で1回だけ)
+    # 期待する --max-size を事前計算 (ループ外で1回だけ)
     _expected_args = _build_scrcpy_args(SCRCPY_DEVICE)
-    _expected_w = _expected_args[_expected_args.index("--window-width") + 1]
     _expected_ms = _expected_args[_expected_args.index("--max-size") + 1]
 
     conforming_pid = None
@@ -369,8 +362,7 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
             continue
         has_device = SCRCPY_DEVICE in line
         has_screen_off = "--turn-screen-off" in line
-        has_correct_size = (f"--window-width {_expected_w}" in line
-                            and f"--max-size {_expected_ms}" in line)
+        has_correct_size = f"--max-size {_expected_ms}" in line
         if has_device and has_screen_off and has_correct_size:
             conforming_pid = pid
             logger.info("[SCRCPY] 規定プロセス検出 PID=%d — 継続", pid)

@@ -1124,10 +1124,20 @@ def detect_and_act(ocr: list, state: PilotState,
         tap_device(cx, cy, state, "REWARD_NEXT")
         return "REWARD_NEXT", 1.0
 
+    # ガチャ結果確認画面: 「限界突破」+「確定で獲得」→ OK ボタン想定位置タップ
+    # (OCR が "OK" を拾えない低解像度を考慮し、テキスト存在だけで判定)
+    _gacha_limit = has_text(ocr, "限界突破", min_conf=0.2)
+    _gacha_kakutei = has_text(ocr, "確定", min_conf=0.2) or has_text(ocr, "獲得", min_conf=0.2)
+    if _gacha_limit and _gacha_kakutei:
+        _ok_x, _ok_y = roi_to_device(int(W * 0.41), int(H * 0.89), state.game_roi)
+        logger.info(">>> 【ガチャ結果確認】 限界突破+確定/獲得 検出 → OK想定位置 (%d,%d) タップ", _ok_x, _ok_y)
+        tap_device(_ok_x, _ok_y, state, "GACHA_RESULT_OK")
+        return "GACHA_RESULT_OK", 1.5
+
     # 限界突破/強化完了/レベルアップ系ポップアップ → 右上 × ボタンで閉じる
     close_popup_kws = ["限界突破", "強化完了", "レベルアップ", "称号獲得", "エピソード解放",
                        "ランクアップ", "新しいコンテンツ", "アンロック",
-                       "マギアボックス", "ミッション達成", "デイリーミッション",
+                       "マギアボックス", "ボックス", "ミッション達成", "デイリーミッション",
                        "ログインボーナス", "初心者ログイン", "キャンペーン"]
 
     # カルーセル型チュートリアルポップアップ (「メインクエストをPLAYして」等の複数ページ説明)
@@ -1545,7 +1555,7 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── 【最優先 #2-a】探索マップ 3D矢印タップ ───
     # 「矢印をタップしてください」が出ている場合、3D空間の矢印を検出してタップ
-    arrow_instruction = has_text(ocr, "矢印をタップ", min_conf=0.2)
+    arrow_instruction = has_text(ocr, "矢印を", min_conf=0.2)
     if arrow_instruction and analysis_path is not None:
         pos = find_3d_arrow(analysis_path)
         if pos:
@@ -2277,7 +2287,8 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         if state.movie_wait_consecutive >= _MOVIE_INERTIA_TTL:
             logger.info("[SCENE_EARLY] Movie inertia TTL expired (consecutive=%d) → UNKNOWN",
                         state.movie_wait_consecutive)
-            state.movie_wait_consecutive = 0
+            # NOTE: movie_wait_consecutive をリセットしない
+            # MOVIE_GUARD_ESCAPE が累積カウントで脱出できるようにする
         else:
             adv = detect_adv_scene_cached(img_path, state)
             if not adv.is_adv and state.current_scene not in ("BATTLE", "MENU"):
@@ -2843,33 +2854,43 @@ def main():
 
     signal.signal(signal.SIGINT, _sigint_handler)
 
-    # ─── scrcpy 管理: 不整合 Kill → 規定オプション起動 ───
+    # ─── scrcpy 管理: アプリ起動前に起動 (スプラッシュ画面を scrcpy で確認可能にする) ───
     _scrcpy_proc = manage_scrcpy()
+    if _scrcpy_proc is not None:
+        logger.info("[SCRCPY] ウィンドウ生成待ち (3秒)...")
+        time.sleep(3)
 
-    # 起動直後に実機物理解像度を取得してログ出力 (ループ内の初回 take_screenshot より早期)
+    # 実機物理解像度を取得してログ出力
     _dev_w, _dev_h = get_device_resolution()
     logger.info("[DEVICE_RES] wm size: %dx%d / 解析基準: %dx%d (ROI補正で座標変換)",
                 _dev_w, _dev_h, ANALYSIS_W, ANALYSIS_H)
 
-    logger.info("[TOKEN_SAVE] 節約モード稼働中。バトル発光検知で OCR スキップ → 爆速モードで進行します")
-
-    # ─── 初回アプリ起動: ランチャーにいる場合は自動で起動 ───
+    # ─── 初回アプリ起動: mResumedActivity で正確な前面アプリ判定 ───
     try:
-        # 画面ウェイクアップ (scrcpy --turn-screen-off で消灯済みの場合)
         adb("shell input keyevent KEYCODE_WAKEUP")
-        time.sleep(1)
-        _focus = adb("shell dumpsys window")
-        if APP_PACKAGE not in _focus:
-            logger.info("[STARTUP] アプリ未起動 → am start で起動します")
+        time.sleep(0.5)
+        _resumed = adb("shell dumpsys activity activities | grep mResumedActivity")
+        if APP_PACKAGE not in _resumed:
+            logger.info("[STARTUP] アプリが前面にない → am start で起動します (mResumedActivity: %s)",
+                        _resumed.strip())
             adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
-            logger.info("[STARTUP] 15秒待機 (スプラッシュ + 初期化)")
-            time.sleep(15)
+            # ポーリングで起動確認 (盲目 sleep(15) を廃止)
+            for _poll in range(10):
+                time.sleep(2)
+                _resumed2 = adb("shell dumpsys activity activities | grep mResumedActivity")
+                if APP_PACKAGE in _resumed2:
+                    logger.info("[STARTUP] アプリ前面確認 (%.1f秒)", (_poll + 1) * 2)
+                    break
+                logger.info("[STARTUP] 起動待ち (%d/10)... mResumedActivity: %s",
+                            _poll + 1, _resumed2.strip())
         else:
-            logger.info("[STARTUP] アプリ既に起動中: %s", APP_PACKAGE)
+            logger.info("[STARTUP] アプリ既に前面: %s", APP_PACKAGE)
     except Exception as _e:
         logger.warning("[STARTUP] フォーカス確認失敗: %s — am start で起動を試行", _e)
         adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
-        time.sleep(15)
+        time.sleep(5)
+
+    logger.info("[TOKEN_SAVE] 節約モード稼働中。バトル発光検知で OCR スキップ → 爆速モードで進行します")
 
     # ─── ランドスケープ待機: ポートレートならアプリ起動待ち ───
     for _orient_wait in range(10):
@@ -2880,12 +2901,11 @@ def main():
         logger.info("[STARTUP] ポートレート検出 (%dx%d) — アプリ起動待ち (%d/10)",
                     _ss_check[1], _ss_check[2], _orient_wait + 1)
         if _orient_wait == 4:
-            # 5回目で再起動を試行
             logger.info("[STARTUP] アプリ再起動を試行")
             adb(f"shell am force-stop {APP_PACKAGE}")
             time.sleep(2)
             adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
-        time.sleep(3)
+        time.sleep(2)
 
     for i in range(MAX_ITERATIONS):
         state.iteration = i
@@ -3179,12 +3199,15 @@ def main():
                                             i, _burst_count, _adv_tap_x, _adv_tap_y)
                                 tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
                                 state.last_action = "ADV_RAPID_TAP"
-                                # 次のスクリーンショット (ROI/phash省略で高速)
-                                _b_path, _b_w, _b_h, _ = take_screenshot()
-                                if _b_path is None:
-                                    break
-                                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
-                                actual_w, actual_h = _b_w, _b_h
+                                # 偶数回 or 最終回のみスクショ (奇数回は前画像で続行)
+                                if _burst_count % 2 == 0 or _burst_count >= _burst_max:
+                                    _b_path, _b_w, _b_h, _ = take_screenshot()
+                                    if _b_path is None:
+                                        break
+                                    _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
+                                    actual_w, actual_h = _b_w, _b_h
+                                else:
+                                    time.sleep(0.3)  # スクショ代わりの短い待ち
                             elif _rapid_adv.is_adv and _rapid_adv.next_btn_pos and _burst_count == 0:
                                 # ↓アイコンHSV未検出だがADVツールバーあり+座標あり → 1回タップ
                                 _adv_nx = int(_rapid_adv.next_btn_pos[0] * ANALYSIS_W / actual_w)
@@ -3221,11 +3244,15 @@ def main():
                                             i, _mc_side, _burst_count, _mc_cx, _mc_cy)
                                 tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
                                 state.last_action = "MINI_CONV_TAP"
-                                _b_path, _b_w, _b_h, _ = take_screenshot()
-                                if _b_path is None:
-                                    break
-                                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
-                                actual_w, actual_h = _b_w, _b_h
+                                # 偶数回 or 最終回のみスクショ
+                                if _burst_count % 2 == 0 or _burst_count >= _burst_max:
+                                    _b_path, _b_w, _b_h, _ = take_screenshot()
+                                    if _b_path is None:
+                                        break
+                                    _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
+                                    actual_w, actual_h = _b_w, _b_h
+                                else:
+                                    time.sleep(0.3)
                             else:
                                 break
                         if _burst_count > 0:
@@ -3361,11 +3388,15 @@ def main():
                             logger.info("[ADV_BURST][iter %d] ↓検出 → タップ #%d", i, _burst_count)
                             tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
                             state.last_action = "ADV_RAPID_TAP"
-                            _b_path, _b_w, _b_h, _ = take_screenshot()
-                            if _b_path is None:
-                                break
-                            _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
-                            actual_w, actual_h = _b_w, _b_h
+                            # 偶数回 or 最終回のみスクショ
+                            if _burst_count % 2 == 0 or _burst_count >= _burst_max:
+                                _b_path, _b_w, _b_h, _ = take_screenshot()
+                                if _b_path is None:
+                                    break
+                                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
+                                actual_w, actual_h = _b_w, _b_h
+                            else:
+                                time.sleep(0.3)
                         else:
                             break
                     if _burst_count > 0:
@@ -3390,11 +3421,15 @@ def main():
                                         i, _mc_side, _burst_count, _mc_cx, _mc_cy)
                             tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
                             state.last_action = "MINI_CONV_TAP"
-                            _b_path, _b_w, _b_h, _ = take_screenshot()
-                            if _b_path is None:
-                                break
-                            _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
-                            actual_w, actual_h = _b_w, _b_h
+                            # 偶数回 or 最終回のみスクショ
+                            if _burst_count % 2 == 0 or _burst_count >= _burst_max:
+                                _b_path, _b_w, _b_h, _ = take_screenshot()
+                                if _b_path is None:
+                                    break
+                                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
+                                actual_w, actual_h = _b_w, _b_h
+                            else:
+                                time.sleep(0.3)
                         else:
                             break
                     if _burst_count > 0:
@@ -3842,11 +3877,15 @@ def main():
                     break
             else:
                 break
-            _pb_path, _pb_w, _pb_h, _ = take_screenshot()
-            if _pb_path is None:
-                break
-            _post_burst_img = prepare_analysis_image(_pb_path, _pb_w, _pb_h)
-            actual_w, actual_h = _pb_w, _pb_h
+            # 偶数回 or 最終回のみスクショ
+            if _post_burst_count % 2 == 0 or _post_burst_count >= _post_burst_max:
+                _pb_path, _pb_w, _pb_h, _ = take_screenshot()
+                if _pb_path is None:
+                    break
+                _post_burst_img = prepare_analysis_image(_pb_path, _pb_w, _pb_h)
+                actual_w, actual_h = _pb_w, _pb_h
+            else:
+                time.sleep(0.3)
         if _post_burst_count > 0:
             logger.info("[POST_OCR_BURST] 完了: %d タップ", _post_burst_count)
             state.last_phash = ""

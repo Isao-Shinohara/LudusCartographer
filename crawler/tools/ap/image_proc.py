@@ -916,6 +916,7 @@ _MOVIE_UI_PENALTY_KWS = (
     "利用規約", "同意", "規約", "プライバシー", "ダウンロード",
     "Download", "OK", "はい", "キャンセル", "設定", "お知らせ",
     "クエスト", "ショップ", "ガチャ", "編成",
+    "ボックス", "プレイヤー", "交換",
 )
 
 
@@ -964,6 +965,18 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     # 即棄却: バトルキーワード
     if any(kw in joined for kw in _MOVIE_REJECT_BATTLE_KWS):
         return MovieSceneResult()
+
+    # 即棄却: ダイアログ枠 (×ボタン / ゴールド枠) が視覚検出された場合
+    # テキストキーワードに依存せず形状ベースで判定
+    if img_path:
+        try:
+            _dlg = detect_dialog_frame_and_nav(img_path)
+            if _dlg is not None:
+                logger.debug("[MOVIE_SCENE] ダイアログ枠検出 (%s) → MOVIE棄却",
+                             _dlg[0])
+                return MovieSceneResult()
+        except Exception:
+            pass
 
     score = 0.0
     # ⏭ スキップボタン
@@ -1856,7 +1869,9 @@ def detect_tutorial_gold_button_tap(img_path: Path,
         if not contours:
             return None
 
-        # ボタン候補: アスペクト比0.5~2.0 かつ面積8000~150000 かつ幅100px以上
+        # ボタン候補: アスペクト比0.5~2.0 かつ面積8000~50000 かつ幅100px以上
+        # キャラアイコン除外: 金色の充填率 (extent) が高い = アイコン (金色が密)
+        #   チュートリアルボタン = 金色の枠線のみ → extent 低め (<0.55)
         candidates = []
         for c in contours:
             area = cv2.contourArea(c)
@@ -1864,6 +1879,13 @@ def detect_tutorial_gold_button_tap(img_path: Path,
                 continue
             x, y, w, h = cv2.boundingRect(c)
             if w < 100:
+                continue
+            # 充填率: 金色ピクセル密度 (キャラアイコンは金色が密集、ボタン枠は枠線のみ)
+            bbox_area = w * h
+            extent = area / max(bbox_area, 1)
+            if extent > 0.55:
+                logger.debug("[GoldBtn] 充填率排除: bbox=(%d,%d,%d,%d) extent=%.2f (キャラアイコン疑い)",
+                             x, y, w, h, extent)
                 continue
             aspect = h / max(w, 1)
             if 0.5 <= aspect <= 2.0:
