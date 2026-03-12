@@ -3315,11 +3315,12 @@ def main():
             state.last_phash_dist = dist
             if dist < PHASH_THRESHOLD:
                 # 画面変化なし → DL/ロード継続中、解析スキップ
+                # 3秒間隔でポーリング (POLL_INTERVAL=0.2 だと iter 消費が激しい)
                 state.same_phash_count += 1
                 state.last_phash = cur_phash
                 state.last_screen_change_time = time.time()  # Watchdog抑制
-                logger.debug("[iter %d] DL/ロード中: phash変化なし(dist=%d) → 待機続行", i, dist)
-                time.sleep(POLL_INTERVAL)
+                logger.debug("[iter %d] DL/ロード中: phash変化なし(dist=%d) → 3秒待機", i, dist)
+                time.sleep(3.0)
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
                 continue

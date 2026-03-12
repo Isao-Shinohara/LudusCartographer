@@ -18,7 +18,7 @@ REMOTE_PATH = "/sdcard/lc_autopilot.png"
 EVIDENCE_DIR = _CRAWLER_ROOT / "evidence" / f"autopilot_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 # ─── タイミング ───
-MAX_ITERATIONS = 2000
+MAX_ITERATIONS = 5000
 POLL_INTERVAL = 0.2         # phash ポーリング間隔 (秒)
 PHASH_THRESHOLD = 5         # phash 距離 >= 5 → 画面変化あり
 FORCE_ANALYZE_AFTER = 1     # phash 変化なし連続 N 回 → 強制 OCR
