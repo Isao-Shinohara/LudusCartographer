@@ -601,8 +601,16 @@ def detect_and_act(ocr: list, state: PilotState,
     # 条件: 右下エリアに "Download" テキスト + "MB" 進捗テキストが両方存在
     # → これ以外の画面は 100% ゲーム実行中であり、ロード待ちを禁止する。
     # 通信速度やネットワーク状態による推測は一切行わない。
-    _has_download_text = any("Download" in t or "ダウンロード" in t for t in texts)
+    # NOTE: OCR が "Download" を "Downiond"/"Down ond" 等と誤読するため、
+    # "Down" 前方一致 + MB/GB 進捗パターンでも検出する
+    _has_download_text = any(
+        "Download" in t or "ダウンロード" in t or t.startswith("Down") for t in texts)
     _has_size_progress = any("MB" in t or "GB" in t for t in texts)
+    # 追加: "XXX MB/YYY MB" パターン (スラッシュ区切りのサイズ表記) は確実にダウンロード
+    _has_size_slash = any(re.search(r"\d+.*MB/\d+", t) for t in texts)
+    if _has_size_slash:
+        _has_download_text = True
+        _has_size_progress = True
     # 確認/完了ダイアログ除外:
     # - 「ダウンロードを開始しますか?」等の質問 or OK+キャンセル共存
     # - 「ダウンロード完了」等の完了通知 + OK ボタン
