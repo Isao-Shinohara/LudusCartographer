@@ -985,6 +985,23 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
                 return MovieSceneResult()
         except Exception:
             pass
+        # 即棄却: ページドット≥2 → ページングダイアログ (ポップアップの金色装飾が⏭と誤検出される)
+        try:
+            if count_page_dots(img_path) >= 2:
+                logger.debug("[MOVIE_SCENE] ページドット検出 → MOVIE棄却 (ポップアップ)")
+                return MovieSceneResult()
+        except Exception:
+            pass
+        # 即棄却: 背景ぼかし → ポップアップ表示中 (動画ではない)
+        try:
+            _img_blur = imread_cached(img_path)
+            if _img_blur is not None:
+                _Hb, _Wb = _img_blur.shape[:2]
+                if _detect_background_blur(_img_blur, _Hb, _Wb):
+                    logger.debug("[MOVIE_SCENE] 背景ぼかし検出 → MOVIE棄却 (ポップアップ)")
+                    return MovieSceneResult()
+        except Exception:
+            pass
 
     score = 0.0
     # ⏭ スキップボタン
@@ -1602,9 +1619,14 @@ def process_paging_dialog(
                 ocr_texts=ocr_texts,
             )
         if _dlg is None:
-            logger.info("[PAGING] ダイアログ消失 (page=%d) → 完了", _page)
-            state.dialog_detections += 1
-            return "DIALOG_CLOSED"
+            # ページドットが残っているなら固定座標で▷続行 (▷が背景同化で検出不能な場合)
+            if _total_dots >= 2 and _page < _total_dots - 1 and initial_dlg is not None:
+                _dlg = initial_dlg  # 初回の固定座標を再利用
+                logger.info("[PAGING] ▷未検出だがドット残(%d/%d) → 固定座標で続行", _page + 1, _total_dots)
+            else:
+                logger.info("[PAGING] ダイアログ消失 (page=%d) → 完了", _page)
+                state.dialog_detections += 1
+                return "DIALOG_CLOSED"
         _kind, _dx, _dy = _dlg
         if _kind == "close":
             tap_device(_dx, _dy, state, "PAGING_CLOSE")

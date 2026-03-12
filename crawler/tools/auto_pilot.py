@@ -2365,6 +2365,14 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # (動画は30秒以上のものもある。短すぎると TTL 切れ→タップ→一時停止ループに陥る)
     _MOVIE_ACTIONS = ("MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_RESUME_TAP", "MOVIE_SKIP_ESCAPE")
     _MOVIE_INERTIA_TTL = 60
+    # ── MOVIE慣性よりポップアップ検出が優先 ──
+    if state.last_action in _MOVIE_ACTIONS and img_path:
+        _inertia_dots = count_page_dots(img_path)
+        if _inertia_dots >= 2:
+            logger.info("[SCENE_EARLY] MOVIE慣性中だがページドット=%d → ポップアップ脱出", _inertia_dots)
+            state.last_action = "SCENE_TAP"
+            state.movie_wait_consecutive = 0
+            return "UNKNOWN"
     if state.last_action in _MOVIE_ACTIONS:
         if state.movie_wait_consecutive >= _MOVIE_INERTIA_TTL:
             logger.info("[SCENE_EARLY] Movie inertia TTL expired (consecutive=%d) → UNKNOWN",
@@ -2432,6 +2440,14 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         adv = detect_adv_scene_cached(img_path, state)
         if adv.is_adv:
             return "ADV"
+
+    # ── ポップアップ検出: MOVIE判定より先にチェック ──
+    # ページドット≥2 or 背景ぼかし → ポップアップ確定 → MOVIE にしない
+    if img_path:
+        _popup_dots = count_page_dots(img_path)
+        if _popup_dots >= 2:
+            logger.info("[SCENE_EARLY] ページドット=%d → ポップアップ確定, MOVIE判定スキップ", _popup_dots)
+            return "UNKNOWN"
 
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
     if state.last_action not in _MOVIE_ACTIONS:
