@@ -8,6 +8,7 @@ import logging
 import numpy as np
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -70,8 +71,10 @@ def _build_scrcpy_args(device_serial: str) -> list:
     MAX_WIDTH = 720
     logger.info("[SCRCPY] 実機解像度 %dx%d → landscape %dx%d → max-size %d",
                 dev_w, dev_h, land_w, land_h, MAX_WIDTH)
+    # scrcpy バイナリ: PATH 検索で絶対パスを解決 (子プロセスの PATH 差異を回避)
+    _scrcpy_bin = shutil.which("scrcpy") or "scrcpy"
     return [
-        "scrcpy",
+        _scrcpy_bin,
         "-s", device_serial,
         "--turn-screen-off",   # 物理画面消灯
         "--stay-awake",
