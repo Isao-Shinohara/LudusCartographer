@@ -554,7 +554,7 @@ def diagnose_device_connection() -> dict:
 # アプリ管理 (インストール / アンインストール / Play Store)
 # ============================================================
 
-def uninstall_app(serial: str, package: str, timeout: int = 30) -> bool:
+def uninstall_app(serial: str, package: str, timeout: int = 60) -> bool:
     """adb shell pm uninstall でアプリを削除する。成功 or 未インストールで True。"""
     try:
         r = subprocess.run(

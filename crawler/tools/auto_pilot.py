@@ -697,23 +697,18 @@ def detect_and_act(ocr: list, state: PilotState,
         has_text(ocr, "基本無料", min_conf=0.3) and has_text(ocr, "未成年", min_conf=0.3)
     ):
         # 「同意」ボタンをOCRで検出
-        # ご注意画面は非 immersive (ステータスバー表示中) のため、
-        # adb input tap の Y 座標がスクリーンキャプチャより 48px 上にズレる。
-        # 補正: OCR/フォールバック座標の Y からステータスバー高さを差し引く。
-        _STATUS_BAR_Y = _query_status_bar_height()
+        # scrcpy はステータスバー込みの全画面をキャプチャするため、
+        # OCR 座標 → _to_device() でそのまま正しいタップ座標に変換される。
         agree_btn = (has_text(ocr, "同意してゲーム", min_conf=0.2) or
                      has_text(ocr, "同意して", min_conf=0.2) or
                      has_text(ocr, "ゲームを始める", min_conf=0.2))
         if agree_btn:
             cx, cy = agree_btn["center"]
-            logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d) → Y-%d補正",
-                        cx, cy, _STATUS_BAR_Y)
+            logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d)", cx, cy)
         else:
             # フォールバック: 比率ベース (W*0.66, H*0.79) + ROI 補正
             cx, cy = roi_to_device(int(W * 0.66), int(H * 0.79), state.game_roi)
-            logger.info(">>> 【ご注意画面】 同意ボタン未検出 → ROI補正フォールバック (%d,%d) → Y-%d補正",
-                        cx, cy, _STATUS_BAR_Y)
-        cy -= _STATUS_BAR_Y  # 非 immersive ステータスバー補正
+            logger.info(">>> 【ご注意画面】 同意ボタン未検出 → ROI補正フォールバック (%d,%d)", cx, cy)
 
         # ─── phash監視付き動的リトライ (固定120秒スリープを廃止) ───
         # 仕様: タップ → 2s待機 → phash変化確認 → 変化なし → x+20pxずらして最大5回リトライ
@@ -2663,8 +2658,12 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             pass
         return False
 
-    def _uiautomator_find_button(content_desc: str) -> Optional[tuple]:
-        """uiautomator dump でボタンの中心座標を取得 (OCR フォールバック用)。"""
+    def _uiautomator_find_button(keywords: list) -> Optional[tuple]:
+        """uiautomator dump でボタンの中心座標を取得。
+
+        text / content-desc 属性を keywords リストで検索する。
+        Play Store 等のネイティブ Android UI では OCR より確実。
+        """
         try:
             subprocess.run(
                 ["adb", "-s", serial, "shell", "uiautomator", "dump", "/sdcard/ui.xml"],
@@ -2676,25 +2675,18 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             )
             if r.returncode != 0:
                 return None
-            # content-desc="インストール" の親 clickable を探す
             import re as _re
-            # clickable ボタンの bounds を探す
-            for m in _re.finditer(r'clickable="true"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', r.stdout):
-                x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
-                # この bounds 内に content_desc が含まれるか確認
-                # ボタン全体の幅が画面の 90% 以上 → インストールボタン候補
-                if (x2 - x1) > 900 and 1200 < y1 < 1500:
-                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                    logger.info("[FRESH_INSTALL] uiautomator フォールバック: bounds=[%d,%d][%d,%d] → (%d,%d)",
-                                x1, y1, x2, y2, cx, cy)
-                    return (cx, cy)
-            # content-desc で直接検索
-            for m in _re.finditer(r'content-desc="' + _re.escape(content_desc) + r'"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', r.stdout):
-                x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
-                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                logger.info("[FRESH_INSTALL] uiautomator content-desc: bounds=[%d,%d][%d,%d] → (%d,%d)",
-                            x1, y1, x2, y2, cx, cy)
-                return (cx, cy)
+            xml_text = r.stdout
+            # text 属性 → content-desc 属性の順で検索
+            for kw in keywords:
+                for attr in ("text", "content-desc"):
+                    pat = attr + r'="[^"]*' + _re.escape(kw) + r'[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
+                    for m in _re.finditer(pat, xml_text):
+                        x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+                        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                        logger.info("[FRESH_INSTALL] uiautomator %s='%s': bounds=[%d,%d][%d,%d] → (%d,%d)",
+                                    attr, kw, x1, y1, x2, y2, cx, cy)
+                        return (cx, cy)
         except Exception as e:
             logger.warning("[FRESH_INSTALL] uiautomator dump 失敗: %s", e)
         return None
@@ -2710,12 +2702,27 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         return
     time.sleep(5)
 
-    # --- Step 3: OCR → インストールボタンをタップ ---
+    # --- Step 3: uiautomator 優先 → OCR フォールバックでインストールボタンをタップ ---
     tmp_ss = str(Path(tempfile.gettempdir()) / "fresh_install_ss.png")
     installed_via_tap = False
 
     for attempt in range(MAX_OCR_ATTEMPTS):
-        logger.info("[FRESH_INSTALL] OCR 試行 %d/%d", attempt + 1, MAX_OCR_ATTEMPTS)
+        logger.info("[FRESH_INSTALL] 試行 %d/%d", attempt + 1, MAX_OCR_ATTEMPTS)
+
+        # --- 1st: uiautomator (ネイティブ UI 用、最も確実) ---
+        _ui_pos = _uiautomator_find_button(INSTALL_KEYWORDS)
+        if _ui_pos:
+            _adb_tap(_ui_pos[0], _ui_pos[1])
+            time.sleep(3)
+            # タップ検証
+            _ui_verify = _uiautomator_find_button(INSTALL_KEYWORDS)
+            if _ui_verify is None:
+                logger.info("[FRESH_INSTALL] uiautomator タップ成功 — インストール開始を確認")
+                installed_via_tap = True
+                break
+            logger.warning("[FRESH_INSTALL] uiautomator タップ空振り — OCR フォールバック")
+
+        # --- 2nd: OCR フォールバック ---
         if not _adb_screenshot(tmp_ss):
             logger.warning("[FRESH_INSTALL] スクリーンショット取得失敗 — リトライ")
             time.sleep(2)
@@ -2739,47 +2746,43 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 time.sleep(5)
                 break
 
-        # 「インストール」ボタンを検出
+        # 「インストール」ボタンを OCR 検出
         for kw in INSTALL_KEYWORDS:
             hit = find_best(ocr_results, kw)
             if hit:
                 cx, cy = hit["center"]
-                logger.info("[FRESH_INSTALL] 「%s」検出 → タップ (%d, %d)", kw, cx, cy)
+                logger.info("[FRESH_INSTALL] OCR「%s」検出 → タップ (%d, %d)", kw, cx, cy)
                 _adb_tap(cx, cy)
                 time.sleep(3)
 
-                # --- タップ検証: インストールが開始されたか確認 ---
+                # タップ検証: 「インストール」がまだ見えるか
                 _tap_ok = False
-                if _adb_screenshot(tmp_ss):
+                _ui_check = _uiautomator_find_button(INSTALL_KEYWORDS)
+                if _ui_check is None:
+                    _tap_ok = True
+                    logger.info("[FRESH_INSTALL] タップ成功 — インストール開始を確認")
+                elif _adb_screenshot(tmp_ss):
                     try:
                         _verify_ocr = run_ocr(tmp_ss)
-                        # 「インストール」がまだ見える → タップ失敗
-                        _still_visible = any(
-                            find_best(_verify_ocr, ik) for ik in INSTALL_KEYWORDS
-                        )
-                        if not _still_visible:
+                        if not any(find_best(_verify_ocr, ik) for ik in INSTALL_KEYWORDS):
                             _tap_ok = True
-                            logger.info("[FRESH_INSTALL] タップ成功 — インストール開始を確認")
                     except Exception:
-                        _tap_ok = True  # OCR 失敗 → 成功と仮定
+                        _tap_ok = True
 
-                if not _tap_ok:
-                    # OCR タップ失敗 → uiautomator fallback
-                    logger.warning("[FRESH_INSTALL] OCR タップ空振り — uiautomator フォールバック")
-                    _ui_pos = _uiautomator_find_button("インストール")
-                    if _ui_pos:
-                        _adb_tap(_ui_pos[0], _ui_pos[1])
-                        time.sleep(3)
-                    else:
-                        logger.warning("[FRESH_INSTALL] uiautomator でもボタン未検出 — リトライ")
-                        continue
+                if _tap_ok:
+                    installed_via_tap = True
+                    break
+                logger.warning("[FRESH_INSTALL] OCR タップ空振り — リトライ")
+                continue
 
-                installed_via_tap = True
-                break
         if installed_via_tap:
-            # 権限ダイアログ処理
+            # 権限ダイアログ処理 (uiautomator 優先)
             time.sleep(2)
-            if _adb_screenshot(tmp_ss):
+            _acc_pos = _uiautomator_find_button(ACCEPT_KEYWORDS)
+            if _acc_pos:
+                logger.info("[FRESH_INSTALL] 権限ダイアログ → uiautomator タップ (%d, %d)", _acc_pos[0], _acc_pos[1])
+                _adb_tap(_acc_pos[0], _acc_pos[1])
+            elif _adb_screenshot(tmp_ss):
                 try:
                     ocr2 = run_ocr(tmp_ss)
                     for akw in ACCEPT_KEYWORDS:
