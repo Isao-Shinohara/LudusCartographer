@@ -1860,10 +1860,10 @@ def detect_tutorial_gold_button_tap(img_path: Path,
         upper_gold = np.array([50, 255, 255], dtype=np.uint8)
         mask = cv2.inRange(hsv, lower_gold, upper_gold)
 
-        # モルフォロジー: 枠線の隙間を埋めて矩形を繋ぐ
+        # モルフォロジー: 枠線の隙間を埋めて矩形を繋ぐ (膨張は1回に抑制→bbox下方ズレ防止)
         k7 = np.ones((7, 7), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k7)
-        mask = cv2.dilate(mask, k7, iterations=2)
+        mask = cv2.dilate(mask, k7, iterations=1)
 
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
@@ -1891,6 +1891,10 @@ def detect_tutorial_gold_button_tap(img_path: Path,
             if 0.5 <= aspect <= 2.0:
                 cx = x + w // 2
                 cy = y + h // 2
+                # 画面上部 (y<35%) は除外 — ホーム画面装飾の誤検出防止
+                if cy < H_img * 0.35:
+                    logger.debug("[GoldBtn] 上部除外: bbox=(%d,%d,%d,%d) cy=%d", x, y, w, h, cy)
+                    continue
                 # 右半分のみフィルタ
                 if right_half_only and cx < W_img * 0.5:
                     continue
