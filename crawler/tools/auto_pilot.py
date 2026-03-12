@@ -2367,18 +2367,18 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         except Exception:
             pass
 
-    # BATTLE 初回検出: 右下の「通常攻撃」ボタンアイコンで判定
+    # BATTLE 初回検出: 右下の「通常攻撃」or「戦闘スキル」ボタンアイコンで判定
     # ADV ツールバーの AUTO/FF がバトル画面にも存在するため、ADV 判定より先に実行
     from tools.ap.image_proc import ASSET_MANAGER as _AM_battle
     try:
-        _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.80),
-                       int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.20))
-        _battle_m = _AM_battle.match_single(
-            "battle_normal_attack", img_path, roi=_battle_roi)
-        if _battle_m and _battle_m[2] >= 0.60:
-            logger.info("[SCENE_EARLY] Battle初回検出 (通常攻撃ボタン score=%.2f) → BATTLE",
-                        _battle_m[2])
-            return "BATTLE"
+        _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
+                       int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+        for _btn_name in ("battle_normal_attack", "battle_skill"):
+            _battle_m = _AM_battle.match_single(_btn_name, img_path, roi=_battle_roi)
+            if _battle_m and _battle_m[2] >= 0.60:
+                logger.info("[SCENE_EARLY] Battle初回検出 (%s score=%.2f) → BATTLE",
+                            _btn_name, _battle_m[2])
+                return "BATTLE"
     except Exception:
         pass
 
