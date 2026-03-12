@@ -2338,8 +2338,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         if state.movie_wait_consecutive >= _MOVIE_INERTIA_TTL:
             logger.info("[SCENE_EARLY] Movie inertia TTL expired (consecutive=%d) → UNKNOWN",
                         state.movie_wait_consecutive)
-            # NOTE: movie_wait_consecutive をリセットしない
-            # MOVIE_GUARD_ESCAPE が累積カウントで脱出できるようにする
+            # 慣性を完全に断ち切る: last_action を非MOVIE系にリセット
+            # → 次イテレーションで再び MOVIE 慣性に入るのを防止
+            state.last_action = "SCENE_TAP"
+            state.movie_wait_consecutive = 0
         else:
             adv = detect_adv_scene_cached(img_path, state)
             if not adv.is_adv and state.current_scene not in ("BATTLE", "MENU"):
@@ -3911,7 +3913,9 @@ def main():
                     _resume_x, _resume_y = roi_to_device(
                         int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state.game_roi)
                     tap_device(_resume_x, _resume_y, state, "MOVIE_RESUME_TAP")
-                    state.last_action = "MOVIE_RESUME_TAP"
+                    # MOVIE慣性を断ち切る: last_action を非MOVIE系にして
+                    # detect_scene_early() がフルOCRに落ちるようにする
+                    state.last_action = "SCENE_TAP"
                 state.last_phash = ""
                 state.same_phash_count = 0
                 continue
