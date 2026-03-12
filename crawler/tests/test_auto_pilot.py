@@ -1031,13 +1031,15 @@ class TestAdvSceneWithAdvanceIcon:
     @patch("tools.ap.image_proc.detect_adv_advance_icon", return_value=True)
     @patch("tools.ap.image_proc.ASSET_MANAGER")
     def test_two_icons_plus_advance(self, mock_am, mock_adv_down, tmp_path):
-        """2 アイコン + detect_adv_advance_icon=True → is_adv=True。"""
+        """2 ADV固有アイコン + detect_adv_advance_icon=True → is_adv=True。
+        NOTE: AUTO+FF だけではバトル画面と区別できないため、
+        ADV専用アイコン (menu/log/skip) を含む必要がある。"""
         import cv2
         import numpy as np
         from tools.ap.image_proc import detect_adv_scene, ANALYSIS_W, ANALYSIS_H
 
         mock_am.match_single.side_effect = self._mock_match_single(
-            {"adv_icon_auto", "adv_icon_ff"})
+            {"adv_icon_auto", "adv_icon_skip"})
 
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
         img_path = tmp_path / "two_icons_advance.png"

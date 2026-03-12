@@ -748,14 +748,21 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
         _icon_scores[i] >= icon_threshold
         for i in (2, 3, 4) if i < len(_icon_scores)
     )
+    # バトル画面との区別: menu(0)/log(1)/skip(4) はバトルに存在しないADV専用アイコン
+    # AUTO(2)/FF(3) はバトルにも存在するため区別に使えない
+    _has_adv_only = any(
+        _icon_scores[i] >= 0.40
+        for i in (0, 1, 4) if i < len(_icon_scores)
+    )
     # ↓ボタン検出 (AUTO あり or ADV固有アイコン含む2アイコン救済時のみ実行)
     _has_advance_icon = False
     if _has_auto or (_matched_count >= 2 and _matched_count < 3 and _has_adv_specific):
         _has_advance_icon = detect_adv_advance_icon(img_path)
-    # 判定: 3アイコン | 2アイコン(ADV固有含む)+↓ | AUTO+↓
+    # 判定: 3アイコン | 2アイコン(ADV固有含む)+↓ | AUTO+↓+ADV専用アイコン
+    # NOTE: AUTO+↓ だけではバトル画面でも成立するため、ADV専用アイコンを要求
     _all_matched = (_matched_count >= 3
-                    or (_matched_count >= 2 and _has_advance_icon and _has_adv_specific)
-                    or (_has_auto and _has_advance_icon))
+                    or (_matched_count >= 2 and _has_advance_icon and _has_adv_only)
+                    or (_has_auto and _has_advance_icon and _has_adv_only))
     result.toolbar_score = min(_icon_scores) if _icon_scores else 0.0
     if _all_matched and _icon_scores:
         # toolbar_pos = AUTO アイコンの位置 (3番目)
