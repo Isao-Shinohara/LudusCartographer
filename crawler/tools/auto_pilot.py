@@ -3682,7 +3682,7 @@ def main():
         _movie_detect = detect_movie_scene(
             analysis_path, adv_result=_adv_result,
             ocr_texts=texts, phash_dist=dist)
-        if _movie_detect.is_movie and scene not in ("BATTLE", "MENU"):
+        if _movie_detect.is_movie and _movie_detect.has_skip_btn and scene not in ("BATTLE", "MENU"):
             # ダウンロード直後のみ動画SKIP許可 (通常ストーリー動画は視聴)
             if state.post_download:
                 _skip_item = next(
