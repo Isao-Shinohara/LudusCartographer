@@ -76,6 +76,7 @@ _UI_TEXT_KWS: tuple = ("利用規約", "同意", "規約", "プライバシー",
 _SINGLE_ONLY: frozenset = frozenset([
     "adv_next_btn",
     "adv_icon_menu", "adv_icon_log", "adv_icon_auto", "adv_icon_ff", "adv_icon_skip",
+    "battle_normal_attack", "battle_skill",
 ])
 
 # ─── ダイアログ・ファースト: 検知キーワード一覧 ───────────────────────────────
