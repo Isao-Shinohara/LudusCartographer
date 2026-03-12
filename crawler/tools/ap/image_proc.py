@@ -1876,16 +1876,17 @@ def detect_tutorial_gold_button_tap(img_path: Path,
         if not contours:
             return None
 
-        # ボタン候補: アスペクト比0.5~2.0 かつ面積8000~50000 かつ幅100px以上
+        # ボタン候補: アスペクト比0.5~2.0 かつ面積5000~50000 かつ幅80px以上
         # キャラアイコン除外: 金色の充填率 (extent) が高い = アイコン (金色が密)
         #   チュートリアルボタン = 金色の枠線のみ → extent 低め (<0.55)
+        # NOTE: ホーム画面の編成ボタン金枠は area~7800 のため 8000 では漏れる
         candidates = []
         for c in contours:
             area = cv2.contourArea(c)
-            if area < 8000 or area > 50000:
+            if area < 5000 or area > 50000:
                 continue
             x, y, w, h = cv2.boundingRect(c)
-            if w < 100:
+            if w < 80:
                 continue
             # 充填率: 金色ピクセル密度 (キャラアイコンは金色が密集、ボタン枠は枠線のみ)
             bbox_area = w * h
