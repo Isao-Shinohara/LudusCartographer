@@ -64,7 +64,7 @@ logging.getLogger("PIL.PngImagePlugin").setLevel(logging.WARNING)
 from tools.ap.constants import (  # noqa: E402
     _CRAWLER_ROOT, SCREENSHOT_PATH, ANALYSIS_PATH, REMOTE_PATH, EVIDENCE_DIR,
     MAX_ITERATIONS, POLL_INTERVAL, PHASH_THRESHOLD, FORCE_ANALYZE_AFTER,
-    STALL_TIMEOUT, BATTLE_WAIT, DOWNLOAD_WAIT, MIN_TAP_INTERVAL,
+    STALL_TIMEOUT, BATTLE_WAIT, DOWNLOAD_WAIT, MIN_TAP_INTERVAL, MIN_CAPTURE_INTERVAL,
     WATCHDOG_DEADLOCK_THRESHOLD, WATCHDOG_MAX_SOFT_RECOVERIES,
     WATCHDOG_MAX_TOTAL_RECOVERIES, APP_PACKAGE, APP_ACTIVITY,
     WATCHDOG_EXEMPT_ACTIONS, ADV_RAPID_PHASH_MAX, BLACKOUT_BRIGHTNESS,
@@ -2911,16 +2911,23 @@ def main():
             else:
                 logger.info("[WATCHDOG] Periodic check OK")
 
-        # ── 0.5) タップ後クールダウン: 残り時間を sleep してからキャプチャ ──
-        # MIN_TAP_INTERVAL (1.0s) 未満のループでは無駄なスクショを回避
-        # 安全弁: 最大 3.0s キャップ (不具合で無限停止しない)
+        # ── 0.5) キャプチャ前クールダウン ──
+        # a) タップ後: MIN_TAP_INTERVAL 未満なら残り時間を待つ
+        #    安全弁: 最大 3.0s キャップ (不具合で無限停止しない)
         if state.last_action_time > 0:
             _cooldown_remaining = MIN_TAP_INTERVAL - (time.time() - state.last_action_time)
             if 0 < _cooldown_remaining <= 3.0:
                 time.sleep(_cooldown_remaining)
+        # b) キャプチャ間隔: MIN_CAPTURE_INTERVAL 未満なら残り時間を待つ
+        #    scrcpy 高速キャプチャ (~100ms) でのCPU/メモリ浪費を抑制
+        if state.last_capture_time > 0:
+            _cap_remaining = MIN_CAPTURE_INTERVAL - (time.time() - state.last_capture_time)
+            if 0 < _cap_remaining <= 3.0:
+                time.sleep(_cap_remaining)
 
         # ── 1) スクリーンショット取得 ──
         img_path, actual_w, actual_h, _ss_retries = take_screenshot()
+        state.last_capture_time = time.time()
         state.screenshot_retry_count += _ss_retries
         if _ss_retries > 0:
             logger.info("[SCREENSHOT] 破損リトライ %d回 (累計: %d回)",

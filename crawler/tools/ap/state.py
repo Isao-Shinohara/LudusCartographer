@@ -158,6 +158,7 @@ class PilotState:
     _adv_scene_cache_result: object = None  # AdvSceneResult (循環import回避でobject型)
     # ─── テレメトリ (DEBUG レベル) ───
     last_action_time: float = 0.0          # 直近アクションの実行時刻
+    last_capture_time: float = 0.0         # 直近スクショ取得時刻
     transition_times: list = field(default_factory=list)  # 遷移時間ヒストリ (最大100件)
     # ─── タップ候補リスト (OCR再解析省略) ───
     pending_candidates: list = field(default_factory=list)   # list[TapCandidate]

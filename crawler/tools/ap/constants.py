@@ -26,6 +26,7 @@ STALL_TIMEOUT = 15.0        # 強制OCRでもタップできず続く秒数 → 
 BATTLE_WAIT = 0.0           # バトル待機 (tap_device の MIN_TAP_INTERVAL=1.0s が保証)
 DOWNLOAD_WAIT = 10.0
 MIN_TAP_INTERVAL = 1.0      # 全場面共通: タップ間隔は最低1.0秒
+MIN_CAPTURE_INTERVAL = 0.1  # スクショ取得の最低間隔 (秒) scrcpy高速キャプチャ用
 
 # ─── Watchdog: デッドロック自動復旧 ───
 WATCHDOG_DEADLOCK_THRESHOLD = 600.0  # 10分以上画面変化なし → デッドロック判定
