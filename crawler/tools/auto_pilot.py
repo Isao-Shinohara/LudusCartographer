@@ -2916,24 +2916,26 @@ def main():
     logger.info("[DEVICE_RES] wm size: %dx%d / 解析基準: %dx%d (ROI補正で座標変換)",
                 _dev_w, _dev_h, ANALYSIS_W, ANALYSIS_H)
 
-    # ─── 初回アプリ起動: mResumedActivity で正確な前面アプリ判定 ───
+    # ─── 初回アプリ起動: mCurrentFocus で正確な前面アプリ判定 ───
+    # NOTE: mResumedActivity はバックグラウンドスタックも含む複数行を返すことがあり
+    #       誤って「既に前面」と判定する問題があった。mCurrentFocus は1行のみ確実。
     try:
         adb("shell input keyevent KEYCODE_WAKEUP")
         time.sleep(0.5)
-        _resumed = adb("shell dumpsys activity activities | grep mResumedActivity")
-        if APP_PACKAGE not in _resumed:
-            logger.info("[STARTUP] アプリが前面にない → am start で起動します (mResumedActivity: %s)",
-                        _resumed.strip())
+        _focus = adb("shell dumpsys window | grep mCurrentFocus")
+        if APP_PACKAGE not in _focus:
+            logger.info("[STARTUP] アプリが前面にない → am start で起動します (mCurrentFocus: %s)",
+                        _focus.strip())
             adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
-            # ポーリングで起動確認 (盲目 sleep(15) を廃止)
+            # ポーリングで起動確認
             for _poll in range(10):
                 time.sleep(2)
-                _resumed2 = adb("shell dumpsys activity activities | grep mResumedActivity")
-                if APP_PACKAGE in _resumed2:
+                _focus2 = adb("shell dumpsys window | grep mCurrentFocus")
+                if APP_PACKAGE in _focus2:
                     logger.info("[STARTUP] アプリ前面確認 (%.1f秒)", (_poll + 1) * 2)
                     break
-                logger.info("[STARTUP] 起動待ち (%d/10)... mResumedActivity: %s",
-                            _poll + 1, _resumed2.strip())
+                logger.info("[STARTUP] 起動待ち (%d/10)... mCurrentFocus: %s",
+                            _poll + 1, _focus2.strip())
         else:
             logger.info("[STARTUP] アプリ既に前面: %s", APP_PACKAGE)
     except Exception as _e:
