@@ -95,6 +95,7 @@ from tools.ap.device import (  # noqa: E402
     set_device_serial, set_scrcpy_device,
     adb, tap_device, swipe, swipe_device, take_screenshot, manage_scrcpy,
     get_device_resolution, _query_status_bar_height, check_adb_liveness,
+    pop_last_scrcpy_bgr,
 )
 # DEVICE_SERIAL / SCRCPY_DEVICE はモジュール変数 — 読取りは _ap_device 経由
 # 後方互換 re-export 用プロパティ代替
@@ -1388,6 +1389,12 @@ def detect_and_act(ocr: list, state: PilotState,
                     _blob_fallback = _b  # 右側優先フォールバック
             if _blob_fallback is None and blobs:
                 _blob_fallback = blobs[0]
+            # ── Hard Mask 一時ファイルを削除 (メモリリーク防止) ──
+            if _hm_analysis != analysis_path:
+                try:
+                    Path(_hm_analysis).unlink(missing_ok=True)
+                except OSError:
+                    pass
 
             if _blob_with_gold is not None:
                 chosen = _blob_with_gold
@@ -2935,7 +2942,8 @@ def main():
             continue
         # メモリ上に最新画像を保持 + ROI更新 (スロットル: 画面変化時 or 50iter毎)
         try:
-            state.last_screen = cv2.imread(str(img_path))
+            _cached_bgr = pop_last_scrcpy_bgr()
+            state.last_screen = _cached_bgr if _cached_bgr is not None else cv2.imread(str(img_path))
             _roi_needed = (state.game_roi is None or i % 50 == 0
                            or state.same_phash_count == 0)  # phash変化直後
             if state.last_screen is not None and _roi_needed:
@@ -3994,11 +4002,11 @@ def main():
         logger.info("  [PERF] Loop %.0fms (OCR)", _loop_elapsed_ms)
 
         # ── 9) メモリ解放 (SIGSEGV防止) ──
-        # cv2 オブジェクトを毎イテレーション解放してメモリ断片化を防ぐ
-        if i % 50 == 0:
+        # scrcpy 高速ループ (~5iter/sec) では CF/numpy 一時オブジェクトが蓄積しやすい
+        if i % 10 == 0:
             gc.collect()
             # scrcpy 不死身モード: 50イテレーションごとにチェック
-            if i > 0:
+            if i > 0 and i % 50 == 0:
                 if _scrcpy_proc is None or _scrcpy_proc.poll() is not None:
                     logger.info("[SCRCPY] プロセス消滅を検知 — 自動再起動")
                     _scrcpy_proc = manage_scrcpy()

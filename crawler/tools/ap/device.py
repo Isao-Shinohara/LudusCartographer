@@ -35,6 +35,7 @@ except ImportError:
 DEVICE_SERIAL = ""   # main() で設定される
 SCRCPY_DEVICE = ""   # main() で DEVICE_SERIAL から動的設定
 _SCRCPY_WINDOW_ID: int = 0   # キャッシュ (0=未取得)
+_LAST_SCRCPY_BGR: Optional[np.ndarray] = None  # scrcpy キャプチャの BGR キャッシュ (二重読み防止)
 
 
 def set_device_serial(s: str) -> None:
@@ -185,6 +186,8 @@ def _capture_scrcpy_window(wid: int, path: Path) -> Optional[np.ndarray]:
         data = _Quartz.CGDataProviderCopyData(data_provider)
         arr = np.frombuffer(data, dtype=np.uint8).reshape(height, bpr // 4, 4)[:, :width, :]
         bgr = arr[:, :, :3].copy()  # BGRA → BGR (macOS Quartz は BGRA 順)
+        # ── Quartz CF オブジェクトを即座に解放 (メモリリーク防止) ──
+        del arr, data, data_provider, image
         # ── タイトルバークロップ: デバイスアスペクト比から期待高さを算出 ──
         dev_w, dev_h = _get_cached_device_resolution()
         if dev_w > 0 and dev_h > 0:
@@ -234,6 +237,7 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
     Returns: (path, device_w, device_h) or None
     ※ device_w/h は実機解像度 (wm size) を返す (scrcpy ウィンドウサイズではない)
     """
+    global _LAST_SCRCPY_BGR
     if not _HAS_QUARTZ:
         return None
     wid = _SCRCPY_WINDOW_ID or _find_scrcpy_window_id()
@@ -243,7 +247,9 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
     if bgr is None:
         # キャプチャ失敗 → ウィンドウ ID リセット (次回再取得)
         _find_scrcpy_window_id()
+        _LAST_SCRCPY_BGR = None
         return None
+    _LAST_SCRCPY_BGR = bgr  # cv2.imread 不要にするキャッシュ
     # 実機解像度を返す (scrcpy ウィンドウはリサイズ済みで実機と異なる)
     dev_w, dev_h = _get_cached_device_resolution()
     if dev_w <= 0 or dev_h <= 0:
@@ -251,6 +257,18 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
         _h, _w = bgr.shape[:2]
         dev_w, dev_h = _w, _h
     return path, dev_w, dev_h
+
+
+def pop_last_scrcpy_bgr() -> Optional[np.ndarray]:
+    """scrcpy キャプチャ済み BGR を取得してキャッシュをクリア。
+
+    take_screenshot 後に1度だけ呼び、cv2.imread の二重読みを回避する。
+    ADB フォールバック時は None を返す。
+    """
+    global _LAST_SCRCPY_BGR
+    bgr = _LAST_SCRCPY_BGR
+    _LAST_SCRCPY_BGR = None
+    return bgr
 
 
 def _take_screenshot_adb(path: Path, retries: int = 3,
