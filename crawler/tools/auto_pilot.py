@@ -1682,7 +1682,6 @@ def detect_and_act(ocr: list, state: PilotState,
                 logger.info(">>> ホーム画面 + 遷移試行 %d回目 → 画面変化待ち", state.home_nav_count)
                 return "HOME_NAV_WAIT", 2.0
         # ── 右上吹き出しセリフチェック: まだチュートリアルガイダンス中 ──
-        import re
         _BUBBLE_EXCLUDE_EXACT = {"AUTO", ">>", ">|", "D1", "×", "+", "■", "畄", "目", "SKIP"}
         _BUBBLE_EXCLUDE_SUBSTR = ("Max", "Lv", "Lx", "Rank", "LV", "MadoDora")
         _BUBBLE_NUM_RE = re.compile(r'^[\d,./:%+\-・\s]+$')
@@ -2072,7 +2071,6 @@ def detect_and_act(ocr: list, state: PilotState,
     # ─── 右上吹き出しセリフ (メニュー画面上のキャラガイダンス) ───
     # 右上エリア (x>55%, y<35%) にテキストがあり、AUTO/>> ボタン等のUI要素と共存
     # → セリフが止まっている (前回と同一テキスト or phash安定) ならタップで送る
-    import re
     _BUBBLE_EXCLUDE_EXACT_2 = {"AUTO", ">>", ">|", "D1", "×", "+", "■", "畄", "目", "SKIP"}
     _BUBBLE_EXCLUDE_SUBSTR_2 = ("Max", "Lv", "Lx", "Rank", "LV", "MadoDora")
     _BUBBLE_NUM_RE_2 = re.compile(r'^[\d,./:%+\-・\s]+$')
