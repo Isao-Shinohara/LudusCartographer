@@ -24,6 +24,28 @@ from tools.ap.helpers import has_any
 
 logger = logging.getLogger("auto_pilot")
 
+# ─── イテレーション単位 imread キャッシュ ───
+# 同一イテレーション内で同じファイルを複数回読むのを防ぐ。
+# メインループ冒頭で clear_imread_cache() を呼ぶこと。
+_IMREAD_CACHE: dict[tuple[str, int], np.ndarray] = {}
+
+
+def imread_cached(path, flags: int = cv2.IMREAD_COLOR) -> Optional[np.ndarray]:
+    """cv2.imread のキャッシュ付きラッパー。同一パス+フラグなら再読み込みしない。"""
+    key = (str(path), flags)
+    cached = _IMREAD_CACHE.get(key)
+    if cached is not None:
+        return cached
+    img = cv2.imread(str(path), flags)
+    if img is not None:
+        _IMREAD_CACHE[key] = img
+    return img
+
+
+def clear_imread_cache() -> None:
+    """イテレーション開始時にキャッシュをクリア。"""
+    _IMREAD_CACHE.clear()
+
 
 def detect_game_roi(img) -> tuple[int, int, int, int]:
     """
@@ -89,7 +111,7 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
     このパターンはチュートリアル冒頭の歩行シーンに固有。
     """
     try:
-        img = cv2.imread(str(img_path))
+        img = imread_cached(img_path)
         if img is None:
             return False
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -134,7 +156,7 @@ def prepare_analysis_image(img_path: Path, actual_w: int, actual_h: int) -> Path
         img.save(analysis_path)
     except Exception:
         # PIL が破損 PNG で SyntaxError を投げる場合 cv2 にフォールバック
-        _cv_img = cv2.imread(str(img_path))
+        _cv_img = imread_cached(img_path)
         if _cv_img is None:
             return img_path  # 完全に読めない → 元画像をそのまま返す
         h, w = _cv_img.shape[:2]
@@ -158,7 +180,7 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
     返値: [(cx, cy, area, bbox_x, bbox_y, bbox_w, bbox_h), ...] 面積降順
     """
     try:
-        img = cv2.imread(str(img_path))
+        img = imread_cached(img_path)
         if img is None:
             return []
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -248,7 +270,7 @@ def detect_white_hand_pointer(
     Returns: (cx, cy, score) or None
     """
     try:
-        img = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
+        img = imread_cached(img_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             return None
         templates_dir = _CRAWLER_ROOT / "assets" / "templates"
@@ -257,7 +279,7 @@ def detect_white_hand_pointer(
             tpl_path = templates_dir / f"{name}.png"
             if not tpl_path.exists():
                 continue
-            tmpl = cv2.imread(str(tpl_path), cv2.IMREAD_GRAYSCALE)
+            tmpl = imread_cached(tpl_path, cv2.IMREAD_GRAYSCALE)
             if tmpl is None or tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
                 continue
             res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
@@ -280,7 +302,7 @@ def create_finger_mask_image(img_path: Path, cx: int, cy: int, half: int = 175) 
     失敗した場合は元の img_path を返す。
     """
     try:
-        _img_hm = cv2.imread(str(img_path))
+        _img_hm = imread_cached(img_path)
         if _img_hm is None:
             return img_path
         _H_hm, _W_hm = _img_hm.shape[:2]
@@ -310,7 +332,7 @@ def detect_guide_glow(img_path: Path, W: int, H: int,
             "bx":int,"by":int,"bw":int,"bh":int}, ...] 面積降順
     """
     try:
-        _img_gw = cv2.imread(str(img_path))
+        _img_gw = imread_cached(img_path)
         if _img_gw is None:
             return []
         _Hg, _Wg = _img_gw.shape[:2]
@@ -449,7 +471,7 @@ def detect_active_battle_char(
     Returns: (cx, cy, brightness_ratio) or None
     """
     try:
-        _img = cv2.imread(str(img_path))
+        _img = imread_cached(img_path)
         if _img is None:
             return None
         _h, _w = _img.shape[:2]
@@ -532,7 +554,7 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
     Returns: (frame_cx, frame_cy, frame_w, frame_h) or None
     """
     try:
-        img = cv2.imread(str(img_path))
+        img = imread_cached(img_path)
         if img is None:
             return None
         H_img, W_img = img.shape[:2]
@@ -609,7 +631,7 @@ def detect_adv_advance_icon(img_path: Path,
     max_bright で大量の白テキスト (利用規約画面等) を排除。
     """
     try:
-        _img = cv2.imread(str(img_path))
+        _img = imread_cached(img_path)
         if _img is None:
             return False
         _H, _W = _img.shape[:2]
@@ -820,7 +842,7 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
     返り値: (cx, cy) or None
     """
     try:
-        _img = cv2.imread(str(img_path))
+        _img = imread_cached(img_path)
         if _img is None:
             return None
         _H, _W = _img.shape[:2]
@@ -986,7 +1008,7 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
     Returns: (cx, cy, "left"|"right") or None
     """
     try:
-        img = cv2.imread(str(img_path))
+        img = imread_cached(img_path)
         if img is None:
             return None
         resized = cv2.resize(img, (ANALYSIS_W, ANALYSIS_H))
@@ -1093,14 +1115,14 @@ def detect_tutorial_dialog_nav(img_path: Path,
     Returns: ("next", cx, cy) | ("close", cx, cy) | None
     """
     try:
-        _img = cv2.imread(str(img_path))
+        _img = imread_cached(img_path)
         if _img is None:
             return None
         _H, _W = _img.shape[:2]
 
         def _match_template(tmpl_path: Path, roi_x1: int, roi_y1: int,
                             roi_x2: int, roi_y2: int) -> Optional[tuple[int, int]]:
-            _tmpl = cv2.imread(str(tmpl_path))
+            _tmpl = imread_cached(tmpl_path)
             if _tmpl is None:
                 return None
             _roi = _img[roi_y1:roi_y2, roi_x1:roi_x2]
@@ -1165,7 +1187,7 @@ def detect_dialog_frame_and_nav(
              None  — ダイアログ未検出
     """
     try:
-        img = cv2.imread(str(img_path))
+        img = imread_cached(img_path)
         if img is None:
             return None
         _H, _W = img.shape[:2]
@@ -1185,7 +1207,7 @@ def detect_dialog_frame_and_nav(
             _roi_x = img_full[0:_ry2, _rx1:_W]
             if _roi_x.size == 0:
                 return None
-            _tpl = cv2.imread(str(_DIALOG_CLOSE_TEMPLATE))
+            _tpl = imread_cached(_DIALOG_CLOSE_TEMPLATE)
             if (_roi_x.shape[0] < _tpl.shape[0]
                     or _roi_x.shape[1] < _tpl.shape[1]):
                 return None
@@ -1328,7 +1350,7 @@ def detect_dialog_frame_and_nav(
             if _froi.size > 0:
                 # テンプレートマッチング
                 if _DIALOG_CLOSE_TEMPLATE.exists():
-                    _tpl = cv2.imread(str(_DIALOG_CLOSE_TEMPLATE))
+                    _tpl = imread_cached(_DIALOG_CLOSE_TEMPLATE)
                     if _froi.shape[0] >= _tpl.shape[0] and _froi.shape[1] >= _tpl.shape[1]:
                         _r_f = cv2.matchTemplate(_froi, _tpl, cv2.TM_CCOEFF_NORMED)
                         _, _mv_f, _, _ml_f = cv2.minMaxLoc(_r_f)
@@ -1344,9 +1366,9 @@ def detect_dialog_frame_and_nav(
 
         # Phase B: フレーム未検出 or フレーム右上で × 未発見 → 画面右上隅で探す
         if _DIALOG_CLOSE_TEMPLATE.exists():
-            _close_tmpl = cv2.imread(str(_DIALOG_CLOSE_TEMPLATE))
+            _close_tmpl = imread_cached(_DIALOG_CLOSE_TEMPLATE)
             _r = cv2.matchTemplate(
-                cv2.imread(str(img_path), cv2.IMREAD_COLOR)[0: int(_H * 0.14), int(_W * 0.88):],
+                imread_cached(img_path, cv2.IMREAD_COLOR)[0: int(_H * 0.14), int(_W * 0.88):],
                 _close_tmpl,
                 cv2.TM_CCOEFF_NORMED,
             )
@@ -1362,7 +1384,7 @@ def detect_dialog_frame_and_nav(
 
         # ── ▷ ボタン (スクリーン右エッジ) ────────────────────────────────
         if _DIALOG_NEXT_TEMPLATE.exists():
-            _next_tmpl = cv2.imread(str(_DIALOG_NEXT_TEMPLATE))
+            _next_tmpl = imread_cached(_DIALOG_NEXT_TEMPLATE)
             _r2 = cv2.matchTemplate(
                 img[int(_H * 0.22): int(_H * 0.78), int(_W * 0.83):],
                 _next_tmpl,
@@ -1420,7 +1442,7 @@ def count_page_dots(img_or_path, H: int = 720, W: int = 1520) -> int:
         ドット数 (0 = 未検出)
     """
     if isinstance(img_or_path, (str, Path)):
-        img = cv2.imread(str(img_or_path))
+        img = imread_cached(img_or_path)
         if img is None:
             return 0
         H, W = img.shape[:2]
@@ -1486,7 +1508,7 @@ def detect_notice_popup(
 
     # ── 条件2: 視覚的特徴の組合せ ──
     try:
-        img = cv2.imread(str(img_path))
+        img = imread_cached(img_path)
         if img is None:
             return False
         _H, _W = img.shape[:2]
@@ -1498,7 +1520,7 @@ def detect_notice_popup(
             _ry2 = int(_H * 0.15)
             _roi_x = img[0:_ry2, _rx1:_W]
             if _roi_x.size > 0:
-                _tpl = cv2.imread(str(_DIALOG_CLOSE_TEMPLATE))
+                _tpl = imread_cached(_DIALOG_CLOSE_TEMPLATE)
                 if (_roi_x.shape[0] >= _tpl.shape[0]
                         and _roi_x.shape[1] >= _tpl.shape[1]):
                     _r = cv2.matchTemplate(_roi_x, _tpl, cv2.TM_CCOEFF_NORMED)
@@ -1564,7 +1586,7 @@ def process_paging_dialog(
             return "DIALOG_CLOSED"
         # × ROI 輝度チェック: bright_pixels=0 が続く場合は強制脱出
         try:
-            _img_c = cv2.imread(str(analysis_path))
+            _img_c = imread_cached(analysis_path)
             if _img_c is not None:
                 _Hc, _Wc = _img_c.shape[:2]
                 _close_roi_c = _img_c[0:int(_Hc * 0.14), int(_Wc * 0.88):]
@@ -1642,7 +1664,7 @@ def detect_text_input_area(
                 return _item["center"][0], _item["center"][1]
     # --- 3. HSV 暗い横長矩形 ---
     try:
-        _img = cv2.imread(str(img_path))
+        _img = imread_cached(img_path)
         if _img is None:
             return None
         _roi_y1, _roi_y2 = int(H * 0.3), int(H * 0.75)
@@ -1675,14 +1697,14 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
     Returns: (direction, swipe_x, from_y, to_y, duration_ms) or None
     """
     try:
-        img = cv2.imread(str(img_path))
+        img = imread_cached(img_path)
         if img is None:
             return None
         H_img, W_img = img.shape[:2]
 
         # ── Phase 1: テンプレートマッチ (指アイコン) + 白い縦軌跡 ──
         if _SWIPE_FINGER_TEMPLATE.exists():
-            _tpl = cv2.imread(str(_SWIPE_FINGER_TEMPLATE))
+            _tpl = imread_cached(_SWIPE_FINGER_TEMPLATE)
             if _tpl is not None and img.shape[0] >= _tpl.shape[0] and img.shape[1] >= _tpl.shape[1]:
                 _r = cv2.matchTemplate(img, _tpl, cv2.TM_CCOEFF_NORMED)
                 _, _mv, _, _ml = cv2.minMaxLoc(_r)
@@ -1815,7 +1837,7 @@ def detect_tutorial_gold_button_tap(img_path: Path,
     Returns: (tap_x, tap_y) or None
     """
     try:
-        img = cv2.imread(str(img_path))
+        img = imread_cached(img_path)
         if img is None:
             return None
         H_img, W_img = img.shape[:2]
@@ -1904,7 +1926,7 @@ def smart_tap_button(
     返値: (tap_x, tap_y)
     """
     try:
-        img_bgr = cv2.imread(str(img_path))
+        img_bgr = imread_cached(img_path)
         if img_bgr is None:
             raise ValueError("imread failed")
         h_img, w_img = img_bgr.shape[:2]
@@ -1972,7 +1994,7 @@ def find_golden_highlighted_button(img_path: Path) -> Optional[tuple[int, int]]:
     返値: (cx, cy) ― 最大輝度の金色領域の中心座標、検出失敗時は None
     """
     try:
-        img_bgr = cv2.imread(str(img_path))
+        img_bgr = imread_cached(img_path)
         if img_bgr is None:
             return None
         h_img, w_img = img_bgr.shape[:2]
@@ -2018,7 +2040,7 @@ def find_3d_arrow(img_path: Path) -> Optional[tuple[int, int]]:
     Returns: (cx, cy) or None
     """
     try:
-        img = cv2.imread(str(img_path))
+        img = imread_cached(img_path)
         if img is None:
             return None
         # キャラ頭上エリア
@@ -2079,7 +2101,7 @@ class AssetManager:
         count = 0
         for png in sorted(self.TEMPLATES_DIR.glob("*.png")):
             name = png.stem
-            img = cv2.imread(str(png), cv2.IMREAD_GRAYSCALE)
+            img = imread_cached(png, cv2.IMREAD_GRAYSCALE)
             if img is None:
                 continue
             meta: dict = {}
@@ -2113,7 +2135,7 @@ class AssetManager:
         """
         if not self._templates:
             return None
-        img = cv2.imread(str(screenshot_path), cv2.IMREAD_GRAYSCALE)
+        img = imread_cached(screenshot_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             return None
         best_score = 0.0
@@ -2165,7 +2187,7 @@ class AssetManager:
         data = self._templates.get(name)
         if data is None:
             return None
-        img = cv2.imread(str(screenshot_path), cv2.IMREAD_GRAYSCALE)
+        img = imread_cached(screenshot_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             return None
         # ROI 切り出し (指定時)
@@ -2200,7 +2222,7 @@ class AssetManager:
         次回起動時から [Asset Match] で高速検出可能になる。
         require_ocr: このテンプレートを使うのに必要なOCRキーワードリスト
         """
-        img = cv2.imread(str(screenshot_path))
+        img = imread_cached(screenshot_path)
         if img is None:
             return False
         crop = img[y1:y2, x1:x2]

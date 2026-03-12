@@ -130,6 +130,7 @@ from tools.ap.image_proc import (  # noqa: E402
     AssetManager, ASSET_MANAGER,
     detect_adv_scene, detect_adv_scene_cached, AdvSceneResult,
     detect_movie_scene, MovieSceneResult,
+    clear_imread_cache, imread_cached,
 )
 
 
@@ -2889,6 +2890,7 @@ def main():
     for i in range(MAX_ITERATIONS):
         state.iteration = i
         _loop_t0 = time.time()  # [PERF] ループ開始時刻
+        clear_imread_cache()    # 前イテレーションのキャッシュを破棄
 
         # ── 定期健診 (100 iter ごと) ──
         if i > 0 and i % 100 == 0:
@@ -2943,7 +2945,7 @@ def main():
         # メモリ上に最新画像を保持 + ROI更新 (スロットル: 画面変化時 or 50iter毎)
         try:
             _cached_bgr = pop_last_scrcpy_bgr()
-            state.last_screen = _cached_bgr if _cached_bgr is not None else cv2.imread(str(img_path))
+            state.last_screen = _cached_bgr if _cached_bgr is not None else imread_cached(img_path)
             _roi_needed = (state.game_roi is None or i % 50 == 0
                            or state.same_phash_count == 0)  # phash変化直後
             if state.last_screen is not None and _roi_needed:
