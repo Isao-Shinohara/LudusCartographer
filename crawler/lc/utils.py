@@ -629,7 +629,10 @@ def compute_phash(image_path: "Path", hash_size: int = 8) -> str:
     import cv2
     import numpy as np
 
-    img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    try:
+        img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    except Exception:
+        img = None
     if img is None:
         raise ValueError(f"画像を読み込めません: {image_path}")
     img = cv2.resize(img, (hash_size * 4, hash_size * 4))

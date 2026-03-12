@@ -603,6 +603,13 @@ def detect_and_act(ocr: list, state: PilotState,
     _adv_result: AdvSceneResult = state._adv_scene_cache_result or AdvSceneResult()
     joined = " ".join(texts)
 
+    # ── 【#-4】MOVIE シーン中は一切タップしない ──
+    # 動画はタップで一時停止/再開を繰り返す仕様 → 絶対にタップ禁止
+    # detect_scene_early で MOVIE 判定済み → ここでは待機のみ返す
+    if state.current_scene == "MOVIE":
+        logger.debug("[detect_and_act] MOVIE シーン → タップ抑制, 待機")
+        return "MOVIE_WAIT", 0.5
+
     # ── 【#-3】ダウンロード画面の厳格判定 ──
     # 条件: 右下エリアに "Download" テキスト + "MB" 進捗テキストが両方存在
     # → これ以外の画面は 100% ゲーム実行中であり、ロード待ちを禁止する。
@@ -2375,10 +2382,17 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             return "UNKNOWN"
     if state.last_action in _MOVIE_ACTIONS:
         if state.movie_wait_consecutive >= _MOVIE_INERTIA_TTL:
-            logger.info("[SCENE_EARLY] Movie inertia TTL expired (consecutive=%d) → UNKNOWN",
-                        state.movie_wait_consecutive)
-            # 慣性を完全に断ち切る: last_action を非MOVIE系にリセット
-            # → 次イテレーションで再び MOVIE 慣性に入るのを防止
+            # TTL切れ → phash変化中なら動画継続、安定なら脱出
+            # 動画は常にphashが変化する。安定 = 動画終了 or 新画面遷移
+            if dist >= 5:
+                # phash変化あり → 動画まだ再生中 → TTLリセットして待機続行
+                logger.info("[SCENE_EARLY] Movie TTL=%d到達だがphash変化(dist=%d) → 動画継続, TTLリセット",
+                            state.movie_wait_consecutive, dist)
+                state.movie_wait_consecutive = _MOVIE_INERTIA_TTL // 2  # 半分からリスタート
+                return "MOVIE"
+            # phash安定 → 動画終了 → UNKNOWN に脱出
+            logger.info("[SCENE_EARLY] Movie TTL expired (consecutive=%d, dist=%d) → 動画終了判定 → UNKNOWN",
+                        state.movie_wait_consecutive, dist)
             state.last_action = "SCENE_TAP"
             state.movie_wait_consecutive = 0
         else:
@@ -3473,6 +3487,15 @@ def main():
                         continue
                     # スコアリングで動画なし
                     # → 動画ではない静止画面 (ガチャ演出等) → 画面タップで進む
+                    # ただし連続 phash 大変化中はタップを保留 (動画の⏭非表示期間の可能性)
+                    # movie_wait_consecutive > 0 = 直前まで MOVIE 判定 → まだ動画かも
+                    if state.movie_wait_consecutive > 0 and dist >= 8:
+                        logger.info("[iter %d] phash_dist=%d 動画スコア不足だが直前MOVIE+phash変化大 → 待機続行 (%d)",
+                                    i, dist, state.movie_wait_consecutive)
+                        state.movie_wait_consecutive += 1
+                        state.last_action = "MOVIE_WAIT"
+                        state.last_phash = cur_phash
+                        continue
                     _st_x = int(ANALYSIS_W * 0.5)
                     _st_y = int(ANALYSIS_H * 0.5)
                     logger.info("[iter %d] phash_dist=%d 非動画静止画面 → SCENE_TAP (%d,%d)",

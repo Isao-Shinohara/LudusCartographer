@@ -1667,7 +1667,10 @@ def process_paging_dialog(
         _img_path, _aw, _ah, _ = take_screenshot()
         analysis_path = prepare_analysis_image(_img_path, _aw, _ah)
         # phash変化監視: 変化なし → ページが進んでいない可能性
-        _new_phash = compute_phash(analysis_path)
+        try:
+            _new_phash = compute_phash(analysis_path)
+        except (ValueError, Exception):
+            _new_phash = None
         if _prev_phash and _new_phash:
             _ph_dist = phash_distance(_prev_phash, _new_phash)
             if _ph_dist < 4:
