@@ -2249,19 +2249,15 @@ def _battle_fast_check(analysis_path: Path,
 def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     """OCR 前にシーンを判定する。
 
-    利用する信号 (すべて OCR 不要):
-    - MOVIE 慣性 (前回 MOVIE + ADV/BATTLE 証拠なし) → MOVIE
-    - 前回シーン == BATTLE + phash 小変化 → BATTLE
-    - ADV ツールバー検出 → ADV
-    - それ以外 → UNKNOWN (フルOCR 必要)
-
-    初回 MOVIE 判定は OCR パス (classify_scene) に委任。
+    優先順位 (特定要素が多い順):
+    1. MOVIE 慣性 (前回 MOVIE + ADV/BATTLE 証拠なし) → MOVIE
+    2. BATTLE 継続 (前回 BATTLE + phash 小変化) → BATTLE
+    3. ADV ツールバー検出 → ADV
+    4. MOVIE 初回検出 (⏭ 必須) → MOVIE  ← 最後 (特定要素が最も少ない)
+    5. それ以外 → UNKNOWN (フルOCR 必要)
 
     Returns: "MOVIE" | "BATTLE" | "ADV" | "UNKNOWN"
     """
-    # MOVIE: detect_scene_early では初回 MOVIE 判定しない (⏭ HSV 検出の偽陽性が多い)
-    # 初回 MOVIE は OCR パス (classify_scene) で判定。
-    # ここでは慣性パスのみ: 前回 MOVIE → 非動画の証拠がなければ継続。
 
     # MOVIE 慣性: 直前が動画アクション → 非動画の明確な証拠がなければ MOVIE 継続
     # ⏭ ボタンが一時的に非表示でも GoldSwipe 等の誤発動を防止
@@ -2279,15 +2275,19 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 # ↓ ボタンがあれば ADV (ツールバーが少なくても ADV 確定)
                 _adv_down = detect_adv_advance_icon(img_path)
                 if not _adv_down:
-                    return "MOVIE"
-
-    # MOVIE 初回検出 (慣性でない場合): スコアリング方式
-    if state.last_action not in _MOVIE_ACTIONS:
-        _adv = detect_adv_scene_cached(img_path, state)
-        _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist)
-        if _movie.is_movie:
-            logger.info("[SCENE_EARLY] Movie初回検出 (conf=%.2f) → MOVIE", _movie.confidence)
-            return "MOVIE"
+                    # AUTO アイコン単独検出 → ADV 確定、MOVIE 脱出
+                    from tools.ap.image_proc import ASSET_MANAGER as _AM_inertia
+                    try:
+                        _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+                        _auto_m = _AM_inertia.match_single(
+                            "adv_icon_auto", img_path, roi=_auto_roi)
+                        if _auto_m and _auto_m[2] >= 0.50:
+                            logger.info("[MOVIE_INERTIA] AUTO icon (%.2f) → ADV確定, MOVIE脱出",
+                                        _auto_m[2])
+                        else:
+                            return "MOVIE"
+                    except Exception:
+                        return "MOVIE"
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     if state.current_scene == "BATTLE" and dist < 30:
@@ -2298,6 +2298,14 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         adv = detect_adv_scene_cached(img_path, state)
         if adv.is_adv:
             return "ADV"
+
+    # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
+    if state.last_action not in _MOVIE_ACTIONS:
+        _adv = detect_adv_scene_cached(img_path, state)
+        _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist)
+        if _movie.is_movie and _movie.has_skip_btn:
+            logger.info("[SCENE_EARLY] Movie初回検出 (conf=%.2f, ⏭あり) → MOVIE", _movie.confidence)
+            return "MOVIE"
 
     return "UNKNOWN"
 
