@@ -2789,15 +2789,26 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         # --- 1st: uiautomator (ネイティブ UI 用、最も確実) ---
         _ui_pos = _uiautomator_find_button(INSTALL_KEYWORDS)
         if _ui_pos:
-            _adb_tap(_ui_pos[0], _ui_pos[1])
-            time.sleep(3)
-            # タップ検証
-            _ui_verify = _uiautomator_find_button(INSTALL_KEYWORDS)
-            if _ui_verify is None:
-                logger.info("[FRESH_INSTALL] uiautomator タップ成功 — インストール開始を確認")
-                installed_via_tap = True
-                break
-            logger.warning("[FRESH_INSTALL] uiautomator タップ空振り — OCR フォールバック")
+            # 上半分のみ有効 (y < 60%): 下部の「他のデバイスにも...」ボタン除外
+            _screen_h = 2160  # portrait default
+            if _ui_pos[1] < _screen_h * 0.6:
+                _adb_tap(_ui_pos[0], _ui_pos[1])
+                time.sleep(3)
+                # タップ検証: 「インストール中」「キャンセル」→ 成功
+                _progress = _uiautomator_find_button(["インストール中", "キャンセル", "Cancel"])
+                if _progress:
+                    logger.info("[FRESH_INSTALL] uiautomator タップ成功 — インストール開始 (%s)", _progress)
+                    installed_via_tap = True
+                    break
+                _ui_verify = _uiautomator_find_button(INSTALL_KEYWORDS)
+                if _ui_verify is None:
+                    logger.info("[FRESH_INSTALL] uiautomator タップ成功 — インストール開始を確認")
+                    installed_via_tap = True
+                    break
+                logger.warning("[FRESH_INSTALL] uiautomator タップ空振り — OCR フォールバック")
+            else:
+                logger.debug("[FRESH_INSTALL] uiautomator (%d,%d) y>60%% → 他端末ボタン除外",
+                             _ui_pos[0], _ui_pos[1])
 
         # --- 2nd: OCR フォールバック ---
         if not _adb_screenshot(tmp_ss):
@@ -2832,10 +2843,13 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 _adb_tap(cx, cy)
                 time.sleep(3)
 
-                # タップ検証: 「インストール」がまだ見えるか
+                # タップ検証: 「インストール中」/「キャンセル」→ 成功
                 _tap_ok = False
-                _ui_check = _uiautomator_find_button(INSTALL_KEYWORDS)
-                if _ui_check is None:
+                _progress_check = _uiautomator_find_button(["インストール中", "キャンセル", "Cancel"])
+                if _progress_check:
+                    _tap_ok = True
+                    logger.info("[FRESH_INSTALL] タップ成功 — インストール中を確認")
+                elif _uiautomator_find_button(INSTALL_KEYWORDS) is None:
                     _tap_ok = True
                     logger.info("[FRESH_INSTALL] タップ成功 — インストール開始を確認")
                 elif _adb_screenshot(tmp_ss):
