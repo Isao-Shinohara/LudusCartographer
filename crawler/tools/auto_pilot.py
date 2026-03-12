@@ -747,16 +747,29 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> 【ご注意→リトライ上限(5回)】 次ループで再検出")
             return "NOTICE_DISMISS", 3.0
 
-    # ─── 【最優先 #-1b】MAIN STORY ローディング背景 ───
-    # タイトル画面TAP後に表示される非インタラクティブなローディング背景。
-    # 「Main」カードと「推奨」テキストが同時に存在する場合は待機のみ（タップ不要）。
-    # この画面は自動でホーム画面へ遷移する。
+    # ─── 【最優先 #-1b】MAIN STORY 画面 ───
+    # (A) クエスト選択画面: 「NEW」+「推奨」+「Main」→ クエストカードをタップ
+    # (B) ローディング背景: タイトル後の非インタラクティブ画面 → 自動遷移待ち
     _is_main_story_bg = (
         any("MAIN" in t or "Main" in t for t in texts) and
         any("推奨" in t or "STORY" in t for t in texts) and
         not any(kw in joined for kw in ["クエスト", "ショップ", "ガチャ", "ガシャ", "光の間", "パーティ"])
     )
     if _is_main_story_bg:
+        _has_new = any("NEW" in t for t in texts)
+        if _has_new:
+            # クエスト選択画面 — "NEW" クエストカードをタップ
+            _quest_hit = has_text(ocr, "Main", min_conf=0.2)
+            if _quest_hit:
+                _qx, _qy = _quest_hit["center"]
+                logger.info(">>> MAIN STORY クエスト選択 — 'Main' カードタップ (%d,%d)", _qx, _qy)
+                tap_device(_qx, _qy, state, "MAIN_STORY_QUEST_TAP")
+                return "MAIN_STORY_QUEST_TAP", 2.0
+            # フォールバック: 画面下部中央をタップ
+            _qx, _qy = int(W * 0.5), int(H * 0.85)
+            logger.info(">>> MAIN STORY クエスト選択 — フォールバックタップ (%d,%d)", _qx, _qy)
+            tap_device(_qx, _qy, state, "MAIN_STORY_QUEST_FB")
+            return "MAIN_STORY_QUEST_FB", 2.0
         logger.info(">>> MAIN STORY ローディング背景 — 自動遷移待ち (10s)")
         return "MAIN_STORY_LOADING", 10.0
 
