@@ -1662,12 +1662,15 @@ def detect_and_act(ocr: list, state: PilotState,
                 logger.info(">>> ホーム画面 + 遷移試行 %d回目 → 画面変化待ち", state.home_nav_count)
                 return "HOME_NAV_WAIT", 2.0
         # ── 右上吹き出しセリフチェック: まだチュートリアルガイダンス中 ──
+        import re
         _BUBBLE_EXCLUDE_EXACT = {"AUTO", ">>", ">|", "D1", "×", "+", "■", "畄", "目"}
-        _BUBBLE_EXCLUDE_SUBSTR = ("Max", "Lv", "Lx", "Rank", "LV")
+        _BUBBLE_EXCLUDE_SUBSTR = ("Max", "Lv", "Lx", "Rank", "LV", "MadoDora")
+        _BUBBLE_NUM_RE = re.compile(r'^[\d,./:%+\-・\s]+$')
         _bubble_texts = [r for r in ocr
                          if r["center"][0] > W * 0.55 and r["center"][1] < H * 0.35
                          and r["text"] not in _BUBBLE_EXCLUDE_EXACT
                          and not any(s in r["text"] for s in _BUBBLE_EXCLUDE_SUBSTR)
+                         and not _BUBBLE_NUM_RE.match(r["text"])
                          and len(r["text"]) > 2]
         if _bubble_texts:
             _bt = _bubble_texts[0]
@@ -2049,12 +2052,15 @@ def detect_and_act(ocr: list, state: PilotState,
     # ─── 右上吹き出しセリフ (メニュー画面上のキャラガイダンス) ───
     # 右上エリア (x>55%, y<35%) にテキストがあり、AUTO/>> ボタン等のUI要素と共存
     # → セリフが止まっている (前回と同一テキスト or phash安定) ならタップで送る
+    import re
     _BUBBLE_EXCLUDE_EXACT_2 = {"AUTO", ">>", ">|", "D1", "×", "+", "■", "畄", "目"}
-    _BUBBLE_EXCLUDE_SUBSTR_2 = ("Max", "Lv", "Lx", "Rank", "LV")
+    _BUBBLE_EXCLUDE_SUBSTR_2 = ("Max", "Lv", "Lx", "Rank", "LV", "MadoDora")
+    _BUBBLE_NUM_RE_2 = re.compile(r'^[\d,./:%+\-・\s]+$')
     _bubble_region = [r for r in ocr
                       if r["center"][0] > W * 0.55 and r["center"][1] < H * 0.35
                       and r["text"] not in _BUBBLE_EXCLUDE_EXACT_2
                       and not any(s in r["text"] for s in _BUBBLE_EXCLUDE_SUBSTR_2)
+                      and not _BUBBLE_NUM_RE_2.match(r["text"])
                       and len(r["text"]) > 2]
     if _bubble_region and len(ocr) <= 20:
         _bubble = _bubble_region[0]
