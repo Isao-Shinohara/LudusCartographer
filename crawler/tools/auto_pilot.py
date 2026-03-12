@@ -2694,7 +2694,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     """
     INSTALL_KEYWORDS = ["インストール", "Install", "install"]
     ACCEPT_KEYWORDS = ["同意する", "Accept", "OK"]
-    OPEN_KEYWORDS = ["開く", "Open"]
+    OPEN_KEYWORDS = ["開く", "Open", "プレイ", "Play"]
     MAX_OCR_ATTEMPTS = 10
     POLL_INTERVAL_SEC = 5
     MAX_POLL_COUNT = 60  # 5秒 × 60 = 5分
@@ -2742,6 +2742,13 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 for attr in ("text", "content-desc"):
                     pat = attr + r'="[^"]*' + _re.escape(kw) + r'[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
                     for m in _re.finditer(pat, xml_text):
+                        # 完全テキスト抽出: 「アンインストール」に「インストール」が部分一致するのを防止
+                        _full_pat = attr + r'="([^"]*' + _re.escape(kw) + r'[^"]*)"'
+                        _full_m = _re.search(_full_pat, m.group(0))
+                        _full_text = _full_m.group(1) if _full_m else ""
+                        if kw == "インストール" and "アン" in _full_text:
+                            logger.debug("[FRESH_INSTALL] uiautomator '%s' → 'アンインストール'を除外", _full_text)
+                            continue
                         x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
                         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
                         logger.info("[FRESH_INSTALL] uiautomator %s='%s': bounds=[%d,%d][%d,%d] → (%d,%d)",
@@ -2768,6 +2775,16 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
 
     for attempt in range(MAX_OCR_ATTEMPTS):
         logger.info("[FRESH_INSTALL] 試行 %d/%d", attempt + 1, MAX_OCR_ATTEMPTS)
+
+        # --- 0th: 既インストール済みチェック (「プレイ」「開く」) ---
+        _ui_open = _uiautomator_find_button(OPEN_KEYWORDS)
+        if _ui_open:
+            logger.info("[FRESH_INSTALL] 既インストール済み（'プレイ'/'開く'検出）→ 再アンインストール")
+            uninstall_app(serial, package)
+            time.sleep(2)
+            open_play_store(serial, package)
+            time.sleep(5)
+            continue
 
         # --- 1st: uiautomator (ネイティブ UI 用、最も確実) ---
         _ui_pos = _uiautomator_find_button(INSTALL_KEYWORDS)
