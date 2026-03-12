@@ -2911,6 +2911,14 @@ def main():
             else:
                 logger.info("[WATCHDOG] Periodic check OK")
 
+        # ── 0.5) タップ後クールダウン: 残り時間を sleep してからキャプチャ ──
+        # MIN_TAP_INTERVAL (1.0s) 未満のループでは無駄なスクショを回避
+        # 安全弁: 最大 3.0s キャップ (不具合で無限停止しない)
+        if state.last_action_time > 0:
+            _cooldown_remaining = MIN_TAP_INTERVAL - (time.time() - state.last_action_time)
+            if 0 < _cooldown_remaining <= 3.0:
+                time.sleep(_cooldown_remaining)
+
         # ── 1) スクリーンショット取得 ──
         img_path, actual_w, actual_h, _ss_retries = take_screenshot()
         state.screenshot_retry_count += _ss_retries
