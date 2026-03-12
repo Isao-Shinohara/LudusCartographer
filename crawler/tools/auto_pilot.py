@@ -2941,11 +2941,14 @@ def main():
             if state.last_screen is not None and _roi_needed:
                 _new_roi = detect_game_roi(state.last_screen)
                 # 非黒画面のときのみ ROI を更新 (暗転中は前の ROI を維持)
-                if _new_roi[2] >= actual_w * 0.5:
-                    # デバイス空間 → 解析空間に正規化 (Xperia等の非1520x720デバイス対応)
-                    if actual_w != ANALYSIS_W or actual_h != ANALYSIS_H:
-                        _sx = ANALYSIS_W / actual_w
-                        _sy = ANALYSIS_H / actual_h
+                _img_h, _img_w = state.last_screen.shape[:2]
+                if _new_roi[2] >= _img_w * 0.5:
+                    # 画像空間 → 解析空間に正規化
+                    # NOTE: _img_w は scrcpy (~1440) or adb (2160) で異なるため
+                    #        actual_w (wm size) ではなく実画像サイズを使う
+                    if _img_w != ANALYSIS_W or _img_h != ANALYSIS_H:
+                        _sx = ANALYSIS_W / _img_w
+                        _sy = ANALYSIS_H / _img_h
                         _new_roi = (
                             int(_new_roi[0] * _sx), int(_new_roi[1] * _sy),
                             int(_new_roi[2] * _sx), int(_new_roi[3] * _sy),
