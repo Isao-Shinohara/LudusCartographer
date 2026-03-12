@@ -100,11 +100,20 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
 
 
 def is_dark_screen(img_path: Path) -> bool:
+    """画像中央60%領域の平均輝度で暗転判定。
+
+    黒帯 (レターボックス/ピラーボックス) を除外するため、
+    画像全体ではなく中央領域のみを評価する。
+    """
     try:
         from PIL import Image
         with Image.open(img_path) as img:
-            gray = img.convert("L")
-            return float(np.mean(np.array(gray))) <= BLACKOUT_BRIGHTNESS
+            gray = np.array(img.convert("L"))
+            h, w = gray.shape
+            # 中央60%の領域のみ (黒帯を除外)
+            y0, y1 = int(h * 0.2), int(h * 0.8)
+            x0, x1 = int(w * 0.2), int(w * 0.8)
+            return float(np.mean(gray[y0:y1, x0:x1])) <= BLACKOUT_BRIGHTNESS
     except Exception:
         return False
 
