@@ -163,3 +163,7 @@ class PilotState:
     # ─── タップ候補リスト (OCR再解析省略) ───
     pending_candidates: list = field(default_factory=list)   # list[TapCandidate]
     pending_candidate_idx: int = 0
+    # ─── 計測: 起動時刻 & 新規/途中再開判定 ───
+    launch_time: float = field(default_factory=time.time)    # auto_pilot 起動時刻
+    is_fresh_start: bool = False     # True: --fresh-install 新規開始, False: 途中再開
+    milestone_logged: dict = field(default_factory=dict)  # {milestone_name: logged_time}

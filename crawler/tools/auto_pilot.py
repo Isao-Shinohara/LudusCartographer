@@ -2122,6 +2122,22 @@ def watchdog_recover(state: PilotState) -> bool:
     return True
 
 
+# ─── マイルストーン到達時間ログ ────────────────────────
+def _log_milestone(state: PilotState, milestone: str) -> None:
+    """目標到達時の経過時間をログ出力する。"""
+    _now = time.time()
+    _elapsed = _now - state.launch_time
+    _m, _s = divmod(int(_elapsed), 60)
+    _h, _m = divmod(_m, 60)
+    if state.is_fresh_start:
+        logger.info("  [TIMER] %s — 起動から %d時間%02d分%02d秒 (新規スタート)",
+                    milestone, _h, _m, _s)
+    else:
+        logger.info("  [TIMER] %s — 起動から %d時間%02d分%02d秒 (途中再開のため総所要時間は計測不可)",
+                    milestone, _h, _m, _s)
+    state.milestone_logged[milestone] = _elapsed
+
+
 # ─── レポート生成 + クリップボードコピー ────────────────
 def generate_and_copy_report(state: PilotState, reason: str) -> None:
     """
@@ -2189,6 +2205,9 @@ def generate_and_copy_report(state: PilotState, reason: str) -> None:
         f"- 周回完了数           : {state.grind_cycles_completed}",
         f"- 最終シーン           : {state.current_scene}",
         f"- Rank                 : {'1 / HOME REACHED' if state.home_reached else 'In Progress'}",
+        f"- 起動種別             : {'新規スタート (--fresh-install)' if state.is_fresh_start else '途中再開'}",
+        *[f"- {k}: {int(v // 3600)}h{int(v % 3600 // 60):02d}m{int(v % 60):02d}s"
+          for k, v in state.milestone_logged.items()],
         "",
         "## 最新コミット",
         f"- commit: {commit_id}",
@@ -2841,6 +2860,7 @@ def main():
     state = PilotState()
     state.grind_mode = args.grind
     state.grind_max_cycles = args.max_cycles
+    state.is_fresh_start = args.fresh_install
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
     # ─── Ctrl+C シグナルハンドラ登録 (レポート自動生成) ───
@@ -4009,6 +4029,7 @@ def main():
                 _reason = "ホーム画面到達 (チュートリアル完了)"
             logger.info("=" * 62)
             logger.info("  %s", _reason)
+            _log_milestone(state, _reason)
             logger.info("  総タップ: %d  イテレーション: %d  周回: %d",
                         state.total_taps, i + 1, state.grind_cycles_completed)
             logger.info("  OCR実行: %d  スキップ: %d  暗転: %d",
