@@ -710,11 +710,17 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
             _icon_matches.append(None)
 
     _matched_count = sum(1 for s in _icon_scores if s >= icon_threshold)
-    # 2アイコン + ↓ボタン = ADV 救済 (AUTO + >> のみの場合を救う)
+    # AUTO アイコン (index=2) スコア取得
+    _auto_score = _icon_scores[2] if len(_icon_scores) > 2 else 0.0
+    _has_auto = _auto_score >= 0.50
+    # ↓ボタン検出 (AUTO あり or 2アイコン救済時のみ実行)
     _has_advance_icon = False
-    if _matched_count >= 2 and _matched_count < 3:
+    if _has_auto or (_matched_count >= 2 and _matched_count < 3):
         _has_advance_icon = detect_adv_advance_icon(img_path)
-    _all_matched = _matched_count >= 3 or (_matched_count >= 2 and _has_advance_icon)
+    # 判定: 3アイコン | 2アイコン+↓ | AUTO+↓ (アイコン数不問)
+    _all_matched = (_matched_count >= 3
+                    or (_matched_count >= 2 and _has_advance_icon)
+                    or (_has_auto and _has_advance_icon))
     result.toolbar_score = min(_icon_scores) if _icon_scores else 0.0
     if _all_matched and _icon_scores:
         # toolbar_pos = AUTO アイコンの位置 (3番目)
@@ -903,6 +909,22 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     # 即棄却: ADV ツールバーあり
     if adv_result is not None and adv_result.is_adv:
         return MovieSceneResult()
+
+    # 即棄却: AUTO アイコン or ↓ボタン検出 → ADV 確定 (MOVIE にはどちらもない)
+    if img_path:
+        try:
+            _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+            _auto = ASSET_MANAGER.match_single("adv_icon_auto", img_path,
+                                               roi=_auto_roi)
+            if _auto and _auto[2] >= 0.50:
+                logger.debug("[MOVIE_SCENE] AUTO icon (%.2f) → ADV確定, MOVIE棄却",
+                             _auto[2])
+                return MovieSceneResult()
+        except Exception:
+            pass
+        if detect_adv_advance_icon(img_path):
+            logger.debug("[MOVIE_SCENE] ↓ボタン検出 → ADV確定, MOVIE棄却")
+            return MovieSceneResult()
 
     # 即棄却: バトルキーワード
     if any(kw in joined for kw in _MOVIE_REJECT_BATTLE_KWS):
