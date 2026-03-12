@@ -192,14 +192,21 @@ _CACHED_DEVICE_RES: tuple[int, int] = (0, 0)
 
 
 def _get_cached_device_resolution() -> tuple[int, int]:
-    """wm size の結果をキャッシュして返す。take_screenshot() 内で使用。"""
+    """wm size の結果をランドスケープ正規化してキャッシュ。
+
+    wm size はポートレート値 (1080x2160) を返すが、ゲームはランドスケープ。
+    adb input tap はカレント座標系を使うため、長辺=width, 短辺=height に正規化する。
+    """
     global _CACHED_DEVICE_RES
     if _CACHED_DEVICE_RES[0] > 0:
         return _CACHED_DEVICE_RES
     w, h = get_device_resolution()
     if w > 0 and h > 0:
-        _CACHED_DEVICE_RES = (w, h)
-    return w, h
+        # ランドスケープ正規化: 長辺=width, 短辺=height
+        land_w = max(w, h)
+        land_h = min(w, h)
+        _CACHED_DEVICE_RES = (land_w, land_h)
+    return _CACHED_DEVICE_RES if _CACHED_DEVICE_RES[0] > 0 else (w, h)
 
 
 def invalidate_device_resolution_cache() -> None:
