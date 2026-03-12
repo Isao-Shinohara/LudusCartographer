@@ -100,20 +100,19 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
 
 
 def is_dark_screen(img_path: Path) -> bool:
-    """画像中央60%領域の平均輝度で暗転判定。
+    """暗転判定 — 中央60%領域の 90th percentile 輝度で判定。
 
-    黒帯 (レターボックス/ピラーボックス) を除外するため、
-    画像全体ではなく中央領域のみを評価する。
+    黒帯除外のため中央領域のみ使用。平均値ではなく 90th percentile を
+    使うことで、暗い背景+UIの画面 (p90≈58) と真の暗転 (p90≈2) を区別する。
     """
     try:
         from PIL import Image
         with Image.open(img_path) as img:
             gray = np.array(img.convert("L"))
             h, w = gray.shape
-            # 中央60%の領域のみ (黒帯を除外)
             y0, y1 = int(h * 0.2), int(h * 0.8)
             x0, x1 = int(w * 0.2), int(w * 0.8)
-            return float(np.mean(gray[y0:y1, x0:x1])) <= BLACKOUT_BRIGHTNESS
+            return float(np.percentile(gray[y0:y1, x0:x1], 90)) <= BLACKOUT_BRIGHTNESS
     except Exception:
         return False
 
