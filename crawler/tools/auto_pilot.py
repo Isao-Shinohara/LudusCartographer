@@ -2367,6 +2367,21 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         except Exception:
             pass
 
+    # BATTLE 初回検出: 右下の「通常攻撃」ボタンアイコンで判定
+    # ADV ツールバーの AUTO/FF がバトル画面にも存在するため、ADV 判定より先に実行
+    from tools.ap.image_proc import ASSET_MANAGER as _AM_battle
+    try:
+        _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.80),
+                       int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.20))
+        _battle_m = _AM_battle.match_single(
+            "battle_normal_attack", img_path, roi=_battle_roi)
+        if _battle_m and _battle_m[2] >= 0.60:
+            logger.info("[SCENE_EARLY] Battle初回検出 (通常攻撃ボタン score=%.2f) → BATTLE",
+                        _battle_m[2])
+            return "BATTLE"
+    except Exception:
+        pass
+
     # ADV: ツールバー検出 (MENU シーンは OCR でボタン検出が必要)
     if state.current_scene != "MENU":
         adv = detect_adv_scene_cached(img_path, state)
@@ -2551,8 +2566,10 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
     _adv_tap_x = int(W * 0.93)
     _adv_tap_y = int(H * 0.91)
 
-    # ── ↓アイコン or ADV ツールバー → バーストタップ ──
-    if adv.is_adv or detect_adv_advance_icon(img_path):
+    # ── ADV ツールバー確認 → バーストタップ ──
+    # NOTE: detect_adv_advance_icon() 単独ではバトル画面で偽陽性が出るため
+    # ADVツールバー判定 (is_adv) を必須条件にする
+    if adv.is_adv:
         _burst_count = 0
         _burst_max = 3
         _burst_img = img_path
@@ -3236,11 +3253,14 @@ def main():
                     # continue しない → 下の OCR パスへ落ちる
                 else:
                     _rapid_adv = detect_adv_scene_cached(img_path, state)
-                    # ── ADV↓アイコン検出 (ツールバー判定に依存しない高速パス) ──
+                    # ── ADV↓アイコン検出 ──
                     # ADVシーンではセリフが連続するため、↓が見える限りバーストタップ
+                    # NOTE: detect_adv_advance_icon() 単独ではバトル画面の「通常攻撃」
+                    # ボタン領域の明るいピクセルを↓と誤検出するため、ADVツールバー判定
+                    # (is_adv) を必須条件にする。↓単独ではADVに入らない。
                     _adv_tap_x = int(ANALYSIS_W * 0.93)
                     _adv_tap_y = int(ANALYSIS_H * 0.91)
-                    if _rapid_adv.is_adv or detect_adv_advance_icon(img_path):
+                    if _rapid_adv.is_adv:
                         # ── ADVバーストタップ: ↓が見える限り連続タップ (OCR/phashスキップ) ──
                         _burst_count = 0
                         _burst_max = 3  # 安全上限
