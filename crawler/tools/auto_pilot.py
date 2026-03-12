@@ -1036,7 +1036,8 @@ def detect_and_act(ocr: list, state: PilotState,
     # ─── 【優先 #0】チュートリアルポップアップ セカンダリセーフネット ───
     # #0-DIALOG (形状ベース) が失敗した場合の OCR キーワードによるバックアップ。
     # キーワードリストは _DIALOG_FIRST_KWS (定数) と共有して管理。
-    pre_popup = has_any(ocr, list(_DIALOG_FIRST_KWS))
+    # BATTLE シーンではロール名 (DEFENDER 等) が常時表示されるため誤検出を防止
+    pre_popup = None if state.current_scene == "BATTLE" else has_any(ocr, list(_DIALOG_FIRST_KWS))
     if pre_popup:
         state.pre_popup_tap_count += 1
         # ── テンプレートマッチングで ▷/× を優先検出 ──
@@ -2366,21 +2367,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     if state.current_scene == "BATTLE" and dist < 30:
         return "BATTLE"
 
-    # ADV 継続: 前回 ADV + phash 小変化 + AUTO アイコン単独検出 (~10ms) → ADV 高速パス維持
-    # dist ガード: ADV→BATTLE 遷移時 (dist>=20) はフォールスルーして再評価する
-    # (バトル画面の AUTO ボタンが adv_icon_auto と誤一致する問題を防止)
-    if state.current_scene == "ADV" and dist < 20:
-        from tools.ap.image_proc import ASSET_MANAGER as _AM_adv
-        try:
-            _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
-            _auto_m = _AM_adv.match_single("adv_icon_auto", img_path, roi=_auto_roi)
-            if _auto_m and _auto_m[2] >= 0.50:
-                return "ADV"
-        except Exception:
-            pass
-
-    # BATTLE 初回検出: 右下の「通常攻撃」or「戦闘スキル」ボタンアイコンで判定
+    # BATTLE 初回/再検出: 右下の「通常攻撃」or「戦闘スキル」ボタンアイコンで判定
     # ADV ツールバーの AUTO/FF がバトル画面にも存在するため、ADV 判定より先に実行
+    # NOTE: ADV 継続チェックより先に実行 — 一度 ADV と誤分類されても
+    # バトルテンプレが見つかれば即 BATTLE に復帰する
     from tools.ap.image_proc import ASSET_MANAGER as _AM_battle
     try:
         _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
@@ -2393,6 +2383,19 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 return "BATTLE"
     except Exception:
         pass
+
+    # ADV 継続: 前回 ADV + phash 小変化 + AUTO アイコン単独検出 (~10ms) → ADV 高速パス維持
+    # dist ガード: ADV→BATTLE 遷移時 (dist>=20) はフォールスルーして再評価する
+    # (バトル画面の AUTO ボタンが adv_icon_auto と誤一致する問題を防止)
+    if state.current_scene == "ADV" and dist < 20:
+        from tools.ap.image_proc import ASSET_MANAGER as _AM_adv
+        try:
+            _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+            _auto_m = _AM_adv.match_single("adv_icon_auto", img_path, roi=_auto_roi)
+            if _auto_m and _auto_m[2] >= 0.50:
+                return "ADV"
+        except Exception:
+            pass
 
     # ADV: ツールバー検出 (MENU シーンは OCR でボタン検出が必要)
     if state.current_scene != "MENU":
@@ -2490,27 +2493,32 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     # ── Phase 0: チュートリアル金枠 → 最優先タップ ──
     # 指ブロブ有無に関わらず金枠を常時チェック (~10ms)
     # scrcpy キャプチャでは指ブロブ面積が変動するためゲート緩和
-    # NOTE: character_selected 時はスキップ — キャラ選択後は必殺技/攻撃ボタン
-    # の発光を金枠と誤検出するため、Phase B を優先する
-    if not state.character_selected and not state.char_just_selected:
-        # BATTLE: 右半分のみ (左側キャラアイコンの歯車装飾を金枠と誤検出するため)
-        _gold_rho = True if state.current_scene == "BATTLE" else False
-        _gold_tap = detect_tutorial_gold_button_tap(analysis_path, right_half_only=_gold_rho)
-        if _gold_tap:
-            _rapid_tx, _rapid_ty = _gold_tap
-            _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
-        # フォールバック: detect_tutorial_gold_button_tap が条件で弾いた場合でも
-        # 大面積ブロブ + find_gold_frame_near で金枠が見つかればそちらを使用
-        if not _rapid_action and _rapid_blobs:
-            for _rb in _rapid_blobs:
-                if _rb[2] >= 15000:  # 大面積ブロブ
-                    _gf = find_gold_frame_near(analysis_path, _rb[0], _rb[1], search_radius=200)
-                    if _gf is not None:
-                        _rapid_tx, _rapid_ty = _gf[0], _gf[1]
-                        _rapid_action = "BATTLE_RAPID_GOLD_FRAME_FALLBACK"
-                        logger.info("[BATTLE_RAPID] 金枠フォールバック: blob(%d,%d) → gold(%d,%d)",
-                                    _rb[0], _rb[1], _gf[0], _gf[1])
-                        break
+    # NOTE: character_selected でもスキップしない — 金枠検出の extent<0.55 フィルタで
+    # 通常のボタン発光と区別可能。ガードすると戦闘スキル等のチュートリアル金枠を見逃す。
+    # BATTLE: 右半分のみ (左側キャラアイコンの菱形装飾を金枠と誤検出するため)
+    # handle_battle() はバトル専用関数なので常に right_half_only=True
+    _gold_tap = detect_tutorial_gold_button_tap(analysis_path, right_half_only=True)
+    if _gold_tap:
+        _rapid_tx, _rapid_ty = _gold_tap
+        _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
+    # フォールバック: detect_tutorial_gold_button_tap が条件で弾いた場合でも
+    # 大面積ブロブ + find_gold_frame_near で金枠が見つかればそちらを使用
+    # バトル: 右半分 (x>W/2) かつ y>35% のみ (左キャラアイコン・上部UI排除)
+    if not _rapid_action and _rapid_blobs:
+        for _rb in _rapid_blobs:
+            if _rb[2] >= 15000:  # 大面積ブロブ
+                _gf = find_gold_frame_near(analysis_path, _rb[0], _rb[1], search_radius=200)
+                if _gf is not None:
+                    # バトル中: 右半分・下部のみ有効 (上部UI・左キャラ排除)
+                    if _gf[0] < ANALYSIS_W * 0.5 or _gf[1] < ANALYSIS_H * 0.35:
+                        logger.debug("[BATTLE_RAPID] 金枠フォールバック排除: gold(%d,%d) 左側/上部",
+                                     _gf[0], _gf[1])
+                        continue
+                    _rapid_tx, _rapid_ty = _gf[0], _gf[1]
+                    _rapid_action = "BATTLE_RAPID_GOLD_FRAME_FALLBACK"
+                    logger.info("[BATTLE_RAPID] 金枠フォールバック: blob(%d,%d) → gold(%d,%d)",
+                                _rb[0], _rb[1], _gf[0], _gf[1])
+                    break
 
     # ── Phase A: アクティブキャラ検出 (赤/ピンク発光) ──
     _active_char = detect_active_battle_char(analysis_path, ANALYSIS_W, ANALYSIS_H)
@@ -3241,6 +3249,7 @@ def main():
                 continue
 
         elif _early_scene == "BATTLE":
+            state.current_scene = "BATTLE"
             _early_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
             if handle_battle(_early_analysis, state, dist):
                 _fms = (time.time() - _loop_t0) * 1000
@@ -3746,13 +3755,13 @@ def main():
             _rapid_blobs = [b for b in _rapid_blobs
                             if b[1] > _SPATIAL_MARGIN_TOP and b[0] < ANALYSIS_W - _CLOSE_BTN_OFFSET]
 
-            # ── Phase 0: チュートリアル金枠+指 (area>10000 かつ金枠ボタン検出) → 最優先タップ ──
-            _rapid_tutorial_gold = [b for b in _rapid_blobs if b[2] > 10000]
-            if _rapid_tutorial_gold:
-                _gold_tap = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False)
-                if _gold_tap:
-                    _rapid_tx, _rapid_ty = _gold_tap
-                    _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
+            # ── Phase 0: チュートリアル金枠 → 最優先タップ ──
+            # 指ブロブ有無に関わらず金枠を常時チェック (extent<0.55 で通常ボタンと区別)
+            _gold_rho2 = True if state.current_scene == "BATTLE" else False
+            _gold_tap = detect_tutorial_gold_button_tap(analysis_path, right_half_only=_gold_rho2)
+            if _gold_tap:
+                _rapid_tx, _rapid_ty = _gold_tap
+                _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
 
             # ── Phase A: アクティブキャラ検出 (赤/ピンク発光ハロー) ──
             # 【永続ルール】キャラ選択モヤ = 赤/ピンクの発光。明度差で識別。
@@ -3911,6 +3920,13 @@ def main():
         # ── シーン分類 ──
         scene, next_interval = classify_scene(
             texts, state.last_action, adv_detected=_adv_result.is_adv)
+        # BATTLE 保持: SCENE_EARLY で BATTLE 確定後、OCR 分類が ADV/UNKNOWN でも
+        # バトルキーワードが残っていれば BATTLE を維持 (攻撃アニメ中にテンプレ不一致になるため)
+        _joined_for_scene = " ".join(texts)
+        if (state.current_scene == "BATTLE" and scene not in ("BATTLE", "LOADING", "STORY")
+                and any(kw in _joined_for_scene for kw in _BATTLE_UI_KWS)):
+            logger.info("[SCENE_STICKY] %s→BATTLE保持 (バトルKW残存)", scene)
+            scene = "BATTLE"
         state.current_scene = scene
         logger.info("[%s][iter %d] phash_dist=%d same=%d OCR(%d): %s",
                     scene, i, dist, state.same_phash_count, len(ocr_results), texts[:8])
@@ -4003,7 +4019,7 @@ def main():
         _post_adv_x = int(ANALYSIS_W * 0.93)
         _post_adv_y = int(ANALYSIS_H * 0.91)
         _post_is_adv = _adv_result.is_adv  # ADVシーンならミニ会話をスキップ
-        _skip_burst = scene in ("BATTLE", "MENU") or action in (
+        _skip_burst = scene in ("BATTLE", "MENU") or state.current_scene == "BATTLE" or action in (
             "DOWNLOAD_WAIT", "LOADING_WAIT", "MOVIE_WAIT", "MAIN_STORY_LOADING",
             "WAIT_FOR_CHANGE")
         while _post_burst_count < _post_burst_max and not _skip_burst:
