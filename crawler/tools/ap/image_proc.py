@@ -985,19 +985,18 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
                 return MovieSceneResult()
         except Exception:
             pass
-        # 即棄却: ページドット≥2 → ページングダイアログ (ポップアップの金色装飾が⏭と誤検出される)
-        try:
-            if count_page_dots(img_path) >= 2:
-                logger.debug("[MOVIE_SCENE] ページドット検出 → MOVIE棄却 (ポップアップ)")
-                return MovieSceneResult()
-        except Exception:
-            pass
-        # 即棄却: 背景ぼかし → ポップアップ表示中 (動画ではない)
+        # 即棄却: ページドット≥2 + 背景ぼかし → ポップアップ (金色装飾が⏭と誤検出される)
+        # (ドット単体はホーム画面UIで誤検出多い → 背景ぼかし必須)
         try:
             _img_blur = imread_cached(img_path)
             if _img_blur is not None:
                 _Hb, _Wb = _img_blur.shape[:2]
-                if _detect_background_blur(_img_blur, _Hb, _Wb):
+                _has_dots = count_page_dots(_img_blur, _Hb, _Wb) >= 2
+                _has_blur = _detect_background_blur(_img_blur, _Hb, _Wb)
+                if _has_dots and _has_blur:
+                    logger.debug("[MOVIE_SCENE] ドット+背景ぼかし → MOVIE棄却 (ポップアップ)")
+                    return MovieSceneResult()
+                if _has_blur:
                     logger.debug("[MOVIE_SCENE] 背景ぼかし検出 → MOVIE棄却 (ポップアップ)")
                     return MovieSceneResult()
         except Exception:

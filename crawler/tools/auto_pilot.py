@@ -123,7 +123,7 @@ from tools.ap.image_proc import (  # noqa: E402
     find_gold_frame_near, is_adv_toolbar_cached, detect_adv_advance_icon,
     is_adv_toolbar_visible, detect_movie_skip_button, detect_mini_conversation,
     detect_tutorial_dialog_nav, detect_dialog_frame_and_nav,
-    process_paging_dialog, detect_notice_popup, count_page_dots,
+    process_paging_dialog, detect_notice_popup, count_page_dots, _detect_background_blur,
     detect_text_input_area,
     detect_tutorial_gold_swipe, detect_tutorial_gold_button_tap, detect_tutorial_overlay,
     smart_tap_button, find_golden_highlighted_button, find_3d_arrow,
@@ -374,11 +374,16 @@ def handle_dialog_screen(
 
     # ── [SPATIAL GATE] ▷ページングより指アイコンを最優先 ──────────────
     if _dlg_type in ("next", "bottom"):
-        # ── ページドット検出: ドット≥2 = 確実にページングダイアログ → SPATIAL_GATE バイパス ──
+        # ── ページドット + 背景ぼかし = ポップアップ確定 → SPATIAL_GATE バイパス ──
+        # (ドット単体はホーム画面UIで誤検出多い → 背景ぼかし必須)
         _page_dots = count_page_dots(analysis_path) if analysis_path else 0
-        _bypass_spatial = _page_dots >= 2
-        if _bypass_spatial:
-            logger.info("[SPATIAL_GATE_BYPASS] ページドット=%d個検出 → ページングダイアログ確定, SPATIAL_GATE スキップ", _page_dots)
+        _bypass_spatial = False
+        if _page_dots >= 2 and analysis_path:
+            _blur_img = imread_cached(analysis_path)
+            if _blur_img is not None and _detect_background_blur(
+                    _blur_img, _blur_img.shape[0], _blur_img.shape[1]):
+                _bypass_spatial = True
+                logger.info("[SPATIAL_GATE_BYPASS] ドット=%d+背景ぼかし → ポップアップ確定, SPATIAL_GATE スキップ", _page_dots)
         if not _bypass_spatial:
             _sg_blobs = find_finger_blobs(analysis_path, min_area=400)
             _sg_blobs = [b for b in _sg_blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
@@ -2373,13 +2378,18 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     _MOVIE_ACTIONS = ("MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_RESUME_TAP", "MOVIE_SKIP_ESCAPE")
     _MOVIE_INERTIA_TTL = 60
     # ── MOVIE慣性よりポップアップ検出が優先 ──
+    # ドット検出だけだと誤検出多い → 背景ぼかしと併用
     if state.last_action in _MOVIE_ACTIONS and img_path:
         _inertia_dots = count_page_dots(img_path)
         if _inertia_dots >= 2:
-            logger.info("[SCENE_EARLY] MOVIE慣性中だがページドット=%d → ポップアップ脱出", _inertia_dots)
-            state.last_action = "SCENE_TAP"
-            state.movie_wait_consecutive = 0
-            return "UNKNOWN"
+            _img_blur = imread_cached(img_path)
+            _is_popup = _img_blur is not None and _detect_background_blur(
+                _img_blur, _img_blur.shape[0], _img_blur.shape[1])
+            if _is_popup:
+                logger.info("[SCENE_EARLY] MOVIE慣性中だがドット=%d+背景ぼかし → ポップアップ脱出", _inertia_dots)
+                state.last_action = "SCENE_TAP"
+                state.movie_wait_consecutive = 0
+                return "UNKNOWN"
     if state.last_action in _MOVIE_ACTIONS:
         if state.movie_wait_consecutive >= _MOVIE_INERTIA_TTL:
             # TTL切れ → phash変化中なら動画継続、安定なら脱出
@@ -2456,12 +2466,17 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             return "ADV"
 
     # ── ポップアップ検出: MOVIE判定より先にチェック ──
-    # ページドット≥2 or 背景ぼかし → ポップアップ確定 → MOVIE にしない
+    # ページドット≥2 AND 背景ぼかし → ポップアップ確定 → MOVIE にしない
+    # (ドット単体はホーム画面UIアイコンで誤検出多い → 背景ぼかし必須)
     if img_path:
         _popup_dots = count_page_dots(img_path)
         if _popup_dots >= 2:
-            logger.info("[SCENE_EARLY] ページドット=%d → ポップアップ確定, MOVIE判定スキップ", _popup_dots)
-            return "UNKNOWN"
+            _popup_img = imread_cached(img_path)
+            _popup_blur = _popup_img is not None and _detect_background_blur(
+                _popup_img, _popup_img.shape[0], _popup_img.shape[1])
+            if _popup_blur:
+                logger.info("[SCENE_EARLY] ドット=%d+背景ぼかし → ポップアップ確定, MOVIE判定スキップ", _popup_dots)
+                return "UNKNOWN"
 
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
     if state.last_action not in _MOVIE_ACTIONS:
