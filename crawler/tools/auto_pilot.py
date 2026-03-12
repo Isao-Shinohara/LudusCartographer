@@ -2354,9 +2354,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     if state.current_scene == "BATTLE" and dist < 30:
         return "BATTLE"
 
-    # ADV 継続: 前回 ADV + AUTO アイコン単独検出 (~10ms) → ADV 高速パス維持
-    # (ツールバー全体 3/5 は検出不安定なため、AUTO 単独で十分)
-    if state.current_scene == "ADV":
+    # ADV 継続: 前回 ADV + phash 小変化 + AUTO アイコン単独検出 (~10ms) → ADV 高速パス維持
+    # dist ガード: ADV→BATTLE 遷移時 (dist>=20) はフォールスルーして再評価する
+    # (バトル画面の AUTO ボタンが adv_icon_auto と誤一致する問題を防止)
+    if state.current_scene == "ADV" and dist < 20:
         from tools.ap.image_proc import ASSET_MANAGER as _AM_adv
         try:
             _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))

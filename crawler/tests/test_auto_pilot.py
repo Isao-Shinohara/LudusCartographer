@@ -1099,7 +1099,7 @@ class TestMovieInertiaTTL:
 
         result = detect_scene_early(img_path, state, dist=5)
         assert result == "UNKNOWN"
-        assert state.movie_wait_consecutive == 0  # リセットされる
+        assert state.movie_wait_consecutive == 20  # リセットしない (MOVIE_GUARD_ESCAPE が累積カウントで脱出)
 
     @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
     @patch("tools.auto_pilot.detect_adv_scene_cached")
