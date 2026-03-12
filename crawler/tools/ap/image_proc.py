@@ -873,10 +873,11 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
             if _blob_area < 200:
                 logger.debug("[MOVIE_SKIP_BTN] 小ブロブを排除 gold_px=%d blob_area=%.0f", _gold_count, _blob_area)
                 return None
-            # 円形度チェック: ⏭ボタンは円形 (>=0.3), テキスト/枠は細長い (<0.3)
+            # 円形度チェック: ⏭ボタンは円形 (>=0.45), テキスト/枠/✕ボタンは非円形 (<0.45)
+            # NOTE: 旧値0.30では✕閉じるボタン(十字形,circ=0.31)が⏭と誤検出された
             _perimeter = cv2.arcLength(_largest, True)
             _circularity = (4 * 3.14159 * _blob_area / (_perimeter * _perimeter)) if _perimeter > 0 else 0
-            if _circularity < 0.3:
+            if _circularity < 0.45:
                 logger.debug("[MOVIE_SKIP_BTN] 非円形を排除 gold_px=%d blob=%.0f circ=%.2f",
                              _gold_count, _blob_area, _circularity)
                 return None
