@@ -1661,7 +1661,7 @@ def process_paging_dialog(
         tap_device(_dx, _dy, state, "PAGING_NEXT")
         logger.info("[PAGING] ▷タップ (page=%d/%d)", _page + 1, max_pages)
         state.dialog_detections += 1
-        time.sleep(0.2)
+        time.sleep(0.05)
         # 次ページのスクリーンショットを取得して解析
         _img_path, _aw, _ah, _ = take_screenshot()
         analysis_path = prepare_analysis_image(_img_path, _aw, _ah)

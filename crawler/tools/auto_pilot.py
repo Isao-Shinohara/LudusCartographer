@@ -1404,8 +1404,24 @@ def detect_and_act(ocr: list, state: PilotState,
                     logger.info("  バトル: 金枠+指 (%d,%d) area=%.0f → チュートリアル最優先",
                                 blobs[0][0], blobs[0][1], blobs[0][2])
                 elif state.char_just_selected:
-                    # 左キャラ選択済み → 右スキルを選択 (左キャラ再タップしない)
-                    if right_panel:
+                    # 左キャラ選択済み → 必殺技を優先、なければ右スキルを選択
+                    _skill_match = None
+                    if analysis_path is not None:
+                        try:
+                            _skill_roi = (_RIGHT_PANEL_X, int(H * 0.45), W, H)
+                            _skill_match = ASSET_MANAGER.match_single(
+                                "battle_skill", analysis_path, roi=_skill_roi)
+                        except Exception:
+                            pass
+                    if _skill_match and _skill_match[2] >= 0.55:
+                        # 必殺技ボタン検出 → 直接タップ (モヤ blob ではなくテンプレ座標)
+                        _sk_x, _sk_y = _skill_match[0], _skill_match[1]
+                        logger.info("  バトル: キャラ選択後 → 必殺技 (%.2f) (%d,%d)",
+                                    _skill_match[2], _sk_x, _sk_y)
+                        state.char_just_selected = False
+                        tap_device(_sk_x, _sk_y, state, "BATTLE_HISSATSU")
+                        return "BATTLE_HISSATSU", 0.5
+                    elif right_panel:
                         blobs = right_panel
                         state.char_just_selected = False
                         logger.info("  バトル: キャラ選択後 → 右スキルもや %d個", len(blobs))
@@ -3284,6 +3300,33 @@ def main():
         if state.consecutive_blackouts > 0:
             state.consecutive_blackouts = 0
 
+        # ── 2.5) ダウンロード/ロード中ショートカット ──
+        # 前回アクションが DOWNLOAD_WAIT/LOADING_WAIT → phash/シーン判定をスキップ
+        # phash だけ更新して detect_and_act へ直行 (DL 完了判定は detect_and_act 内で行う)
+        if state.last_action in ("DOWNLOAD_WAIT", "LOADING_WAIT", "MAIN_STORY_LOADING"):
+            try:
+                cur_phash = compute_phash(img_path)
+            except Exception:
+                cur_phash = ""
+            if state.last_phash and cur_phash:
+                dist = phash_distance(state.last_phash, cur_phash)
+            else:
+                dist = 999
+            state.last_phash_dist = dist
+            if dist < PHASH_THRESHOLD:
+                # 画面変化なし → DL/ロード継続中、解析スキップ
+                state.same_phash_count += 1
+                state.last_phash = cur_phash
+                state.last_screen_change_time = time.time()  # Watchdog抑制
+                logger.debug("[iter %d] DL/ロード中: phash変化なし(dist=%d) → 待機続行", i, dist)
+                time.sleep(POLL_INTERVAL)
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                continue
+            # 画面変化あり → DL 完了の可能性。通常フローで判定
+            logger.info("[iter %d] DL/ロード中: 画面変化(dist=%d) → 通常解析へ", i, dist)
+            state.last_phash = cur_phash
+
         # ── 3) phash 粗解析 ──
         try:
             cur_phash = compute_phash(img_path)
@@ -3445,15 +3488,12 @@ def main():
                                             i, _burst_count, _adv_tap_x, _adv_tap_y)
                                 tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
                                 state.last_action = "ADV_RAPID_TAP"
-                                # 偶数回 or 最終回のみスクショ (奇数回は前画像で続行)
-                                if _burst_count % 2 == 0 or _burst_count >= _burst_max:
-                                    _b_path, _b_w, _b_h, _ = take_screenshot()
-                                    if _b_path is None:
-                                        break
-                                    _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
-                                    actual_w, actual_h = _b_w, _b_h
-                                else:
-                                    time.sleep(0.3)  # スクショ代わりの短い待ち
+                                # 毎回スクショ (scrcpy: 10-15ms で sleep(0.3) より高速)
+                                _b_path, _b_w, _b_h, _ = take_screenshot()
+                                if _b_path is None:
+                                    break
+                                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
+                                actual_w, actual_h = _b_w, _b_h
                             elif _rapid_adv.is_adv and _rapid_adv.next_btn_pos and _burst_count == 0:
                                 # ↓アイコンHSV未検出だがADVツールバーあり+座標あり → 1回タップ
                                 _adv_nx = int(_rapid_adv.next_btn_pos[0] * ANALYSIS_W / actual_w)
