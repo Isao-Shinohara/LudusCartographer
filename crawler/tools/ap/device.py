@@ -187,27 +187,59 @@ def _capture_scrcpy_window(wid: int, path: Path) -> Optional[np.ndarray]:
         return None
 
 
-def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[Path], int, int, int]:
+# ─── デバイス解像度キャッシュ (wm size 結果) ───
+_CACHED_DEVICE_RES: tuple[int, int] = (0, 0)
+
+
+def _get_cached_device_resolution() -> tuple[int, int]:
+    """wm size の結果をキャッシュして返す。take_screenshot() 内で使用。"""
+    global _CACHED_DEVICE_RES
+    if _CACHED_DEVICE_RES[0] > 0:
+        return _CACHED_DEVICE_RES
+    w, h = get_device_resolution()
+    if w > 0 and h > 0:
+        _CACHED_DEVICE_RES = (w, h)
+    return w, h
+
+
+def invalidate_device_resolution_cache() -> None:
+    """デバイス解像度キャッシュを無効化する (デバイス変更時用)。"""
+    global _CACHED_DEVICE_RES
+    _CACHED_DEVICE_RES = (0, 0)
+
+
+def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
+    """scrcpy ウィンドウキャプチャ (Quartz, ~100ms)。
+
+    Returns: (path, device_w, device_h) or None
+    ※ device_w/h は実機解像度 (wm size) を返す (scrcpy ウィンドウサイズではない)
     """
-    スクリーンショット取得。2段構え:
-    1. scrcpy ウィンドウキャプチャ (Quartz, ~100ms)
-    2. adb screencap フォールバック (~1.5-2s)
+    if not _HAS_QUARTZ:
+        return None
+    wid = _SCRCPY_WINDOW_ID or _find_scrcpy_window_id()
+    if not wid:
+        return None
+    bgr = _capture_scrcpy_window(wid, path)
+    if bgr is None:
+        # キャプチャ失敗 → ウィンドウ ID リセット (次回再取得)
+        _find_scrcpy_window_id()
+        return None
+    # 実機解像度を返す (scrcpy ウィンドウはリサイズ済みで実機と異なる)
+    dev_w, dev_h = _get_cached_device_resolution()
+    if dev_w <= 0 or dev_h <= 0:
+        # キャッシュ未設定なら画像サイズをフォールバック
+        _h, _w = bgr.shape[:2]
+        dev_w, dev_h = _w, _h
+    return path, dev_w, dev_h
+
+
+def _take_screenshot_adb(path: Path, retries: int = 3,
+                         min_bytes: int = 5_000) -> tuple[Optional[Path], int, int, int]:
+    """adb screencap (~1.5-2s)。Wi-Fi 破損リトライ付き。
+
+    Returns: (path, width, height, retry_count) — adb は実機解像度そのまま
     """
-    path = Path(SCREENSHOT_PATH)
     _retried = 0
-
-    # ── Tier 1: scrcpy ウィンドウキャプチャ (macOS + Quartz) ──
-    if _HAS_QUARTZ:
-        wid = _SCRCPY_WINDOW_ID or _find_scrcpy_window_id()
-        if wid:
-            bgr = _capture_scrcpy_window(wid, path)
-            if bgr is not None:
-                _h, _w = bgr.shape[:2]
-                return path, _w, _h, 0
-            # キャプチャ失敗 → ウィンドウ ID リセットして再取得
-            _find_scrcpy_window_id()
-
-    # ── Tier 2: adb screencap フォールバック ──
     for _attempt in range(retries):
         try:
             _result = subprocess.run(
@@ -223,7 +255,8 @@ def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[
                     shell=True, capture_output=True, timeout=10,
                 )
         except Exception as _ss_exc:
-            logger.warning("[SCREENSHOT] 取得例外: %s (attempt %d/%d)", _ss_exc, _attempt + 1, retries)
+            logger.warning("[SCREENSHOT] 取得例外: %s (attempt %d/%d)",
+                           _ss_exc, _attempt + 1, retries)
             _retried += 1
             time.sleep(0.5)
             continue
@@ -243,8 +276,29 @@ def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[
             continue
         _h, _w = _test.shape[:2]
         return path, _w, _h, _retried
-    logger.error("[WIFI_ERROR] Corrupted frame dropped (%d retries exhausted). Returning None.", retries)
+    logger.error("[WIFI_ERROR] Corrupted frame dropped (%d retries exhausted). Returning None.",
+                 retries)
     return None, 0, 0, _retried
+
+
+def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[Path], int, int, int]:
+    """スクリーンショット取得 (2段構え)。
+
+    1. scrcpy ウィンドウキャプチャ (Quartz, ~100ms)
+    2. adb screencap フォールバック (~1.5-2s)
+
+    Returns: (path, device_w, device_h, retry_count)
+    ※ device_w/h は常に実機の物理解像度 (wm size) を返す
+    """
+    path = Path(SCREENSHOT_PATH)
+
+    # ── Tier 1: scrcpy ウィンドウキャプチャ ──
+    _scrcpy = _take_screenshot_scrcpy(path)
+    if _scrcpy is not None:
+        return _scrcpy[0], _scrcpy[1], _scrcpy[2], 0
+
+    # ── Tier 2: adb screencap フォールバック ──
+    return _take_screenshot_adb(path, retries=retries, min_bytes=min_bytes)
 
 
 def manage_scrcpy() -> Optional[subprocess.Popen]:
