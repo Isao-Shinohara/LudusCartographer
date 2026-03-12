@@ -374,19 +374,25 @@ def handle_dialog_screen(
 
     # ── [SPATIAL GATE] ▷ページングより指アイコンを最優先 ──────────────
     if _dlg_type in ("next", "bottom"):
-        _sg_blobs = find_finger_blobs(analysis_path, min_area=400)
-        _sg_blobs = [b for b in _sg_blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
-        if _sg_blobs:
-            _sg_best = max(_sg_blobs, key=lambda b: b[2])
-            _sg_dist = ((_dlg_x - _sg_best[0]) ** 2 + (_dlg_y - _sg_best[1]) ** 2) ** 0.5
-            if _sg_dist > 300:
-                logger.info(
-                    ">>> [SPATIAL_GATE] 指(%d,%d)↔▷(%d,%d) 距離=%.0fpx>300 → #0-DIALOG スキップ",
-                    _sg_best[0], _sg_best[1], _dlg_x, _dlg_y, _sg_dist,
-                )
-                _dlg = None
+        # ── ページドット検出: ドット≥2 = 確実にページングダイアログ → SPATIAL_GATE バイパス ──
+        _page_dots = count_page_dots(analysis_path) if analysis_path else 0
+        _bypass_spatial = _page_dots >= 2
+        if _bypass_spatial:
+            logger.info("[SPATIAL_GATE_BYPASS] ページドット=%d個検出 → ページングダイアログ確定, SPATIAL_GATE スキップ", _page_dots)
+        if not _bypass_spatial:
+            _sg_blobs = find_finger_blobs(analysis_path, min_area=400)
+            _sg_blobs = [b for b in _sg_blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
+            if _sg_blobs:
+                _sg_best = max(_sg_blobs, key=lambda b: b[2])
+                _sg_dist = ((_dlg_x - _sg_best[0]) ** 2 + (_dlg_y - _sg_best[1]) ** 2) ** 0.5
+                if _sg_dist > 300:
+                    logger.info(
+                        ">>> [SPATIAL_GATE] 指(%d,%d)↔▷(%d,%d) 距離=%.0fpx>300 → #0-DIALOG スキップ",
+                        _sg_best[0], _sg_best[1], _dlg_x, _dlg_y, _sg_dist,
+                    )
+                    _dlg = None
         # ── 白ハンドポインタ画面ガード ──────────────────────────
-        if _dlg is not None:
+        if _dlg is not None and not _bypass_spatial:
             _sg_white = detect_white_hand_pointer(analysis_path, threshold=0.90)
             if _sg_white is not None:
                 logger.info(
@@ -1048,15 +1054,30 @@ def detect_and_act(ocr: list, state: PilotState,
     pre_popup = None if state.current_scene == "BATTLE" else has_any(ocr, list(_DIALOG_FIRST_KWS))
     if pre_popup:
         state.pre_popup_tap_count += 1
+        # ── ページドット検出: ドット≥2 → ページングが必要 (× 即タップではなく全ページ走査) ──
+        _popup_dots = count_page_dots(analysis_path) if analysis_path else 0
         # ── テンプレートマッチングで ▷/× を優先検出 ──
         _nav = detect_tutorial_dialog_nav(analysis_path, W, H) if analysis_path else None
         if _nav:
             _nav_type, cx, cy = _nav
-            if _nav_type == "close":
-                logger.info(">>> 【チュートリアルポップアップ】 '%s' ×→(%d,%d) [template]",
-                            pre_popup["text"][:10], cx, cy)
+            if _nav_type == "close" and _popup_dots < 2:
+                # ページなし → × で即閉じ
+                logger.info(">>> 【チュートリアルポップアップ】 '%s' ×→(%d,%d) [template] dots=%d",
+                            pre_popup["text"][:10], cx, cy, _popup_dots)
                 tap_device(cx, cy, state, "PRE_POPUP_TAP")
                 return "TUTORIAL_POPUP", 1.0
+            if _nav_type == "close" and _popup_dots >= 2:
+                # ページあり + × 検出 → ▷ は固定座標で走査後 × で閉じ
+                logger.info(">>> 【チュートリアルポップアップ→PAGING】 '%s' dots=%d, × 検出→先にページ走査",
+                            pre_popup["text"][:10], _popup_dots)
+                _arr_x, _arr_y = int(W * 0.91), int(H * 0.49)
+                _pg_result = process_paging_dialog(
+                    analysis_path, W, H, state,
+                    initial_dlg=("next", _arr_x, _arr_y),
+                    ocr_texts=texts,
+                )
+                state.pre_popup_tap_count = 0
+                return _pg_result, 1.0
             # ▷ 検出 → ページングダイアログ: process_paging_dialog で全ページ一括処理
             # (単発タップだとページ2以降の OCR が _DIALOG_FIRST_KWS に不一致 → スタックする)
             logger.info(">>> 【チュートリアルポップアップ→PAGING】 '%s' ▷(%d,%d) → 全ページ走査開始",
@@ -1073,8 +1094,8 @@ def detect_and_act(ocr: list, state: PilotState,
         _arr = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)   # ▷ 矢印
         _cls = roi_to_device(int(W * 0.98), int(H * 0.056), state.game_roi)  # × ボタン
         # まず ▷ をタップして反応を見る → process_paging_dialog で全ページ処理
-        logger.info(">>> 【チュートリアルポップアップ→PAGING(FB)】 '%s' ▷(%d,%d) → 全ページ走査",
-                    pre_popup["text"][:10], _arr[0], _arr[1])
+        logger.info(">>> 【チュートリアルポップアップ→PAGING(FB)】 '%s' ▷(%d,%d) dots=%d → 全ページ走査",
+                    pre_popup["text"][:10], _arr[0], _arr[1], _popup_dots)
         _pg_result = process_paging_dialog(
             analysis_path, W, H, state,
             initial_dlg=("next", _arr[0], _arr[1]),
@@ -2340,9 +2361,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
     # MOVIE 慣性: 直前が動画アクション → 非動画の明確な証拠がなければ MOVIE 継続
     # ⏭ ボタンが一時的に非表示でも GoldSwipe 等の誤発動を防止
-    # TTL: 20回 (~10秒) で慣性強制解除 → 誤分類の永久固定化を防止
+    # TTL: 60回 (~30秒) で慣性強制解除 → 誤分類の永久固定化を防止
+    # (動画は30秒以上のものもある。短すぎると TTL 切れ→タップ→一時停止ループに陥る)
     _MOVIE_ACTIONS = ("MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_RESUME_TAP", "MOVIE_SKIP_ESCAPE")
-    _MOVIE_INERTIA_TTL = 20
+    _MOVIE_INERTIA_TTL = 60
     if state.last_action in _MOVIE_ACTIONS:
         if state.movie_wait_consecutive >= _MOVIE_INERTIA_TTL:
             logger.info("[SCENE_EARLY] Movie inertia TTL expired (consecutive=%d) → UNKNOWN",
@@ -2433,18 +2455,11 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     """
     W, H = ANALYSIS_W, ANALYSIS_H
 
-    # ── post_download → SKIP ボタン検出 ──
+    # ── 動画は最後まで再生して自動遷移する → ⏭ ボタンは押さず待機のみ ──
+    # (タップすると一時停止/再開ループに陥る)
     if state.post_download:
-        _movie_btn = detect_movie_skip_button(img_path)
-        if _movie_btn:
-            _sk_x, _sk_y = _movie_btn
-            _sk_x, _sk_y = roi_to_device(_sk_x, _sk_y, state.game_roi)
-            logger.info("[MOVIE] DL直後 SKIP ボタン検出 → タップ (%d,%d)", _sk_x, _sk_y)
-            tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP")
-            state.last_action = "MOVIE_SKIP"
-            state.movie_wait_consecutive = 0
-            state.last_phash = ""
-            return True
+        state.post_download = False  # 動画開始確認 → フラグリセット
+        logger.info("[MOVIE] DL直後動画 → ⏭ 押さず最後まで待機")
 
     # ── 待機カウンタ ──
     state.movie_wait_consecutive += 1

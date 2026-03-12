@@ -1586,6 +1586,12 @@ def process_paging_dialog(
     _roi = state.game_roi
     _prev_phash = compute_phash(analysis_path)
     _no_close_streak = 0  # × ROI bright_pixels=0 の連続回数
+    # ページドットで総ページ数を把握 → phash 停止を緩和
+    _total_dots = count_page_dots(analysis_path)
+    if _total_dots >= 2:
+        max_pages = max(max_pages, _total_dots)
+        logger.info("[PAGING] ページドット=%d検出 → max_pages=%d", _total_dots, max_pages)
+    _phash_fail_count = 0  # phash変化なし連続回数
     for _page in range(max_pages):
         # page=0 かつ initial_dlg が渡されている場合は外側の検出結果を再利用
         if _page == 0 and initial_dlg is not None:
@@ -1638,16 +1644,23 @@ def process_paging_dialog(
         # 次ページのスクリーンショットを取得して解析
         _img_path, _aw, _ah, _ = take_screenshot()
         analysis_path = prepare_analysis_image(_img_path, _aw, _ah)
-        # phash変化監視: 変化なし → ページが進んでいない → ループ中断
+        # phash変化監視: 変化なし → ページが進んでいない可能性
         _new_phash = compute_phash(analysis_path)
         if _prev_phash and _new_phash:
             _ph_dist = phash_distance(_prev_phash, _new_phash)
             if _ph_dist < 4:
-                logger.info(
-                    "[PAGING] ▷タップ後 phash変化なし(dist=%d<4) → 誤検出▷ → ループ中断",
-                    _ph_dist,
-                )
-                return "DIALOG_PAGING_TIMEOUT"
+                _phash_fail_count += 1
+                # ページドットあり → 2回連続まで許容 (類似ページ間遷移)
+                _phash_tolerance = 2 if _total_dots >= 2 else 1
+                if _phash_fail_count >= _phash_tolerance:
+                    logger.info(
+                        "[PAGING] ▷タップ後 phash変化なし(dist=%d<4) %d回連続 → ループ中断",
+                        _ph_dist, _phash_fail_count,
+                    )
+                    return "DIALOG_PAGING_TIMEOUT"
+                logger.debug("[PAGING] phash変化小(dist=%d) %d/%d → 続行", _ph_dist, _phash_fail_count, _phash_tolerance)
+            else:
+                _phash_fail_count = 0
         _prev_phash = _new_phash
     logger.warning("[PAGING] max_pages=%d 超過 → タイムアウト", max_pages)
     return "DIALOG_PAGING_TIMEOUT"
