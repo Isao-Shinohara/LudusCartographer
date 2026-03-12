@@ -2482,6 +2482,18 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     if _gold_tap:
         _rapid_tx, _rapid_ty = _gold_tap
         _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
+    # フォールバック: detect_tutorial_gold_button_tap が条件で弾いた場合でも
+    # 大面積ブロブ + find_gold_frame_near で金枠が見つかればそちらを使用
+    if not _rapid_action and _rapid_blobs:
+        for _rb in _rapid_blobs:
+            if _rb[2] >= 15000:  # 大面積ブロブ
+                _gf = find_gold_frame_near(analysis_path, _rb[0], _rb[1], search_radius=200)
+                if _gf is not None:
+                    _rapid_tx, _rapid_ty = _gf[0], _gf[1]
+                    _rapid_action = "BATTLE_RAPID_GOLD_FRAME_FALLBACK"
+                    logger.info("[BATTLE_RAPID] 金枠フォールバック: blob(%d,%d) → gold(%d,%d)",
+                                _rb[0], _rb[1], _gf[0], _gf[1])
+                    break
 
     # ── Phase A: アクティブキャラ検出 (赤/ピンク発光) ──
     _active_char = detect_active_battle_char(analysis_path, ANALYSIS_W, ANALYSIS_H)
