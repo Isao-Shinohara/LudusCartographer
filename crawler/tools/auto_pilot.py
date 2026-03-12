@@ -2694,7 +2694,8 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     """
     INSTALL_KEYWORDS = ["インストール", "Install", "install"]
     ACCEPT_KEYWORDS = ["同意する", "Accept", "OK"]
-    OPEN_KEYWORDS = ["開く", "Open", "プレイ", "Play"]
+    OPEN_KEYWORDS = ["開く", "Open", "プレイ", "Play"]  # uiautomator用 (完全一致)
+    _OCR_OPEN_KEYWORDS = ["開く", "プレイ"]  # OCR用 (部分一致なので "Play"/"Open" は除外: Google Play にヒットする)
     MAX_OCR_ATTEMPTS = 10
     POLL_INTERVAL_SEC = 5
     MAX_POLL_COUNT = 60  # 5秒 × 60 = 5分
@@ -2823,16 +2824,27 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             time.sleep(2)
             continue
 
-        # 「開く」が見える → 既にインストール済み → アンインストール再試行
-        for kw in OPEN_KEYWORDS:
+        # 「開く」「プレイ」が見える → pm list packages で実際にインストール済みか確認
+        _ocr_open_hit = False
+        for kw in _OCR_OPEN_KEYWORDS:
             hit = find_best(ocr_results, kw)
             if hit:
-                logger.info("[FRESH_INSTALL] 「%s」検出 — 既インストール → 再アンインストール", kw)
-                uninstall_app(serial, package)
-                time.sleep(2)
-                open_play_store(serial, package)
-                time.sleep(5)
+                # pm list packages で実際のインストール状態を確認
+                _pm = subprocess.run(
+                    ["adb", "-s", serial, "shell", "pm", "list", "packages", package],
+                    capture_output=True, text=True, timeout=5)
+                if package in _pm.stdout:
+                    logger.info("[FRESH_INSTALL] 「%s」+ pm確認 → 既インストール → 再アンインストール", kw)
+                    uninstall_app(serial, package)
+                    time.sleep(2)
+                    open_play_store(serial, package)
+                    time.sleep(5)
+                    _ocr_open_hit = True
+                else:
+                    logger.info("[FRESH_INSTALL] 「%s」検出だがpm未確認 → Play Store表示のみ、継続", kw)
                 break
+        if _ocr_open_hit:
+            continue
 
         # 「インストール」ボタンを OCR 検出
         for kw in INSTALL_KEYWORDS:
@@ -2852,13 +2864,17 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 elif _uiautomator_find_button(INSTALL_KEYWORDS) is None:
                     _tap_ok = True
                     logger.info("[FRESH_INSTALL] タップ成功 — インストール開始を確認")
-                elif _adb_screenshot(tmp_ss):
-                    try:
-                        _verify_ocr = run_ocr(tmp_ss)
-                        if not any(find_best(_verify_ocr, ik) for ik in INSTALL_KEYWORDS):
-                            _tap_ok = True
-                    except Exception:
-                        _tap_ok = True
+                else:
+                    # uiautomator で判定困難 → OCR + pm で追加確認
+                    if _adb_screenshot(tmp_ss):
+                        try:
+                            _verify_ocr = run_ocr(tmp_ss)
+                            # 「インストール中」がOCRで見えたら成功
+                            if find_best(_verify_ocr, "インストール中"):
+                                _tap_ok = True
+                                logger.info("[FRESH_INSTALL] OCR「インストール中」確認 → 成功")
+                        except Exception:
+                            pass
 
                 if _tap_ok:
                     installed_via_tap = True
