@@ -1085,13 +1085,13 @@ class TestMovieInertiaTTL:
 
     @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
     @patch("tools.auto_pilot.detect_adv_scene_cached")
-    def test_inertia_expires(self, mock_adv_cached, mock_adv_down, state, tmp_path):
-        """consecutive >= 20 → UNKNOWN (慣性解除)。"""
+    def test_inertia_expires_phash_stable(self, mock_adv_cached, mock_adv_down, state, tmp_path):
+        """consecutive >= 60 + phash安定(dist<5) → 動画終了。"""
         from tools.auto_pilot import detect_scene_early
         from tools.ap.image_proc import AdvSceneResult
 
         mock_adv_cached.return_value = AdvSceneResult(is_adv=False)
-        state.movie_wait_consecutive = 20
+        state.movie_wait_consecutive = 60
         state.game_roi = (0, 0, 1520, 720)
 
         img_path = tmp_path / "test.png"
@@ -1099,9 +1099,29 @@ class TestMovieInertiaTTL:
         import numpy as np
         cv2.imwrite(str(img_path), np.zeros((720, 1520, 3), dtype=np.uint8))
 
-        result = detect_scene_early(img_path, state, dist=5)
-        assert result == "UNKNOWN"
-        assert state.movie_wait_consecutive == 20  # リセットしない (MOVIE_GUARD_ESCAPE が累積カウントで脱出)
+        result = detect_scene_early(img_path, state, dist=2)  # phash安定→動画終了
+        assert result != "MOVIE"
+        assert state.movie_wait_consecutive == 0
+
+    @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
+    @patch("tools.auto_pilot.detect_adv_scene_cached")
+    def test_inertia_continues_phash_changing(self, mock_adv_cached, mock_adv_down, state, tmp_path):
+        """consecutive >= 60 + phash変化(dist>=5) → 動画継続 MOVIE。"""
+        from tools.auto_pilot import detect_scene_early
+        from tools.ap.image_proc import AdvSceneResult
+
+        mock_adv_cached.return_value = AdvSceneResult(is_adv=False)
+        state.movie_wait_consecutive = 60
+        state.game_roi = (0, 0, 1520, 720)
+
+        img_path = tmp_path / "test.png"
+        import cv2
+        import numpy as np
+        cv2.imwrite(str(img_path), np.zeros((720, 1520, 3), dtype=np.uint8))
+
+        result = detect_scene_early(img_path, state, dist=5)  # phash変化→動画継続
+        assert result == "MOVIE"
+        assert state.movie_wait_consecutive == 30  # TTL/2 にリセット
 
     @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
     @patch("tools.auto_pilot.detect_adv_scene_cached")
@@ -1348,8 +1368,9 @@ class TestMovieSceneDetection:
             ocr_texts=["OK", "ダウンロード", "設定"])
         assert result.is_movie is False
 
+    @patch("tools.ap.image_proc._detect_background_blur", return_value=False)
     @patch("tools.ap.image_proc.detect_movie_skip_button")
-    def test_movie_with_skip_no_toolbar(self, mock_skip, black_image):
+    def test_movie_with_skip_no_toolbar(self, mock_skip, mock_blur, black_image):
         """⏭ + ツールバーなし → is_movie=True。"""
         from tools.ap.image_proc import detect_movie_scene, AdvSceneResult
         mock_skip.return_value = (1400, 50)  # ⏭ ボタン座標
@@ -1358,8 +1379,9 @@ class TestMovieSceneDetection:
         assert result.is_movie is True
         assert result.confidence >= 0.50
 
+    @patch("tools.ap.image_proc._detect_background_blur", return_value=False)
     @patch("tools.ap.image_proc.detect_movie_skip_button")
-    def test_movie_with_subtitles(self, mock_skip, black_image):
+    def test_movie_with_subtitles(self, mock_skip, mock_blur, black_image):
         """⏭ + ツールバーなし + OCR 3件 (字幕) → is_movie=True。"""
         from tools.ap.image_proc import detect_movie_scene, AdvSceneResult
         mock_skip.return_value = (1400, 50)

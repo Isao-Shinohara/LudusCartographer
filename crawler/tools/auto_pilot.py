@@ -1665,10 +1665,30 @@ def detect_and_act(ocr: list, state: PilotState,
         return "STORY_TAP", 0.3
 
     # ─── ホーム画面検出 ───
+    # OCR が文字を途中で切る場合がある ("クエスト"→"クエス", "パーティ"→"パーテ")
+    # → 短いプレフィックスで双方向部分一致: keyword in text OR text in keyword
     home_indicators = ["光の間", "ショップ", "ガシャ", "ガチャ", "パーティ",
                        "クエスト", "ミッション", "メニュー", "ホーム",
                        "お知らせ", "イベント", "フレンド", "マイページ", "編成"]
-    home_count = sum(1 for h in home_indicators if any(h in t for t in texts))
+    # 短縮プレフィックス (2文字以上一致で検出)
+    _home_prefixes = ["光の", "ショッ", "ガシャ", "ガチャ", "パーテ",
+                      "クエス", "ミッシ", "メニュ", "ホーム",
+                      "お知ら", "イベン", "フレン", "マイペ", "編成"]
+    def _home_match(t: str) -> int:
+        """home_indicators のうち t にマッチする数を返す (完全 or プレフィックス)"""
+        count = 0
+        for h, p in zip(home_indicators, _home_prefixes):
+            if h in t or p in t or t in h:
+                count += 1
+        return count
+    home_count = sum(min(1, _home_match(t)) for t in texts)
+    # 重複排除: 同じ indicator に複数テキストがマッチしても1回
+    _matched = set()
+    for t in texts:
+        for idx, (h, p) in enumerate(zip(home_indicators, _home_prefixes)):
+            if idx not in _matched and (h in t or p in t or t in h):
+                _matched.add(idx)
+    home_count = len(_matched)
     if home_count >= 3:
         state.home_reached = True
         # ── 指アイコン+金枠 → まだホームチュートリアル中 ──
