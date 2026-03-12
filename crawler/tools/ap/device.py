@@ -162,7 +162,11 @@ def _find_scrcpy_window_id() -> int:
 
 
 def _capture_scrcpy_window(wid: int, path: Path) -> Optional[np.ndarray]:
-    """Quartz で scrcpy ウィンドウをキャプチャ → BGR numpy + PNG 保存。"""
+    """Quartz で scrcpy ウィンドウをキャプチャ → BGR numpy + PNG 保存。
+
+    macOS のタイトルバー (~64 Retina px) が含まれるため、
+    デバイスのアスペクト比から期待コンテンツ高さを算出してクロップする。
+    """
     try:
         image = _Quartz.CGWindowListCreateImage(
             _Quartz.CGRectNull,
@@ -181,6 +185,15 @@ def _capture_scrcpy_window(wid: int, path: Path) -> Optional[np.ndarray]:
         data = _Quartz.CGDataProviderCopyData(data_provider)
         arr = np.frombuffer(data, dtype=np.uint8).reshape(height, bpr // 4, 4)[:, :width, :]
         bgr = arr[:, :, [2, 1, 0]].copy()  # BGRA → BGR
+        # ── タイトルバークロップ: デバイスアスペクト比から期待高さを算出 ──
+        dev_w, dev_h = _get_cached_device_resolution()
+        if dev_w > 0 and dev_h > 0:
+            expected_h = int(width * dev_h / dev_w)
+            if height > expected_h + 10:
+                _title_bar_h = height - expected_h
+                bgr = bgr[_title_bar_h:, :, :]
+                logger.debug("[SCRCPY_CAPTURE] タイトルバークロップ: %dpx (raw %dx%d → %dx%d)",
+                             _title_bar_h, width, height, width, bgr.shape[0])
         cv2.imwrite(str(path), bgr)
         return bgr
     except Exception:
@@ -374,11 +387,20 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
     return None
 
 
-def _to_device(x: int, y: int, state) -> tuple[int, int]:
-    """解析座標 (ANALYSIS_W×ANALYSIS_H) → デバイス実座標。"""
-    if state and state.device_w and state.device_h:
-        return (int(x * state.device_w / ANALYSIS_W),
-                int(y * state.device_h / ANALYSIS_H))
+def _to_device(x: int, y: int, state=None) -> tuple[int, int]:
+    """解析座標 (ANALYSIS_W×ANALYSIS_H) → デバイス実座標。
+
+    キャッシュ済みデバイス解像度を優先使用。state.device_w/h はフォールバック。
+    scrcpy/adb どちらの取得方法でも同じ変換結果を保証する。
+    """
+    # 優先: モジュールキャッシュ (wm size ベース、ランドスケープ正規化済み)
+    dev_w, dev_h = _CACHED_DEVICE_RES
+    # フォールバック: state 経由
+    if dev_w <= 0 and state and state.device_w and state.device_h:
+        dev_w, dev_h = state.device_w, state.device_h
+    if dev_w > 0 and dev_h > 0:
+        return (int(x * dev_w / ANALYSIS_W),
+                int(y * dev_h / ANALYSIS_H))
     return x, y
 
 
