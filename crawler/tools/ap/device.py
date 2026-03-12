@@ -184,7 +184,7 @@ def _capture_scrcpy_window(wid: int, path: Path) -> Optional[np.ndarray]:
         data_provider = _Quartz.CGImageGetDataProvider(image)
         data = _Quartz.CGDataProviderCopyData(data_provider)
         arr = np.frombuffer(data, dtype=np.uint8).reshape(height, bpr // 4, 4)[:, :width, :]
-        bgr = arr[:, :, [2, 1, 0]].copy()  # BGRA → BGR
+        bgr = arr[:, :, :3].copy()  # BGRA → BGR (macOS Quartz は BGRA 順)
         # ── タイトルバークロップ: デバイスアスペクト比から期待高さを算出 ──
         dev_w, dev_h = _get_cached_device_resolution()
         if dev_w > 0 and dev_h > 0:
