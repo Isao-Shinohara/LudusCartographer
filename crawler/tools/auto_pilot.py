@@ -1206,6 +1206,16 @@ def detect_and_act(ocr: list, state: PilotState,
         return "CLOSE_POPUP", 1.0
     close_popup = has_any(ocr, close_popup_kws)
     if close_popup:
+        # CLOSE_POPUP スタック脱出: 8回以上同じアクション → BACK キーで閉じる
+        if state.last_action and state.last_action.startswith("CLOSE_POPUP") and state.dialog_close_total >= 8:
+            logger.warning(">>> 【%s ポップアップ】 × が8回空振り → BACK キーで脱出",
+                           close_popup["text"][:6])
+            try:
+                adb("shell input keyevent KEYCODE_BACK")
+            except Exception as _e:
+                logger.debug("[CLOSE_POPUP] BACK キー送信例外: %s", _e)
+            state.dialog_close_total = 0
+            return "CLOSE_POPUP_BACK", 1.0
         # テンプレートマッチングで正確な × 位置を取得 (固定座標より優先)
         _close_match = ASSET_MANAGER.match_single("close_btn", analysis_path) if analysis_path else None
         if _close_match and _close_match[2] >= 0.60:
@@ -1217,6 +1227,7 @@ def detect_and_act(ocr: list, state: PilotState,
             close_y = _CLOSE_BTN_OFFSET
             logger.info(">>> 【%s ポップアップ】 → × 固定座標 (%d,%d) タップ",
                         close_popup["text"][:6], close_x, close_y)
+        state.dialog_close_total += 1
         tap_device(close_x, close_y, state, f"CLOSE_POPUP_{close_popup['text'][:6]}")
         return "CLOSE_POPUP", 1.0
 
