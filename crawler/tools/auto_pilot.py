@@ -3037,6 +3037,7 @@ def main():
             state.adv_confirmed_count += 1
         elif _early_scene not in ("UNKNOWN",):
             state.adv_confirmed_count = 0
+            state.adv_early_consecutive = 0  # ADV 以外のシーン → カウンタリセット
 
         if _early_scene == "MOVIE":
             if handle_movie(img_path, state, dist, cur_phash):
@@ -3055,25 +3056,24 @@ def main():
             _skip_rapid = True  # BATTLE ハンドラがフォールスルー → OCR へ直行
 
         elif _early_scene == "ADV":
-            # ADV_EARLY スタック脱出: 10回連続で画面変化なし → OCR フォールスルー
-            _ADV_EARLY_STALL = 10
-            if not screen_changed:
-                state.adv_early_consecutive += 1
-            else:
-                state.adv_early_consecutive = 0
+            # ADV_EARLY スタック脱出: 15回連続ハンドル成功 → OCR フォールスルー
+            _ADV_EARLY_STALL = 15
             if state.adv_early_consecutive >= _ADV_EARLY_STALL:
-                logger.warning("[ADV_EARLY] %d 回連続変化なし → OCR フォールスルー",
+                logger.warning("[ADV_EARLY] %d 回連続 → OCR フォールスルー",
                                state.adv_early_consecutive)
                 state.adv_early_consecutive = 0
                 state.adv_confirmed_count = 0
                 state.current_scene = "UNKNOWN"
                 _skip_rapid = True
             elif handle_adv(img_path, state, dist, cur_phash, actual_w, actual_h):
+                state.adv_early_consecutive += 1
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
-                logger.info("  [PERF] Loop %.0fms (ADV_EARLY)", _fms)
+                logger.info("  [PERF] Loop %.0fms (ADV_EARLY) [%d/%d]",
+                            _fms, state.adv_early_consecutive, _ADV_EARLY_STALL)
                 continue
             else:
+                state.adv_early_consecutive = 0
                 _skip_rapid = True  # ADV ハンドラがフォールスルー → OCR へ直行
 
         if screen_changed:
