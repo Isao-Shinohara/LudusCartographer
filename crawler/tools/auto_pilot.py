@@ -2736,25 +2736,29 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     # ── 一時停止検出: phash が完全に静止 (dist<=2) → 早期タップで再開 ──
     # 再生中の動画は毎フレーム変化する。静止が続くのは一時停止。
     # MOVIE ループは main loop の frozen_frames 更新に到達しないため自前で計測
-    if dist <= 2:
-        state.consecutive_frozen_frames += 1
+    _resume_cooldown = getattr(state, '_movie_resume_cooldown', 0)
+    if _resume_cooldown > 0:
+        state._movie_resume_cooldown = _resume_cooldown - 1
+        # クールダウン中: 一時停止判定をスキップ
     else:
-        state.consecutive_frozen_frames = 0
+        if dist <= 2:
+            state.consecutive_frozen_frames += 1
+        else:
+            state.consecutive_frozen_frames = 0
 
-    if state.consecutive_frozen_frames >= 5 and state.movie_wait_consecutive >= 5:
-        # 5フレーム完全静止 (~3秒) → 一時停止確定 → 即再開
-        logger.warning(
-            "[MOVIE_PAUSE_DETECT] frozen=%d wait=%d → 一時停止確定 → 中央タップで再開",
-            state.consecutive_frozen_frames, state.movie_wait_consecutive)
-        _mc_x, _mc_y = roi_to_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state.game_roi)
-        tap_device(_mc_x, _mc_y, state, "MOVIE_RESUME_TAP")
-        time.sleep(2.0)  # 再開後の安定待機
-        state.last_phash = None  # phash リセットで次フレーム検出
-        # クールダウン: 再開直後の静止を誤検出しないよう -50 に設定
-        # (55フレーム経過しないと次の一時停止検出が発動しない)
-        state.consecutive_frozen_frames = -50
-        state.movie_wait_consecutive = 0  # 待機カウンタもリセット
-        return True
+        if state.consecutive_frozen_frames >= 5 and state.movie_wait_consecutive >= 5:
+            # 5フレーム完全静止 (~3秒) → 一時停止確定 → 即再開
+            logger.warning(
+                "[MOVIE_PAUSE_DETECT] frozen=%d wait=%d → 一時停止確定 → 中央タップで再開",
+                state.consecutive_frozen_frames, state.movie_wait_consecutive)
+            _mc_x, _mc_y = roi_to_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state.game_roi)
+            tap_device(_mc_x, _mc_y, state, "MOVIE_RESUME_TAP")
+            time.sleep(2.0)
+            state.last_phash = None
+            state.consecutive_frozen_frames = 0
+            state.movie_wait_consecutive = 0
+            state._movie_resume_cooldown = 50  # 50フレーム (~30秒) クールダウン
+            return True
 
     # ── 通常待機 (動画は自動終了するのでタップせず待つ) ──
     roi_x = state.game_roi[0] if state.game_roi else 0
