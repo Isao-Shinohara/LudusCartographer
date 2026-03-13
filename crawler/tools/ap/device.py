@@ -401,7 +401,13 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
                 pass
 
     if conforming_pid is not None:
-        return None
+        # プロセスが本当に生存しているか確認
+        try:
+            os.kill(conforming_pid, 0)  # シグナル0 = 生存確認のみ
+            return None
+        except OSError:
+            logger.warning("[SCRCPY] PID=%d は既に終了 — 再起動します", conforming_pid)
+            # fall through to launch new process
 
     try:
         proc = subprocess.Popen(
