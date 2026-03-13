@@ -3841,6 +3841,7 @@ def main():
             state.adv_early_consecutive = 0  # ADV 以外のシーン → カウンタリセット
 
         if _early_scene == "MOVIE":
+            state.current_scene = "MOVIE"
             if handle_movie(img_path, state, dist, cur_phash):
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
