@@ -971,6 +971,21 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     skip_btn = detect_movie_skip_button(img_path) if img_path else None
     has_skip = skip_btn is not None
     if has_skip:
+        # ⏭ が見つかっても AUTO アイコンが同時に見えれば ADV (動画ではない)
+        _skip_is_adv = False
+        if img_path:
+            try:
+                _auto_roi_s = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+                _auto_s = ASSET_MANAGER.match_single("adv_icon_auto", img_path,
+                                                      roi=_auto_roi_s)
+                if _auto_s and _auto_s[2] >= 0.50:
+                    _skip_is_adv = True
+                    logger.info("[MOVIE_SCENE] ⏭検出 + AUTO(%.2f) → ADV確定, MOVIE棄却",
+                                _auto_s[2])
+            except Exception:
+                pass
+        if _skip_is_adv:
+            return MovieSceneResult()
         logger.info("[MOVIE_SCENE] ⏭ スキップボタン先行検出 → 即棄却パスをバイパス")
     else:
         # 即棄却: ADV ツールバーあり
