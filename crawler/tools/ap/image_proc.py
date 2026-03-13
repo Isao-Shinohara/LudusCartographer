@@ -965,55 +965,46 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     texts = ocr_texts or []
     joined = " ".join(texts) if texts else ""
 
-    # ── 最優先: ⏭ スキップボタンを先行検出 ──
-    # ⏭は動画固有のUI。検出された場合は即棄却パスをスキップして MOVIE 確定へ。
-    # これにより AUTO 誤マッチやページドット偽陽性に左右されない。
+    # ── ⏭ スキップボタン検出 ──
     skip_btn = detect_movie_skip_button(img_path) if img_path else None
     has_skip = skip_btn is not None
-    if has_skip:
-        # ⏭ が見つかっても ADV ツールバー (5アイコン) が揃っていれば ADV
-        # AUTO 単独スコア (0.72程度) は動画シーンでも偽陽性になるため
-        # 複数 ADV アイコンの同時検出を要求する
-        _skip_is_adv = False
-        if img_path:
-            try:
-                _auto_roi_s = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
-                _adv_icons_found = 0
-                for _icon_name in ("adv_icon_auto", "adv_icon_ff", "adv_icon_menu"):
-                    _m = ASSET_MANAGER.match_single(_icon_name, img_path,
-                                                     roi=_auto_roi_s)
-                    if _m and _m[2] >= 0.60:
-                        _adv_icons_found += 1
-                # 2個以上 ADV アイコンが見えれば ADV 確定
-                if _adv_icons_found >= 2:
-                    _skip_is_adv = True
-                    logger.info("[MOVIE_SCENE] ⏭検出 + ADVアイコン%d個 → ADV確定, MOVIE棄却",
-                                _adv_icons_found)
-            except Exception:
-                pass
-        if _skip_is_adv:
-            return MovieSceneResult()
-        logger.info("[MOVIE_SCENE] ⏭ スキップボタン先行検出 → 即棄却パスをバイパス")
-    else:
-        # 即棄却: ADV ツールバーあり
-        if adv_result is not None and adv_result.is_adv:
-            return MovieSceneResult()
 
-        # 即棄却: AUTO アイコン or ↓ボタン検出 → ADV 確定 (MOVIE にはどちらもない)
-        if img_path:
-            try:
-                _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
-                _auto = ASSET_MANAGER.match_single("adv_icon_auto", img_path,
-                                                   roi=_auto_roi)
-                if _auto and _auto[2] >= 0.50:
-                    logger.debug("[MOVIE_SCENE] AUTO icon (%.2f) → ADV確定, MOVIE棄却",
-                                 _auto[2])
-                    return MovieSceneResult()
-            except Exception:
-                pass
-            if detect_adv_advance_icon(img_path):
-                logger.debug("[MOVIE_SCENE] ↓ボタン検出 → ADV確定, MOVIE棄却")
-                return MovieSceneResult()
+    # ── ADV 証拠チェック (⏭有無に関わらず共通) ──
+    # ADV の構造的特徴 (MOVIE にはどれもない):
+    #   1. ↓送りボタン (右下) — セリフ送り可能時に表示
+    #   2. ADV ツールバー (右上5アイコン: menu,log,AUTO,>>,>|)
+    #   3. 上部 AUTO ボタン単独 — ADV 確定
+    _has_adv_advance = detect_adv_advance_icon(img_path) if img_path else False
+    _has_auto_icon = False
+    if img_path:
+        try:
+            _auto_roi_chk = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+            _auto_chk = ASSET_MANAGER.match_single(
+                "adv_icon_auto", img_path, roi=_auto_roi_chk)
+            _has_auto_icon = _auto_chk is not None and _auto_chk[2] >= 0.70
+        except Exception:
+            pass
+
+    # ADV 証拠があれば MOVIE 棄却
+    _adv_evidence = None
+    if _has_adv_advance:
+        _adv_evidence = "↓ボタン"
+    elif adv_result is not None and adv_result.is_adv:
+        _adv_evidence = "ADVツールバー"
+    elif _has_auto_icon:
+        _adv_evidence = "AUTOボタン"
+
+    if has_skip:
+        if _adv_evidence:
+            logger.info("[MOVIE_SCENE] ⏭検出 + %s → ADV確定, MOVIE棄却", _adv_evidence)
+            return MovieSceneResult()
+        # ADV 証拠なし → MOVIE
+        logger.info("[MOVIE_SCENE] ⏭検出 + ADV証拠なし → MOVIE確定")
+    else:
+        # ⏭ なし → MOVIE ではない
+        if _adv_evidence:
+            logger.debug("[MOVIE_SCENE] %s → ADV確定, MOVIE棄却", _adv_evidence)
+            return MovieSceneResult()
 
         # 即棄却: バトルキーワード
         if any(kw in joined for kw in _MOVIE_REJECT_BATTLE_KWS):

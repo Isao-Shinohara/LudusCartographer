@@ -2622,42 +2622,39 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             state.last_action = "SCENE_TAP"
             state.movie_wait_consecutive = 0
         else:
+            # ADV 証拠チェック: ↓ボタン or AUTOボタン
             _adv_down = detect_adv_advance_icon(img_path)
+            _inertia_adv_evidence = None
             if _adv_down:
-                logger.info("[MOVIE_INERTIA] ↓ボタン検出 → ADV確定, MOVIE脱出")
-                state.last_action = "SCENE_TAP"
-                state.movie_wait_consecutive = 0
+                _inertia_adv_evidence = "↓ボタン"
             else:
-                # ADV ツールバー複数アイコン検出 → ADV 確定、MOVIE 脱出
-                # AUTO 単独 (score 0.50) では動画シーンで偽陽性が出るため
-                # 複数アイコン同時検出を要求する
                 from tools.ap.image_proc import ASSET_MANAGER as _AM_inertia
                 try:
                     _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
-                    _adv_cnt = 0
-                    for _ic in ("adv_icon_auto", "adv_icon_ff", "adv_icon_menu"):
-                        _m = _AM_inertia.match_single(_ic, img_path, roi=_auto_roi)
-                        if _m and _m[2] >= 0.60:
-                            _adv_cnt += 1
-                    if _adv_cnt >= 2:
-                        logger.info("[MOVIE_INERTIA] ADVアイコン%d個 → ADV確定, MOVIE脱出",
-                                    _adv_cnt)
-                        state.last_action = "SCENE_TAP"
-                        state.movie_wait_consecutive = 0
-                    else:
-                        # ── 核心: ⏭ ボタンが見えるか毎フレーム確認 ──
-                        _movie_chk = detect_movie_scene(
-                            img_path, adv_result=adv, phash_dist=dist)
-                        if _movie_chk.is_movie and _movie_chk.has_skip_btn:
-                            # ⏭ あり → 動画継続 (再生中 or 一時停止中)
-                            return "MOVIE"
-                        # ⏭ なし → 動画終了
-                        logger.info("[MOVIE_INERTIA] ⏭消失 (consecutive=%d, dist=%d) → 動画終了",
-                                    state.movie_wait_consecutive, dist)
-                        state.last_action = "SCENE_TAP"
-                        state.movie_wait_consecutive = 0
+                    _auto_m = _AM_inertia.match_single(
+                        "adv_icon_auto", img_path, roi=_auto_roi)
+                    if _auto_m and _auto_m[2] >= 0.70:
+                        _inertia_adv_evidence = f"AUTO({_auto_m[2]:.2f})"
                 except Exception:
+                    pass
+
+            if _inertia_adv_evidence:
+                logger.info("[MOVIE_INERTIA] %s → ADV確定, MOVIE脱出",
+                            _inertia_adv_evidence)
+                state.last_action = "SCENE_TAP"
+                state.movie_wait_consecutive = 0
+            else:
+                # ADV 証拠なし → ⏭ ボタンで動画継続/終了を判定
+                _movie_chk = detect_movie_scene(
+                    img_path, adv_result=adv, phash_dist=dist)
+                if _movie_chk.is_movie and _movie_chk.has_skip_btn:
+                    # ⏭ あり + ADV証拠なし → 動画継続
                     return "MOVIE"
+                # ⏭ なし → 動画終了
+                logger.info("[MOVIE_INERTIA] ⏭消失 (consecutive=%d, dist=%d) → 動画終了",
+                            state.movie_wait_consecutive, dist)
+                state.last_action = "SCENE_TAP"
+                state.movie_wait_consecutive = 0
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     if state.current_scene == "BATTLE" and dist < 30:
