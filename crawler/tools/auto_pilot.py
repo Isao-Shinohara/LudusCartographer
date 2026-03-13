@@ -2577,7 +2577,17 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                             state.movie_wait_consecutive, dist)
                 state.movie_wait_consecutive = _MOVIE_INERTIA_TTL // 2  # 半分からリスタート
                 return "MOVIE"
-            # phash安定 → 動画終了 → UNKNOWN に脱出
+            # phash安定 → ⏭スキップボタンがまだ見えるかチェック
+            # 見えていたら一時停止中 (前回TTL切れタップで停止) → タップ禁止して待機継続
+            _ttl_movie = detect_movie_scene(
+                img_path, adv_result=detect_adv_scene_cached(img_path, state),
+                phash_dist=dist)
+            if _ttl_movie.is_movie and _ttl_movie.has_skip_btn:
+                logger.info("[SCENE_EARLY] Movie TTL切れだが⏭あり → 一時停止中, TTLリセット (dist=%d)",
+                            dist)
+                state.movie_wait_consecutive = _MOVIE_INERTIA_TTL // 2
+                return "MOVIE"
+            # ⏭なし + phash安定 → 動画終了 → UNKNOWN に脱出
             logger.info("[SCENE_EARLY] Movie TTL expired (consecutive=%d, dist=%d) → 動画終了判定 → UNKNOWN",
                         state.movie_wait_consecutive, dist)
             state.last_action = "SCENE_TAP"
