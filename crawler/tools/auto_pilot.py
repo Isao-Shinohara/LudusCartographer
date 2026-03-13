@@ -2548,15 +2548,12 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     Returns: "MOVIE" | "BATTLE" | "ADV" | "UNKNOWN"
     """
 
-    # MOVIE 慣性: 直前が動画アクション → 非動画の明確な証拠がなければ MOVIE 継続
-    # ⏭ ボタンが一時的に非表示でも GoldSwipe 等の誤発動を防止
-    # TTL: 60回 (~30秒) で慣性強制解除 → 誤分類の永久固定化を防止
-    # (動画は30秒以上のものもある。短すぎると TTL 切れ→タップ→一時停止ループに陥る)
+    # MOVIE 慣性: 直前が動画アクション → 毎フレーム ⏭ ボタンで継続/終了を判定
+    # TTL は使わない。⏭ が見えている限り MOVIE を維持 (一時停止含む)。
+    # ⏭ が消えたら動画終了 → UNKNOWN に脱出。
     _MOVIE_ACTIONS = ("MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_RESUME_TAP", "MOVIE_SKIP_ESCAPE")
-    _MOVIE_INERTIA_TTL = 60
-    # ── MOVIE慣性よりポップアップ検出が優先 ──
-    # ドット検出だけだと誤検出多い → 背景ぼかしと併用
     if state.last_action in _MOVIE_ACTIONS and img_path:
+        # ── ポップアップ脱出 (MOVIE慣性より優先) ──
         _inertia_dots = count_page_dots(img_path)
         if _inertia_dots >= 2:
             _img_blur = imread_cached(img_path)
@@ -2567,50 +2564,46 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 state.last_action = "SCENE_TAP"
                 state.movie_wait_consecutive = 0
                 return "UNKNOWN"
-    if state.last_action in _MOVIE_ACTIONS:
-        if state.movie_wait_consecutive >= _MOVIE_INERTIA_TTL:
-            # TTL切れ → phash変化中なら動画継続、安定なら脱出
-            # 動画は常にphashが変化する。安定 = 動画終了 or 新画面遷移
-            if dist >= 5:
-                # phash変化あり → 動画まだ再生中 → TTLリセットして待機続行
-                logger.info("[SCENE_EARLY] Movie TTL=%d到達だがphash変化(dist=%d) → 動画継続, TTLリセット",
-                            state.movie_wait_consecutive, dist)
-                state.movie_wait_consecutive = _MOVIE_INERTIA_TTL // 2  # 半分からリスタート
-                return "MOVIE"
-            # phash安定 → ⏭スキップボタンがまだ見えるかチェック
-            # 見えていたら一時停止中 (前回TTL切れタップで停止) → タップ禁止して待機継続
-            _ttl_movie = detect_movie_scene(
-                img_path, adv_result=detect_adv_scene_cached(img_path, state),
-                phash_dist=dist)
-            if _ttl_movie.is_movie and _ttl_movie.has_skip_btn:
-                logger.info("[SCENE_EARLY] Movie TTL切れだが⏭あり → 一時停止中, TTLリセット (dist=%d)",
-                            dist)
-                state.movie_wait_consecutive = _MOVIE_INERTIA_TTL // 2
-                return "MOVIE"
-            # ⏭なし + phash安定 → 動画終了 → UNKNOWN に脱出
-            logger.info("[SCENE_EARLY] Movie TTL expired (consecutive=%d, dist=%d) → 動画終了判定 → UNKNOWN",
-                        state.movie_wait_consecutive, dist)
+
+        # ── ADV 証拠チェック (ADV ツールバー or ↓ ボタン → MOVIE 脱出) ──
+        adv = detect_adv_scene_cached(img_path, state)
+        if adv.is_adv or state.current_scene in ("BATTLE", "MENU"):
+            # ADV/BATTLE/MENU の明確な証拠 → MOVIE 脱出
+            logger.info("[MOVIE_INERTIA] ADV/BATTLE/MENU 証拠あり → MOVIE脱出")
             state.last_action = "SCENE_TAP"
             state.movie_wait_consecutive = 0
         else:
-            adv = detect_adv_scene_cached(img_path, state)
-            if not adv.is_adv and state.current_scene not in ("BATTLE", "MENU"):
-                # ↓ ボタンがあれば ADV (ツールバーが少なくても ADV 確定)
-                _adv_down = detect_adv_advance_icon(img_path)
-                if not _adv_down:
-                    # AUTO アイコン単独検出 → ADV 確定、MOVIE 脱出
-                    from tools.ap.image_proc import ASSET_MANAGER as _AM_inertia
-                    try:
-                        _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
-                        _auto_m = _AM_inertia.match_single(
-                            "adv_icon_auto", img_path, roi=_auto_roi)
-                        if _auto_m and _auto_m[2] >= 0.50:
-                            logger.info("[MOVIE_INERTIA] AUTO icon (%.2f) → ADV確定, MOVIE脱出",
-                                        _auto_m[2])
-                        else:
+            _adv_down = detect_adv_advance_icon(img_path)
+            if _adv_down:
+                logger.info("[MOVIE_INERTIA] ↓ボタン検出 → ADV確定, MOVIE脱出")
+                state.last_action = "SCENE_TAP"
+                state.movie_wait_consecutive = 0
+            else:
+                # AUTO アイコン単独検出 → ADV 確定、MOVIE 脱出
+                from tools.ap.image_proc import ASSET_MANAGER as _AM_inertia
+                try:
+                    _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+                    _auto_m = _AM_inertia.match_single(
+                        "adv_icon_auto", img_path, roi=_auto_roi)
+                    if _auto_m and _auto_m[2] >= 0.50:
+                        logger.info("[MOVIE_INERTIA] AUTO icon (%.2f) → ADV確定, MOVIE脱出",
+                                    _auto_m[2])
+                        state.last_action = "SCENE_TAP"
+                        state.movie_wait_consecutive = 0
+                    else:
+                        # ── 核心: ⏭ ボタンが見えるか毎フレーム確認 ──
+                        _movie_chk = detect_movie_scene(
+                            img_path, adv_result=adv, phash_dist=dist)
+                        if _movie_chk.is_movie and _movie_chk.has_skip_btn:
+                            # ⏭ あり → 動画継続 (再生中 or 一時停止中)
                             return "MOVIE"
-                    except Exception:
-                        return "MOVIE"
+                        # ⏭ なし → 動画終了
+                        logger.info("[MOVIE_INERTIA] ⏭消失 (consecutive=%d, dist=%d) → 動画終了",
+                                    state.movie_wait_consecutive, dist)
+                        state.last_action = "SCENE_TAP"
+                        state.movie_wait_consecutive = 0
+                except Exception:
+                    return "MOVIE"
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     if state.current_scene == "BATTLE" and dist < 30:

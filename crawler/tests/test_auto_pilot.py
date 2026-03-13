@@ -1071,8 +1071,8 @@ class TestAdvSceneWithAdvanceIcon:
 
 # ─── Fix 3: Movie inertia TTL テスト ──────────────────────────────────
 
-class TestMovieInertiaTTL:
-    """detect_scene_early() の Movie inertia TTL テスト。"""
+class TestMovieInertiaSkipBtn:
+    """detect_scene_early() の Movie 慣性テスト (⏭ベース判定)。"""
 
     @pytest.fixture
     def state(self):
@@ -1083,64 +1083,73 @@ class TestMovieInertiaTTL:
         s.movie_wait_consecutive = 0
         return s
 
+    @patch("tools.auto_pilot.detect_movie_scene")
     @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
     @patch("tools.auto_pilot.detect_adv_scene_cached")
-    def test_inertia_expires_phash_stable(self, mock_adv_cached, mock_adv_down, state, tmp_path):
-        """consecutive >= 60 + phash安定(dist<5) → 動画終了。"""
+    def test_skip_btn_gone_exits_movie(self, mock_adv_cached, mock_adv_down, mock_movie, state, tmp_path):
+        """⏭ 消失 → 動画終了 → UNKNOWN。"""
         from tools.auto_pilot import detect_scene_early
         from tools.ap.image_proc import AdvSceneResult
+        from unittest.mock import MagicMock
 
         mock_adv_cached.return_value = AdvSceneResult(is_adv=False)
-        state.movie_wait_consecutive = 60
-        state.game_roi = (0, 0, 1520, 720)
-
-        img_path = tmp_path / "test.png"
-        import cv2
-        import numpy as np
-        cv2.imwrite(str(img_path), np.zeros((720, 1520, 3), dtype=np.uint8))
-
-        result = detect_scene_early(img_path, state, dist=2)  # phash安定→動画終了
-        assert result != "MOVIE"
-        assert state.movie_wait_consecutive == 0
-
-    @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
-    @patch("tools.auto_pilot.detect_adv_scene_cached")
-    def test_inertia_continues_phash_changing(self, mock_adv_cached, mock_adv_down, state, tmp_path):
-        """consecutive >= 60 + phash変化(dist>=5) → 動画継続 MOVIE。"""
-        from tools.auto_pilot import detect_scene_early
-        from tools.ap.image_proc import AdvSceneResult
-
-        mock_adv_cached.return_value = AdvSceneResult(is_adv=False)
-        state.movie_wait_consecutive = 60
-        state.game_roi = (0, 0, 1520, 720)
-
-        img_path = tmp_path / "test.png"
-        import cv2
-        import numpy as np
-        cv2.imwrite(str(img_path), np.zeros((720, 1520, 3), dtype=np.uint8))
-
-        result = detect_scene_early(img_path, state, dist=5)  # phash変化→動画継続
-        assert result == "MOVIE"
-        assert state.movie_wait_consecutive == 30  # TTL/2 にリセット
-
-    @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
-    @patch("tools.auto_pilot.detect_adv_scene_cached")
-    def test_inertia_continues(self, mock_adv_cached, mock_adv_down, state, tmp_path):
-        """consecutive < 20 → MOVIE (慣性継続)。"""
-        from tools.auto_pilot import detect_scene_early
-        from tools.ap.image_proc import AdvSceneResult
-
-        mock_adv_cached.return_value = AdvSceneResult(is_adv=False)
+        _movie_result = MagicMock()
+        _movie_result.is_movie = False
+        _movie_result.has_skip_btn = False
+        mock_movie.return_value = _movie_result
         state.movie_wait_consecutive = 10
         state.game_roi = (0, 0, 1520, 720)
 
         img_path = tmp_path / "test.png"
-        import cv2
-        import numpy as np
+        import cv2, numpy as np
+        cv2.imwrite(str(img_path), np.zeros((720, 1520, 3), dtype=np.uint8))
+
+        result = detect_scene_early(img_path, state, dist=2)
+        assert result != "MOVIE"
+        assert state.movie_wait_consecutive == 0
+
+    @patch("tools.auto_pilot.detect_movie_scene")
+    @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
+    @patch("tools.auto_pilot.detect_adv_scene_cached")
+    def test_skip_btn_present_continues_movie(self, mock_adv_cached, mock_adv_down, mock_movie, state, tmp_path):
+        """⏭ あり → MOVIE 継続 (一時停止含む)。"""
+        from tools.auto_pilot import detect_scene_early
+        from tools.ap.image_proc import AdvSceneResult
+        from unittest.mock import MagicMock
+
+        mock_adv_cached.return_value = AdvSceneResult(is_adv=False)
+        _movie_result = MagicMock()
+        _movie_result.is_movie = True
+        _movie_result.has_skip_btn = True
+        mock_movie.return_value = _movie_result
+        state.movie_wait_consecutive = 10
+        state.game_roi = (0, 0, 1520, 720)
+
+        img_path = tmp_path / "test.png"
+        import cv2, numpy as np
+        cv2.imwrite(str(img_path), np.zeros((720, 1520, 3), dtype=np.uint8))
+
+        result = detect_scene_early(img_path, state, dist=0)  # phash安定でも⏭あれば継続
+        assert result == "MOVIE"
+
+    @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
+    @patch("tools.auto_pilot.detect_adv_scene_cached")
+    def test_adv_evidence_exits_movie(self, mock_adv_cached, mock_adv_down, state, tmp_path):
+        """ADV 証拠 (is_adv=True) → MOVIE 脱出。"""
+        from tools.auto_pilot import detect_scene_early
+        from tools.ap.image_proc import AdvSceneResult
+
+        mock_adv_cached.return_value = AdvSceneResult(is_adv=True)
+        state.movie_wait_consecutive = 10
+        state.game_roi = (0, 0, 1520, 720)
+
+        img_path = tmp_path / "test.png"
+        import cv2, numpy as np
         cv2.imwrite(str(img_path), np.zeros((720, 1520, 3), dtype=np.uint8))
 
         result = detect_scene_early(img_path, state, dist=5)
-        assert result == "MOVIE"
+        assert result != "MOVIE"
+        assert state.movie_wait_consecutive == 0
 
 
 # ─── Fix #7: 課金ダイアログ保護 ─────────────────────────────────
