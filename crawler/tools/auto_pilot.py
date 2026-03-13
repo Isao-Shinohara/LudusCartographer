@@ -2741,8 +2741,8 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     else:
         state.consecutive_frozen_frames = 0
 
-    if state.consecutive_frozen_frames >= 30 and state.movie_wait_consecutive >= 50:
-        # 30フレーム完全静止 + 最低50回待機 → 一時停止確定
+    if state.consecutive_frozen_frames >= 5 and state.movie_wait_consecutive >= 5:
+        # 5フレーム完全静止 (~3秒) → 一時停止確定 → 即再開
         logger.warning(
             "[MOVIE_PAUSE_DETECT] frozen=%d wait=%d → 一時停止確定 → 中央タップで再開",
             state.consecutive_frozen_frames, state.movie_wait_consecutive)
