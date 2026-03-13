@@ -248,7 +248,8 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
         # ── 大面積ブロブ救済: 近傍に金枠があれば指+ゴールドUI融合と判定して採用 ──
         # 通常ブロブの有無に関わらず、金枠付き大面積ブロブは常に最優先で挿入
         # home_mode: ホーム画面の装飾 (area 46000-53000) を指と誤認するため無効化
-        if _oversized and not home_mode:
+        # max_area < デフォルト(15000): 呼び出し元が明示的にサイズ制限 → RESCUE 不要
+        if _oversized and not home_mode and max_area >= 15000:
             for _ov in _oversized:
                 _gf = find_gold_frame_near(img_path, _ov[0], _ov[1], search_radius=200)
                 if _gf is not None:

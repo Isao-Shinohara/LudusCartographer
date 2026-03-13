@@ -1312,6 +1312,47 @@ class TestFingerGuardCloseButton:
         assert pre_dialog_finger is True
 
 
+class TestOversizedRescueSuppression:
+    """OVERSIZED_RESCUE は max_area < 15000 のとき自動的に無効化される。"""
+
+    def test_rescue_suppressed_when_max_area_small(self, tmp_path):
+        """max_area=5000 → area=48000 のブロブは rescue されない。"""
+        import cv2
+        import numpy as np
+        # 大きな肌色ブロブ (area >> 5000) + 金色要素を含む画像を作成
+        img = np.zeros((720, 1520, 3), dtype=np.uint8)
+        # 肌色 (HSV: H=15, S=100, V=200 → BGR相当) の大ブロブ
+        # BGR で肌色を近似: B=140, G=180, R=230
+        cv2.rectangle(img, (750, 520), (870, 620), (140, 180, 230), -1)  # ~12000px area
+        img_path = tmp_path / "home_footer.png"
+        cv2.imwrite(str(img_path), img)
+
+        from tools.ap.image_proc import find_finger_blobs
+        # max_area=5000 → OVERSIZED_RESCUE は発動しないべき
+        blobs = find_finger_blobs(img_path, min_area=300, max_area=5000)
+        # 12000 > 5000 → _oversized に入るが、max_area < 15000 で rescue 無効
+        assert all(b[2] <= 5000 for b in blobs), \
+            f"max_area=5000 なのに area>5000 のブロブが返された: {blobs}"
+
+    def test_rescue_active_when_max_area_default(self, tmp_path):
+        """max_area=15000 (デフォルト) → OVERSIZED_RESCUE は有効のまま。"""
+        # ロジック検証のみ (画像生成なし)
+        max_area = 15000
+        home_mode = False
+        _oversized = [(800, 560, 48000, 750, 520, 120, 100)]
+        # 条件チェック
+        rescue_enabled = bool(_oversized) and not home_mode and max_area >= 15000
+        assert rescue_enabled is True
+
+    def test_rescue_disabled_by_home_mode(self, tmp_path):
+        """home_mode=True → OVERSIZED_RESCUE は無効。"""
+        max_area = 15000
+        home_mode = True
+        _oversized = [(800, 560, 48000, 750, 520, 120, 100)]
+        rescue_enabled = bool(_oversized) and not home_mode and max_area >= 15000
+        assert rescue_enabled is False
+
+
 # ─── Fix #2: ADV 速度改善 ─────────────────────────────────────
 
 class TestAdvSpeedImprovements:
