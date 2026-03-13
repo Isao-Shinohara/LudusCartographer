@@ -1016,6 +1016,28 @@ def detect_and_act(ocr: list, state: PilotState,
     # 次優先: セリフ/ADVテキスト確認 (後続の#0/#3-ADV処理)
     if analysis_path is not None:
         asset_hit = ASSET_MANAGER.match(analysis_path, ocr_texts=texts)
+        # DIALOG_NAV_RIGHT 連続空振りガード: 画面変化なく繰り返す場合は偽陽性
+        if asset_hit and asset_hit[2] == "DIALOG_NAV_RIGHT":
+            # 抑制期間中 (stall発動後 16iter) は DIALOG_NAV_RIGHT を常に無視
+            _dns = getattr(state, '_dialog_nav_suppress', 0)
+            if _dns > 0:
+                state._dialog_nav_suppress = _dns - 1
+                asset_hit = None
+            elif state.last_phash_dist < 8:
+                state.dialog_nav_stall.tick()
+                if state.dialog_nav_stall.stalled:
+                    logger.warning(
+                        "[DIALOG_NAV_STALL] %d回空振り (phash変化なし) → 16iter抑制",
+                        state.dialog_nav_stall.count)
+                    state.dialog_nav_stall.reset()
+                    state._dialog_nav_suppress = 16
+                    asset_hit = None  # フォールスルーして他の検出器に委譲
+            else:
+                state.dialog_nav_stall.reset()
+                state._dialog_nav_suppress = 0
+        elif asset_hit:
+            state.dialog_nav_stall.reset()  # 別アクションが来たらリセット
+            state._dialog_nav_suppress = 0
         if asset_hit:
             cx, cy, action, _asset_region = asset_hit
             # Text-Core: テンプレートマッチ領域 + OCR でテキスト中心優先座標を取得
