@@ -840,6 +840,7 @@ def detect_and_act(ocr: list, state: PilotState,
         any(k in t for k in ("Result", "リザルト", "次へ"))
         for t in texts
     )
+    _white_hand_pos = None  # (cx, cy, score, direction) or None
     if analysis_path is not None and not _is_result_screen and not _is_notice and not _adv_result.is_adv and not _is_mini_conv:
         _pdg_blobs = find_finger_blobs(analysis_path, min_area=300, max_area=5000)
         _pdg_blobs = [b for b in _pdg_blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
@@ -898,8 +899,15 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── 【指+金枠ボタン】PRE_DIALOG_GUARD で指ブロブ検出 → ゴールドボタン直タップ ───
     # ダイアログ×ボタンがない画面 (プレゼントボックス等) で指が金色ボタンを指している場合
+    # 白ハンドポインタの指先方向がわかれば、その方向の金枠を優先タップ
     if _pre_dialog_finger and analysis_path is not None:
-        _finger_gold_pos = find_golden_highlighted_button(analysis_path)
+        _hand_xy = None
+        _hand_d = ""
+        if _white_hand_pos is not None:
+            _hand_xy = (_white_hand_pos[0], _white_hand_pos[1])
+            _hand_d = _white_hand_pos[3] if len(_white_hand_pos) >= 4 else ""
+        _finger_gold_pos = find_golden_highlighted_button(
+            analysis_path, hand_pos=_hand_xy, hand_dir=_hand_d)
         if _finger_gold_pos:
             _fg_x, _fg_y = _finger_gold_pos
             logger.info(">>> [FINGER_GOLD_TAP] 指ブロブ+金色ボタン → (%d,%d)", _fg_x, _fg_y)

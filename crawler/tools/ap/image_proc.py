@@ -266,18 +266,20 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
 
 def detect_white_hand_pointer(
     img_path: Path, threshold: float = 0.85
-) -> Optional[tuple[int, int, float]]:
+) -> Optional[tuple[int, int, float, str]]:
     """
     白いハンドポインタ（home_nav_finger / home_nav_finger_up）をテンプレートマッチングで検出。
     find_finger_blobs() が HSV 肌色のみ対象で白ポインタを見逃す問題を補完。
-    Returns: (cx, cy, score) or None
+    Returns: (cx, cy, score, direction) or None
+        direction: "down" (home_nav_finger) / "up" (home_nav_finger_up)
     """
     try:
         img = imread_cached(img_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             return None
         templates_dir = _CRAWLER_ROOT / "assets" / "templates"
-        best: Optional[tuple[int, int, float]] = None
+        best: Optional[tuple[int, int, float, str]] = None
+        _dir_map = {"home_nav_finger": "down", "home_nav_finger_up": "up"}
         for name in ("home_nav_finger", "home_nav_finger_up"):
             tpl_path = templates_dir / f"{name}.png"
             if not tpl_path.exists():
@@ -289,9 +291,10 @@ def detect_white_hand_pointer(
             _, max_val, _, max_loc = cv2.minMaxLoc(res)
             if max_val >= threshold and (best is None or max_val > best[2]):
                 h, w = tmpl.shape
-                best = (max_loc[0] + w // 2, max_loc[1] + h // 2, max_val)
+                best = (max_loc[0] + w // 2, max_loc[1] + h // 2, max_val, _dir_map[name])
         if best:
-            logger.info("[WHITE_HAND] 白ハンドポインタ検出 (%d,%d) score=%.3f", best[0], best[1], best[2])
+            logger.info("[WHITE_HAND] 白ハンドポインタ検出 (%d,%d) score=%.3f dir=%s",
+                        best[0], best[1], best[2], best[3])
         return best
     except Exception as e:
         logger.debug("detect_white_hand_pointer error: %s", e)
@@ -2085,13 +2088,20 @@ def smart_tap_button(
 
 
 # ─── チュートリアル: 金色ハイライトボタンを全画面スキャンで検出 ──────────────
-def find_golden_highlighted_button(img_path: Path) -> Optional[tuple[int, int]]:
+def find_golden_highlighted_button(
+    img_path: Path,
+    hand_pos: Optional[tuple[int, int]] = None,
+    hand_dir: str = "",
+) -> Optional[tuple[int, int]]:
     """
     チュートリアル指差しアイコンが指す「金色ハイライトされたボタン/カード」を
     HSV 色域スキャンで検出する。
-    指の向き（上下左右）に依存しない方向非依存のアプローチ。
 
-    返値: (cx, cy) ― 最大輝度の金色領域の中心座標、検出失敗時は None
+    hand_pos / hand_dir が指定された場合、指先方向にある金枠を優先する。
+      hand_dir="up"   → ハンドより上方の金枠を優先
+      hand_dir="down"  → ハンドより下方の金枠を優先
+
+    返値: (cx, cy) ― 金色領域の中心座標、検出失敗時は None
     """
     try:
         img_bgr = imread_cached(img_path)
@@ -2123,12 +2133,39 @@ def find_golden_highlighted_button(img_path: Path) -> Optional[tuple[int, int]]:
             # 幅・高さが30px未満の細い枠線装飾は除外
             if _rw < 30 or _rh < 30:
                 continue
-            valid.append((_ca, c))
+            valid.append((_ca, c, _rx, _ry, _rw, _rh))
         if not valid:
             return None
 
-        _, best_cnt = max(valid, key=lambda x: x[0])
-        rx, ry, rw, rh = cv2.boundingRect(best_cnt)
+        # ---- ハンド方向フィルタ: 指先方向にある金枠を優先 ----
+        if hand_pos and hand_dir:
+            hx, hy = hand_pos
+            directed = []
+            for item in valid:
+                _ca, _c, _rx, _ry, _rw, _rh = item
+                _cx = _rx + _rw // 2
+                _cy = _ry + _rh // 2
+                if hand_dir == "up" and _cy < hy:
+                    directed.append(item)
+                elif hand_dir == "down" and _cy > hy:
+                    directed.append(item)
+            if directed:
+                # 指先方向の候補の中からハンドに最も近いものを選択
+                def _dist_to_hand(item):
+                    _ca, _c, _rx, _ry, _rw, _rh = item
+                    _cx = _rx + _rw // 2
+                    _cy = _ry + _rh // 2
+                    return (hx - _cx) ** 2 + (hy - _cy) ** 2
+                best_item = min(directed, key=_dist_to_hand)
+                _, _, rx, ry, rw, rh = best_item
+                cx = rx + rw // 2
+                cy = ry + rh // 2
+                logger.info("  [GoldHighlight] 指先方向(%s)の金枠 rect=(%d,%d,%d,%d) → center=(%d,%d)",
+                            hand_dir, rx, ry, rw, rh, cx, cy)
+                return cx, cy
+
+        # フォールバック: 最大面積の輪郭
+        _, best_cnt, rx, ry, rw, rh = max(valid, key=lambda x: x[0])
         cx = rx + rw // 2
         cy = ry + rh // 2
         logger.info("  [GoldHighlight] 金色ハイライト検出 rect=(%d,%d,%d,%d) → center=(%d,%d)",
