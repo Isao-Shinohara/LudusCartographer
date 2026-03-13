@@ -2726,6 +2726,17 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     # ── 待機カウンタ ──
     state.movie_wait_consecutive += 1
 
+    # ── 一時停止検出: 500回超 + 画面静止 → タップで再開 ──
+    if state.movie_wait_consecutive > 500 and state.movie_wait_consecutive % 200 == 0:
+        logger.warning(
+            "[MOVIE_PAUSE_DETECT] %d回待機 (phash静止) → 一時停止疑い → 中央タップで再開",
+            state.movie_wait_consecutive)
+        _mc_x, _mc_y = roi_to_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state.game_roi)
+        tap_device(_mc_x, _mc_y, state, "MOVIE_RESUME_TAP")
+        time.sleep(1.0)
+        state.last_phash = None  # phash リセットで次フレーム検出
+        return True
+
     # ── 通常待機 (動画は自動終了するのでタップせず待つ) ──
     roi_x = state.game_roi[0] if state.game_roi else 0
     logger.info("[MOVIE] roi_x=%d → 待機 (%d)",
