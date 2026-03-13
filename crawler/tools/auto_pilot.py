@@ -3761,11 +3761,18 @@ def main():
                 state.same_phash_count += 1
                 state.last_phash = cur_phash
                 state.last_screen_change_time = time.time()  # Watchdog抑制
-                logger.debug("[iter %d] DL/ロード中: phash変化なし(dist=%d) → 3秒待機", i, dist)
-                time.sleep(3.0)
-                _fms = (time.time() - _loop_t0) * 1000
-                state.total_loop_ms += _fms
-                continue
+                # ── 10回(30秒)変化なし → DL完了ダイアログの可能性。OCR解析へ ──
+                if state.same_phash_count >= 10:
+                    logger.info("[iter %d] DL/ロード中: %d回変化なし → 完了ダイアログ確認のため通常解析へ",
+                                i, state.same_phash_count)
+                    state.same_phash_count = 0
+                    # fall through to detect_and_act
+                else:
+                    logger.debug("[iter %d] DL/ロード中: phash変化なし(dist=%d) → 3秒待機", i, dist)
+                    time.sleep(3.0)
+                    _fms = (time.time() - _loop_t0) * 1000
+                    state.total_loop_ms += _fms
+                    continue
             # 画面変化あり → DL 完了の可能性。通常フローで判定
             logger.info("[iter %d] DL/ロード中: 画面変化(dist=%d) → 通常解析へ", i, dist)
             state.last_phash = cur_phash
