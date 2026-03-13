@@ -152,6 +152,8 @@ class PilotState:
     adv_early_consecutive: int = 0
     # ─── ダウンロード直後フラグ (動画SKIP許可) ───
     post_download: bool = False
+    # ─── ダウンロード中フラグ (誤タップ保護) ───
+    download_active: bool = False
     # ─── キャッシュ (per-phash サイクル) ───
     _adv_toolbar_cache_phash: str = ""     # キャッシュ有効な phash 値
     _adv_toolbar_cache_result: bool = False # 後方互換 (is_adv_toolbar_cached用)

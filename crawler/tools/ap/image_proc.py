@@ -171,12 +171,14 @@ def prepare_analysis_image(img_path: Path, actual_w: int, actual_h: int) -> Path
 # ─── 指差しアイコン (肌色ブロブ) 検出 ──────────────
 def find_finger_blobs(img_path: Path, min_area: int = 400,
                       max_area: int = 15000,
-                      dark_mode: bool = False) -> list[tuple[int, int, float, int, int, int, int]]:
+                      dark_mode: bool = False,
+                      home_mode: bool = False) -> list[tuple[int, int, float, int, int, int, int]]:
     """
     指差しアイコン（肌色）の大きいブロブを検出。
     battle_loop.py と同じ HSV マスク手法。
     max_area: 金色カード等の大面積誤検出を除外（UI カードは 15000px² 超）
     dark_mode: バトル背景など暗い状況では輝度閾値を緩和（V:150→100, S:40→25）
+    home_mode: ホーム画面では OVERSIZED_RESCUE を無効化 (装飾の誤検出防止)
     返値: [(cx, cy, area, bbox_x, bbox_y, bbox_w, bbox_h), ...] 面積降順
     """
     try:
@@ -245,7 +247,8 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
             blobs.append((cx, cy, area, bx, by, bw, bh))
         # ── 大面積ブロブ救済: 近傍に金枠があれば指+ゴールドUI融合と判定して採用 ──
         # 通常ブロブの有無に関わらず、金枠付き大面積ブロブは常に最優先で挿入
-        if _oversized:
+        # home_mode: ホーム画面の装飾 (area 46000-53000) を指と誤認するため無効化
+        if _oversized and not home_mode:
             for _ov in _oversized:
                 _gf = find_gold_frame_near(img_path, _ov[0], _ov[1], search_radius=200)
                 if _gf is not None:

@@ -95,7 +95,7 @@ from tools.ap.device import (  # noqa: E402
     set_device_serial, set_scrcpy_device,
     adb, tap_device, swipe, swipe_device, take_screenshot, manage_scrcpy,
     get_device_resolution, _query_status_bar_height, check_adb_liveness,
-    pop_last_scrcpy_bgr,
+    pop_last_scrcpy_bgr, check_foreground_app,
 )
 # DEVICE_SERIAL / SCRCPY_DEVICE はモジュール変数 — 読取りは _ap_device 経由
 # 後方互換 re-export 用プロパティ代替
@@ -529,6 +529,8 @@ def collect_secondary_candidates(
             analysis_path, W, H, ocr_texts=texts, roi=state.game_roi)
         if dlg_nav:
             _nav_type, _nx, _ny = dlg_nav
+            # 画面右端クランプ: x=1517-1519 (device端) → W*0.95 に制限
+            _nx = min(_nx, int(W * 0.95))
             candidates.append(TapCandidate(
                 x=_nx, y=_ny, action=f"CAND_DIALOG_{_nav_type.upper()}",
                 priority=10, desc=f"dialog {_nav_type}"))
@@ -640,6 +642,7 @@ def detect_and_act(ocr: list, state: PilotState,
     if _has_download_text and _has_size_progress and not _dl_is_confirm_dialog:
         _dl_texts = [t for t in texts if "Download" in t or "MB" in t or "GB" in t or "ダウンロード" in t]
         logger.info(">>> [DOWNLOAD_STRICT] 右下ゲージ確認: %s — ダウンロード待機", _dl_texts)
+        state.download_active = True
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
 
     # ── 【#-2.9】確認ダイアログ — 肯定ボタン最優先 ──
@@ -715,6 +718,13 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.info(">>> 【設定メニュー誤起動】 BACK キーで閉じる")
         adb("shell input keyevent 4")
         return "SETTINGS_BACK", 1.5
+
+    # ─── Play Games ポップアップ → BACK キーで閉じる ───
+    # 中央タップすると Chrome が起動してスタックするため BACK で安全に閉じる
+    if has_text(ocr, "Play Games", min_conf=0.3) or has_text(ocr, "Play ゲーム", min_conf=0.3):
+        logger.info(">>> 【Play Games ポップアップ】 BACK キーで閉じる")
+        adb("shell input keyevent 4")
+        return "PLAY_GAMES_BACK", 1.0
 
     # ─── 【最優先 #-1】「ご注意」画面 (Google Play 起動時 portrait 注意書き) ───
     # アプリ初回起動時に portrait で表示される法的注意画面。
@@ -968,10 +978,11 @@ def detect_and_act(ocr: list, state: PilotState,
     # ─── 【最優先 #0-ab】HSV金枠ボタン検出 → 中心タップ (Type B) ───
     # バトルチュートリアルで指アイコンが金枠ハイライトボタンを指している場面。
     # OCR が "隣接攻撃" "必殺技" を検出し、かつ右半分に金枠ボタンがある場合に発火。
+    # DL中はゲージバーを金枠と誤検出するためスキップ
     _battle_tut_kws = ["隣接攻撃", "必殺技", "巫殺技", "ATTACKER", "通常攻撃"]
     _is_battle_tut_context = any(kw in joined for kw in _battle_tut_kws)
     # バトルUI確認済みの場合はフッター外GoldBtnをスキップ → Glow SM (フッター) に委ねる
-    if analysis_path is not None and _is_battle_tut_context and not _is_battle_early:
+    if analysis_path is not None and _is_battle_tut_context and not _is_battle_early and not state.download_active:
         _gold_btn = detect_tutorial_gold_button_tap(analysis_path, right_half_only=True)
         if _gold_btn:
             _bx, _by = _gold_btn
@@ -1776,7 +1787,7 @@ def detect_and_act(ocr: list, state: PilotState,
         # ── 指アイコン+金枠 → まだホームチュートリアル中 ──
         # 「ホーム画面かつ指+金枠がない」= チュートリアル終了
         # 回数制限なし: 指+金枠+暗転オーバーレイで判定 (カウンタ偽検出は廃止)
-        _home_blobs = find_finger_blobs(analysis_path) if analysis_path else []
+        _home_blobs = find_finger_blobs(analysis_path, home_mode=True) if analysis_path else []
         _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
         _home_dimmed = detect_tutorial_overlay(analysis_path) if analysis_path else False
         if _home_blobs or _home_gold:
@@ -1785,6 +1796,10 @@ def detect_and_act(ocr: list, state: PilotState,
                 _chosen_blob = max(_home_blobs, key=lambda b: b[2])  # area最大
                 _bx, _by = _chosen_blob[0], _chosen_blob[1]
                 _gf = find_gold_frame_near(analysis_path, _bx, _by, search_radius=250) if analysis_path else None
+                # フッターナビ領域 (y > H*0.85) の金色要素を除外 (装飾の誤検出防止)
+                if _gf and _gf[1] > H * 0.85:
+                    logger.info(">>> ホーム: 金枠(%d,%d) がフッターナビ領域 → 除外", _gf[0], _gf[1])
+                    _gf = None
                 if _gf:
                     _tap_target = (_gf[0], _gf[1])
                     logger.info(">>> ホームチュートリアル: 指(%d,%d)→金枠(%d,%d) dimmed=%s [%d回目]",
@@ -1939,6 +1954,7 @@ def detect_and_act(ocr: list, state: PilotState,
     _dl_progress = any("MB" in t or "GB" in t for t in texts)
     if _dl_jp and _dl_progress:
         logger.info(">>> [DOWNLOAD_STRICT_JP] %s + 進捗あり — 待機", _dl_jp["text"])
+        state.download_active = True
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
 
     # ─── クエストマップ/ステージ選択 ───
@@ -2253,8 +2269,10 @@ def detect_and_act(ocr: list, state: PilotState,
         return "CONFIRM", 1.0
 
     # ─── ストーリー/会話 (下部テキストボックス) ───
-    lower_texts = [r for r in ocr if r["center"][1] > H * 0.6]
-    if lower_texts and len(ocr) <= 15:
+    _STORY_TAP_EXCLUDE = {"Rank", "Pank", "Runk", "AUTO", "SKIP", ">>", ">|"}
+    lower_texts = [r for r in ocr if r["center"][1] > H * 0.6
+                   and r["text"] not in _STORY_TAP_EXCLUDE]
+    if lower_texts and len(ocr) <= 15 and not state.download_active:
         target = lower_texts[-1]
         cx, cy = target["center"]
         logger.info(">>> ストーリー送り '%s' (%d,%d)", target["text"][:10], cx, cy)
@@ -3309,6 +3327,15 @@ def main():
             else:
                 logger.info("[WATCHDOG] Periodic check OK")
 
+        # ── フォアグラウンドアプリ監視 (20 iter 毎) ──
+        # Chrome 等が誤起動していたら am start でゲームに復帰
+        if i > 0 and i % 20 == 0:
+            if check_foreground_app():
+                logger.info("[FOREGROUND] ゲーム復帰完了 → 次イテレーションへ")
+                state.last_phash = ""
+                state.same_phash_count = 0
+                continue
+
         # ── 0.5) キャプチャ前クールダウン ──
         # a) タップ後: MIN_TAP_INTERVAL 未満なら残り時間を待つ
         #    安全弁: 最大 3.0s キャップ (不具合で無限停止しない)
@@ -3404,12 +3431,21 @@ def main():
             if state.total_blackout_skipped % 5 == 1:
                 logger.info("[iter %d] 暗転 — 3s 待機 (連続: %d)",
                             i, state.consecutive_blackouts)
-            # ── 暗転復帰: 画面中央タップ (スキップボタンは押さない) ──
-            # 長時間暗転 (30回=~90秒) → 画面中央をタップして復帰を試みる
-            if state.consecutive_blackouts >= 30 and state.consecutive_blackouts % 10 == 0:
-                logger.info("[BLACKOUT_RECOVER] 連続暗転 %d 回 → 画面中央タップで復帰試行",
-                            state.consecutive_blackouts)
-                tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "BLACKOUT_RECOVER")
+            # ── 暗転復帰 ──
+            # 連続30回超 → スリープ延長 (0.5s→3.0s) + フォアグラウンドチェック
+            if state.consecutive_blackouts >= 30:
+                if state.consecutive_blackouts % 10 == 0:
+                    # 画面消灯の可能性 → フォアグラウンドチェック + WAKEUP
+                    if check_foreground_app():
+                        logger.info("[BLACKOUT_RECOVER] 別アプリ前面 → ゲーム復帰")
+                    else:
+                        logger.info("[BLACKOUT_RECOVER] 連続暗転 %d 回 → WAKEUP + 画面中央タップ",
+                                    state.consecutive_blackouts)
+                        adb("shell input keyevent KEYCODE_WAKEUP")
+                        time.sleep(0.5)
+                        tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "BLACKOUT_RECOVER")
+                else:
+                    time.sleep(3.0)  # 暗転ポーリング延長 (コールドスタート最適化)
             else:
                 time.sleep(0.5)
             state.last_phash = ""
@@ -3461,6 +3497,11 @@ def main():
         state.last_phash_dist = dist
 
         screen_changed = dist >= PHASH_THRESHOLD
+
+        # ── ダウンロード保護フラグ解除: 大きな画面変化でDL終了を検出 ──
+        if state.download_active and dist >= 20:
+            logger.info("[DL_PROTECT] phash_dist=%d >= 20 → download_active 解除", dist)
+            state.download_active = False
 
         # ── 動的しきい値: Gold UI アクション後はアニメーション変化でも即解析 ──
         if not screen_changed and state.last_action in _GOLD_UI_ACTIONS and dist >= 1:
@@ -3896,6 +3937,14 @@ def main():
             if state.stall_start == 0.0:
                 state.stall_start = time.time()
             stall_elapsed = time.time() - state.stall_start
+
+            # DL中はスタック介入をスキップ (phash 変化小はDLの正常動作)
+            if state.download_active:
+                logger.debug("[DL_PROTECT] DL中 → STALL_CORNER スキップ")
+                state.stall_start = time.time()  # タイマーリセット
+                state.last_phash = cur_phash
+                time.sleep(3.0)
+                continue
 
             if stall_elapsed >= STALL_TIMEOUT and not state.stall_corner_tried:
                 # ADVシーン中は右上タップ禁止 (ツールバー >| スキップを押してしまうため)

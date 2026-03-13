@@ -19,6 +19,7 @@ from typing import Optional
 from tools.ap.constants import (
     ANALYSIS_W, ANALYSIS_H, MIN_TAP_INTERVAL, SCREENSHOT_PATH,
     REMOTE_PATH, _DEBUG_SAVE_IMAGES,
+    APP_PACKAGE, APP_ACTIVITY,
 )
 
 logger = logging.getLogger("auto_pilot")
@@ -523,4 +524,40 @@ def check_adb_liveness() -> bool:
         return False
     except Exception as _e:
         logger.warning("[WATCHDOG] 物理診断例外: %s", _e)
+        return False
+
+
+def check_foreground_app() -> bool:
+    """
+    ゲームアプリがフォアグラウンドかチェック。
+    別アプリ (Chrome 等) が開いていたら am start で復帰し True を返す。
+    ゲームが前面なら False を返す (復帰不要)。
+    """
+    _serial_arg = ["-s", DEVICE_SERIAL] if DEVICE_SERIAL else []
+    try:
+        _r = subprocess.run(
+            ["adb"] + _serial_arg + ["shell", "dumpsys", "window", "displays"],
+            capture_output=True, timeout=3, text=True,
+        )
+        if _r.returncode != 0:
+            return False
+        # mCurrentFocus or mFocusedApp でパッケージを確認
+        for line in _r.stdout.splitlines():
+            if "mCurrentFocus" in line or "mFocusedApp" in line:
+                if APP_PACKAGE in line:
+                    return False  # ゲームが前面 → 復帰不要
+        # ゲームが前面にない → am start で復帰
+        logger.warning("[FOREGROUND] ゲームが背面 → am start で復帰")
+        subprocess.run(
+            ["adb"] + _serial_arg + ["shell", "am", "start", "-n",
+             f"{APP_PACKAGE}/{APP_ACTIVITY}"],
+            capture_output=True, timeout=5,
+        )
+        time.sleep(1)
+        return True  # 復帰実行した
+    except subprocess.TimeoutExpired:
+        logger.warning("[FOREGROUND] dumpsys タイムアウト")
+        return False
+    except Exception as _e:
+        logger.warning("[FOREGROUND] チェック例外: %s", _e)
         return False
