@@ -3243,26 +3243,41 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
 
     # --- Step 2.5: Play Store ページ読み込み待機 ---
     # 初回は十分に待つ (BACK 乱発でページロードが途切れるのを防止)
+    # uiautomator + OCR 両方で読み込み完了を検出 (Play Store は WebView ベースのため uiautomator が効かない場合がある)
+    _PAGE_READY_KWS = ["インストール", "Install", "install",
+                       "開く", "Open", "プレイ", "Play", "更新", "Update"]
     logger.info("[FRESH_INSTALL] Play Store ページ読み込み待機中...")
     _page_loaded = False
     for _wait in range(6):  # 最大 30 秒 (5秒 × 6)
+        # --- uiautomator で確認 ---
         xml = _uiautomator_dump_xml()
         if xml:
             ui_texts = _log_ui_texts(xml)
-            # Install / Open / Update のいずれかが見えれば読み込み完了
-            if any(kw in t for t in ui_texts
-                   for kw in ["インストール", "Install", "install",
-                              "開く", "Open", "プレイ", "Play",
-                              "更新", "Update"]):
-                logger.info("[FRESH_INSTALL] ページ読み込み完了 (%d秒)", (_wait + 1) * 5)
+            if any(kw in t for t in ui_texts for kw in _PAGE_READY_KWS):
+                logger.info("[FRESH_INSTALL] ページ読み込み完了 [uiautomator] (%d秒)", (_wait + 1) * 5)
                 _page_loaded = True
                 break
-            # ポップアップが出ていれば閉じる
             if _try_dismiss_popup(xml):
                 continue
-            # loading 系テキストが見えたら待機続行
             if any(kw in t for t in ui_texts for kw in _LOADING_HINTS):
                 logger.info("[FRESH_INSTALL] 読み込み中... (%d秒)", (_wait + 1) * 5)
+                time.sleep(5)
+                continue
+        else:
+            logger.debug("[FRESH_INSTALL] uiautomator dump 失敗 — OCR フォールバック")
+        # --- OCR フォールバック ---
+        _wait_ss = str(Path(tempfile.gettempdir()) / "fresh_install_wait.png")
+        if _adb_screenshot(_wait_ss):
+            try:
+                _wait_ocr = run_ocr(_wait_ss)
+                _wait_texts = [r["text"] for r in _wait_ocr]
+                logger.info("[FRESH_INSTALL] OCR (待機中): %s", _wait_texts[:10])
+                if any(kw in t for t in _wait_texts for kw in _PAGE_READY_KWS):
+                    logger.info("[FRESH_INSTALL] ページ読み込み完了 [OCR] (%d秒)", (_wait + 1) * 5)
+                    _page_loaded = True
+                    break
+            except Exception:
+                pass
         time.sleep(5)
 
     if not _page_loaded:
