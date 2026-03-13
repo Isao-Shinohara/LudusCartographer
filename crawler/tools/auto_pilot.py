@@ -2621,14 +2621,15 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             logger.info("[MOVIE_INERTIA] ADV/BATTLE/MENU 証拠あり → MOVIE脱出")
             state.last_action = "SCENE_TAP"
             state.movie_wait_consecutive = 0
+            state._movie_resume_used = False
         else:
             # ADV 証拠チェック: ↓ボタンのみ (MOVIE中はAUTO単独を信頼しない)
-            # AUTO は動画シーンで score~0.77 の偽陽性を出すため
             _adv_down = detect_adv_advance_icon(img_path)
             if _adv_down:
                 logger.info("[MOVIE_INERTIA] ↓ボタン検出 → ADV確定, MOVIE脱出")
                 state.last_action = "SCENE_TAP"
                 state.movie_wait_consecutive = 0
+                state._movie_resume_used = False
             else:
                 # ADV 証拠なし → ⏭ ボタンで動画継続/終了を判定
                 _movie_chk = detect_movie_scene(
@@ -2641,6 +2642,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                             state.movie_wait_consecutive, dist)
                 state.last_action = "SCENE_TAP"
                 state.movie_wait_consecutive = 0
+                state._movie_resume_used = False
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     if state.current_scene == "BATTLE" and dist < 30:
@@ -2733,23 +2735,19 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     # ── 待機カウンタ ──
     state.movie_wait_consecutive += 1
 
-    # ── 一時停止検出: phash が完全に静止 (dist<=2) → 早期タップで再開 ──
-    # 再生中の動画は毎フレーム変化する。静止が続くのは一時停止。
-    # MOVIE ループは main loop の frozen_frames 更新に到達しないため自前で計測
-    _resume_cooldown = getattr(state, '_movie_resume_cooldown', 0)
-    if _resume_cooldown > 0:
-        state._movie_resume_cooldown = _resume_cooldown - 1
-        # クールダウン中: 一時停止判定をスキップ
-    else:
+    # ── 一時停止検出: phash 完全静止 (dist<=2) が続けば一時停止 ──
+    # 再生中の動画は毎フレーム変化する。静止が続くのは一時停止の証拠。
+    # 1動画セッションにつき最大1回だけ再開タップする (トグルループ防止)。
+    _resume_used = getattr(state, '_movie_resume_used', False)
+    if not _resume_used:
         if dist <= 2:
             state.consecutive_frozen_frames += 1
         else:
             state.consecutive_frozen_frames = 0
 
         if state.consecutive_frozen_frames >= 5 and state.movie_wait_consecutive >= 5:
-            # 5フレーム完全静止 (~3秒) → 一時停止確定 → 即再開
             logger.warning(
-                "[MOVIE_PAUSE_DETECT] frozen=%d wait=%d → 一時停止確定 → 中央タップで再開",
+                "[MOVIE_PAUSE_DETECT] frozen=%d wait=%d → 一時停止確定 → 中央タップで再開 (1回限り)",
                 state.consecutive_frozen_frames, state.movie_wait_consecutive)
             _mc_x, _mc_y = roi_to_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state.game_roi)
             tap_device(_mc_x, _mc_y, state, "MOVIE_RESUME_TAP")
@@ -2757,7 +2755,7 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
             state.last_phash = None
             state.consecutive_frozen_frames = 0
             state.movie_wait_consecutive = 0
-            state._movie_resume_cooldown = 50  # 50フレーム (~30秒) クールダウン
+            state._movie_resume_used = True  # 2回目以降は発動しない
             return True
 
     # ── 通常待機 (動画は自動終了するのでタップせず待つ) ──
