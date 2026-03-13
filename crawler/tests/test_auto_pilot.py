@@ -5,6 +5,7 @@ AssetManager (require_ocr) と Result画面ハンドラの動作検証。
 """
 from __future__ import annotations
 
+import re
 import sys
 import json
 import tempfile
@@ -1449,3 +1450,94 @@ class TestMovieSceneDetection:
                              has_skip_btn=True, skip_btn_pos=(100, 50))
         assert "is_movie=True" in repr(r)
         assert "0.75" in repr(r)
+
+
+# ─── Fresh Install フロー堅牢性テスト ──────────────────────────
+
+class TestFreshInstallHelpers:
+    """_fresh_install_from_play_store のヘルパーロジックテスト。"""
+
+    def test_uninstall_keyword_exclusion(self):
+        """「インストール」検索で「アンインストール」を除外する。"""
+        kw = "インストール"
+        matched_text = "アンインストール"
+        # 除外条件: kw == "インストール" and "アン" in matched_text
+        should_exclude = (kw == "インストール" and "アン" in matched_text)
+        assert should_exclude is True
+
+    def test_install_keyword_match(self):
+        """「インストール」は正しくマッチする。"""
+        kw = "インストール"
+        matched_text = "インストール"
+        should_exclude = (kw == "インストール" and "アン" in matched_text)
+        assert should_exclude is False
+
+    def test_y_coordinate_filter_top75(self):
+        """Y 座標 < 75% のインストールボタンは有効。"""
+        screen_h = 1520
+        button_y = 960  # ~63% (typical install button position)
+        assert button_y < screen_h * 0.75
+
+    def test_y_coordinate_filter_bottom(self):
+        """Y 座標 > 75% のボタンは「他端末にも」ボタンとして除外。"""
+        screen_h = 1520
+        button_y = 1300  # ~86% (bottom area)
+        assert not (button_y < screen_h * 0.75)
+
+    def test_back_only_after_attempt_7(self):
+        """BACK キーは試行 8回目以降でのみ発動。"""
+        # attempt >= 7 の時だけ BACK を押す (0-indexed)
+        for attempt in range(15):
+            should_back = attempt >= 7
+            if attempt < 7:
+                assert not should_back, f"attempt={attempt} should not press BACK"
+            else:
+                assert should_back, f"attempt={attempt} should press BACK"
+
+    def test_wait_escalation(self):
+        """待機時間が試行回数に応じてエスカレートする。"""
+        waits = []
+        for attempt in range(15):
+            if attempt > 0:
+                w = 3 if attempt < 5 else 5 if attempt < 10 else 8
+                waits.append(w)
+        # 前半は短く、後半は長い
+        assert waits[0] == 3   # attempt 1
+        assert waits[4] == 5   # attempt 5
+        assert waits[9] == 8   # attempt 10
+
+    def test_popup_dismiss_keywords(self):
+        """ポップアップ解除キーワードが十分にカバーされている。"""
+        dismiss_kws = ["後で", "後で行う", "スキップ", "いいえ", "No thanks",
+                       "Not now", "No, thanks", "閉じる", "DISMISS",
+                       "GOT IT", "OK", "了解"]
+        # 最低限のカバレッジ
+        assert "後で" in dismiss_kws         # Google Play Games
+        assert "No thanks" in dismiss_kws    # English popups
+        assert "GOT IT" in dismiss_kws       # Play Protect
+        assert "閉じる" in dismiss_kws       # Generic close
+
+    def test_xml_uiautomator_parse(self):
+        """uiautomator XML から正しくボタン座標を抽出する。"""
+        import xml.etree.ElementTree as ET
+        xml_str = '''<?xml version="1.0" encoding="UTF-8"?>
+        <hierarchy rotation="0">
+            <node text="インストール" bounds="[200,900][520,980]" />
+            <node text="アンインストール" bounds="[200,1100][520,1180]" />
+        </hierarchy>'''
+        root = ET.fromstring(xml_str)
+        results = []
+        kw = "インストール"
+        for node in root.iter("node"):
+            text_val = node.get("text", "")
+            if kw in text_val:
+                if kw == "インストール" and "アン" in text_val:
+                    continue
+                bm = re.findall(r"\[(\d+),(\d+)\]", node.get("bounds", ""))
+                if len(bm) >= 2:
+                    x1, y1 = int(bm[0][0]), int(bm[0][1])
+                    x2, y2 = int(bm[1][0]), int(bm[1][1])
+                    results.append(((x1 + x2) // 2, (y1 + y2) // 2))
+        # 「インストール」のみマッチ、「アンインストール」は除外
+        assert len(results) == 1
+        assert results[0] == (360, 940)

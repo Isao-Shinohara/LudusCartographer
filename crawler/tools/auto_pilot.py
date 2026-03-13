@@ -2948,28 +2948,46 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     PilotState はまだ存在しない段階で呼ばれるため、
     tap_device() ではなく直接 adb shell input tap を使用する。
 
-    改善点 (2026-03-13):
-    - XML を ElementTree で正式パース (属性順序に依存しない)
-    - デバイス解像度を wm size で動的取得 (ハードコード廃止)
-    - 再アンインストール上限 (max 2回) でループ防止
-    - タップ後検証を 5秒 + リトライ 2回に延長
-    - 権限ダイアログ処理を最大 3回リトライ
-    - スクリーンショット PNG ヘッダ検証
-    - installed_via_tap=False 時の早期エラーログ
+    v2 改善点 (2026-03-13):
+    - 画面ウェイク+ロック解除を最初に実行
+    - uiautomator dump 前に stale XML を削除
+    - uiautomator dump 結果の全テキストをログ出力 (診断用)
+    - Play Store ページ読み込み待機フェーズ追加 (BACK 乱発防止)
+    - 試行回数に応じた待機時間エスカレーション
+    - 診断スクリーンショットを storage/fresh_install/ に保存
+    - Google Play Protect / TOS 画面のハンドリング
+    - フォアグラウンドアプリ検証 (BACK が Store を閉じた場合のリカバリ)
     """
     INSTALL_KEYWORDS = ["インストール", "Install", "install"]
-    ACCEPT_KEYWORDS = ["同意する", "Accept", "OK"]
+    ACCEPT_KEYWORDS = ["同意する", "Accept", "OK", "続行", "Continue"]
     OPEN_KEYWORDS = ["開く", "Open", "プレイ", "Play"]  # uiautomator用 (完全一致)
     _OCR_OPEN_KEYWORDS = ["開く", "プレイ"]  # OCR用 (部分一致なので "Play"/"Open" は除外)
-    MAX_ATTEMPTS = 10
+    # ページ読み込み中の兆候 (これらが見えたら待機)
+    _LOADING_HINTS = ["読み込み中", "Loading", "接続しています", "Connecting"]
+    # ポップアップ / ダイアログを閉じるべきキーワード
+    _POPUP_DISMISS_KWS = ["後で", "後で行う", "スキップ", "いいえ", "No thanks",
+                          "Not now", "No, thanks", "閉じる", "DISMISS",
+                          "GOT IT", "OK", "了解"]
+    MAX_ATTEMPTS = 15  # 10→15 に増加 (遅い接続対応)
     POLL_INTERVAL_SEC = 5
-    MAX_POLL_COUNT = 60  # 5秒 × 60 = 5分
+    MAX_POLL_COUNT = 120  # 5秒 × 120 = 10分 (大容量アプリ対応)
     _PNG_HEADER = b"\x89PNG\r\n\x1a\n"
     MAX_REINSTALL = 2  # 再アンインストール上限
+    PLAY_STORE_PKG = "com.android.vending"
+
+    # 診断スクリーンショット保存先
+    _diag_dir = Path(__file__).parent.parent / "storage" / "fresh_install"
+    _diag_dir.mkdir(parents=True, exist_ok=True)
 
     def _adb_tap(x: int, y: int) -> None:
         subprocess.run(
             ["adb", "-s", serial, "shell", "input", "tap", str(x), str(y)],
+            capture_output=True, timeout=5,
+        )
+
+    def _adb_key(keycode: str) -> None:
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "input", "keyevent", keycode],
             capture_output=True, timeout=5,
         )
 
@@ -2990,6 +3008,13 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             time.sleep(0.5)
         return False
 
+    def _save_diag_screenshot(label: str) -> None:
+        """診断用スクリーンショットを保存 (失敗しても無視)。"""
+        ts = time.strftime("%H%M%S")
+        path = str(_diag_dir / f"{label}_{ts}.png")
+        if _adb_screenshot(path):
+            logger.info("[FRESH_INSTALL] 診断SS保存: %s", path)
+
     def _get_device_screen_height() -> int:
         """wm size でデバイス画面の高さを取得 (portrait 基準)。"""
         try:
@@ -2997,104 +3022,163 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 ["adb", "-s", serial, "shell", "wm", "size"],
                 capture_output=True, text=True, timeout=5,
             )
-            # "Physical size: 720x1520" → max(720, 1520) = portrait height
             m = re.search(r"(\d+)x(\d+)", r.stdout)
             if m:
                 w, h = int(m.group(1)), int(m.group(2))
-                return max(w, h)  # portrait の高さ (=長辺)
+                return max(w, h)
         except Exception as e:
             logger.debug("[FRESH_INSTALL] wm size 取得失敗: %s", e)
-        return 1520  # デフォルト (テスト端末)
+        return 1520
 
-    def _uiautomator_find_button(keywords: list) -> Optional[tuple]:
-        """uiautomator dump → ElementTree パースでボタン中心座標を取得。
-
-        XML を正式にパースすることで属性の出現順序に依存しない。
-        text / content-desc 属性を keywords リストで部分一致検索する。
-        """
+    def _is_play_store_foreground() -> bool:
+        """Play Store がフォアグラウンドにあるか確認。"""
         try:
-            subprocess.run(
-                ["adb", "-s", serial, "shell", "uiautomator", "dump", "/sdcard/ui.xml"],
-                capture_output=True, timeout=10,
+            r = subprocess.run(
+                ["adb", "-s", serial, "shell", "dumpsys", "window", "displays"],
+                capture_output=True, text=True, timeout=5,
             )
+            return PLAY_STORE_PKG in r.stdout
+        except Exception:
+            return False
+
+    def _ensure_play_store_open() -> None:
+        """Play Store がフォアグラウンドにない場合、再表示する。"""
+        if not _is_play_store_foreground():
+            logger.warning("[FRESH_INSTALL] Play Store がフォアグラウンドにない → 再表示")
+            open_play_store(serial, package)
+            time.sleep(5)
+
+    def _uiautomator_dump_xml() -> Optional[str]:
+        """uiautomator dump を実行し XML テキストを返す。stale データ防止付き。"""
+        try:
+            # stale XML を削除してからダンプ
+            subprocess.run(
+                ["adb", "-s", serial, "shell", "rm", "-f", "/sdcard/ui.xml"],
+                capture_output=True, timeout=5,
+            )
+            dr = subprocess.run(
+                ["adb", "-s", serial, "shell", "uiautomator", "dump", "/sdcard/ui.xml"],
+                capture_output=True, timeout=15, text=True,
+            )
+            # dump 成功判定: 出力に "dumped to" が含まれる
+            if "dumped" not in dr.stdout.lower() and "dumped" not in dr.stderr.lower():
+                logger.debug("[FRESH_INSTALL] uiautomator dump 応答なし: stdout=%s stderr=%s",
+                             dr.stdout.strip()[:80], dr.stderr.strip()[:80])
+                return None
             r = subprocess.run(
                 ["adb", "-s", serial, "shell", "cat", "/sdcard/ui.xml"],
                 capture_output=True, timeout=10, text=True,
             )
             if r.returncode != 0 or not r.stdout.strip():
                 return None
-
-            import xml.etree.ElementTree as ET
-            try:
-                root = ET.fromstring(r.stdout)
-            except ET.ParseError as _pe:
-                logger.debug("[FRESH_INSTALL] XML パースエラー: %s", _pe)
-                return None
-
-            for kw in keywords:
-                for node in root.iter("node"):
-                    text_val = node.get("text", "")
-                    desc_val = node.get("content-desc", "")
-                    bounds_str = node.get("bounds", "")
-                    # text or content-desc に kw が含まれるか
-                    matched_text = ""
-                    if kw in text_val:
-                        matched_text = text_val
-                    elif kw in desc_val:
-                        matched_text = desc_val
-                    else:
-                        continue
-                    # 「インストール」→「アンインストール」除外
-                    if kw == "インストール" and "アン" in matched_text:
-                        logger.debug("[FRESH_INSTALL] uiautomator '%s' → 'アンインストール'を除外",
-                                     matched_text)
-                        continue
-                    # bounds パース: "[x1,y1][x2,y2]"
-                    bm = re.findall(r"\[(\d+),(\d+)\]", bounds_str)
-                    if len(bm) < 2:
-                        continue
-                    x1, y1 = int(bm[0][0]), int(bm[0][1])
-                    x2, y2 = int(bm[1][0]), int(bm[1][1])
-                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                    logger.info("[FRESH_INSTALL] uiautomator '%s' (text='%s'): "
-                                "bounds=[%d,%d][%d,%d] → (%d,%d)",
-                                kw, matched_text[:20], x1, y1, x2, y2, cx, cy)
-                    return (cx, cy)
+            return r.stdout
         except Exception as e:
             logger.warning("[FRESH_INSTALL] uiautomator dump 失敗: %s", e)
+            return None
+
+    def _uiautomator_find_button(keywords: list, xml_text: str = None) -> Optional[tuple]:
+        """uiautomator XML からボタン中心座標を取得。
+
+        xml_text が渡された場合はそれを使う (dump 不要)。
+        """
+        import xml.etree.ElementTree as ET
+        if xml_text is None:
+            xml_text = _uiautomator_dump_xml()
+        if not xml_text:
+            return None
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError as _pe:
+            logger.debug("[FRESH_INSTALL] XML パースエラー: %s", _pe)
+            return None
+
+        for kw in keywords:
+            for node in root.iter("node"):
+                text_val = node.get("text", "")
+                desc_val = node.get("content-desc", "")
+                bounds_str = node.get("bounds", "")
+                matched_text = ""
+                if kw in text_val:
+                    matched_text = text_val
+                elif kw in desc_val:
+                    matched_text = desc_val
+                else:
+                    continue
+                # 「インストール」→「アンインストール」除外
+                if kw == "インストール" and "アン" in matched_text:
+                    continue
+                bm = re.findall(r"\[(\d+),(\d+)\]", bounds_str)
+                if len(bm) < 2:
+                    continue
+                x1, y1 = int(bm[0][0]), int(bm[0][1])
+                x2, y2 = int(bm[1][0]), int(bm[1][1])
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                logger.info("[FRESH_INSTALL] uiautomator '%s' (text='%s'): "
+                            "bounds=[%d,%d][%d,%d] → (%d,%d)",
+                            kw, matched_text[:30], x1, y1, x2, y2, cx, cy)
+                return (cx, cy)
         return None
 
+    def _log_ui_texts(xml_text: str) -> list[str]:
+        """uiautomator XML から全テキストを抽出してログ出力 (診断用)。"""
+        import xml.etree.ElementTree as ET
+        texts = []
+        try:
+            root = ET.fromstring(xml_text)
+            for node in root.iter("node"):
+                t = node.get("text", "").strip()
+                if t:
+                    texts.append(t)
+        except ET.ParseError:
+            pass
+        if texts:
+            logger.info("[FRESH_INSTALL] UI texts: %s", texts[:20])
+        return texts
+
     def _verify_install_started() -> bool:
-        """インストール開始を検証 (5秒待ち + 2回リトライ)。"""
-        for _vt in range(2):
+        """インストール開始を検証 (5秒待ち + 3回リトライ)。"""
+        for _vt in range(3):
             time.sleep(5)
-            # 1) 「インストール中」「キャンセル」→ 確実に開始
-            _progress = _uiautomator_find_button(["インストール中", "キャンセル", "Cancel",
-                                                   "Installing", "Pending"])
-            if _progress:
-                logger.info("[FRESH_INSTALL] インストール開始を確認 (進捗検出, 試行%d)", _vt + 1)
-                return True
-            # 2) 「インストール」ボタン消失 → 開始したと推定
-            if _uiautomator_find_button(INSTALL_KEYWORDS) is None:
-                logger.info("[FRESH_INSTALL] インストール開始を確認 (ボタン消失, 試行%d)", _vt + 1)
-                return True
-            # 3) pm で既にインストール済み (高速インストール)
+            xml = _uiautomator_dump_xml()
+            if xml:
+                # 1) 進捗系キーワード
+                _progress = _uiautomator_find_button(
+                    ["インストール中", "キャンセル", "Cancel",
+                     "Installing", "Pending", "ダウンロード中", "Downloading"],
+                    xml_text=xml)
+                if _progress:
+                    logger.info("[FRESH_INSTALL] インストール開始を確認 (進捗検出, 試行%d)", _vt + 1)
+                    return True
+                # 2) 「インストール」ボタン消失
+                if _uiautomator_find_button(INSTALL_KEYWORDS, xml_text=xml) is None:
+                    logger.info("[FRESH_INSTALL] インストール開始を確認 (ボタン消失, 試行%d)", _vt + 1)
+                    return True
+            # 3) pm で既にインストール済み
             if is_app_installed(serial, package):
                 logger.info("[FRESH_INSTALL] インストール完了を確認 (pm, 試行%d)", _vt + 1)
                 return True
-            logger.debug("[FRESH_INSTALL] 検証リトライ %d/2", _vt + 1)
+            logger.debug("[FRESH_INSTALL] 検証リトライ %d/3", _vt + 1)
         return False
 
     def _handle_accept_dialogs() -> None:
-        """権限/同意ダイアログを最大3回リトライで処理。"""
-        for _ad in range(3):
+        """権限/同意ダイアログを最大5回リトライで処理。"""
+        for _ad in range(5):
             time.sleep(2)
-            _acc_pos = _uiautomator_find_button(ACCEPT_KEYWORDS)
-            if _acc_pos:
-                logger.info("[FRESH_INSTALL] 権限ダイアログ → タップ (%d,%d) [%d回目]",
-                            _acc_pos[0], _acc_pos[1], _ad + 1)
-                _adb_tap(_acc_pos[0], _acc_pos[1])
-                continue  # 追加のダイアログが出る可能性
+            xml = _uiautomator_dump_xml()
+            if xml:
+                _acc_pos = _uiautomator_find_button(ACCEPT_KEYWORDS, xml_text=xml)
+                if _acc_pos:
+                    logger.info("[FRESH_INSTALL] 権限ダイアログ → タップ (%d,%d) [%d回目]",
+                                _acc_pos[0], _acc_pos[1], _ad + 1)
+                    _adb_tap(_acc_pos[0], _acc_pos[1])
+                    continue
+                # ポップアップ解除キーワード
+                _dismiss_pos = _uiautomator_find_button(_POPUP_DISMISS_KWS, xml_text=xml)
+                if _dismiss_pos:
+                    logger.info("[FRESH_INSTALL] ポップアップ解除 → タップ (%d,%d) [%d回目]",
+                                _dismiss_pos[0], _dismiss_pos[1], _ad + 1)
+                    _adb_tap(_dismiss_pos[0], _dismiss_pos[1])
+                    continue
             # uiautomator で見つからない → OCR フォールバック
             tmp_ss = str(Path(tempfile.gettempdir()) / "fresh_install_ss.png")
             if _adb_screenshot(tmp_ss):
@@ -3113,14 +3197,37 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                         continue
                 except Exception:
                     pass
-            # ダイアログなし → 完了
             logger.debug("[FRESH_INSTALL] 権限ダイアログなし [%d回目] → 完了", _ad + 1)
             break
 
+    def _try_dismiss_popup(xml: str) -> bool:
+        """Play Games / Protect / TOS 等のポップアップを検出して閉じる。
+        閉じた場合 True を返す。"""
+        # uiautomator でポップアップ閉じるボタンを探す
+        _dismiss = _uiautomator_find_button(_POPUP_DISMISS_KWS, xml_text=xml)
+        if _dismiss:
+            logger.info("[FRESH_INSTALL] ポップアップ検出 → dismiss タップ (%d,%d)",
+                        _dismiss[0], _dismiss[1])
+            _adb_tap(_dismiss[0], _dismiss[1])
+            time.sleep(2)
+            return True
+        return False
+
     # ─── 実行開始 ───
 
-    # --- Step 1: アンインストール ---
     logger.info("[FRESH_INSTALL] === アプリ再インストール開始 ===")
+
+    # --- Step 0: 画面ウェイク + ロック解除 ---
+    _adb_key("KEYCODE_WAKEUP")
+    time.sleep(1)
+    # スワイプでロック解除 (パスワードなし前提)
+    subprocess.run(
+        ["adb", "-s", serial, "shell", "input", "swipe", "360", "1200", "360", "400", "300"],
+        capture_output=True, timeout=5,
+    )
+    time.sleep(1)
+
+    # --- Step 1: アンインストール ---
     uninstall_app(serial, package)
     time.sleep(2)
 
@@ -3134,65 +3241,108 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     _screen_h = _get_device_screen_height()
     logger.info("[FRESH_INSTALL] デバイス画面高さ (portrait): %dpx", _screen_h)
 
-    # --- Step 3: uiautomator 優先 → OCR フォールバックでインストールボタンをタップ ---
+    # --- Step 2.5: Play Store ページ読み込み待機 ---
+    # 初回は十分に待つ (BACK 乱発でページロードが途切れるのを防止)
+    logger.info("[FRESH_INSTALL] Play Store ページ読み込み待機中...")
+    _page_loaded = False
+    for _wait in range(6):  # 最大 30 秒 (5秒 × 6)
+        xml = _uiautomator_dump_xml()
+        if xml:
+            ui_texts = _log_ui_texts(xml)
+            # Install / Open / Update のいずれかが見えれば読み込み完了
+            if any(kw in t for t in ui_texts
+                   for kw in ["インストール", "Install", "install",
+                              "開く", "Open", "プレイ", "Play",
+                              "更新", "Update"]):
+                logger.info("[FRESH_INSTALL] ページ読み込み完了 (%d秒)", (_wait + 1) * 5)
+                _page_loaded = True
+                break
+            # ポップアップが出ていれば閉じる
+            if _try_dismiss_popup(xml):
+                continue
+            # loading 系テキストが見えたら待機続行
+            if any(kw in t for t in ui_texts for kw in _LOADING_HINTS):
+                logger.info("[FRESH_INSTALL] 読み込み中... (%d秒)", (_wait + 1) * 5)
+        time.sleep(5)
+
+    if not _page_loaded:
+        logger.warning("[FRESH_INSTALL] ページ読み込みタイムアウト — インストール検出を開始")
+        _save_diag_screenshot("page_load_timeout")
+
+    # --- Step 3: インストールボタン検出 + タップ ---
     tmp_ss = str(Path(tempfile.gettempdir()) / "fresh_install_ss.png")
     installed_via_tap = False
-    _reinstall_count = 0  # 再アンインストール回数
+    _reinstall_count = 0
 
     for attempt in range(MAX_ATTEMPTS):
+        # 待機時間エスカレーション: 試行5回目以降は長めに待つ
+        if attempt > 0:
+            _wait_sec = 3 if attempt < 5 else 5 if attempt < 10 else 8
+            time.sleep(_wait_sec)
+
         logger.info("[FRESH_INSTALL] 試行 %d/%d", attempt + 1, MAX_ATTEMPTS)
 
-        # --- 0th: 既インストール済みチェック (「プレイ」「開く」) ---
-        _ui_open = _uiautomator_find_button(OPEN_KEYWORDS)
-        if _ui_open:
-            if _reinstall_count >= MAX_REINSTALL:
-                logger.warning("[FRESH_INSTALL] 再アンインストール上限(%d回)到達 → BACK + 再表示",
-                               MAX_REINSTALL)
-                subprocess.run(
-                    ["adb", "-s", serial, "shell", "input", "keyevent", "4"],
-                    capture_output=True, timeout=5)
+        # Play Store がフォアグラウンドにあるか確認
+        _ensure_play_store_open()
+
+        # uiautomator dump (1回だけ取得して使い回す)
+        xml = _uiautomator_dump_xml()
+
+        if xml:
+            ui_texts = _log_ui_texts(xml)
+
+            # --- 0th: 既インストール済みチェック ---
+            _ui_open = _uiautomator_find_button(OPEN_KEYWORDS, xml_text=xml)
+            if _ui_open:
+                if _reinstall_count >= MAX_REINSTALL:
+                    logger.warning("[FRESH_INSTALL] 再アンインストール上限(%d回)到達 → BACK + 再表示",
+                                   MAX_REINSTALL)
+                    _adb_key("4")
+                    time.sleep(2)
+                    open_play_store(serial, package)
+                    time.sleep(5)
+                    continue
+                logger.info("[FRESH_INSTALL] 既インストール済み（'プレイ'/'開く'検出）→ 再アンインストール (%d/%d)",
+                            _reinstall_count + 1, MAX_REINSTALL)
+                _reinstall_count += 1
+                uninstall_app(serial, package)
                 time.sleep(2)
                 open_play_store(serial, package)
                 time.sleep(5)
                 continue
-            logger.info("[FRESH_INSTALL] 既インストール済み（'プレイ'/'開く'検出）→ 再アンインストール (%d/%d)",
-                        _reinstall_count + 1, MAX_REINSTALL)
-            _reinstall_count += 1
-            uninstall_app(serial, package)
-            time.sleep(2)
-            open_play_store(serial, package)
-            time.sleep(5)
-            continue
 
-        # --- 1st: uiautomator (ネイティブ UI 用、最も確実) ---
-        _ui_pos = _uiautomator_find_button(INSTALL_KEYWORDS)
-        if _ui_pos:
-            # 上部 75% のみ有効: 下部の「他のデバイスにも...」ボタン除外
-            # (実機検証: インストールボタンは y~63% に表示されるため 60%→75% に緩和)
-            if _ui_pos[1] < _screen_h * 0.75:
-                _adb_tap(_ui_pos[0], _ui_pos[1])
-                if _verify_install_started():
-                    installed_via_tap = True
-                    break
-                logger.warning("[FRESH_INSTALL] uiautomator タップ空振り — OCR フォールバック")
-            else:
-                logger.debug("[FRESH_INSTALL] uiautomator (%d,%d) y>60%% → 他端末ボタン除外",
-                             _ui_pos[0], _ui_pos[1])
+            # --- 1st: uiautomator でインストールボタン ---
+            _ui_pos = _uiautomator_find_button(INSTALL_KEYWORDS, xml_text=xml)
+            if _ui_pos:
+                if _ui_pos[1] < _screen_h * 0.75:
+                    _adb_tap(_ui_pos[0], _ui_pos[1])
+                    if _verify_install_started():
+                        installed_via_tap = True
+                        break
+                    logger.warning("[FRESH_INSTALL] uiautomator タップ空振り — OCR フォールバック")
+                else:
+                    logger.debug("[FRESH_INSTALL] uiautomator (%d,%d) y>75%% → 他端末ボタン除外",
+                                 _ui_pos[0], _ui_pos[1])
+
+            # --- ポップアップ / ダイアログを閉じる試行 ---
+            if _try_dismiss_popup(xml):
+                continue
 
         # --- 2nd: OCR フォールバック ---
         if not _adb_screenshot(tmp_ss):
             logger.warning("[FRESH_INSTALL] スクリーンショット取得失敗 — リトライ")
-            time.sleep(2)
             continue
 
         try:
             ocr_results = run_ocr(tmp_ss)
         except Exception as e:
             logger.warning("[FRESH_INSTALL] OCR 失敗: %s", e)
-            time.sleep(2)
             continue
 
-        # 「開く」「プレイ」が見える → pm list packages で実際にインストール済みか確認
+        _ocr_texts = [r["text"] for r in ocr_results]
+        logger.info("[FRESH_INSTALL] OCR texts: %s", _ocr_texts[:15])
+
+        # 「開く」「プレイ」検出 → pm 確認 → 再アンインストール
         _ocr_open_hit = False
         for kw in _OCR_OPEN_KEYWORDS:
             hit = find_best(ocr_results, kw)
@@ -3215,36 +3365,50 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         if _ocr_open_hit:
             continue
 
-        # 「インストール」ボタンを OCR 検出
+        # 「インストール」を OCR 検出
+        _install_found = False
         for kw in INSTALL_KEYWORDS:
             hit = find_best(ocr_results, kw)
             if hit:
+                # 「アンインストール」除外
+                if "アン" in hit["text"]:
+                    continue
                 cx, cy = hit["center"]
                 logger.info("[FRESH_INSTALL] OCR「%s」検出 → タップ (%d,%d)", kw, cx, cy)
                 _adb_tap(cx, cy)
                 if _verify_install_started():
                     installed_via_tap = True
-                    break
-                logger.warning("[FRESH_INSTALL] OCR タップ空振り — リトライ")
-                break  # 内側 for を抜けてリトライ
+                _install_found = True
+                break
         if installed_via_tap:
             break
+        if _install_found:
+            continue  # タップしたが検証失敗 → リトライ
 
-        # ポップアップ (Google Play Games 等) が遮っている可能性 → BACK で閉じて再表示
-        logger.info("[FRESH_INSTALL] インストールボタン未検出 → BACK + Play Store 再表示")
-        subprocess.run(
-            ["adb", "-s", serial, "shell", "input", "keyevent", "4"],
-            capture_output=True, timeout=5,
-        )
-        time.sleep(2)
-        open_play_store(serial, package)
-        time.sleep(5)
+        # インストールボタン未検出 — BACK は最終手段 (試行 8回目以降のみ)
+        if attempt >= 7:
+            logger.info("[FRESH_INSTALL] インストールボタン未検出 → BACK + Play Store 再表示")
+            _save_diag_screenshot(f"no_install_btn_{attempt}")
+            _adb_key("4")
+            time.sleep(2)
+            open_play_store(serial, package)
+            time.sleep(5)
+        else:
+            logger.info("[FRESH_INSTALL] インストールボタン未検出 — ページ読み込み待機 (試行%d)", attempt + 1)
+            _save_diag_screenshot(f"waiting_{attempt}")
 
     # --- 権限ダイアログ処理 ---
     if installed_via_tap:
         _handle_accept_dialogs()
     else:
         logger.error("[FRESH_INSTALL] %d回の試行でインストールボタンをタップできませんでした", MAX_ATTEMPTS)
+        _save_diag_screenshot("final_failure")
+        # 最終手段: pm install-existing (キャッシュ残りで復活することがある)
+        logger.info("[FRESH_INSTALL] pm install-existing を試行...")
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "pm", "install-existing", package],
+            capture_output=True, timeout=30,
+        )
 
     # --- Step 4: インストール完了ポーリング ---
     if not is_app_installed(serial, package):
@@ -3255,9 +3419,16 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 logger.info("[FRESH_INSTALL] インストール完了を確認 (%d秒経過)",
                             (i + 1) * POLL_INTERVAL_SEC)
                 break
+            # 30秒毎にダイアログチェック (Play Protect 等がインストールを止めている可能性)
+            if (i + 1) % 6 == 0:
+                xml = _uiautomator_dump_xml()
+                if xml:
+                    _try_dismiss_popup(xml)
+                    _handle_accept_dialogs()
             time.sleep(POLL_INTERVAL_SEC)
         else:
             logger.error("[FRESH_INSTALL] タイムアウト — 手動でインストールを完了してください")
+            _save_diag_screenshot("install_timeout")
             return
     else:
         logger.info("[FRESH_INSTALL] 既にインストール完了済み")
@@ -3265,7 +3436,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     # --- Step 5: Play Store を閉じる ---
     time.sleep(2)
     subprocess.run(
-        ["adb", "-s", serial, "shell", "am", "force-stop", "com.android.vending"],
+        ["adb", "-s", serial, "shell", "am", "force-stop", PLAY_STORE_PKG],
         capture_output=True, timeout=5,
     )
     logger.info("[FRESH_INSTALL] Play Store を閉じました")
