@@ -2733,15 +2733,24 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     # ── 待機カウンタ ──
     state.movie_wait_consecutive += 1
 
-    # ── 一時停止検出: 500回超 + 画面静止 → タップで再開 ──
-    if state.movie_wait_consecutive > 500 and state.movie_wait_consecutive % 200 == 0:
+    # ── 一時停止検出: phash が完全に静止 (dist<=2) → 早期タップで再開 ──
+    # 再生中の動画は毎フレーム変化する。静止が続くのは一時停止。
+    # MOVIE ループは main loop の frozen_frames 更新に到達しないため自前で計測
+    if dist <= 2:
+        state.consecutive_frozen_frames += 1
+    else:
+        state.consecutive_frozen_frames = 0
+
+    if state.consecutive_frozen_frames >= 30 and state.movie_wait_consecutive >= 50:
+        # 30フレーム完全静止 + 最低50回待機 → 一時停止確定
         logger.warning(
-            "[MOVIE_PAUSE_DETECT] %d回待機 (phash静止) → 一時停止疑い → 中央タップで再開",
-            state.movie_wait_consecutive)
+            "[MOVIE_PAUSE_DETECT] frozen=%d wait=%d → 一時停止確定 → 中央タップで再開",
+            state.consecutive_frozen_frames, state.movie_wait_consecutive)
         _mc_x, _mc_y = roi_to_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state.game_roi)
         tap_device(_mc_x, _mc_y, state, "MOVIE_RESUME_TAP")
         time.sleep(1.0)
         state.last_phash = None  # phash リセットで次フレーム検出
+        state.consecutive_frozen_frames = 0
         return True
 
     # ── 通常待機 (動画は自動終了するのでタップせず待つ) ──
