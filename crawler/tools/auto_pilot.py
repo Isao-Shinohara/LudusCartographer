@@ -3609,6 +3609,12 @@ def main():
         _early_scene = detect_scene_early(img_path, state, dist)
         _skip_rapid = False  # True: 早期ハンドラがフォールスルー → インライン RAPID をスキップ
         _early_analysis = None  # BATTLE 用に先行計算した analysis_path を再利用
+        # SCENE_EARLY が UNKNOWN → ポップアップ等で前シーンが無効化された
+        # state.current_scene を UNKNOWN にリセットして BATTLE_RAPID を阻止
+        if _early_scene == "UNKNOWN" and state.current_scene == "BATTLE":
+            logger.info("[SCENE_EARLY] BATTLE→UNKNOWN 遷移 → BATTLE_RAPID 中断, OCR へ")
+            state.current_scene = "UNKNOWN"
+            state.battle_rapid_consecutive.reset()
         # ADV 連続検出カウンタ (phash 動的拡大用)
         if _early_scene == "ADV":
             state.adv_confirmed_count += 1
