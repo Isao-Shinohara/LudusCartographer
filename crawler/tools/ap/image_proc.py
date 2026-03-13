@@ -1537,20 +1537,25 @@ def count_page_dots(img_or_path, H: int = 720, W: int = 1520) -> int:
         H, W = img.shape[:2]
     else:
         img = img_or_path
-    # ROI: 下部8%, 中央60%
+    # ROI: 下部8%, 中央80%
     _y1 = int(H * 0.92)
-    _x1 = int(W * 0.20)
-    _x2 = int(W * 0.80)
+    _x1 = int(W * 0.10)
+    _x2 = int(W * 0.90)
     _roi = img[_y1:H, _x1:_x2]
     if _roi.size == 0:
         return 0
     _gray = cv2.cvtColor(_roi, cv2.COLOR_BGR2GRAY)
     _, _thr = cv2.threshold(_gray, 140, 255, cv2.THRESH_BINARY)
     _cnts, _ = cv2.findContours(_thr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # 面積閾値を解像度でスケーリング (基準: 1520x720)
+    # max_area=800: 金色アクティブドット (輝度が高く膨張) を含む
+    _scale = (W * H) / (1520 * 720)
+    _min_area = 15 * _scale
+    _max_area = 800 * _scale
     _dot_count = 0
     for _c in _cnts:
         _a = cv2.contourArea(_c)
-        if _a < 15 or _a > 400:
+        if _a < _min_area or _a > _max_area:
             continue
         _x, _y, _w, _h = cv2.boundingRect(_c)
         _asp = _w / max(_h, 1)
