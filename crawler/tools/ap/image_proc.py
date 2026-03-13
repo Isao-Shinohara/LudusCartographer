@@ -866,29 +866,35 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
         if _y2 < 5 or _W - _x1 < 5:
             return None
         _roi = _img[0:_y2, _x1:_W]
+        # ── プライマリ: テンプレートマッチング (adv_icon_skip) ──
+        # HSV はリサイズ後のアイコンサイズに依存するがテンプレートは安定
+        try:
+            _skip_roi = (int(ANALYSIS_W * 0.85), 0,
+                         int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.15))
+            _skip_m = ASSET_MANAGER.match_single("adv_icon_skip", img_path, roi=_skip_roi)
+            if _skip_m and _skip_m[2] >= 0.70:
+                logger.debug("[MOVIE_SKIP_BTN] テンプレート検出 (%d,%d) score=%.2f",
+                             _skip_m[0], _skip_m[1], _skip_m[2])
+                return (_skip_m[0], _skip_m[1])
+        except Exception:
+            pass
+
+        # ── フォールバック: HSV 金色ブロブ検出 ──
         _hsv = cv2.cvtColor(_roi, cv2.COLOR_BGR2HSV)
-        # 金色: H=15-40, S>50, V>130
         _mask = cv2.inRange(_hsv, (15, 50, 130), (40, 255, 255))
         _gold_count = int(cv2.countNonZero(_mask))
         if _gold_count >= 80:
-            # コンター分析: 散在金色 (ADV ツールバー等) を排除
             _contours, _ = cv2.findContours(_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if not _contours:
                 return None
             _largest = max(_contours, key=cv2.contourArea)
             _blob_area = cv2.contourArea(_largest)
             if _blob_area < 200:
-                logger.debug("[MOVIE_SKIP_BTN] 小ブロブを排除 gold_px=%d blob_area=%.0f", _gold_count, _blob_area)
                 return None
-            # 円形度チェック: ⏭ボタンは円形 (>=0.45), テキスト/枠/✕ボタンは非円形 (<0.45)
-            # NOTE: 旧値0.30では✕閉じるボタン(十字形,circ=0.31)が⏭と誤検出された
             _perimeter = cv2.arcLength(_largest, True)
             _circularity = (4 * 3.14159 * _blob_area / (_perimeter * _perimeter)) if _perimeter > 0 else 0
             if _circularity < 0.45:
-                logger.debug("[MOVIE_SKIP_BTN] 非円形を排除 gold_px=%d blob=%.0f circ=%.2f",
-                             _gold_count, _blob_area, _circularity)
                 return None
-            # 最大ブロブの重心で座標をより正確に返す
             _moments = cv2.moments(_largest)
             if _moments["m00"] > 0:
                 _mx = int(_moments["m10"] / _moments["m00"]) + _x1
@@ -897,7 +903,8 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
                 _coords = cv2.findNonZero(_mask)
                 _mx = int(np.mean(_coords[:, 0, 0])) + _x1
                 _my = int(np.mean(_coords[:, 0, 1]))
-            logger.debug("[MOVIE_SKIP_BTN] 金色ボタン検出 (%d,%d) gold_px=%d blob=%.0f", _mx, _my, _gold_count, _blob_area)
+            logger.debug("[MOVIE_SKIP_BTN] HSV金色ボタン検出 (%d,%d) gold_px=%d blob=%.0f",
+                         _mx, _my, _gold_count, _blob_area)
             return (_mx, _my)
         return None
     except Exception:
@@ -957,62 +964,66 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     texts = ocr_texts or []
     joined = " ".join(texts) if texts else ""
 
-    # 即棄却: ADV ツールバーあり
-    if adv_result is not None and adv_result.is_adv:
-        return MovieSceneResult()
-
-    # 即棄却: AUTO アイコン or ↓ボタン検出 → ADV 確定 (MOVIE にはどちらもない)
-    if img_path:
-        try:
-            _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
-            _auto = ASSET_MANAGER.match_single("adv_icon_auto", img_path,
-                                               roi=_auto_roi)
-            if _auto and _auto[2] >= 0.50:
-                logger.debug("[MOVIE_SCENE] AUTO icon (%.2f) → ADV確定, MOVIE棄却",
-                             _auto[2])
-                return MovieSceneResult()
-        except Exception:
-            pass
-        if detect_adv_advance_icon(img_path):
-            logger.debug("[MOVIE_SCENE] ↓ボタン検出 → ADV確定, MOVIE棄却")
-            return MovieSceneResult()
-
-    # 即棄却: バトルキーワード
-    if any(kw in joined for kw in _MOVIE_REJECT_BATTLE_KWS):
-        return MovieSceneResult()
-
-    # 即棄却: ダイアログ枠 (×ボタン / ゴールド枠) が視覚検出された場合
-    # テキストキーワードに依存せず形状ベースで判定
-    if img_path:
-        try:
-            _dlg = detect_dialog_frame_and_nav(img_path)
-            if _dlg is not None:
-                logger.debug("[MOVIE_SCENE] ダイアログ枠検出 (%s) → MOVIE棄却",
-                             _dlg[0])
-                return MovieSceneResult()
-        except Exception:
-            pass
-        # 即棄却: ページドット≥2 + 背景ぼかし → ポップアップ (金色装飾が⏭と誤検出される)
-        # (ドット単体はホーム画面UIで誤検出多い → 背景ぼかし必須)
-        try:
-            _img_blur = imread_cached(img_path)
-            if _img_blur is not None:
-                _Hb, _Wb = _img_blur.shape[:2]
-                _has_dots = count_page_dots(_img_blur, _Hb, _Wb) >= 2
-                _has_blur = _detect_background_blur(_img_blur, _Hb, _Wb)
-                if _has_dots and _has_blur:
-                    logger.debug("[MOVIE_SCENE] ドット+背景ぼかし → MOVIE棄却 (ポップアップ)")
-                    return MovieSceneResult()
-                if _has_blur:
-                    logger.debug("[MOVIE_SCENE] 背景ぼかし検出 → MOVIE棄却 (ポップアップ)")
-                    return MovieSceneResult()
-        except Exception:
-            pass
-
-    score = 0.0
-    # ⏭ スキップボタン
+    # ── 最優先: ⏭ スキップボタンを先行検出 ──
+    # ⏭は動画固有のUI。検出された場合は即棄却パスをスキップして MOVIE 確定へ。
+    # これにより AUTO 誤マッチやページドット偽陽性に左右されない。
     skip_btn = detect_movie_skip_button(img_path) if img_path else None
     has_skip = skip_btn is not None
+    if has_skip:
+        logger.info("[MOVIE_SCENE] ⏭ スキップボタン先行検出 → 即棄却パスをバイパス")
+    else:
+        # 即棄却: ADV ツールバーあり
+        if adv_result is not None and adv_result.is_adv:
+            return MovieSceneResult()
+
+        # 即棄却: AUTO アイコン or ↓ボタン検出 → ADV 確定 (MOVIE にはどちらもない)
+        if img_path:
+            try:
+                _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+                _auto = ASSET_MANAGER.match_single("adv_icon_auto", img_path,
+                                                   roi=_auto_roi)
+                if _auto and _auto[2] >= 0.50:
+                    logger.debug("[MOVIE_SCENE] AUTO icon (%.2f) → ADV確定, MOVIE棄却",
+                                 _auto[2])
+                    return MovieSceneResult()
+            except Exception:
+                pass
+            if detect_adv_advance_icon(img_path):
+                logger.debug("[MOVIE_SCENE] ↓ボタン検出 → ADV確定, MOVIE棄却")
+                return MovieSceneResult()
+
+        # 即棄却: バトルキーワード
+        if any(kw in joined for kw in _MOVIE_REJECT_BATTLE_KWS):
+            return MovieSceneResult()
+
+        # 即棄却: ダイアログ枠 (×ボタン / ゴールド枠) が視覚検出された場合
+        if img_path:
+            try:
+                _dlg = detect_dialog_frame_and_nav(img_path)
+                if _dlg is not None:
+                    logger.debug("[MOVIE_SCENE] ダイアログ枠検出 (%s) → MOVIE棄却",
+                                 _dlg[0])
+                    return MovieSceneResult()
+            except Exception:
+                pass
+            # 即棄却: ページドット≥2 + 背景ぼかし → ポップアップ
+            try:
+                _img_blur = imread_cached(img_path)
+                if _img_blur is not None:
+                    _Hb, _Wb = _img_blur.shape[:2]
+                    _has_dots = count_page_dots(_img_blur, _Hb, _Wb) >= 2
+                    _has_blur = _detect_background_blur(_img_blur, _Hb, _Wb)
+                    if _has_dots and _has_blur:
+                        logger.debug("[MOVIE_SCENE] ドット+背景ぼかし → MOVIE棄却 (ポップアップ)")
+                        return MovieSceneResult()
+                    if _has_blur:
+                        logger.debug("[MOVIE_SCENE] 背景ぼかし検出 → MOVIE棄却 (ポップアップ)")
+                        return MovieSceneResult()
+            except Exception:
+                pass
+
+    score = 0.0
+    # ⏭ スキップボタン (既に上で検出済み)
     if has_skip:
         score += 0.40
 
