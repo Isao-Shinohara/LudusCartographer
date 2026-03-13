@@ -880,33 +880,8 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
         except Exception:
             pass
 
-        # ── フォールバック: HSV 金色ブロブ検出 ──
-        _hsv = cv2.cvtColor(_roi, cv2.COLOR_BGR2HSV)
-        _mask = cv2.inRange(_hsv, (15, 50, 130), (40, 255, 255))
-        _gold_count = int(cv2.countNonZero(_mask))
-        if _gold_count >= 80:
-            _contours, _ = cv2.findContours(_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if not _contours:
-                return None
-            _largest = max(_contours, key=cv2.contourArea)
-            _blob_area = cv2.contourArea(_largest)
-            if _blob_area < 200:
-                return None
-            _perimeter = cv2.arcLength(_largest, True)
-            _circularity = (4 * 3.14159 * _blob_area / (_perimeter * _perimeter)) if _perimeter > 0 else 0
-            if _circularity < 0.45:
-                return None
-            _moments = cv2.moments(_largest)
-            if _moments["m00"] > 0:
-                _mx = int(_moments["m10"] / _moments["m00"]) + _x1
-                _my = int(_moments["m01"] / _moments["m00"])
-            else:
-                _coords = cv2.findNonZero(_mask)
-                _mx = int(np.mean(_coords[:, 0, 0])) + _x1
-                _my = int(np.mean(_coords[:, 0, 1]))
-            logger.debug("[MOVIE_SKIP_BTN] HSV金色ボタン検出 (%d,%d) gold_px=%d blob=%.0f",
-                         _mx, _my, _gold_count, _blob_area)
-            return (_mx, _my)
+        # HSV 金色ブロブフォールバックは廃止 (UI金色要素で偽陽性多発)
+        # テンプレートマッチのみで ⏭ を検出する
         return None
     except Exception:
         return None
