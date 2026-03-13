@@ -150,8 +150,10 @@ def _find_scrcpy_window_id() -> int:
     if not _HAS_QUARTZ:
         return 0
     try:
+        # OnScreenOnly ではなく全ウィンドウから検索 — --turn-screen-off や
+        # 他ウィンドウ裏に隠れた場合でも scrcpy を見つけられるようにする
         windows = _Quartz.CGWindowListCopyWindowInfo(
-            _Quartz.kCGWindowListOptionOnScreenOnly, _Quartz.kCGNullWindowID)
+            _Quartz.kCGWindowListOptionAll, _Quartz.kCGNullWindowID)
         for w in windows:
             if "scrcpy" in w.get("kCGWindowOwnerName", "").lower():
                 wid = w.get("kCGWindowNumber", 0)
