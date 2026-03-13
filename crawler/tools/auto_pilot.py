@@ -2748,9 +2748,12 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
             state.consecutive_frozen_frames, state.movie_wait_consecutive)
         _mc_x, _mc_y = roi_to_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state.game_roi)
         tap_device(_mc_x, _mc_y, state, "MOVIE_RESUME_TAP")
-        time.sleep(1.0)
+        time.sleep(2.0)  # 再開後の安定待機
         state.last_phash = None  # phash リセットで次フレーム検出
-        state.consecutive_frozen_frames = 0
+        # クールダウン: 再開直後の静止を誤検出しないよう -50 に設定
+        # (55フレーム経過しないと次の一時停止検出が発動しない)
+        state.consecutive_frozen_frames = -50
+        state.movie_wait_consecutive = 0  # 待機カウンタもリセット
         return True
 
     # ── 通常待機 (動画は自動終了するのでタップせず待つ) ──
