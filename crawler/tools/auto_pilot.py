@@ -1018,12 +1018,22 @@ def detect_and_act(ocr: list, state: PilotState,
         asset_hit = ASSET_MANAGER.match(analysis_path, ocr_texts=texts)
         # DIALOG_NAV_RIGHT 連続空振りガード: 画面変化なく繰り返す場合は偽陽性
         if asset_hit and asset_hit[2] == "DIALOG_NAV_RIGHT":
+            # ポップアップ(ドット+blur)内では偽陽性率が高い → OCRカルーセルハンドラに委譲
+            _popup_dots_nav = count_page_dots(analysis_path) if analysis_path else 0
+            if _popup_dots_nav >= 2:
+                _pi_nav = imread_cached(analysis_path) if analysis_path else None
+                if _pi_nav is not None and _detect_background_blur(
+                        _pi_nav, _pi_nav.shape[0], _pi_nav.shape[1]):
+                    logger.info("[DIALOG_NAV] ポップアップ内 (dots=%d) → OCRハンドラに委譲",
+                                _popup_dots_nav)
+                    asset_hit = None
             # 抑制期間中 (stall発動後 16iter) は DIALOG_NAV_RIGHT を常に無視
-            _dns = getattr(state, '_dialog_nav_suppress', 0)
-            if _dns > 0:
-                state._dialog_nav_suppress = _dns - 1
-                asset_hit = None
-            elif state.last_phash_dist < 8:
+            if asset_hit:
+                _dns = getattr(state, '_dialog_nav_suppress', 0)
+                if _dns > 0:
+                    state._dialog_nav_suppress = _dns - 1
+                    asset_hit = None
+            if asset_hit and state.last_phash_dist < 8:
                 state.dialog_nav_stall.tick()
                 if state.dialog_nav_stall.stalled:
                     logger.warning(
