@@ -530,8 +530,8 @@ def check_adb_liveness() -> bool:
 def check_foreground_app() -> bool:
     """
     ゲームアプリがフォアグラウンドかチェック。
-    別アプリ (Chrome 等) が開いていたら am start で復帰し True を返す。
-    ゲームが前面なら False を返す (復帰不要)。
+    明確に別アプリ (Chrome 等) が前面にいる場合のみ am start で復帰し True を返す。
+    ゲームが前面 or 判定不能 (null/ロード中) なら False を返す (復帰不要)。
     """
     _serial_arg = ["-s", DEVICE_SERIAL] if DEVICE_SERIAL else []
     try:
@@ -541,13 +541,29 @@ def check_foreground_app() -> bool:
         )
         if _r.returncode != 0:
             return False
-        # mCurrentFocus or mFocusedApp でパッケージを確認
+        # mCurrentFocus と mFocusedApp の両方を確認
+        _focus_lines = []
         for line in _r.stdout.splitlines():
             if "mCurrentFocus" in line or "mFocusedApp" in line:
+                _focus_lines.append(line.strip())
                 if APP_PACKAGE in line:
                     return False  # ゲームが前面 → 復帰不要
-        # ゲームが前面にない → am start で復帰
-        logger.warning("[FOREGROUND] ゲームが背面 → am start で復帰")
+        # focus 情報が取れない or null → ロード中の可能性 → 復帰しない
+        if not _focus_lines:
+            return False
+        # mCurrentFocus=null はゲームのロード/遷移中で発生する → 復帰しない
+        _all_null = all("null" in l for l in _focus_lines)
+        if _all_null:
+            logger.debug("[FOREGROUND] mCurrentFocus=null → ロード中と推定、復帰スキップ")
+            return False
+        # 明確に別パッケージが前面 → 復帰
+        # ただしランチャーは除外 (ゲーム起動直後に一瞬ランチャーが見えることがある)
+        _launcher_kws = ("launcher", "Launcher", "com.android.systemui")
+        if all(any(lk in l for lk in _launcher_kws) for l in _focus_lines):
+            logger.debug("[FOREGROUND] ランチャー/SystemUI → ゲーム起動中と推定、復帰スキップ")
+            return False
+        logger.warning("[FOREGROUND] 別アプリが前面: %s → am start で復帰",
+                       _focus_lines[0][:80] if _focus_lines else "?")
         subprocess.run(
             ["adb"] + _serial_arg + ["shell", "am", "start", "-n",
              f"{APP_PACKAGE}/{APP_ACTIVITY}"],
