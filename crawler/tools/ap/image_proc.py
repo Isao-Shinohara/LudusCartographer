@@ -2113,8 +2113,17 @@ def find_golden_highlighted_button(img_path: Path) -> Optional[tuple[int, int]]:
 
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        # 最大面積の輪郭を採用 (小さなノイズを除外)
-        valid = [(cv2.contourArea(c), c) for c in contours if cv2.contourArea(c) > 500]
+        # 最大面積の輪郭を採用 (小さなノイズ・細い枠線を除外)
+        valid = []
+        for c in contours:
+            _ca = cv2.contourArea(c)
+            if _ca <= 500:
+                continue
+            _rx, _ry, _rw, _rh = cv2.boundingRect(c)
+            # 幅・高さが30px未満の細い枠線装飾は除外
+            if _rw < 30 or _rh < 30:
+                continue
+            valid.append((_ca, c))
         if not valid:
             return None
 
