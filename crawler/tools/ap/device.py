@@ -145,21 +145,36 @@ def _query_status_bar_height() -> int:
 
 
 def _find_scrcpy_window_id() -> int:
-    """Quartz API で scrcpy ウィンドウ ID を取得。見つからなければ 0。"""
+    """Quartz API で scrcpy ウィンドウ ID を取得。見つからなければ 0。
+
+    scrcpy は複数のサブウィンドウ (タイトルバー/装飾) を持つため、
+    最も大きい映像ウィンドウ (onscreen かつ幅>100) を優先選択する。
+    """
     global _SCRCPY_WINDOW_ID
     if not _HAS_QUARTZ:
         return 0
     try:
-        # OnScreenOnly ではなく全ウィンドウから検索 — --turn-screen-off や
-        # 他ウィンドウ裏に隠れた場合でも scrcpy を見つけられるようにする
         windows = _Quartz.CGWindowListCopyWindowInfo(
             _Quartz.kCGWindowListOptionAll, _Quartz.kCGNullWindowID)
+        best_wid = 0
+        best_area = 0
         for w in windows:
-            if "scrcpy" in w.get("kCGWindowOwnerName", "").lower():
-                wid = w.get("kCGWindowNumber", 0)
-                if wid:
-                    _SCRCPY_WINDOW_ID = wid
-                    return wid
+            if "scrcpy" not in w.get("kCGWindowOwnerName", "").lower():
+                continue
+            wid = w.get("kCGWindowNumber", 0)
+            if not wid:
+                continue
+            bounds = w.get("kCGWindowBounds", {})
+            bw = int(bounds.get("Width", 0))
+            bh = int(bounds.get("Height", 0))
+            area = bw * bh
+            # 映像ウィンドウ: 幅>100px (タイトルバーや装飾を除外)
+            if bw > 100 and bh > 100 and area > best_area:
+                best_area = area
+                best_wid = wid
+        if best_wid:
+            _SCRCPY_WINDOW_ID = best_wid
+            return best_wid
     except Exception:
         pass
     _SCRCPY_WINDOW_ID = 0
