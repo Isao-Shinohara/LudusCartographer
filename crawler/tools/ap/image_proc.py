@@ -880,8 +880,18 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
         except Exception:
             pass
 
-        # HSV 金色ブロブフォールバックは廃止 (UI金色要素で偽陽性多発)
-        # テンプレートマッチのみで ⏭ を検出する
+        # ── セカンダリ: 「SKIP」テキストボタン (動画シーン右上) ──
+        # ⏭アイコンとは別UIだがどちらもスキップ用
+        try:
+            _skip_text_m = ASSET_MANAGER.match_single(
+                "movie_skip_text", img_path, roi=_skip_roi)
+            if _skip_text_m and _skip_text_m[2] >= 0.70:
+                logger.debug("[MOVIE_SKIP_BTN] SKIPテキスト検出 (%d,%d) score=%.2f",
+                             _skip_text_m[0], _skip_text_m[1], _skip_text_m[2])
+                return (_skip_text_m[0], _skip_text_m[1])
+        except Exception:
+            pass
+
         return None
     except Exception:
         return None

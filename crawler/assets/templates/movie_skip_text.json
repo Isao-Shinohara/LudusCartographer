@@ -1,0 +1,5 @@
+{
+  "action": "MOVIE_SKIP_TEXT",
+  "threshold": 0.70,
+  "note": "動画シーンの「SKIP」テキストボタン (右上)。⏭アイコン(adv_icon_skip)とは別UI。DL完了後ループ脱出用。"
+}

@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -59,6 +60,62 @@ logger = logging.getLogger("auto_pilot")
 # PIL/Pillow の DEBUG STREAM ログを抑制 (スクリーンショット毎に IHDR/sRGB/IDAT が出る)
 logging.getLogger("PIL").setLevel(logging.WARNING)
 logging.getLogger("PIL.PngImagePlugin").setLevel(logging.WARNING)
+
+# ─── 永続化: SQLite (ludus.db) ──────────────────────────────
+_STATE_DB_PATH = Path(__file__).parent.parent / "storage" / "ludus.db"
+
+
+def _ensure_state_table():
+    """auto_pilot_state テーブルがなければ作成する。"""
+    conn = sqlite3.connect(str(_STATE_DB_PATH))
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS auto_pilot_state "
+        "(key TEXT PRIMARY KEY, value TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+    )
+    conn.commit()
+    conn.close()
+
+
+def persist_state(key: str, value: str):
+    """状態を SQLite に永続化する。"""
+    try:
+        conn = sqlite3.connect(str(_STATE_DB_PATH))
+        conn.execute(
+            "INSERT OR REPLACE INTO auto_pilot_state (key, value, updated_at) "
+            "VALUES (?, ?, datetime('now'))",
+            (key, value),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning("[PERSIST] 書き込み失敗 key=%s: %s", key, e)
+
+
+def load_state(key: str, default: str = "") -> str:
+    """SQLite から状態を読み込む。"""
+    try:
+        conn = sqlite3.connect(str(_STATE_DB_PATH))
+        row = conn.execute(
+            "SELECT value FROM auto_pilot_state WHERE key = ?", (key,)
+        ).fetchone()
+        conn.close()
+        return row[0] if row else default
+    except Exception:
+        return default
+
+
+def delete_state(key: str):
+    """SQLite から状態を削除する。"""
+    try:
+        conn = sqlite3.connect(str(_STATE_DB_PATH))
+        conn.execute("DELETE FROM auto_pilot_state WHERE key = ?", (key,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+_ensure_state_table()
 
 # ─── 定数: ap/constants.py から一括 import ───
 from tools.ap.constants import (  # noqa: E402
@@ -833,15 +890,21 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ── 【#0-DIALOG 前ガード】指ブロブ検出時はダイアログ検出をスキップ ──────
     # お知らせポップアップ検出時はガードをバイパス (×で確実に閉じるため)
-    # ADV/ミニ会話シーン検出時はスキップ (指アイコンは出ない — 背景装飾の誤検出防止)
+    # ADV/ミニ会話/動画シーン検出時はスキップ (指アイコンは出ない — 背景装飾の誤検出防止)
     _pre_dialog_finger = False
     _is_mini_conv = detect_mini_conversation(analysis_path) is not None if analysis_path else False
     _is_result_screen = any(
         any(k in t for k in ("Result", "リザルト", "次へ"))
         for t in texts
     )
+    # ADV/MOVIE シーンでは指ブロブ+金枠検出を完全スキップ (緑発光等の誤検出防止)
+    _is_adv_or_movie = (
+        _adv_result.is_adv
+        or state.current_scene in ("ADV", "MOVIE")
+        or any(t in ("SKIP", "スキップ") for t in texts)
+    )
     _white_hand_pos = None  # (cx, cy, score, direction) or None
-    if analysis_path is not None and not _is_result_screen and not _is_notice and not _adv_result.is_adv and not _is_mini_conv:
+    if analysis_path is not None and not _is_result_screen and not _is_notice and not _is_adv_or_movie and not _is_mini_conv:
         _pdg_blobs = find_finger_blobs(analysis_path, min_area=300, max_area=5000)
         _pdg_blobs = [b for b in _pdg_blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
         if _pdg_blobs:
@@ -2729,18 +2792,27 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
                  cur_phash: str) -> bool:
     """動画シーン専用ハンドラ。指アイコン / GoldSwipe / 金枠ボタン検出なし。
 
-    - post_download なら SKIP ボタンを HSV で探してタップ
-    - そうでなければ待機のみ (動画は自動で終わるのでタップ不要)
+    - post_download + SKIP 表示 → DL完了後ループなので SKIP タップで脱出
+    - それ以外の動画 → 待機のみ (タップで一時停止/再開ループに陥る)
 
     Returns: True if handled (caller should continue), False for fallthrough.
     """
     W, H = ANALYSIS_W, ANALYSIS_H
 
-    # ── 動画は最後まで再生して自動遷移する → ⏭ ボタンは押さず待機のみ ──
-    # (タップすると一時停止/再開ループに陥る)
+    # ── DL直後 + SKIP 表示 → DL完了後ループ脱出 ──
+    # ダウンロード完了後に動画がループする現象: SKIP をタップして抜ける
     if state.post_download:
-        state.post_download = False  # 動画開始確認 → フラグリセット
-        logger.info("[MOVIE] DL直後動画 → ⏭ 押さず最後まで待機")
+        _skip_pos = detect_movie_skip_button(img_path)
+        if _skip_pos:
+            _sk_x, _sk_y = roi_to_device(_skip_pos[0], _skip_pos[1], state.game_roi)
+            logger.info("[MOVIE] DL直後 + SKIP検出 → SKIPタップ (%d,%d) でループ脱出", _sk_x, _sk_y)
+            tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP")
+            state.movie_wait_consecutive = 0
+            state.last_phash = ""
+            state.post_download = False
+            delete_state("post_download")
+            return True
+        logger.info("[MOVIE] DL直後だが SKIP 未検出 → 待機")
 
     # ── 待機カウンタ ──
     state.movie_wait_consecutive += 1
@@ -3597,6 +3669,15 @@ def main():
 
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
     if args.fresh_install:
+        # 永続状態をクリア (新規アカウントでは前回の状態は無効)
+        try:
+            conn = sqlite3.connect(str(_STATE_DB_PATH))
+            conn.execute("DELETE FROM auto_pilot_state")
+            conn.commit()
+            conn.close()
+            logger.info("[PERSIST] fresh-install → auto_pilot_state テーブルクリア")
+        except Exception:
+            pass
         _fresh_install_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
 
     # ─── ゲーム未インストール保護 ───
@@ -3621,6 +3702,11 @@ def main():
     state.grind_max_cycles = args.max_cycles
     state.is_fresh_start = args.fresh_install
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ── SQLite から永続状態を復元 ──
+    if load_state("post_download") == "1":
+        state.post_download = True
+        logger.info("[PERSIST] post_download=True を復元 (前回 DL 中断からの再開)")
 
     # ─── Ctrl+C シグナルハンドラ登録 (レポート自動生成) ───
     global _pilot_state_ref
@@ -4878,11 +4964,23 @@ def main():
             state.stall_corner_tried = False
             state.same_phash_count = 0
 
-        # ── ダウンロード中フラグ管理 ──
+        # ── ダウンロード中フラグ管理 (SQLite 永続化) ──
+        # ON: DL画面検出時 → 永続化 (プロセス再起動でも復元される)
+        # OFF: DL/動画/ロード以外のシーンに遷移した時 → 削除
+        _DL_MOVIE_ACTIONS = frozenset((
+            "DOWNLOAD_WAIT", "MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_RESUME_TAP",
+            "MOVIE_SKIP_ESCAPE", "LOADING_WAIT", "WAIT_FOR_CHANGE",
+            "DARK_SCENE_TAP", "MAIN_STORY_LOADING",
+        ))
         if action == "DOWNLOAD_WAIT":
-            state.post_download = True
-        elif action in ("HOME_REACHED", "GRIND_COMPLETE"):
+            if not state.post_download:
+                logger.info("[PERSIST] post_download=True (DL画面検出)")
+                state.post_download = True
+                persist_state("post_download", "1")
+        elif state.post_download and action not in _DL_MOVIE_ACTIONS:
+            logger.info("[PERSIST] post_download クリア (action=%s はDL/動画外)", action)
             state.post_download = False
+            delete_state("post_download")
 
         # ── ダウンロード進捗ログ (30秒ごとに生存確認) ──
         if action == "DOWNLOAD_WAIT":
