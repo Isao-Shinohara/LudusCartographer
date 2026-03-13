@@ -261,7 +261,7 @@ cd ~/Desktop/LudusCartographer/crawler
 PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
 ANDROID_HOME=~/Library/Android/sdk \
 ANDROID_SDK_ROOT=~/Library/Android/sdk \
-PATH="$HOME/.nodebrew/current/bin:$PATH" \
+PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 venv/bin/python -u tools/auto_pilot.py
 ```
 
