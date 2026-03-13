@@ -1095,11 +1095,32 @@ def detect_and_act(ocr: list, state: PilotState,
                     analysis_path, hand_pos=_hand_pos, hand_dir=_hand_dir)
                 if gold_pos:
                     tap_x, tap_y = gold_pos
+                    logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d) → 金色ハイライト(%d,%d)",
+                                cx, cy, tap_x, tap_y)
                 else:
-                    # フォールバック: 指アイコン直下160px
-                    tap_x, tap_y = smart_tap_button(analysis_path, cx, cy + 160, search_r=160, ocr_items=ocr)
-                logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d) → 金色ハイライト(%d,%d)",
-                            cx, cy, tap_x, tap_y)
+                    # フォールバック: 指の方向にある最近接OCRテキストをタップ
+                    _hx, _hy = _hand_pos
+                    _fb_found = False
+                    if _hand_dir and ocr:
+                        _dir_items = []
+                        for item in ocr:
+                            _tx, _ty = item[1], item[2]
+                            if _hand_dir == "up" and _ty < _hy:
+                                _dir_items.append((_tx, _ty, abs(_hx - _tx) + abs(_hy - _ty), item[0]))
+                            elif _hand_dir == "down" and _ty > _hy:
+                                _dir_items.append((_tx, _ty, abs(_hx - _tx) + abs(_hy - _ty), item[0]))
+                        if _dir_items:
+                            _dir_items.sort(key=lambda d: d[2])  # 距離順
+                            tap_x, tap_y = _dir_items[0][0], _dir_items[0][1]
+                            _fb_found = True
+                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → OCRフォールバック '%s'(%d,%d)",
+                                        cx, cy, _hand_dir, _dir_items[0][3], tap_x, tap_y)
+                    if not _fb_found:
+                        # 最終フォールバック: 指アイコン方向に80px
+                        _offset = -80 if _hand_dir == "up" else 160
+                        tap_x, tap_y = smart_tap_button(analysis_path, cx, cy + _offset, search_r=160, ocr_items=ocr)
+                        logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d) → smart_tap(%d,%d)",
+                                    cx, cy, tap_x, tap_y)
                 tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
                 return "TAP_HIGHLIGHTED_NAV", 1.0
             # ── NAME_INPUT_OK_TAP: 名前未入力(0/N)の場合は入力シーケンスへ ──

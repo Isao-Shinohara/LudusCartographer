@@ -2182,8 +2182,12 @@ def find_golden_highlighted_button(
             else:
                 directional = valid
 
-            # 方向フィルタ後に候補があればそれを使う、なければ全候補にフォールバック
-            pool = directional if directional else valid
+            # 方向フィルタ後に候補がなければ None (逆方向の金枠を誤タップしない)
+            if not directional:
+                logger.info("  [GoldHighlight] ハンド(%d,%d,dir=%s) 方向に金枠なし (全%d件は逆方向)",
+                            hx, hy, hand_dir, len(valid))
+                return None
+            pool = directional
 
             def _dist_to_hand(item):
                 _ca, _c, _rx, _ry, _rw, _rh = item
