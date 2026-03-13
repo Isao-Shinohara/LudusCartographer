@@ -3385,6 +3385,19 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         if xml:
             ui_texts = _log_ui_texts(xml)
 
+            # --- 0th-pre: ダウンロード進行中チェック (再タップ防止) ---
+            _dl_progress_kws = ["キャンセル", "Cancel", "インストール中", "Installing",
+                                "Pending", "ダウンロード中", "Downloading", "待機中"]
+            _is_downloading = any(
+                kw in t for t in ui_texts for kw in _dl_progress_kws
+            )
+            if _is_downloading:
+                logger.info("[FRESH_INSTALL] ダウンロード進行中 (uiautomator) → タップせず待機")
+                if _verify_install_started():
+                    installed_via_tap = True
+                    break
+                continue
+
             # --- 0th: 既インストール済みチェック ---
             _ui_open = _uiautomator_find_button(OPEN_KEYWORDS, xml_text=xml)
             if _ui_open:
@@ -3457,6 +3470,19 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                     logger.info("[FRESH_INSTALL] 「%s」検出だがpm未確認 → 継続", kw)
                 break
         if _ocr_open_hit:
+            continue
+
+        # --- ダウンロード進行中チェック (OCR) ---
+        _DL_PROGRESS_OCR_KWS = ["キャンセル", "Cancel", "MB", "ダウンロード中",
+                                "インストール中", "Installing", "Downloading"]
+        _ocr_downloading = any(
+            kw in t for t in _ocr_texts for kw in _DL_PROGRESS_OCR_KWS
+        )
+        if _ocr_downloading:
+            logger.info("[FRESH_INSTALL] ダウンロード進行中 (OCR) → タップせず待機")
+            if _verify_install_started():
+                installed_via_tap = True
+                break
             continue
 
         # 「インストール」を OCR 検出
@@ -3866,20 +3892,28 @@ def main():
             # 画面変化あり → DL 完了の可能性。通常フローで判定
             logger.info("[iter %d] DL/ロード中: 画面変化(dist=%d) → 通常解析へ", i, dist)
             state.last_phash = cur_phash
-
-        # ── 3) phash 粗解析 ──
-        try:
-            cur_phash = compute_phash(img_path)
-        except Exception:
-            cur_phash = ""
-
-        if state.last_phash and cur_phash:
-            dist = phash_distance(state.last_phash, cur_phash)
+            # DLショートカットで既に phash 計算済み → 通常 phash 計算をスキップ
+            state.last_phash_dist = dist
+            screen_changed = dist >= PHASH_THRESHOLD
+            state.same_phash_count = 0
+            _dl_shortcut_fell_through = True
         else:
-            dist = 999
-        state.last_phash_dist = dist
+            _dl_shortcut_fell_through = False
 
-        screen_changed = dist >= PHASH_THRESHOLD
+        if not _dl_shortcut_fell_through:
+            # ── 3) phash 粗解析 ──
+            try:
+                cur_phash = compute_phash(img_path)
+            except Exception:
+                cur_phash = ""
+
+            if state.last_phash and cur_phash:
+                dist = phash_distance(state.last_phash, cur_phash)
+            else:
+                dist = 999
+            state.last_phash_dist = dist
+
+            screen_changed = dist >= PHASH_THRESHOLD
 
         # ── ダウンロード保護フラグ解除: 大きな画面変化でDL終了を検出 ──
         if state.download_active and dist >= 20:
