@@ -2622,25 +2622,11 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             state.last_action = "SCENE_TAP"
             state.movie_wait_consecutive = 0
         else:
-            # ADV 証拠チェック: ↓ボタン or AUTOボタン
+            # ADV 証拠チェック: ↓ボタンのみ (MOVIE中はAUTO単独を信頼しない)
+            # AUTO は動画シーンで score~0.77 の偽陽性を出すため
             _adv_down = detect_adv_advance_icon(img_path)
-            _inertia_adv_evidence = None
             if _adv_down:
-                _inertia_adv_evidence = "↓ボタン"
-            else:
-                from tools.ap.image_proc import ASSET_MANAGER as _AM_inertia
-                try:
-                    _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
-                    _auto_m = _AM_inertia.match_single(
-                        "adv_icon_auto", img_path, roi=_auto_roi)
-                    if _auto_m and _auto_m[2] >= 0.70:
-                        _inertia_adv_evidence = f"AUTO({_auto_m[2]:.2f})"
-                except Exception:
-                    pass
-
-            if _inertia_adv_evidence:
-                logger.info("[MOVIE_INERTIA] %s → ADV確定, MOVIE脱出",
-                            _inertia_adv_evidence)
+                logger.info("[MOVIE_INERTIA] ↓ボタン検出 → ADV確定, MOVIE脱出")
                 state.last_action = "SCENE_TAP"
                 state.movie_wait_consecutive = 0
             else:

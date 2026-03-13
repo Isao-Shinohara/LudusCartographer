@@ -985,23 +985,26 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
         except Exception:
             pass
 
-    # ADV 証拠があれば MOVIE 棄却
-    _adv_evidence = None
+    # ADV 証拠の評価
+    # ↓ボタン: 最も確実 (MOVIE には絶対にない)
+    # ADVツールバー: 確実 (5アイコン検出、MOVIE には存在しない)
+    # AUTOボタン単独: ⏭なし時のみ信頼 (⏭あり時は動画シーンで偽陽性 score~0.77)
+    _adv_evidence_strong = None  # ⏭あり時でも信頼できる証拠
     if _has_adv_advance:
-        _adv_evidence = "↓ボタン"
+        _adv_evidence_strong = "↓ボタン"
     elif adv_result is not None and adv_result.is_adv:
-        _adv_evidence = "ADVツールバー"
-    elif _has_auto_icon:
-        _adv_evidence = "AUTOボタン"
+        _adv_evidence_strong = "ADVツールバー"
 
     if has_skip:
-        if _adv_evidence:
-            logger.info("[MOVIE_SCENE] ⏭検出 + %s → ADV確定, MOVIE棄却", _adv_evidence)
+        if _adv_evidence_strong:
+            logger.info("[MOVIE_SCENE] ⏭検出 + %s → ADV確定, MOVIE棄却", _adv_evidence_strong)
             return MovieSceneResult()
-        # ADV 証拠なし → MOVIE
+        # ⏭あり + 強い証拠なし → MOVIE (AUTO単独は信頼しない)
         logger.info("[MOVIE_SCENE] ⏭検出 + ADV証拠なし → MOVIE確定")
     else:
         # ⏭ なし → MOVIE ではない
+        # ⏭がない場合は AUTO 単独でも ADV 判定 OK
+        _adv_evidence = _adv_evidence_strong or ("AUTOボタン" if _has_auto_icon else None)
         if _adv_evidence:
             logger.debug("[MOVIE_SCENE] %s → ADV確定, MOVIE棄却", _adv_evidence)
             return MovieSceneResult()
