@@ -1936,9 +1936,12 @@ def detect_tutorial_gold_button_tap(img_path: Path,
             # 充填率: 金色ピクセル密度 (キャラアイコンは金色が密集、ボタン枠は枠線のみ)
             bbox_area = w * h
             extent = area / max(bbox_area, 1)
-            if extent > 0.55:
-                logger.debug("[GoldBtn] 充填率排除: bbox=(%d,%d,%d,%d) extent=%.2f (キャラアイコン疑い)",
-                             x, y, w, h, extent)
+            # right_half_only (バトル) では右半分にキャラアイコンがないため閾値を緩和
+            # 戦闘スキルボタンは morphology 後に extent=0.7-0.8 になるため 0.55 では弾かれる
+            _extent_limit = 0.85 if right_half_only else 0.55
+            if extent > _extent_limit:
+                logger.debug("[GoldBtn] 充填率排除: bbox=(%d,%d,%d,%d) extent=%.2f > %.2f (キャラアイコン疑い)",
+                             x, y, w, h, extent, _extent_limit)
                 continue
             aspect = h / max(w, 1)
             if 0.5 <= aspect <= 2.0:
