@@ -558,18 +558,20 @@ def check_foreground_app() -> bool:
     """
     _serial_arg = ["-s", DEVICE_SERIAL] if DEVICE_SERIAL else []
     try:
-        # ---- 1) ポートレート判定: ゲームは常にランドスケープ ----
+        # ---- 1) ポートレート判定: Override size のみチェック ----
+        # Physical size はデバイス固定 (常にポートレート) のため誤判定する。
+        # Override size が設定されていてポートレートなら非ゲーム状態。
         try:
             _sz = subprocess.run(
                 ["adb"] + _serial_arg + ["shell", "wm", "size"],
                 capture_output=True, timeout=3, text=True,
             )
             for _sl in _sz.stdout.splitlines():
-                if "Override" in _sl or "Physical" in _sl:
+                if "Override" in _sl:
                     _parts = _sl.split()[-1].split("x")
                     if len(_parts) == 2:
                         _sw, _sh = int(_parts[0]), int(_parts[1])
-                        if _sw < _sh:  # portrait = ゲームではない
+                        if _sw < _sh:  # portrait override = ゲームではない
                             logger.warning(
                                 "[FOREGROUND] ポートレート検出 (%dx%d) → ゲーム非前面、am start で復帰",
                                 _sw, _sh)
@@ -580,7 +582,7 @@ def check_foreground_app() -> bool:
                             )
                             time.sleep(1)
                             return True
-                    break  # 1行見つかれば十分
+                    break
         except Exception:
             pass  # wm size 失敗は無視して従来ロジックへ
 

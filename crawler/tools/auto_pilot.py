@@ -3729,6 +3729,17 @@ def main():
         if is_dark_screen(img_path):
             state.total_blackout_skipped += 1
             state.consecutive_blackouts += 1
+            # ── 暗い ADV シーン救済: 連続5回 (~2.5秒) で画面中央タップ → 脱出試行 ──
+            # 暗いが内容がある画面 (p90≈5-15) を真の暗転 (p90≈0-3) と区別
+            if state.consecutive_blackouts == 5:
+                logger.info("[DARK_SCENE_ESCAPE] 連続暗転 %d 回 → 暗い ADV 疑い、画面中央タップで脱出試行",
+                            state.consecutive_blackouts)
+                tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "DARK_SCENE_TAP")
+                state.consecutive_blackouts = 0
+                state.last_phash = ""
+                state.same_phash_count = 0
+                time.sleep(1.0)
+                continue
             if state.total_blackout_skipped % 5 == 1:
                 logger.info("[iter %d] 暗転 — 3s 待機 (連続: %d)",
                             i, state.consecutive_blackouts)
