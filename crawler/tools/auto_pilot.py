@@ -2626,16 +2626,23 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     except Exception:
         pass
 
-    # ADV 継続: 前回 ADV + phash 小変化 + AUTO アイコン単独検出 (~10ms) → ADV 高速パス維持
+    # ADV 継続: 前回 ADV + phash 小変化 + AUTO アイコン + ADV ツールバー → ADV 高速パス
     # dist ガード: ADV→BATTLE 遷移時 (dist>=20) はフォールスルーして再評価する
-    # (バトル画面の AUTO ボタンが adv_icon_auto と誤一致する問題を防止)
+    # NOTE: AUTO アイコン単独ではバトル画面の AUTO ボタンと区別不能 (score=0.91 で誤一致)
+    #        → ADV ツールバー全体も確認して確定する
     if state.current_scene == "ADV" and dist < 20:
         from tools.ap.image_proc import ASSET_MANAGER as _AM_adv
         try:
             _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
             _auto_m = _AM_adv.match_single("adv_icon_auto", img_path, roi=_auto_roi)
             if _auto_m and _auto_m[2] >= 0.50:
-                return "ADV"
+                # AUTO あり → ADV ツールバーも確認 (バトル画面の AUTO 誤一致を排除)
+                _adv_check = detect_adv_scene_cached(img_path, state)
+                if _adv_check.is_adv:
+                    return "ADV"
+                # ツールバーなし + AUTO あり → BATTLE の可能性。フォールスルー
+                logger.info("[SCENE_EARLY] ADV継続: AUTO(%.2f)だがツールバーなし → UNKNOWN",
+                            _auto_m[2])
         except Exception:
             pass
 
