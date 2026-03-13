@@ -3469,6 +3469,12 @@ def main():
         logger.error(str(e))
         sys.exit(1)
 
+    # ─── scrcpy 早期起動: fresh-install 含めた全工程を画面で確認可能にする ───
+    _scrcpy_proc = manage_scrcpy()
+    if _scrcpy_proc is not None:
+        logger.info("[SCRCPY] ウィンドウ生成待ち (3秒)...")
+        time.sleep(3)
+
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
     if args.fresh_install:
         _fresh_install_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
@@ -3507,11 +3513,12 @@ def main():
 
     signal.signal(signal.SIGINT, _sigint_handler)
 
-    # ─── scrcpy 管理: アプリ起動前に起動 (スプラッシュ画面を scrcpy で確認可能にする) ───
-    _scrcpy_proc = manage_scrcpy()
-    if _scrcpy_proc is not None:
-        logger.info("[SCRCPY] ウィンドウ生成待ち (3秒)...")
-        time.sleep(3)
+    # ─── scrcpy 再確認: fresh-install 中に死んだ場合のリカバリ ───
+    if _scrcpy_proc is not None and _scrcpy_proc.poll() is not None:
+        logger.info("[SCRCPY] fresh-install 中に終了 → 再起動")
+        _scrcpy_proc = manage_scrcpy()
+        if _scrcpy_proc is not None:
+            time.sleep(3)
 
     # 実機物理解像度を取得してログ出力
     _dev_w, _dev_h = get_device_resolution()
