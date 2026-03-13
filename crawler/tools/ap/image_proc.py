@@ -2300,8 +2300,14 @@ class AssetManager:
                     meta = json.loads(meta_path.read_text())
                 except Exception:
                     pass
+            # edge_weight: エッジマッチング重み (0.0=ピクセルのみ, 1.0=エッジのみ)
+            # 背景依存の偽陽性が多いテンプレートに有効
+            _ew = float(meta.get("edge_weight", 0.0))
+            _edge_img = cv2.Canny(img, 50, 150) if _ew > 0 else None
             self._templates[name] = {
                 "img": img,
+                "edge_img": _edge_img,
+                "edge_weight": _ew,
                 "threshold": float(meta.get("threshold", self.DEFAULT_THRESHOLD)),
                 "action": meta.get("action", f"ASSET_{name.upper()}"),
                 "offset": meta.get("offset", [0, 0]),
@@ -2350,6 +2356,13 @@ class AssetManager:
             try:
                 res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                # エッジ重みスコアリング: edge_weight > 0 なら形状重視
+                _ew = data["edge_weight"]
+                if _ew > 0 and data["edge_img"] is not None:
+                    _img_edge = cv2.Canny(img, 50, 150)
+                    _res_e = cv2.matchTemplate(_img_edge, data["edge_img"], cv2.TM_CCOEFF_NORMED)
+                    _, _ev, _, _ = cv2.minMaxLoc(_res_e)
+                    max_val = (1 - _ew) * max_val + _ew * _ev
                 if max_val >= data["threshold"] and max_val > best_score:
                     best_score = max_val
                     h, w = tmpl.shape
@@ -2391,6 +2404,19 @@ class AssetManager:
         try:
             res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            # エッジ重みスコアリング
+            _ew = data["edge_weight"]
+            if _ew > 0 and data["edge_img"] is not None:
+                _img_edge = cv2.Canny(img, 50, 150)
+                _tmpl_edge = data["edge_img"]
+                if roi is not None:
+                    _tmpl_edge_h, _tmpl_edge_w = _tmpl_edge.shape[:2]
+                    if _tmpl_edge_h <= _img_edge.shape[0] and _tmpl_edge_w <= _img_edge.shape[1]:
+                        _img_edge = _img_edge[_ry:_ry + _rh, _rx:_rx + _rw]
+                if _tmpl_edge.shape[0] <= _img_edge.shape[0] and _tmpl_edge.shape[1] <= _img_edge.shape[1]:
+                    _res_e = cv2.matchTemplate(_img_edge, _tmpl_edge, cv2.TM_CCOEFF_NORMED)
+                    _, _ev, _, _ = cv2.minMaxLoc(_res_e)
+                    max_val = (1 - _ew) * max_val + _ew * _ev
             if max_val >= data["threshold"]:
                 h, w = tmpl.shape
                 cx = max_loc[0] + w // 2 + _roi_ox
