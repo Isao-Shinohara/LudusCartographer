@@ -1178,10 +1178,10 @@ def detect_tutorial_dialog_nav(img_path: Path,
 
         def _match_template(tmpl_path: Path, roi_x1: int, roi_y1: int,
                             roi_x2: int, roi_y2: int) -> Optional[tuple[int, int]]:
-            _tmpl = imread_cached(tmpl_path)
+            _tmpl = imread_cached(tmpl_path, cv2.IMREAD_GRAYSCALE)
             if _tmpl is None:
                 return None
-            _roi = _img[roi_y1:roi_y2, roi_x1:roi_x2]
+            _roi = cv2.cvtColor(_img[roi_y1:roi_y2, roi_x1:roi_x2], cv2.COLOR_BGR2GRAY)
             _res = cv2.matchTemplate(_roi, _tmpl, cv2.TM_CCOEFF_NORMED)
             _, _max_val, _, _max_loc = cv2.minMaxLoc(_res)
             if _max_val >= threshold:
@@ -1454,14 +1454,17 @@ def detect_dialog_frame_and_nav(
 
         # ── ▷ ボタン (スクリーン右エッジ) ────────────────────────────────
         if _DIALOG_NEXT_TEMPLATE.exists():
-            _next_tmpl = imread_cached(_DIALOG_NEXT_TEMPLATE)
-            _r2 = cv2.matchTemplate(
+            _next_tmpl = imread_cached(_DIALOG_NEXT_TEMPLATE, cv2.IMREAD_GRAYSCALE)
+            _roi_next = cv2.cvtColor(
                 img[int(_H * 0.22): int(_H * 0.78), int(_W * 0.83):],
+                cv2.COLOR_BGR2GRAY)
+            _r2 = cv2.matchTemplate(
+                _roi_next,
                 _next_tmpl,
                 cv2.TM_CCOEFF_NORMED,
             )
             _, _mv2, _, _ml2 = cv2.minMaxLoc(_r2)
-            if _mv2 >= 0.75:
+            if _mv2 >= 0.65:
                 _th2, _tw2 = _next_tmpl.shape[:2]
                 return ("next",
                         int(_W * 0.83) + _ml2[0] + _tw2 // 2,
