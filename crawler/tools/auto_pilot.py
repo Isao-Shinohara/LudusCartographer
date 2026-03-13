@@ -3156,8 +3156,9 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         # --- 1st: uiautomator (ネイティブ UI 用、最も確実) ---
         _ui_pos = _uiautomator_find_button(INSTALL_KEYWORDS)
         if _ui_pos:
-            # 上半分のみ有効 (y < 60%): 下部の「他のデバイスにも...」ボタン除外
-            if _ui_pos[1] < _screen_h * 0.6:
+            # 上部 75% のみ有効: 下部の「他のデバイスにも...」ボタン除外
+            # (実機検証: インストールボタンは y~63% に表示されるため 60%→75% に緩和)
+            if _ui_pos[1] < _screen_h * 0.75:
                 _adb_tap(_ui_pos[0], _ui_pos[1])
                 if _verify_install_started():
                     installed_via_tap = True
