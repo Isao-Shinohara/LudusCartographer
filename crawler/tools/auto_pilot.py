@@ -859,6 +859,33 @@ def detect_and_act(ocr: list, state: PilotState,
     if _dialog_result is not None:
         return _dialog_result
 
+    # ─── 【最優先 #0-b-name】プレイヤー名入力ダイアログ (FINGER_GOLD_TAP より先に評価) ───
+    # 名前入力画面の金枠入力フィールドが FINGER_GOLD_TAP に食われるのを防ぐ
+    _name_input_item = has_text(ocr, "プレイヤー名を入力", min_conf=0.3)
+    if _name_input_item:
+        _ni_ui_words = {"プレイヤー名を入力してください", "プレイヤー名は", "変更後3日間", "名前入力", "OK"}
+        _ni_name_texts = [t for t in texts if t not in _ni_ui_words and len(t) >= 2
+                          and not t.startswith("プレイヤー") and "/" not in t
+                          and not t.startswith("※") and not t.startswith("＜")]
+        _ni_ok = next(
+            (item for item in ocr if "OK" in item.get("text", "") and item["center"][1] > H * 0.5),
+            None
+        )
+        if _ni_name_texts and _ni_ok:
+            _ni_cx, _ni_cy = roi_to_device(_ni_ok["center"][0], int(H * 0.78), state.game_roi)
+            logger.info(">>> 【名前入力 OK】 入力済み='%s' → ROI補正(%d,%d) タップ", _ni_name_texts[0], _ni_cx, _ni_cy)
+            tap_device(_ni_cx, _ni_cy, state, "NAME_INPUT_OK")
+            return "NAME_INPUT_OK", 2.0
+        elif _ni_ok:
+            _nf_x, _nf_y = roi_to_device(int(W * 0.46), int(H * 0.58), state.game_roi)
+            logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d)", _nf_x, _nf_y)
+            tap_device(_nf_x, _nf_y, state, "NAME_INPUT_FOCUS")
+            adb("shell input text MadoDora")
+            time.sleep(0.2)
+            adb("shell input keyevent 66")
+            logger.info(">>> 【名前入力】 'MadoDora' 入力完了 → OK タップ待ち")
+            return "NAME_INPUT_TEXT", 1.5
+
     # ─── 【指+金枠ボタン】PRE_DIALOG_GUARD で指ブロブ検出 → ゴールドボタン直タップ ───
     # ダイアログ×ボタンがない画面 (プレゼントボックス等) で指が金色ボタンを指している場合
     if _pre_dialog_finger and analysis_path is not None:
@@ -1388,9 +1415,15 @@ def detect_and_act(ocr: list, state: PilotState,
                         logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠なし+暗転あり]",
                                     _ht_bx, _ht_by, *_ht_target)
                     else:
-                        # 金枠なし+暗転なし → 偽検出の可能性 → スキップ
-                        logger.info("  ホーム指検出: 指(%d,%d) 金枠なし+暗転なし → 偽検出疑い、スキップ",
-                                    _ht_bx, _ht_by)
+                        # 金枠なし+暗転なし: 画面中央付近なら指先をタップ、端なら偽検出疑い
+                        if _ht_bx > 150 and _ht_by > 100 and _ht_bx < W - 100 and _ht_by < H - 80:
+                            _ht_tip_y = _ht_chosen[4] + int(_ht_chosen[6] * 0.1)
+                            _ht_target = (_ht_chosen[3] + _ht_chosen[5] // 2, _ht_tip_y)
+                            logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠なし+暗転なし・中央付近]",
+                                        _ht_bx, _ht_by, *_ht_target)
+                        else:
+                            logger.info("  ホーム指検出: 指(%d,%d) 金枠なし+暗転なし+画面端 → 偽検出疑い、スキップ",
+                                        _ht_bx, _ht_by)
                 elif _ht_gold:
                     # 金枠のみ (指なし) → 暗転があればチュートリアル
                     if _ht_dimmed:
@@ -1400,8 +1433,12 @@ def detect_and_act(ocr: list, state: PilotState,
                         logger.info("  ホーム金枠検出: (%d,%d) 暗転なし → 通常ホーム、スキップ", *_ht_gold)
                 if _ht_target:
                     state.home_tutorial_tap_count += 1
-                    tap_device(_ht_target[0], _ht_target[1], state, "HOME_TUTORIAL_TAP")
-                    return "HOME_TUTORIAL_TAP", 0.5
+                    if state.home_tutorial_tap_count < 10:
+                        tap_device(_ht_target[0], _ht_target[1], state, "HOME_TUTORIAL_TAP")
+                        return "HOME_TUTORIAL_TAP", 0.5
+                    else:
+                        logger.info("  HOME_TUTORIAL_TAP %d回 空振り → 偽検出と判断、スキップ",
+                                    state.home_tutorial_tap_count)
             blobs = []
         elif _is_tos_screen or _is_system_dialog:
             logger.info("  システムダイアログ/利用規約検出 → MOYA_TAP スキップ")
@@ -1747,11 +1784,16 @@ def detect_and_act(ocr: list, state: PilotState,
             if _home_blobs:
                 _chosen_blob = max(_home_blobs, key=lambda b: b[2])  # area最大
                 _bx, _by = _chosen_blob[0], _chosen_blob[1]
-                _gf = find_gold_frame_near(analysis_path, _bx, _by) if analysis_path else None
+                _gf = find_gold_frame_near(analysis_path, _bx, _by, search_radius=250) if analysis_path else None
                 if _gf:
                     _tap_target = (_gf[0], _gf[1])
                     logger.info(">>> ホームチュートリアル: 指(%d,%d)→金枠(%d,%d) dimmed=%s [%d回目]",
                                 _bx, _by, _gf[0], _gf[1], _home_dimmed, state.home_tutorial_tap_count + 1)
+                elif _home_gold:
+                    # 指あり+金枠が近傍150px外だがGoldBtn検出あり → 金ボタンをタップ
+                    _tap_target = _home_gold
+                    logger.info(">>> ホームチュートリアル: 指(%d,%d)→GoldBtn(%d,%d) [近傍外] [%d回目]",
+                                _bx, _by, *_home_gold, state.home_tutorial_tap_count + 1)
                 elif _home_dimmed:
                     # 金枠なし+暗転あり → チュートリアル (指先タップ)
                     _tip_y = _chosen_blob[4] + int(_chosen_blob[6] * 0.1)
@@ -1759,19 +1801,43 @@ def detect_and_act(ocr: list, state: PilotState,
                     logger.info(">>> ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠なし+暗転あり]",
                                 _bx, _by, *_tap_target)
                 else:
-                    logger.info(">>> ホーム指検出: 指(%d,%d) 金枠なし+暗転なし → 偽検出疑い、スキップ",
-                                _bx, _by)
+                    # 金枠なし+暗転なし: 画面中央付近なら指先をタップ、端なら偽検出疑い
+                    if _bx > 150 and _by > 100 and _bx < W - 100 and _by < H - 80:
+                        _tip_y = _chosen_blob[4] + int(_chosen_blob[6] * 0.1)
+                        _tap_target = (_chosen_blob[3] + _chosen_blob[5] // 2, _tip_y)
+                        logger.info(">>> ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠なし+暗転なし・中央付近]",
+                                    _bx, _by, *_tap_target)
+                    else:
+                        logger.info(">>> ホーム指検出: 指(%d,%d) 金枠なし+暗転なし+画面端 → 偽検出疑い、スキップ",
+                                    _bx, _by)
             elif _home_gold:
+                # 指なし+金枠あり: dimmed でも非 dimmed でもチュートリアル金枠の可能性あり
+                _tap_target = _home_gold
                 if _home_dimmed:
-                    _tap_target = _home_gold
                     logger.info(">>> ホームチュートリアル: 金ボタン(%d,%d) [暗転あり]", *_home_gold)
                 else:
-                    logger.info(">>> ホーム金枠検出: (%d,%d) 暗転なし → 通常ホーム、スキップ", *_home_gold)
+                    logger.info(">>> ホームチュートリアル: 金ボタン(%d,%d) [暗転なし・指なし]", *_home_gold)
             if _tap_target:
                 state.home_tutorial_tap_count += 1
-                tap_device(_tap_target[0], _tap_target[1], state, "HOME_TUTORIAL_TAP")
-                return "HOME_TUTORIAL_TAP", 0.5
+                # 同じ場所を10回以上タップしても画面変化なし → 偽検出と判断してスキップ
+                if state.home_tutorial_tap_count >= 10:
+                    logger.info(">>> HOME_TUTORIAL_TAP %d回 空振り → 偽検出と判断、HOME_CLEAR_CHECK へ",
+                                state.home_tutorial_tap_count)
+                    # _tap_target を無視して HOME_CLEAR_CHECK に流す
+                else:
+                    # 指/金枠を検出 → 連続クリアカウンタをリセット
+                    if hasattr(state, '_home_clear_count'):
+                        state._home_clear_count = 0
+                    tap_device(_tap_target[0], _tap_target[1], state, "HOME_TUTORIAL_TAP")
+                    return "HOME_TUTORIAL_TAP", 0.5
             # blob/gold検出あるがタップ対象なし → blob_same_count 処理へ
+            # ※10回未満なら指or金枠の存在自体がチュートリアル未完了の証拠 → HOME_CLEAR_CHECK リセット
+            # ※10回以上なら偽検出確定 → リセットしない (HOME_CLEAR_CHECK に進ませる)
+            if state.home_tutorial_tap_count < 10:
+                if hasattr(state, '_home_clear_count') and state._home_clear_count > 0:
+                    logger.info(">>> 指/金枠検出あり(タップ対象なし) → HOME_CLEAR_COUNT リセット (%d→0)",
+                                state._home_clear_count)
+                    state._home_clear_count = 0
             if state.blob_same_count >= 5:
                 logger.info(">>> ホーム画面 + もやスタック → クエストへナビゲート")
                 state.blob_same_count = 0
@@ -1790,22 +1856,42 @@ def detect_and_act(ocr: list, state: PilotState,
                 return "HOME_NAV_WAIT", 2.0
         # ── 右上吹き出しセリフチェック: まだチュートリアルガイダンス中 ──
         _BUBBLE_EXCLUDE_EXACT = {"AUTO", ">>", ">|", "D1", "×", "+", "■", "畄", "目", "SKIP"}
-        _BUBBLE_EXCLUDE_SUBSTR = ("Max", "Lv", "Lx", "Rank", "LV", "MadoDora")
+        _BUBBLE_EXCLUDE_SUBSTR = ("Max", "Lv", "Lx", "Rank", "LV", "MadoDora", "M.8", "M8X")
         _BUBBLE_NUM_RE = re.compile(r'^[\d,./:%+\-・\s]+$')
+        _BUBBLE_ALPHANUM_NOISE_RE = re.compile(r'^[A-Za-z0-9.,\-+×★☆\s]{1,5}$')
         _bubble_texts = [r for r in ocr
                          if r["center"][0] > W * 0.55 and r["center"][1] < H * 0.35
                          and r["text"] not in _BUBBLE_EXCLUDE_EXACT
                          and not any(s in r["text"] for s in _BUBBLE_EXCLUDE_SUBSTR)
                          and not _BUBBLE_NUM_RE.match(r["text"])
+                         and not _BUBBLE_ALPHANUM_NOISE_RE.match(r["text"])
                          and len(r["text"]) > 2]
-        if _bubble_texts:
+        if _bubble_texts and state.home_tutorial_tap_count < 10:
             _bt = _bubble_texts[0]
             _btx, _bty = _bt["center"]
             logger.info(">>> ホーム画面 + 吹き出しセリフ '%s' → チュートリアル継続 (%d,%d)",
                         _bt["text"][:10], _btx, _bty)
+            if hasattr(state, '_home_clear_count'):
+                state._home_clear_count = 0
             tap_device(_btx, _bty, state, "BUBBLE_TAP")
             return "BUBBLE_TAP", 0.3
-        # ── 指アイコンも金枠もない → チュートリアル完了判定 ──
+        # ── 指アイコンも金枠もない → 連続カウンタで完了判定 ──
+        # 同一フレーム (phash_dist < 5) での重複カウントを防ぎ、異なるフレーム5回で確定
+        if not hasattr(state, '_home_clear_count'):
+            state._home_clear_count = 0
+            state._home_clear_last_phash = ""
+        # 同一フレームならカウントしない
+        _cur_phash = getattr(state, 'last_phash', "")
+        if _cur_phash and _cur_phash == state._home_clear_last_phash:
+            logger.info(">>> ホーム画面 指/金枠なし (同一フレーム, %d/5) → スキップ",
+                        state._home_clear_count)
+            return "HOME_CLEAR_CHECK", 1.0
+        state._home_clear_last_phash = _cur_phash
+        state._home_clear_count += 1
+        if state._home_clear_count < 5:
+            logger.info(">>> ホーム画面 指/金枠なし (%d/5) → 確認待ち", state._home_clear_count)
+            return "HOME_CLEAR_CHECK", 0.5
+        logger.info(">>> ホーム画面 指/金枠なし 5フレーム連続 → チュートリアル完了!")
         # nav カウンタをリセット (チュートリアル指標消失)
         state.home_nav_count = 0
         state.blob_same_count = 0
@@ -3156,6 +3242,11 @@ def main():
     try:
         adb("shell input keyevent KEYCODE_WAKEUP")
         time.sleep(0.5)
+        # ロック画面をスワイプ解除 (PIN/パターンなし端末)
+        adb("shell input keyevent 82")  # KEYCODE_MENU でロック解除
+        time.sleep(0.5)
+        adb("shell input swipe 540 1800 540 500 300")  # スワイプ解除
+        time.sleep(0.5)
         _focus = adb("shell dumpsys window | grep mCurrentFocus")
         if APP_PACKAGE not in _focus:
             logger.info("[STARTUP] アプリが前面にない → am start で起動します (mCurrentFocus: %s)",
@@ -4246,6 +4337,7 @@ def main():
         if action == state.last_action and action not in (
             "WAIT_FOR_CHANGE", "BATTLE_WAIT", "DOWNLOAD_WAIT",
             "MOVIE_WAIT", "LOADING_WAIT", "ADV_WAIT",
+            "HOME_CLEAR_CHECK",
         ):
             state.action_repeat_count += 1
         else:
