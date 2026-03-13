@@ -280,8 +280,9 @@ def detect_white_hand_pointer(
             return None
         templates_dir = _CRAWLER_ROOT / "assets" / "templates"
         best: Optional[tuple[int, int, float, str]] = None
-        _dir_map = {"home_nav_finger": "down", "home_nav_finger_up": "up"}
-        for name in ("home_nav_finger", "home_nav_finger_up"):
+        _dir_map = {"home_nav_finger": "down", "home_nav_finger_up": "up",
+                    "tutorial_hand_pointer": "up"}
+        for name in ("home_nav_finger", "home_nav_finger_up", "tutorial_hand_pointer"):
             tpl_path = templates_dir / f"{name}.png"
             if not tpl_path.exists():
                 continue
@@ -1274,9 +1275,23 @@ def detect_dialog_frame_and_nav(
             return None
 
         def _has_page_arrow(img_full, _H, _W) -> Optional[tuple[int, int]]:
-            """右サイドにページング矢印 (>) が存在するか確認。
-            狭いストリップ (右端3%) × 中央帯 (30%-70%) で白/明るい矢印を検出。
+            """右サイドにページング矢印 (▷) が存在するか確認。
+            PRIMARY: テンプレートマッチング (dialog_nav_right)
+            FALLBACK: 輝度ベース検出 (右端6% × 中央帯)
             """
+            # PRIMARY: テンプレートマッチング
+            try:
+                _nav_roi = (int(_W * 0.90), int(_H * 0.25),
+                            int(_W * 0.10), int(_H * 0.50))
+                _nav_m = ASSET_MANAGER.match_single(
+                    "dialog_nav_right", img_path, roi=_nav_roi)
+                if _nav_m and _nav_m[2] >= 0.65:
+                    logger.debug("[Dialog▷] テンプレート検出: (%d,%d) score=%.3f",
+                                 _nav_m[0], _nav_m[1], _nav_m[2])
+                    return (_nav_m[0], _nav_m[1])
+            except Exception:
+                pass
+            # FALLBACK: 輝度ベース
             _rx1n = int(_W * 0.94)  # 右端6%のみ
             _ry1n, _ry2n = int(_H * 0.30), int(_H * 0.70)
             _roi_n = img_full[_ry1n:_ry2n, _rx1n:_W]

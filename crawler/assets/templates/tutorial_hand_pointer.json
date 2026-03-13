@@ -1,0 +1,5 @@
+{
+  "action": "FINGER_TEMPLATE",
+  "threshold": 0.70,
+  "note": "チュートリアル白手ポインタ(上向き)。find_finger_blobs()のテンプレート補助検出用。HSV検出後の位置確認・代替検出として使用。cross-validation: 18/98 true positive at 0.70。"
+}
