@@ -1062,7 +1062,15 @@ def detect_and_act(ocr: list, state: PilotState,
                     return "DIALOG_NEXT_FALLBACK", 1.0
             # チュートリアル指差し: 金色ハイライトされたUI要素を方向非依存で検出→タップ
             if action == "TAP_HIGHLIGHTED_NAV":
-                gold_pos = find_golden_highlighted_button(analysis_path)
+                # ハンド方向を取得して金色ハイライト検出の精度を向上
+                _wh = detect_white_hand_pointer(analysis_path, threshold=0.85)
+                _hand_pos = (cx, cy)
+                _hand_dir = ""
+                if _wh:
+                    _hand_pos = (_wh[0], _wh[1])
+                    _hand_dir = _wh[3]  # "up" or "down"
+                gold_pos = find_golden_highlighted_button(
+                    analysis_path, hand_pos=_hand_pos, hand_dir=_hand_dir)
                 if gold_pos:
                     tap_x, tap_y = gold_pos
                 else:

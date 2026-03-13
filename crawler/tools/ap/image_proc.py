@@ -2141,32 +2141,23 @@ def find_golden_highlighted_button(
         if not valid:
             return None
 
-        # ---- ハンド方向フィルタ: 指先方向にある金枠を優先 ----
-        if hand_pos and hand_dir:
+        # ---- ハンド近接フィルタ: hand_pos が指定された場合、最も近い金枠を選択 ----
+        if hand_pos:
             hx, hy = hand_pos
-            directed = []
-            for item in valid:
+
+            def _dist_to_hand(item):
                 _ca, _c, _rx, _ry, _rw, _rh = item
                 _cx = _rx + _rw // 2
                 _cy = _ry + _rh // 2
-                if hand_dir == "up" and _cy < hy:
-                    directed.append(item)
-                elif hand_dir == "down" and _cy > hy:
-                    directed.append(item)
-            if directed:
-                # 指先方向の候補の中からハンドに最も近いものを選択
-                def _dist_to_hand(item):
-                    _ca, _c, _rx, _ry, _rw, _rh = item
-                    _cx = _rx + _rw // 2
-                    _cy = _ry + _rh // 2
-                    return (hx - _cx) ** 2 + (hy - _cy) ** 2
-                best_item = min(directed, key=_dist_to_hand)
-                _, _, rx, ry, rw, rh = best_item
-                cx = rx + rw // 2
-                cy = ry + rh // 2
-                logger.info("  [GoldHighlight] 指先方向(%s)の金枠 rect=(%d,%d,%d,%d) → center=(%d,%d)",
-                            hand_dir, rx, ry, rw, rh, cx, cy)
-                return cx, cy
+                return (hx - _cx) ** 2 + (hy - _cy) ** 2
+
+            best_item = min(valid, key=_dist_to_hand)
+            _, _, rx, ry, rw, rh = best_item
+            cx = rx + rw // 2
+            cy = ry + rh // 2
+            logger.info("  [GoldHighlight] ハンド(%d,%d)最近接の金枠 rect=(%d,%d,%d,%d) → center=(%d,%d)",
+                        hx, hy, rx, ry, rw, rh, cx, cy)
+            return cx, cy
 
         # フォールバック: 最大面積の輪郭
         _, best_cnt, rx, ry, rw, rh = max(valid, key=lambda x: x[0])
