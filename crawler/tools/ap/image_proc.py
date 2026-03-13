@@ -971,17 +971,24 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     skip_btn = detect_movie_skip_button(img_path) if img_path else None
     has_skip = skip_btn is not None
     if has_skip:
-        # ⏭ が見つかっても AUTO アイコンが同時に見えれば ADV (動画ではない)
+        # ⏭ が見つかっても ADV ツールバー (5アイコン) が揃っていれば ADV
+        # AUTO 単独スコア (0.72程度) は動画シーンでも偽陽性になるため
+        # 複数 ADV アイコンの同時検出を要求する
         _skip_is_adv = False
         if img_path:
             try:
                 _auto_roi_s = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
-                _auto_s = ASSET_MANAGER.match_single("adv_icon_auto", img_path,
-                                                      roi=_auto_roi_s)
-                if _auto_s and _auto_s[2] >= 0.50:
+                _adv_icons_found = 0
+                for _icon_name in ("adv_icon_auto", "adv_icon_ff", "adv_icon_menu"):
+                    _m = ASSET_MANAGER.match_single(_icon_name, img_path,
+                                                     roi=_auto_roi_s)
+                    if _m and _m[2] >= 0.60:
+                        _adv_icons_found += 1
+                # 2個以上 ADV アイコンが見えれば ADV 確定
+                if _adv_icons_found >= 2:
                     _skip_is_adv = True
-                    logger.info("[MOVIE_SCENE] ⏭検出 + AUTO(%.2f) → ADV確定, MOVIE棄却",
-                                _auto_s[2])
+                    logger.info("[MOVIE_SCENE] ⏭検出 + ADVアイコン%d個 → ADV確定, MOVIE棄却",
+                                _adv_icons_found)
             except Exception:
                 pass
         if _skip_is_adv:

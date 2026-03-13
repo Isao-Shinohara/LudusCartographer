@@ -2628,15 +2628,20 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 state.last_action = "SCENE_TAP"
                 state.movie_wait_consecutive = 0
             else:
-                # AUTO アイコン単独検出 → ADV 確定、MOVIE 脱出
+                # ADV ツールバー複数アイコン検出 → ADV 確定、MOVIE 脱出
+                # AUTO 単独 (score 0.50) では動画シーンで偽陽性が出るため
+                # 複数アイコン同時検出を要求する
                 from tools.ap.image_proc import ASSET_MANAGER as _AM_inertia
                 try:
                     _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
-                    _auto_m = _AM_inertia.match_single(
-                        "adv_icon_auto", img_path, roi=_auto_roi)
-                    if _auto_m and _auto_m[2] >= 0.50:
-                        logger.info("[MOVIE_INERTIA] AUTO icon (%.2f) → ADV確定, MOVIE脱出",
-                                    _auto_m[2])
+                    _adv_cnt = 0
+                    for _ic in ("adv_icon_auto", "adv_icon_ff", "adv_icon_menu"):
+                        _m = _AM_inertia.match_single(_ic, img_path, roi=_auto_roi)
+                        if _m and _m[2] >= 0.60:
+                            _adv_cnt += 1
+                    if _adv_cnt >= 2:
+                        logger.info("[MOVIE_INERTIA] ADVアイコン%d個 → ADV確定, MOVIE脱出",
+                                    _adv_cnt)
                         state.last_action = "SCENE_TAP"
                         state.movie_wait_consecutive = 0
                     else:
