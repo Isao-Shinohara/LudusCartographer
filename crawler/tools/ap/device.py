@@ -541,13 +541,39 @@ def check_foreground_app() -> bool:
     """
     _serial_arg = ["-s", DEVICE_SERIAL] if DEVICE_SERIAL else []
     try:
+        # ---- 1) ポートレート判定: ゲームは常にランドスケープ ----
+        try:
+            _sz = subprocess.run(
+                ["adb"] + _serial_arg + ["shell", "wm", "size"],
+                capture_output=True, timeout=3, text=True,
+            )
+            for _sl in _sz.stdout.splitlines():
+                if "Override" in _sl or "Physical" in _sl:
+                    _parts = _sl.split()[-1].split("x")
+                    if len(_parts) == 2:
+                        _sw, _sh = int(_parts[0]), int(_parts[1])
+                        if _sw < _sh:  # portrait = ゲームではない
+                            logger.warning(
+                                "[FOREGROUND] ポートレート検出 (%dx%d) → ゲーム非前面、am start で復帰",
+                                _sw, _sh)
+                            subprocess.run(
+                                ["adb"] + _serial_arg + ["shell", "am", "start", "-n",
+                                 f"{APP_PACKAGE}/{APP_ACTIVITY}"],
+                                capture_output=True, timeout=5,
+                            )
+                            time.sleep(1)
+                            return True
+                    break  # 1行見つかれば十分
+        except Exception:
+            pass  # wm size 失敗は無視して従来ロジックへ
+
+        # ---- 2) mCurrentFocus / mFocusedApp 判定 ----
         _r = subprocess.run(
             ["adb"] + _serial_arg + ["shell", "dumpsys", "window", "displays"],
             capture_output=True, timeout=3, text=True,
         )
         if _r.returncode != 0:
             return False
-        # mCurrentFocus と mFocusedApp の両方を確認
         _focus_lines = []
         for line in _r.stdout.splitlines():
             if "mCurrentFocus" in line or "mFocusedApp" in line:
