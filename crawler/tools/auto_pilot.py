@@ -2863,6 +2863,21 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 return "BATTLE"
     except Exception:
         pass
+    # BATTLE 補助判定: 金枠オーバーレイでテンプレが失敗する場合
+    # 右下 (バトルボタン領域) に金枠が存在 → BATTLE 確定
+    try:
+        from tools.ap.image_proc import find_gold_frame_near
+        _battle_gold_cx = int(ANALYSIS_W * 0.88)
+        _battle_gold_cy = int(ANALYSIS_H * 0.80)
+        _bg_result = find_gold_frame_near(
+            img_path, _battle_gold_cx, _battle_gold_cy, search_radius=200)
+        if _bg_result is not None:
+            _bg_cx, _bg_cy, _bg_w, _bg_h = _bg_result
+            logger.info("[SCENE_EARLY] Battle補助: 右下金枠(%d,%d %dx%d) → BATTLE",
+                        _bg_cx, _bg_cy, _bg_w, _bg_h)
+            return "BATTLE"
+    except Exception:
+        pass
 
     # ADV 継続: 前回 ADV + phash 小変化 + AUTO アイコン + ADV ツールバー → ADV 高速パス
     # dist ガード: ADV→BATTLE 遷移時 (dist>=20) はフォールスルーして再評価する
