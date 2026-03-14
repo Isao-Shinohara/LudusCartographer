@@ -4114,8 +4114,8 @@ def main():
                 state.same_phash_count += 1
                 state.last_phash = cur_phash
                 state.last_screen_change_time = time.time()  # Watchdog抑制
-                # ── 10回(30秒)変化なし → DL完了ダイアログの可能性。OCR解析へ ──
-                if state.same_phash_count >= 10:
+                # ── 20回(60秒)変化なし → DL完了/失敗ダイアログの可能性。OCR解析へ ──
+                if state.same_phash_count >= 20:
                     logger.info("[iter %d] DL/ロード中: %d回変化なし → 完了ダイアログ確認のため通常解析へ",
                                 i, state.same_phash_count)
                     # ── 累積60回(3分)変化なし → DLモード強制解除 ──
@@ -5130,8 +5130,10 @@ def main():
                     _re_dist = phash_distance(state.last_phash, _re_phash) if state.last_phash and _re_phash else 999
                 except Exception:
                     _re_dist = 999
-                if _re_dist < 3 and ocr_results:
-                    logger.info("[SCENE_REEVAL] phash_dist=%d < 3 → 既存OCR再利用 (OCRスキップ)", _re_dist)
+                _re_reuse_th = 8 if state.current_scene == "BATTLE" else 5
+                if _re_dist < _re_reuse_th and ocr_results:
+                    logger.info("[SCENE_REEVAL] phash_dist=%d < %d → 既存OCR再利用 (OCRスキップ)",
+                                _re_dist, _re_reuse_th)
                     _re_ocr = ocr_results
                 else:
                     _re_ocr = run_ocr(str(_re_analysis), lang=OCR_LANG,
