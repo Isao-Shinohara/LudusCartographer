@@ -8,7 +8,7 @@
   "swipe_duration_ms": 10000,
   "repeat_until_change": true,
   "max_repeat": 10,
-  "threshold": 0.72,
+  "threshold": 0.82,
   "require_ocr": [],
-  "note": "ratio化: 旧(1050,580)→(1050,50) を 1520x720基準でratio変換。duration 3000→10000ms (長ホールドスワイプ)。threshold 0.86→0.72 (Xperia 2160x1080でスコア0.786)。"
+  "note": "ratio化: 旧(1050,580)→(1050,50) を 1520x720基準でratio変換。duration 3000→10000ms (長ホールドスワイプ)。threshold 0.72→0.82 (偽陽性0.74-0.80多発のため引上げ)。"
 }

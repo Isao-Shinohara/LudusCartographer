@@ -667,6 +667,17 @@ def detect_and_act(ocr: list, state: PilotState,
     _adv_result: AdvSceneResult = state._adv_scene_cache_result or AdvSceneResult()
     joined = " ".join(texts)
 
+    # ── 【#-5】ブラウザ脱出 — WEB SHOP 等の外部リンクを検出したら即 BACK ──
+    _browser_kw = ["WEB SHOP", "好評配信中", "doka-exedra", "magia-exedra"]
+    if any(kw in joined for kw in _browser_kw):
+        logger.warning("[BROWSER_ESCAPE] ブラウザ画面検出 (%s) → BACK キーで脱出",
+                       [kw for kw in _browser_kw if kw in joined])
+        adb("shell input keyevent KEYCODE_BACK")
+        time.sleep(2.0)
+        # ゲーム終了ダイアログが出た場合に備えてフォアグラウンドチェック
+        check_foreground_app()
+        return "BROWSER_ESCAPE", 3.0
+
     # ── 【#-4】MOVIE シーン中は一切タップしない ──
     # 動画はタップで一時停止/再開を繰り返す仕様 → 絶対にタップ禁止
     # detect_scene_early で MOVIE 判定済み → ここでは待機のみ返す
@@ -849,22 +860,56 @@ def detect_and_act(ocr: list, state: PilotState,
         not any(kw in joined for kw in ["クエスト", "ショップ", "ガチャ", "ガシャ", "光の間", "パーティ"])
     )
     if _is_main_story_bg:
-        _has_new = any("NEW" in t for t in texts)
-        if _has_new:
-            # クエスト選択画面 — "NEW" クエストカードをタップ
-            _quest_hit = has_text(ocr, "Main", min_conf=0.2)
-            if _quest_hit:
-                _qx, _qy = _quest_hit["center"]
-                logger.info(">>> MAIN STORY クエスト選択 — 'Main' カードタップ (%d,%d)", _qx, _qy)
-                tap_device(_qx, _qy, state, "MAIN_STORY_QUEST_TAP")
-                return "MAIN_STORY_QUEST_TAP", 2.0
-            # フォールバック: 画面下部中央をタップ
-            _qx, _qy = int(W * 0.5), int(H * 0.85)
-            logger.info(">>> MAIN STORY クエスト選択 — フォールバックタップ (%d,%d)", _qx, _qy)
-            tap_device(_qx, _qy, state, "MAIN_STORY_QUEST_FB")
-            return "MAIN_STORY_QUEST_FB", 2.0
-        logger.info(">>> MAIN STORY ローディング背景 — 自動遷移待ち (10s)")
-        return "MAIN_STORY_LOADING", 10.0
+        # クエスト選択画面 — "Main" カードをタップ (NEW バッジの有無は問わない)
+        _quest_hit = has_text(ocr, "Main", min_conf=0.2)
+        if _quest_hit:
+            _qx, _qy = _quest_hit["center"]
+            logger.info(">>> MAIN STORY クエスト選択 — 'Main' カードタップ (%d,%d)", _qx, _qy)
+            tap_device(_qx, _qy, state, "MAIN_STORY_QUEST_TAP")
+            return "MAIN_STORY_QUEST_TAP", 2.0
+        # フォールバック: 画面下部中央をタップ
+        _qx, _qy = int(W * 0.5), int(H * 0.85)
+        logger.info(">>> MAIN STORY クエスト選択 — フォールバックタップ (%d,%d)", _qx, _qy)
+        tap_device(_qx, _qy, state, "MAIN_STORY_QUEST_FB")
+        return "MAIN_STORY_QUEST_FB", 2.0
+
+    # ─── 【最優先 #-1b2】Result画面 — 「次へ」ボタンタップ ───
+    # "Result" + "次へ" が見えたら即タップ (SWIPE_UP 誤マッチ防止)
+    _is_result_early = any("Result" in t for t in texts)
+    if _is_result_early:
+        _next_btn = has_text(ocr, "次へ", min_conf=0.3)
+        if _next_btn:
+            _nx, _ny = _next_btn["center"]
+            logger.info(">>> Result画面 — '次へ'(%d,%d) タップ", _nx, _ny)
+            tap_device(_nx, _ny, state, "RESULT_NEXT_EARLY")
+            return "RESULT_NEXT_EARLY", 1.5
+
+    # ─── 【最優先 #-1c】クエスト詳細画面 — 「挑戦」ボタンタップ ───
+    # ステージ番号 (1-1等) + "推奨" or "報酬" → クエスト詳細画面と判定
+    # "挑戦" はゴールド装飾フォントで OCR 検出不可のため固定位置タップ
+    # AssetManager (SWIPE_UP/DIALOG_NEXT) が誤マッチするため、ここで先に処理する
+    _quest_stage = has_any(ocr, ["1-1", "1-2", "1-3", "2-1", "2-2", "2-3",
+                                  "3-1", "3-2", "4-1", "4-2"])
+    _quest_detail_kw = any(kw in joined for kw in ["推奨", "報酬", "パーティ"])
+    if _quest_stage and _quest_detail_kw:
+        # OCR で挑戦テキストが読めた場合はその座標を使う
+        _quest_chal = None
+        for _qkw in ["挑戦", "戦闘", "出撃"]:
+            _qc = has_text(ocr, _qkw, min_conf=0.3)
+            if _qc and _qc["center"][1] > H * 0.5:
+                _quest_chal = _qc
+                break
+        if _quest_chal:
+            _qcx, _qcy = _quest_chal["center"]
+        else:
+            # 固定位置: 挑戦ボタンは画面下部中央 (x=50%, y=88%)
+            _qcx, _qcy = int(W * 0.50), int(H * 0.88)
+        if state.game_roi:
+            _roi_max_y = state.game_roi[1] + state.game_roi[3] - 5
+            _qcy = min(_qcy, _roi_max_y)
+        logger.info(">>> クエスト詳細 — 挑戦ボタン(%d,%d) タップ", _qcx, _qcy)
+        tap_device(_qcx, _qcy, state, "QUEST_DETAIL_CHALLENGE")
+        return "QUEST_DETAIL_CHALLENGE", 2.0
 
     # ─── 【最優先 #0-PRE】バトル発光SM ガード ─────────────────────────────────
     # DIALOG_CLOSE が「通常攻撃」等のバトルアクションを踏み越えるのを防ぐ。
@@ -1167,24 +1212,28 @@ def detect_and_act(ocr: list, state: PilotState,
                 _hx, _hy = _hand_pos
                 tap_x, tap_y = cx, cy  # デフォルト
 
-                # 【プライマリ】指の方向にある最近接OCRテキストをタップ
+                # 【プライマリ】指の方向にある最近接OCRテキストをタップ (距離200px以内)
+                _MAX_HAND_OCR_DIST = 200
                 _ocr_found = False
                 if _hand_dir and ocr:
                     _dir_items = []
                     for item in ocr:
-                        _tx, _ty = item[1], item[2]
+                        _tx, _ty = item["center"]
+                        _dist = abs(_hx - _tx) + abs(_hy - _ty)
+                        if _dist > _MAX_HAND_OCR_DIST:
+                            continue  # 遠すぎるOCRは無視
                         if _hand_dir == "up" and _ty < _hy:
-                            _dir_items.append((_tx, _ty, abs(_hx - _tx) + abs(_hy - _ty), item[0]))
+                            _dir_items.append((_tx, _ty, _dist, item["text"]))
                         elif _hand_dir == "down" and _ty > _hy:
-                            _dir_items.append((_tx, _ty, abs(_hx - _tx) + abs(_hy - _ty), item[0]))
+                            _dir_items.append((_tx, _ty, _dist, item["text"]))
                     if _dir_items:
                         _dir_items.sort(key=lambda d: d[2])  # 距離順
                         tap_x, tap_y = _dir_items[0][0], _dir_items[0][1]
                         _ocr_found = True
-                        logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → OCR '%s'(%d,%d)",
-                                    cx, cy, _hand_dir, _dir_items[0][3], tap_x, tap_y)
+                        logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → OCR '%s'(%d,%d) dist=%d",
+                                    cx, cy, _hand_dir, _dir_items[0][3], tap_x, tap_y, _dir_items[0][2])
 
-                # 【フォールバック】OCR なし → 指アイコン方向に80pxオフセット
+                # 【フォールバック】OCR なし or 距離内に該当なし → 指アイコン方向にオフセット
                 if not _ocr_found:
                     _offset = -80 if _hand_dir == "up" else 160
                     tap_x, tap_y = smart_tap_button(
@@ -3900,6 +3949,14 @@ def main():
             logger.info("解像度変化: %dx%d → %dx%d", state.device_w, state.device_h, actual_w, actual_h)
             state.device_w = actual_w
             state.device_h = actual_h
+
+        # ── 1.5) フォアグラウンドアプリ監視 (20iter毎 ≈ ~40秒) ──
+        if i > 0 and i % 20 == 0:
+            if check_foreground_app():
+                logger.info("[FOREGROUND_GUARD] 別アプリ検出 → ゲーム復帰、次ループへ")
+                state.last_phash = ""
+                time.sleep(3.0)
+                continue
 
         # ── 2) 暗転検出 ──
         if is_dark_screen(img_path):

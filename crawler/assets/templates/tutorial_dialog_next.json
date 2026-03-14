@@ -1,0 +1,5 @@
+{
+  "action": "ASSET_TUTORIAL_DIALOG_NEXT",
+  "threshold": 0.86,
+  "note": "チュートリアルダイアログの▷(次へ)矢印。クエスト装飾0.82/Chrome画面0.854で偽陽性 → 0.86で排除。"
+}

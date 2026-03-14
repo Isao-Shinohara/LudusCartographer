@@ -77,7 +77,6 @@ def _build_scrcpy_args(device_serial: str) -> list:
     return [
         _scrcpy_bin,
         "-s", device_serial,
-        "--turn-screen-off",   # 物理画面消灯
         "--stay-awake",
         "--max-size", str(MAX_WIDTH),
     ]
@@ -404,9 +403,8 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
         except ValueError:
             continue
         has_device = SCRCPY_DEVICE in line
-        has_screen_off = "--turn-screen-off" in line
         has_correct_size = f"--max-size {_expected_ms}" in line
-        if has_device and has_screen_off and has_correct_size:
+        if has_device and has_correct_size:
             conforming_pid = pid
             logger.info("[SCRCPY] 規定プロセス検出 PID=%d — 継続", pid)
         else:
@@ -432,7 +430,7 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        logger.info("[SCRCPY] 規定オプションで起動 PID=%d (device=%s, --turn-screen-off)",
+        logger.info("[SCRCPY] 規定オプションで起動 PID=%d (device=%s)",
                     proc.pid, SCRCPY_DEVICE)
         # ウィンドウ ID キャッシュをリセット (次回キャプチャ時に再取得)
         global _SCRCPY_WINDOW_ID

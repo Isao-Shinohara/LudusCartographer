@@ -1170,7 +1170,7 @@ _DIALOG_NEXT_TEMPLATE  = _CRAWLER_ROOT / "assets" / "templates" / "tutorial_dial
 
 def detect_tutorial_dialog_nav(img_path: Path,
                                 W: int = 1520, H: int = 720,
-                                threshold: float = 0.75) -> Optional[tuple[str, int, int]]:
+                                threshold: float = 0.85) -> Optional[tuple[str, int, int]]:
     """
     チュートリアルダイアログの ▷(次へ) または ×(閉じる) ボタンを検出する。
 
