@@ -5029,6 +5029,7 @@ def main():
         if _post_burst_count > 0:
             logger.info("[POST_OCR_BURST] 完了: %d タップ", _post_burst_count)
             state.last_phash = ""
+            state.last_action = action  # 主アクションを復元 (repeat counter 用)
             img_path = _post_burst_img
             continue
 
