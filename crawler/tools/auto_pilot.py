@@ -4429,6 +4429,21 @@ def main():
                         state.last_action = "MOVIE_WAIT"
                         state.last_phash = cur_phash
                         continue
+                    # アニメーション検出: 0.5s後に再スクショしphash比較
+                    # 動画再生中ならphashが変化する → タップせず待機
+                    # 静止画面ならphash変化なし → SCENE_TAP実行
+                    time.sleep(0.5)
+                    _st_retry_path, _st_retry_w, _st_retry_h, _ = take_screenshot()
+                    if _st_retry_path:
+                        _st_retry_img = prepare_analysis_image(_st_retry_path, _st_retry_w, _st_retry_h)
+                        _st_retry_ph = compute_phash(_st_retry_img) if _st_retry_img else ""
+                        _st_retry_dist = phash_distance(cur_phash, _st_retry_ph) if cur_phash and _st_retry_ph else 0
+                        if _st_retry_dist >= PHASH_THRESHOLD:
+                            logger.info("[iter %d] SCENE_TAP前検査: 0.5s後phash_dist=%d → アニメーション中 → 待機",
+                                        i, _st_retry_dist)
+                            state.last_action = "MOVIE_WAIT"
+                            state.last_phash = _st_retry_ph
+                            continue
                     _st_x = int(ANALYSIS_W * 0.5)
                     _st_y = int(ANALYSIS_H * 0.5)
                     logger.info("[iter %d] phash_dist=%d 非動画静止画面 → SCENE_TAP (%d,%d)",
@@ -4617,7 +4632,20 @@ def main():
                             state.last_action = "MOVIE_WAIT"
                             state.stall_start = 0.0  # ムービー待機中はスタックタイマー抑制
                             continue
-                        # 金色⏭なし → 動画ではない静止画面 → タップで進む
+                        # 金色⏭なし → アニメーション検査後にSCENE_TAP
+                        time.sleep(0.5)
+                        _st2_path, _st2_w, _st2_h, _ = take_screenshot()
+                        if _st2_path:
+                            _st2_img = prepare_analysis_image(_st2_path, _st2_w, _st2_h)
+                            _st2_ph = compute_phash(_st2_img) if _st2_img else ""
+                            _st2_dist = phash_distance(cur_phash, _st2_ph) if cur_phash and _st2_ph else 0
+                            if _st2_dist >= PHASH_THRESHOLD:
+                                logger.info("[iter %d] SCENE_TAP前検査: 0.5s後phash_dist=%d → アニメーション中 → 待機",
+                                            i, _st2_dist)
+                                state.last_action = "MOVIE_WAIT"
+                                state.stall_start = 0.0
+                                state.last_phash = _st2_ph
+                                continue
                         _st_x = int(ANALYSIS_W * 0.5)
                         _st_y = int(ANALYSIS_H * 0.5)
                         logger.info("[iter %d] 静止画面(非動画) → SCENE_TAP (%d,%d)", i, _st_x, _st_y)
@@ -5127,6 +5155,23 @@ def main():
         if action == "WAIT_FOR_CHANGE":
             state._wfc_consecutive = getattr(state, "_wfc_consecutive", 0) + 1
             if state._wfc_consecutive >= 3:
+                # アニメーション検査: 0.5s後に再スクショしphash比較
+                time.sleep(0.5)
+                _wfc_path, _wfc_w, _wfc_h, _ = take_screenshot()
+                _wfc_is_anim = False
+                if _wfc_path:
+                    _wfc_img = prepare_analysis_image(_wfc_path, _wfc_w, _wfc_h)
+                    _wfc_ph = compute_phash(_wfc_img) if _wfc_img else ""
+                    _wfc_dist = phash_distance(cur_phash, _wfc_ph) if cur_phash and _wfc_ph else 0
+                    if _wfc_dist >= PHASH_THRESHOLD:
+                        _wfc_is_anim = True
+                if _wfc_is_anim:
+                    logger.info("[WFC_ESCAPE] 0.5s後phash_dist=%d → アニメーション中 → タップ抑制",
+                                _wfc_dist)
+                    state._wfc_consecutive = 0
+                    state.last_action = "MOVIE_WAIT"
+                    state.last_phash = _wfc_ph
+                    continue
                 logger.warning(
                     "[WFC_ESCAPE] WAIT_FOR_CHANGE %d 回連続 → 中央タップでエスケープ",
                     state._wfc_consecutive,
