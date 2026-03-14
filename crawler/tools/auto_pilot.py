@@ -1143,8 +1143,13 @@ def detect_and_act(ocr: list, state: PilotState,
         asset_hit = ASSET_MANAGER.match(analysis_path, ocr_texts=texts)
         # DIALOG_NAV_RIGHT 連続空振りガード: 画面変化なく繰り返す場合は偽陽性
         if asset_hit and asset_hit[2] == "DIALOG_NAV_RIGHT":
-            # ポップアップ(ドット+blur)内では偽陽性率が高い → OCRカルーセルハンドラに委譲
+            # ページドット必須: ページングダイアログには必ずドットがある。
+            # ドット0個 = ページングダイアログではない → ▷ テンプレは偽陽性
             _popup_dots_nav = count_page_dots(analysis_path) if analysis_path else 0
+            if _popup_dots_nav == 0:
+                logger.info("[DIALOG_NAV] ページドット未検出 → ▷ マッチは偽陽性、スキップ")
+                asset_hit = None
+            # ポップアップ(ドット+blur)内では偽陽性率が高い → OCRカルーセルハンドラに委譲
             if _popup_dots_nav >= 2:
                 _pi_nav = imread_cached(analysis_path) if analysis_path else None
                 if _pi_nav is not None and _detect_background_blur(
@@ -3090,13 +3095,24 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
                     int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
                 _rapid_action = "BATTLE_RAPID_NORMATK_P2"
 
-    # ── Phase C: フォールバック → 右側攻撃ボタン ──
+    # ── Phase C: フォールバック → 0.5秒待機+再確認 → 右側攻撃ボタン ──
     if not _rapid_action:
         if state.normatk_fallback.stalled:
             logger.info("[BATTLE] FALLBACK %d回連続 → OCR で再評価",
                         state.normatk_fallback.count)
             state.normatk_fallback.reset()
             return False
+        # 敵ターン/アニメーション中の可能性 → 待機+再スクショで確認
+        time.sleep(0.5)
+        _retry_path, _retry_w, _retry_h, _ = take_screenshot()
+        if _retry_path:
+            _retry_analysis = prepare_analysis_image(_retry_path, _retry_w, _retry_h)
+            _retry_active = detect_active_battle_char(
+                _retry_analysis, ANALYSIS_W, ANALYSIS_H)
+            if _retry_active:
+                # プレイヤーターンに切り替わった → 再解析して正規パスへ
+                logger.info("[BATTLE] 再確認でACTIVE_CHAR検出 → 次ループで正規処理")
+                return True  # 次ループで handle_battle が再呼出される
         _rapid_tx, _rapid_ty = roi_to_device(
             int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
         _rapid_action = "BATTLE_RAPID_NORMATK_FALLBACK"
@@ -3176,7 +3192,17 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
             else:
                 break
         if _burst_count > 0:
-            logger.info("[ADV] バースト完了: %d タップ", _burst_count)
+            # バースト後 phash 比較: 画面変化なし → ↓ 検出が偽陽性 → ADV判定失敗
+            try:
+                _post_burst_phash = compute_phash(_burst_img)
+                _burst_dist = phash_distance(cur_phash, _post_burst_phash) if cur_phash and _post_burst_phash else 999
+            except Exception:
+                _burst_dist = 999
+            if _burst_dist < PHASH_THRESHOLD:
+                logger.warning("[ADV] バースト %d タップ後も画面変化なし (dist=%d) → ADV判定失敗",
+                               _burst_count, _burst_dist)
+                return False
+            logger.info("[ADV] バースト完了: %d タップ (dist=%d)", _burst_count, _burst_dist)
             state.movie_wait_consecutive = 0
             state.last_phash = ""
             return True
@@ -4775,7 +4801,7 @@ def main():
                             int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
                         _rapid_action = "BATTLE_RAPID_NORMATK_P2"
 
-            # ── Phase C: 左モヤなしフォールバック → 右側攻撃ボタン ──
+            # ── Phase C: 左モヤなしフォールバック → 待機+再確認 → 右側攻撃ボタン ──
             # 【永続ルール】左キャラにモヤがない場合は常に右側の通常攻撃/戦闘スキルをタップ
             # 安全弁: 連続10回フォールバック → バトル以外のシーンの可能性 → OCR 再評価
             if not _rapid_action:
@@ -4785,6 +4811,17 @@ def main():
                     state.normatk_fallback.reset()
                     # BATTLE_RAPID を抜けて OCR に回す (continue しない)
                 else:
+                    # 敵ターン/アニメーション中の可能性 → 待機+再スクショで確認
+                    time.sleep(0.5)
+                    _fb_path, _fb_w, _fb_h, _ = take_screenshot()
+                    if _fb_path:
+                        _fb_analysis = prepare_analysis_image(_fb_path, _fb_w, _fb_h)
+                        _fb_active = detect_active_battle_char(
+                            _fb_analysis, ANALYSIS_W, ANALYSIS_H)
+                        if _fb_active:
+                            logger.info("[BATTLE_RAPID] 再確認でACTIVE_CHAR検出 → 次ループで正規処理")
+                            img_path = _fb_analysis
+                            continue
                     _rapid_tx, _rapid_ty = roi_to_device(
                         int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
                     _rapid_action = "BATTLE_RAPID_NORMATK_FALLBACK"
