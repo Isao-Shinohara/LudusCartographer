@@ -5106,12 +5106,14 @@ def main():
                 # → 画面中央タップでエスケープ (動画は字幕位置タップでは進まない)
                 if action == _pre_reeval_action and action in (
                     "STORY_TAP", "MOYA_TAP", "ADV_NEXT_FALLBACK",
-                    "ASSET_TUTORIAL_DIALOG_NEXT",
+                    "ASSET_TUTORIAL_DIALOG_NEXT", "GOLD_BTN_TAP",
+                    "FINGER_GOLD_TAP",
                 ):
-                    # DIALOG_NEXT スタック → BACK キーで閉じる (ポップアップ最終ページ)
-                    if action == "ASSET_TUTORIAL_DIALOG_NEXT":
+                    # DIALOG_NEXT / GOLD_BTN スタック → BACK キーで閉じる
+                    if action in ("ASSET_TUTORIAL_DIALOG_NEXT",
+                                  "GOLD_BTN_TAP", "FINGER_GOLD_TAP"):
                         logger.warning(
-                            "[SCENE_REEVAL_ESCAPE] DIALOG_NEXT スタック → BACK キーで脱出")
+                            "[SCENE_REEVAL_ESCAPE] '%s' スタック → BACK キーで脱出", action)
                         adb("shell input keyevent KEYCODE_BACK")
                         state.last_action = "REEVAL_BACK_ESCAPE"
                     else:
