@@ -5045,14 +5045,22 @@ def main():
                 # → 画面中央タップでエスケープ (動画は字幕位置タップでは進まない)
                 if action == _pre_reeval_action and action in (
                     "STORY_TAP", "MOYA_TAP", "ADV_NEXT_FALLBACK",
+                    "ASSET_TUTORIAL_DIALOG_NEXT",
                 ):
-                    logger.warning(
-                        "[SCENE_REEVAL_ESCAPE] 再判定でも '%s' → 中央タップでエスケープ",
-                        action,
-                    )
-                    tap_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state,
-                               desc="REEVAL_CENTER_ESCAPE")
-                    state.last_action = "REEVAL_CENTER_ESCAPE"
+                    # DIALOG_NEXT スタック → BACK キーで閉じる (ポップアップ最終ページ)
+                    if action == "ASSET_TUTORIAL_DIALOG_NEXT":
+                        logger.warning(
+                            "[SCENE_REEVAL_ESCAPE] DIALOG_NEXT スタック → BACK キーで脱出")
+                        adb("shell input keyevent KEYCODE_BACK")
+                        state.last_action = "REEVAL_BACK_ESCAPE"
+                    else:
+                        logger.warning(
+                            "[SCENE_REEVAL_ESCAPE] 再判定でも '%s' → 中央タップでエスケープ",
+                            action,
+                        )
+                        tap_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state,
+                                   desc="REEVAL_CENTER_ESCAPE")
+                        state.last_action = "REEVAL_CENTER_ESCAPE"
             except Exception as _re_err:
                 logger.debug("[SCENE_REEVAL] 再評価例外: %s", _re_err)
             state.scene_reeval_mode = False
