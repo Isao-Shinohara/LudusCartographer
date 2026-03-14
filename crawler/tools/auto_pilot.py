@@ -711,6 +711,7 @@ def detect_and_act(ocr: list, state: PilotState,
         _dl_texts = [t for t in texts if "Download" in t or "MB" in t or "GB" in t or "ダウンロード" in t]
         logger.info(">>> [DOWNLOAD_STRICT] 右下ゲージ確認: %s — ダウンロード待機", _dl_texts)
         state.download_active = True
+        _log_milestone(state, "DL_START")
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
 
     # ── 【#-2.9】確認ダイアログ — 肯定ボタン最優先 ──
@@ -849,6 +850,7 @@ def detect_and_act(ocr: list, state: PilotState,
 
         if _agree_changed:
             logger.info(">>> 【Unity初期化待機】 30秒 Watchdog停止 (NOTICE_DISMISS exempt)")
+            _log_milestone(state, "NOTICE_DISMISS")
             return "NOTICE_DISMISS", 30.0
         else:
             logger.info(">>> 【ご注意→リトライ上限(5回)】 次ループで再検出")
@@ -996,6 +998,7 @@ def detect_and_act(ocr: list, state: PilotState,
         if _ni_name_texts and _ni_ok:
             _ni_cx, _ni_cy = roi_to_device(_ni_ok["center"][0], int(H * 0.78), state.game_roi)
             logger.info(">>> 【名前入力 OK】 入力済み='%s' → ROI補正(%d,%d) タップ", _ni_name_texts[0], _ni_cx, _ni_cy)
+            _log_milestone(state, "NAME_INPUT")
             tap_device(_ni_cx, _ni_cy, state, "NAME_INPUT_OK")
             return "NAME_INPUT_OK", 2.0
         elif _ni_ok:
@@ -1491,6 +1494,8 @@ def detect_and_act(ocr: list, state: PilotState,
     if analysis_path is not None:
         # 「AUTO」のみはストーリー画面にも表示されるため除外、戦闘固有キーワードで判定
         is_battle_screen = any(kw in joined for kw in _BATTLE_CORE_KWS)
+        if is_battle_screen:
+            _log_milestone(state, "FIRST_BATTLE")
         # ── 速度チュートリアル早期検出 (もや検出より前に処理) ──
         _speed_tip_early = has_any(ocr, ["このボタンでバトル", "進行速度を変更"])
         if _speed_tip_early and is_battle_screen:
@@ -1522,6 +1527,7 @@ def detect_and_act(ocr: list, state: PilotState,
         )
         if is_title_screen:
             logger.info("  タイトル画面検出 → TAP TO START (760,628) タップ")
+            _log_milestone(state, "TITLE_TAP")
             _tt_x, _tt_y = roi_to_device(int(W * 0.5), int(H * 0.87), state.game_roi)
             tap_device(_tt_x, _tt_y, state, "TITLE_TAP_START")
             return "TITLE_TAP", 2.0
@@ -2134,6 +2140,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 tap_device(_qf_x, _qf_y, state, "GRIND_QUEST_NAV_FIXED")
             return "GRIND_QUEST_NAV", 3.0
         logger.info(">>> ホーム画面検出! (%d個) 指/金枠なし → チュートリアル完了!", home_count)
+        _log_milestone(state, "HOME_REACHED")
         return "HOME_REACHED", 0
 
     # ─── ダウンロード/ロード中 (セカンダリチェック) ───
@@ -2557,7 +2564,9 @@ def watchdog_recover(state: PilotState) -> bool:
 
 # ─── マイルストーン到達時間ログ ────────────────────────
 def _log_milestone(state: PilotState, milestone: str) -> None:
-    """目標到達時の経過時間をログ出力する。"""
+    """目標到達時の経過時間をログ出力する。同一マイルストーンは初回のみ記録。"""
+    if milestone in state.milestone_logged:
+        return  # 重複防止: 同じマイルストーンは初回のみ
     _now = time.time()
     _elapsed = _now - state.launch_time
     _m, _s = divmod(int(_elapsed), 60)
@@ -2569,6 +2578,52 @@ def _log_milestone(state: PilotState, milestone: str) -> None:
         logger.info("  [TIMER] %s — 起動から %d時間%02d分%02d秒 (途中再開のため総所要時間は計測不可)",
                     milestone, _h, _m, _s)
     state.milestone_logged[milestone] = _elapsed
+
+
+# ─── フェーズタイムライン生成 ────────────────────────────
+_PHASE_LABELS: dict[str, str] = {
+    "APP_LAUNCH":     "アプリ起動",
+    "NOTICE_DISMISS": "ご注意画面",
+    "TITLE_TAP":      "タイトル画面",
+    "FIRST_BATTLE":   "初回バトル開始",
+    "DL_START":       "ダウンロード開始",
+    "DL_END":         "ダウンロード完了",
+    "NAME_INPUT":     "名前入力",
+    "HOME_REACHED":   "ホーム画面到達",
+}
+
+
+def _build_phase_timeline(state: PilotState) -> list[str]:
+    """マイルストーンから Markdown テーブル形式のフェーズタイムラインを生成する。"""
+    milestones = state.milestone_logged
+    if not milestones:
+        return ["## フェーズタイムライン", "(マイルストーン未記録)"]
+
+    def _fmt_time(secs: float) -> str:
+        m, s = divmod(int(secs), 60)
+        h, m = divmod(m, 60)
+        if h > 0:
+            return f"{h}:{m:02d}:{s:02d}"
+        return f"{m}:{s:02d}"
+
+    lines = [
+        "## フェーズタイムライン",
+        "",
+        "| フェーズ | 到達時刻 | 区間時間 |",
+        "|---------|---------|---------|",
+    ]
+    # マイルストーンを到達時刻順にソート
+    sorted_ms = sorted(milestones.items(), key=lambda x: x[1])
+    prev_time = 0.0
+    for name, elapsed in sorted_ms:
+        label = _PHASE_LABELS.get(name, name)
+        delta = elapsed - prev_time
+        lines.append(f"| {label} | {_fmt_time(elapsed)} | +{_fmt_time(delta)} |")
+        prev_time = elapsed
+    # 合計行
+    total = sorted_ms[-1][1] if sorted_ms else 0.0
+    lines.append(f"| **合計** | **{_fmt_time(total)}** | |")
+    return lines
 
 
 # ─── レポート生成 + クリップボードコピー ────────────────
@@ -2639,8 +2694,8 @@ def generate_and_copy_report(state: PilotState, reason: str) -> None:
         f"- 最終シーン           : {state.current_scene}",
         f"- Rank                 : {'1 / HOME REACHED' if state.home_reached else 'In Progress'}",
         f"- 起動種別             : {'新規スタート (--fresh-install)' if state.is_fresh_start else '途中再開'}",
-        *[f"- {k}: {int(v // 3600)}h{int(v % 3600 // 60):02d}m{int(v % 60):02d}s"
-          for k, v in state.milestone_logged.items()],
+        "",
+        *_build_phase_timeline(state),
         "",
         "## 最新コミット",
         f"- commit: {commit_id}",
@@ -3824,6 +3879,7 @@ def main():
         adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
         time.sleep(5)
 
+    _log_milestone(state, "APP_LAUNCH")
     logger.info("[TOKEN_SAVE] 節約モード稼働中。バトル発光検知で OCR スキップ → 爆速モードで進行します")
 
     # ─── ランドスケープ待機: ポートレートならアプリ起動待ち ───
@@ -4074,6 +4130,7 @@ def main():
         if state.download_active and dist >= 20:
             logger.info("[DL_PROTECT] phash_dist=%d >= 20 → download_active 解除", dist)
             state.download_active = False
+            _log_milestone(state, "DL_END")
 
         # ── 動的しきい値: Gold UI アクション後はアニメーション変化でも即解析 ──
         if not screen_changed and state.last_action in _GOLD_UI_ACTIONS and dist >= 1:
