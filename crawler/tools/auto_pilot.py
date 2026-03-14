@@ -685,6 +685,13 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.debug("[detect_and_act] MOVIE シーン → タップ抑制, 待機")
         return "MOVIE_WAIT", 0.5
 
+    # ── 【#-3a】Loading 画面保護 ──
+    # "Now Loading" 等が表示されている間は金枠/指ブロブの誤検出でタップしない
+    _loading_kws = ["Now Loading", "Loading", "読み込み中", "接続しています"]
+    if any(kw in joined for kw in _loading_kws) and len(texts) <= 3:
+        logger.debug("[detect_and_act] Loading 画面 (%d件) → タップ抑制", len(texts))
+        return "LOADING_WAIT", 1.0
+
     # ── 【#-3】ダウンロード画面の厳格判定 ──
     # 条件: 右下エリアに "Download" テキスト + "MB" 進捗テキストが両方存在
     # → これ以外の画面は 100% ゲーム実行中であり、ロード待ちを禁止する。
@@ -1656,7 +1663,7 @@ def detect_and_act(ocr: list, state: PilotState,
                         logger.info("  ホーム金枠検出: (%d,%d) 暗転なし → 通常ホーム、スキップ", *_ht_gold)
                 if _ht_target:
                     state.home_tutorial_tap_count += 1
-                    if state.home_tutorial_tap_count < 10:
+                    if state.home_tutorial_tap_count < 5:
                         tap_device(_ht_target[0], _ht_target[1], state, "HOME_TUTORIAL_TAP")
                         return "HOME_TUTORIAL_TAP", 0.5
                     else:
