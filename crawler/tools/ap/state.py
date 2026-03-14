@@ -149,6 +149,8 @@ class PilotState:
         default_factory=lambda: StallCounter("battle_rapid_consecutive", threshold=50))
     # ─── MOVIE_WAIT 脱出カウンタ ───
     movie_wait_consecutive: int = 0
+    # ─── MOVIE 一時停止検知 (phash 静止カウンタ) ───
+    movie_static_count: int = 0
     # ─── ADV 連続検出カウンタ (phash 動的拡大用) ───
     adv_confirmed_count: int = 0
     # ─── ADV_EARLY 連続ハンドル回数 (スタック脱出用) ───
@@ -158,10 +160,6 @@ class PilotState:
     post_download_ttl: int = 0  # 残りイテレーション数 (0=即クリア許可)
     # ─── ダウンロード中フラグ (誤タップ保護) ───
     download_active: bool = False
-    # ─── キャッシュ (per-phash サイクル) ───
-    _adv_toolbar_cache_phash: str = ""     # キャッシュ有効な phash 値
-    _adv_toolbar_cache_result: bool = False # 後方互換 (is_adv_toolbar_cached用)
-    _adv_scene_cache_result: object = None  # AdvSceneResult (循環import回避でobject型)
     # ─── テレメトリ (DEBUG レベル) ───
     last_action_time: float = 0.0          # 直近アクションの実行時刻
     last_capture_time: float = 0.0         # 直近スクショ取得時刻

@@ -177,7 +177,7 @@ from tools.ap.image_proc import (  # noqa: E402
     prepare_analysis_image,
     find_finger_blobs, detect_white_hand_pointer, create_finger_mask_image,
     detect_guide_glow, _run_battle_glow_sm, detect_active_battle_char,
-    find_gold_frame_near, is_adv_toolbar_cached, detect_adv_advance_icon,
+    find_gold_frame_near, detect_adv_advance_icon,
     is_adv_toolbar_visible, detect_movie_skip_button, detect_mini_conversation,
     detect_tutorial_dialog_nav, detect_dialog_frame_and_nav,
     process_paging_dialog, detect_notice_popup, count_page_dots, _detect_background_blur,
@@ -185,7 +185,7 @@ from tools.ap.image_proc import (  # noqa: E402
     detect_tutorial_gold_swipe, detect_tutorial_gold_button_tap, detect_tutorial_overlay,
     smart_tap_button, find_golden_highlighted_button, find_3d_arrow,
     AssetManager, ASSET_MANAGER,
-    detect_adv_scene, detect_adv_scene_cached, AdvSceneResult,
+    detect_adv_scene, AdvSceneResult,
     detect_movie_scene, MovieSceneResult,
     clear_imread_cache, imread_cached,
 )
@@ -663,8 +663,8 @@ def detect_and_act(ocr: list, state: PilotState,
     """
     texts = all_texts(ocr)
     W, H = ANALYSIS_W, ANALYSIS_H
-    # ADVシーン検出結果 (detect_adv_scene_cached で事前計算済み)
-    _adv_result: AdvSceneResult = state._adv_scene_cache_result or AdvSceneResult()
+    # ADVシーン検出結果 (detect_adv_scene で毎回フレッシュ検出)
+    _adv_result: AdvSceneResult = AdvSceneResult()
     joined = " ".join(texts)
 
     # ── 【#-5】ブラウザ脱出 — WEB SHOP 等の外部リンクを検出したら即 BACK ──
@@ -2237,7 +2237,7 @@ def detect_and_act(ocr: list, state: PilotState,
             return "BATTLE_TUTORIAL", 0.0
 
         # バトルチュートリアル: 必殺技
-        hissatsu_tut = has_any(ocr, ["CTDアップ", "必殺技"])
+        hissatsu_tut = has_any(ocr, ["CTDアップ", "必殺技", "巫殺技"])
         if hissatsu_tut:
             hx, hy = roi_to_device(int(W * 0.862), int(H * 0.778), state.game_roi)
             logger.info(">>> 必殺技チュートリアル (%d,%d)", hx, hy)
@@ -2807,24 +2807,26 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     _MOVIE_ACTIONS = ("MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_RESUME_TAP", "MOVIE_SKIP_ESCAPE")
     if state.last_action in _MOVIE_ACTIONS and img_path:
         # ── ポップアップ脱出 (MOVIE慣性より優先) ──
+        # ただし phash 変化中 (動画再生中) はポップアップ誤検出の可能性が高いためスキップ
+        # 動画の映像がドット+ぼかしに誤検出されるケースを防止
         _inertia_dots = count_page_dots(img_path)
-        if _inertia_dots >= 2:
+        if _inertia_dots >= 2 and dist < PHASH_THRESHOLD:
             _img_blur = imread_cached(img_path)
             _is_popup = _img_blur is not None and _detect_background_blur(
                 _img_blur, _img_blur.shape[0], _img_blur.shape[1])
             if _is_popup:
-                logger.info("[SCENE_EARLY] MOVIE慣性中だがドット=%d+背景ぼかし → ポップアップ脱出", _inertia_dots)
+                logger.info("[SCENE_EARLY] MOVIE慣性中だがドット=%d+背景ぼかし+静止 → ポップアップ脱出", _inertia_dots)
                 state.last_action = "SCENE_TAP"
-                state.movie_wait_consecutive = 0
+                state.movie_wait_consecutive = 0; state.movie_static_count = 0
                 return "UNKNOWN"
 
         # ── ADV 証拠チェック (ADV ツールバー or ↓ ボタン → MOVIE 脱出) ──
-        adv = detect_adv_scene_cached(img_path, state)
+        adv = detect_adv_scene(img_path, roi=state.game_roi)
         if adv.is_adv or state.current_scene in ("BATTLE", "MENU"):
             # ADV/BATTLE/MENU の明確な証拠 → MOVIE 脱出
             logger.info("[MOVIE_INERTIA] ADV/BATTLE/MENU 証拠あり → MOVIE脱出")
             state.last_action = "SCENE_TAP"
-            state.movie_wait_consecutive = 0
+            state.movie_wait_consecutive = 0; state.movie_static_count = 0
             state._movie_resume_used = False
         else:
             # ADV 証拠チェック: ↓ボタンのみ (MOVIE中はAUTO単独を信頼しない)
@@ -2832,8 +2834,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             if _adv_down:
                 logger.info("[MOVIE_INERTIA] ↓ボタン検出 → ADV確定, MOVIE脱出")
                 state.last_action = "SCENE_TAP"
-                state.movie_wait_consecutive = 0
-                pass  # _movie_resume_used 廃止
+                state.movie_wait_consecutive = 0; state.movie_static_count = 0
             else:
                 # ADV 証拠なし → ⏭ ボタンで動画継続/終了を判定
                 _movie_chk = detect_movie_scene(
@@ -2841,15 +2842,31 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 if _movie_chk.is_movie and _movie_chk.has_skip_btn:
                     # ⏭ あり + ADV証拠なし → 動画継続
                     return "MOVIE"
-                # ⏭ なし → 動画終了
-                # movie_wait_consecutive はリセットしない
-                # (Movie scoring guard で再検出されたときにESCAPEカウントが進むように)
-                logger.info("[MOVIE_INERTIA] ⏭消失 (consecutive=%d, dist=%d) → 動画終了",
+                # ⏭ 未検出でも phash が変化中 (アニメーション) → 動画再生中
+                # 動画はタップ不要で自動終了→自動遷移するため、
+                # phash 変化中は MOVIE 維持して待機 (⏭テンプレの一時的不一致に耐性)
+                if dist >= PHASH_THRESHOLD:
+                    logger.info("[MOVIE_INERTIA] ⏭未検出だが phash_dist=%d (動画再生中) → MOVIE継続",
+                                dist)
+                    return "MOVIE"
+                # ⏭ なし + 画面静止 → 動画終了 (自動遷移済み)
+                logger.info("[MOVIE_INERTIA] ⏭消失+静止 (consecutive=%d, dist=%d) → 動画終了",
                             state.movie_wait_consecutive, dist)
                 state.last_action = "SCENE_TAP"
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
+    # 10回に1回テンプレートで実在確認 (Result画面等での誤BATTLE継続を防止)
     if state.current_scene == "BATTLE" and dist < 30:
+        if state.battle_rapid_consecutive.count > 0 and state.battle_rapid_consecutive.count % 3 == 0:
+            from tools.ap.image_proc import ASSET_MANAGER as _AM_verify
+            _verify_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
+                           int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+            _v_atk = _AM_verify.match_single("battle_normal_attack", img_path, roi=_verify_roi)
+            _v_skl = _AM_verify.match_single("battle_skill", img_path, roi=_verify_roi)
+            _v_best = max((_v_atk[2] if _v_atk else 0), (_v_skl[2] if _v_skl else 0))
+            if _v_best < 0.70:
+                logger.info("[SCENE_EARLY] BATTLE継続チェック: テンプレ未検出 (best=%.2f) → UNKNOWN", _v_best)
+                return "UNKNOWN"
         return "BATTLE"
 
     # BATTLE 初回/再検出: 右下の「通常攻撃」or「戦闘スキル」ボタンアイコンで判定
@@ -2895,7 +2912,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             _auto_m = _AM_adv.match_single("adv_icon_auto", img_path, roi=_auto_roi)
             if _auto_m and _auto_m[2] >= 0.50:
                 # AUTO あり → ADV ツールバーも確認 (バトル画面の AUTO 誤一致を排除)
-                _adv_check = detect_adv_scene_cached(img_path, state)
+                _adv_check = detect_adv_scene(img_path, roi=state.game_roi)
                 if _adv_check.is_adv:
                     return "ADV"
                 # ツールバーなし + AUTO あり → BATTLE の可能性。フォールスルー
@@ -2906,7 +2923,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
     # ADV: ツールバー検出 (MENU シーンは OCR でボタン検出が必要)
     if state.current_scene != "MENU":
-        adv = detect_adv_scene_cached(img_path, state)
+        adv = detect_adv_scene(img_path, roi=state.game_roi)
         if adv.is_adv:
             return "ADV"
 
@@ -2925,7 +2942,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
     if state.last_action not in _MOVIE_ACTIONS:
-        _adv = detect_adv_scene_cached(img_path, state)
+        _adv = detect_adv_scene(img_path, roi=state.game_roi)
         _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist)
         if _movie.is_movie and _movie.has_skip_btn:
             logger.info("[SCENE_EARLY] Movie初回検出 (conf=%.2f, ⏭あり) → MOVIE", _movie.confidence)
@@ -2953,7 +2970,7 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
             _sk_x, _sk_y = roi_to_device(_skip_pos[0], _skip_pos[1], state.game_roi)
             logger.info("[MOVIE] DL直後 + SKIP検出 → SKIPタップ (%d,%d) でループ脱出", _sk_x, _sk_y)
             tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP")
-            state.movie_wait_consecutive = 0
+            state.movie_wait_consecutive = 0; state.movie_static_count = 0
             state.last_phash = ""
             return True
         logger.info("[MOVIE] DL直後だが SKIP 未検出 → 待機")
@@ -2961,36 +2978,33 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     # ── 待機カウンタ ──
     state.movie_wait_consecutive += 1
 
-    # ── MOVIE_ESCAPE: 長時間待機 → ⏭ ボタンタップで脱出 ──
-    # handle_movie が True を返すとメインループの MOVIE_GUARD_ESCAPE に到達しないため、
-    # ここで独自のエスケープ機構を持つ。120回 (~60秒) で ⏭ タップ試行。
-    _HANDLE_MOVIE_ESCAPE = 30
-    if state.movie_wait_consecutive >= _HANDLE_MOVIE_ESCAPE:
-        _skip_pos = detect_movie_skip_button(img_path)
-        if _skip_pos:
-            _sk_x, _sk_y = roi_to_device(_skip_pos[0], _skip_pos[1], state.game_roi)
-            logger.info("[MOVIE_ESCAPE] 待機 %d 回 → ⏭タップ (%d,%d)",
-                        state.movie_wait_consecutive, _sk_x, _sk_y)
-            tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP_ESCAPE")
-            state.movie_wait_consecutive = 0
-            state.last_phash = ""
-            return True
-        else:
-            # ⏭ なし → 画面中央タップで脱出試行
-            _cx = int(W * 0.5)
-            _cy = int(H * 0.5)
-            _dx, _dy = roi_to_device(_cx, _cy, state.game_roi)
-            logger.info("[MOVIE_ESCAPE] 待機 %d 回 + ⏭なし → 中央タップ (%d,%d)",
-                        state.movie_wait_consecutive, _dx, _dy)
-            tap_device(_dx, _dy, state, "MOVIE_SKIP_ESCAPE")
-            state.movie_wait_consecutive = 0
-            state.last_phash = ""
-            return True
+    # ── 一時停止検知: phash 変化なし (静止) が連続 → 誤って一時停止された可能性 ──
+    _MOVIE_PAUSE_THRESHOLD = 8  # 8回静止 (~4秒) で一時停止と判定
+    if dist < PHASH_THRESHOLD:
+        state.movie_static_count += 1
+    else:
+        state.movie_static_count = 0  # 動画再生中 (画面変化あり) → リセット
+
+    if state.movie_static_count >= _MOVIE_PAUSE_THRESHOLD:
+        logger.warning("[MOVIE_PAUSE] 静止 %d 回連続 (dist=%d) → 一時停止と判定、タップで再開",
+                       state.movie_static_count, dist)
+        tap_device(int(W * 0.5), int(H * 0.5), state, "MOVIE_RESUME")
+        state.movie_static_count = 0
+        state.last_phash = ""  # phash リセットして次フレームで変化を見る
+        state.last_action = "MOVIE_WAIT"
+        state.stall_start = 0.0
+        time.sleep(1.0)
+        return True
+
+    # ── 長時間待機ログ ──
+    if state.movie_wait_consecutive >= 30 and state.movie_wait_consecutive % 30 == 0:
+        logger.info("[MOVIE] 長時間待機 %d 回 — 動画自動終了を待機中",
+                    state.movie_wait_consecutive)
 
     # ── 通常待機 (動画は自動終了するのでタップせず待つ) ──
-    roi_x = state.game_roi[0] if state.game_roi else 0
-    logger.info("[MOVIE] roi_x=%d → 待機 (%d)",
-                roi_x, state.movie_wait_consecutive)
+    logger.info("[MOVIE] 待機 (%d) dist=%d static=%d/%d",
+                state.movie_wait_consecutive, dist,
+                state.movie_static_count, _MOVIE_PAUSE_THRESHOLD)
     state.last_action = "MOVIE_WAIT"
     state.stall_start = 0.0
     time.sleep(0.5)
@@ -3027,6 +3041,16 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
         state.battle_rapid_consecutive.reset()
         return False
 
+    # ── バトルUIガード: 通常攻撃ボタンが見えなければ Result/ADV の可能性 → OCR へ ──
+    # 3回に1回チェック (テンプレートマッチ ~10ms のコストは無視できる)
+    if state.battle_rapid_consecutive.count > 0 and state.battle_rapid_consecutive.count % 3 == 0:
+        _atk_m = ASSET_MANAGER.match_single("battle_normal_attack", analysis_path)
+        if not _atk_m or _atk_m[2] < 0.70:
+            logger.info("[BATTLE] 通常攻撃ボタン未検出 (count=%d) → OCR で再評価",
+                        state.battle_rapid_consecutive.count)
+            state.battle_rapid_consecutive.reset()
+            return False
+
     _rapid_tx = _rapid_ty = 0
     _rapid_action = ""
     _rapid_double = False
@@ -3043,20 +3067,33 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     # 通常のボタン発光と区別可能。ガードすると戦闘スキル等のチュートリアル金枠を見逃す。
     # BATTLE: 右半分のみ (左側キャラアイコンの菱形装飾を金枠と誤検出するため)
     # handle_battle() はバトル専用関数なので常に right_half_only=True
-    _gold_tap = detect_tutorial_gold_button_tap(analysis_path, right_half_only=True)
+    # ── ただしチュートリアル暗転中は全画面探索 (速度ボタン等の左上UIも検出) ──
+    _is_overlay = detect_tutorial_overlay(analysis_path)
+    _gold_tap = detect_tutorial_gold_button_tap(
+        analysis_path, right_half_only=True, overlay_mode=_is_overlay)
     if _gold_tap:
         _rapid_tx, _rapid_ty = _gold_tap
-        _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
+        # overlay_mode で見つけた金枠がキャラカード領域 (左下) なら偽検出 → スキップ
+        if _is_overlay and _rapid_tx < ANALYSIS_W * 0.5 and _rapid_ty > ANALYSIS_H * 0.55:
+            logger.info("[BATTLE_RAPID] overlay金枠 (%d,%d) はキャラカード領域 → スキップ",
+                        _rapid_tx, _rapid_ty)
+        else:
+            _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
+            if _is_overlay:
+                logger.info("[BATTLE_RAPID] 暗転オーバーレイ検出 → 全画面金枠探索で (%d,%d) 発見",
+                            _rapid_tx, _rapid_ty)
     # フォールバック: detect_tutorial_gold_button_tap が条件で弾いた場合でも
     # 大面積ブロブ + find_gold_frame_near で金枠が見つかればそちらを使用
     # バトル: 右半分 (x>W/2) かつ y>35% のみ (左キャラアイコン・上部UI排除)
+    # 暗転オーバーレイ中は全画面許可
     if not _rapid_action and _rapid_blobs:
         for _rb in _rapid_blobs:
             if _rb[2] >= 15000:  # 大面積ブロブ
                 _gf = find_gold_frame_near(analysis_path, _rb[0], _rb[1], search_radius=200)
                 if _gf is not None:
                     # バトル中: 右半分・下部のみ有効 (上部UI・左キャラ排除)
-                    if _gf[0] < ANALYSIS_W * 0.5 or _gf[1] < ANALYSIS_H * 0.35:
+                    # 暗転オーバーレイ中はバイパス
+                    if not _is_overlay and (_gf[0] < ANALYSIS_W * 0.5 or _gf[1] < ANALYSIS_H * 0.35):
                         logger.debug("[BATTLE_RAPID] 金枠フォールバック排除: gold(%d,%d) 左側/上部",
                                      _gf[0], _gf[1])
                         continue
@@ -3156,83 +3193,41 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
     Returns: True if handled, False for fallthrough to OCR.
     """
     W, H = ANALYSIS_W, ANALYSIS_H
-    adv = detect_adv_scene_cached(img_path, state)
+    adv = detect_adv_scene(img_path, roi=state.game_roi)
     _adv_tap_x = int(W * 0.93)
     _adv_tap_y = int(H * 0.91)
 
-    # ── ADV ツールバー確認 → バーストタップ ──
+    # ── ADV ツールバー確認 → 1回タップ ──
     # NOTE: detect_adv_advance_icon() 単独ではバトル画面で偽陽性が出るため
     # ADVツールバー判定 (is_adv) を必須条件にする
     if adv.is_adv:
-        _burst_count = 0
-        _burst_max = 3
-        _burst_img = img_path
-        while _burst_count < _burst_max:
-            if detect_adv_advance_icon(_burst_img):
-                _burst_count += 1
-                logger.info("[ADV] ↓検出 → タップ #%d (%d,%d)",
-                            _burst_count, _adv_tap_x, _adv_tap_y)
-                tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
-                state.last_action = "ADV_RAPID_TAP"
-                _b_path, _b_w, _b_h, _ = take_screenshot()
-                if _b_path is None:
-                    break
-                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
-            elif adv.is_adv and adv.next_btn_pos and _burst_count == 0:
-                _adv_nx = int(adv.next_btn_pos[0] * W / actual_w)
-                _adv_ny = int(adv.next_btn_pos[1] * H / actual_h)
-                logger.info("[ADV] ↓ボタン座標 (%d,%d)", _adv_nx, _adv_ny)
-                tap_device(_adv_nx, _adv_ny, state, "ADV_RAPID_TAP")
-                state.last_action = "ADV_RAPID_TAP"
-                _burst_count += 1
-                _b_path, _b_w, _b_h, _ = take_screenshot()
-                if _b_path is None:
-                    break
-                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
-            else:
-                break
-        if _burst_count > 0:
-            # バースト後 phash 比較: 画面変化なし → ↓ 検出が偽陽性 → ADV判定失敗
-            try:
-                _post_burst_phash = compute_phash(_burst_img)
-                _burst_dist = phash_distance(cur_phash, _post_burst_phash) if cur_phash and _post_burst_phash else 999
-            except Exception:
-                _burst_dist = 999
-            if _burst_dist < PHASH_THRESHOLD:
-                logger.warning("[ADV] バースト %d タップ後も画面変化なし (dist=%d) → ADV判定失敗",
-                               _burst_count, _burst_dist)
-                return False
-            logger.info("[ADV] バースト完了: %d タップ (dist=%d)", _burst_count, _burst_dist)
-            state.movie_wait_consecutive = 0
+        if detect_adv_advance_icon(img_path):
+            logger.info("[ADV] ↓検出 → タップ (%d,%d)", _adv_tap_x, _adv_tap_y)
+            tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
+            state.last_action = "ADV_RAPID_TAP"
+            state.movie_wait_consecutive = 0; state.movie_static_count = 0
+            state.last_phash = ""
+            return True
+        elif adv.next_btn_pos:
+            _adv_nx = int(adv.next_btn_pos[0] * W / actual_w)
+            _adv_ny = int(adv.next_btn_pos[1] * H / actual_h)
+            logger.info("[ADV] ↓ボタン座標 (%d,%d)", _adv_nx, _adv_ny)
+            tap_device(_adv_nx, _adv_ny, state, "ADV_RAPID_TAP")
+            state.last_action = "ADV_RAPID_TAP"
+            state.movie_wait_consecutive = 0; state.movie_static_count = 0
             state.last_phash = ""
             return True
 
-    # ── ミニ会話バーストタップ ──
+    # ── ミニ会話タップ (1回) ──
     _mc = detect_mini_conversation(img_path)
     if _mc is not None:
-        _burst_count = 0
-        _burst_max = 5
-        _burst_img = img_path
-        while _burst_count < _burst_max:
-            _mc_res = detect_mini_conversation(_burst_img)
-            if _mc_res is not None:
-                _mc_cx, _mc_cy, _mc_side = _mc_res
-                _burst_count += 1
-                logger.info("[ADV] 吹き出し(%s) → タップ #%d (%d,%d)",
-                            _mc_side, _burst_count, _mc_cx, _mc_cy)
-                tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
-                state.last_action = "MINI_CONV_TAP"
-                _b_path, _b_w, _b_h, _ = take_screenshot()
-                if _b_path is None:
-                    break
-                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
-            else:
-                break
-        if _burst_count > 0:
-            logger.info("[ADV] 吹き出しバースト完了: %d タップ", _burst_count)
-            state.movie_wait_consecutive = 0
-            state.last_phash = ""
-            return True
+        _mc_cx, _mc_cy, _mc_side = _mc
+        logger.info("[ADV] 吹き出し(%s) → タップ (%d,%d)", _mc_side, _mc_cx, _mc_cy)
+        tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
+        state.last_action = "MINI_CONV_TAP"
+        state.movie_wait_consecutive = 0; state.movie_static_count = 0
+        state.last_phash = ""
+        return True
 
     # ↓ なし + 吹き出しなし → フォールスルー
     return False
@@ -4084,15 +4079,22 @@ def main():
             state.consecutive_blackouts += 1
             # ── 暗い ADV シーン救済: 連続5回 (~2.5秒) で画面中央タップ → 脱出試行 ──
             # 暗いが内容がある画面 (p90≈5-15) を真の暗転 (p90≈0-3) と区別
+            # MOVIE シーン中は暗いシーンが頻発するためタップ禁止 (一時停止してしまう)
             if state.consecutive_blackouts == 5:
-                logger.info("[DARK_SCENE_ESCAPE] 連続暗転 %d 回 → 暗い ADV 疑い、画面中央タップで脱出試行",
-                            state.consecutive_blackouts)
-                tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "DARK_SCENE_TAP")
-                state.consecutive_blackouts = 0
-                state.last_phash = ""
-                state.same_phash_count = 0
-                time.sleep(1.0)
-                continue
+                if state.current_scene == "MOVIE" or state.movie_wait_consecutive > 0:
+                    logger.info("[DARK_SCENE_ESCAPE] 連続暗転 %d 回だが MOVIE中/直後 (scene=%s, mwc=%d) → タップ抑制",
+                                state.consecutive_blackouts, state.current_scene,
+                                state.movie_wait_consecutive)
+                    state.consecutive_blackouts = 0
+                else:
+                    logger.info("[DARK_SCENE_ESCAPE] 連続暗転 %d 回 → 暗い ADV 疑い、画面中央タップで脱出試行",
+                                state.consecutive_blackouts)
+                    tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "DARK_SCENE_TAP")
+                    state.consecutive_blackouts = 0
+                    state.last_phash = ""
+                    state.same_phash_count = 0
+                    time.sleep(1.0)
+                    continue
             if state.total_blackout_skipped % 5 == 1:
                 logger.info("[iter %d] 暗転 — 3s 待機 (連続: %d)",
                             i, state.consecutive_blackouts)
@@ -4136,12 +4138,11 @@ def main():
             state.last_phash_dist = dist
             if dist < PHASH_THRESHOLD:
                 # 画面変化なし → DL/ロード継続中、解析スキップ
-                # 3秒間隔でポーリング (POLL_INTERVAL=0.2 だと iter 消費が激しい)
                 state.same_phash_count += 1
                 state.last_phash = cur_phash
                 state.last_screen_change_time = time.time()  # Watchdog抑制
-                # ── 20回(60秒)変化なし → DL完了/失敗ダイアログの可能性。OCR解析へ ──
-                if state.same_phash_count >= 20:
+                # ── 10回(30秒)変化なし → DL完了/失敗ダイアログの可能性。OCR解析へ ──
+                if state.same_phash_count >= 10:
                     logger.info("[iter %d] DL/ロード中: %d回変化なし → 完了ダイアログ確認のため通常解析へ",
                                 i, state.same_phash_count)
                     # ── 累積60回(3分)変化なし → DLモード強制解除 ──
@@ -4230,6 +4231,10 @@ def main():
             state.adv_early_consecutive = 0  # ADV 以外のシーン → カウンタリセット
 
         if _early_scene == "MOVIE":
+            if state.current_scene == "BATTLE":
+                state.character_selected = False
+                state.battle_rapid_consecutive.reset()
+                logger.debug("[SCENE_CHANGE_EARLY] BATTLE→MOVIE: バトルフラグリセット")
             state.current_scene = "MOVIE"
             if handle_movie(img_path, state, dist, cur_phash):
                 _fms = (time.time() - _loop_t0) * 1000
@@ -4300,12 +4305,6 @@ def main():
             # ── ADV 高速モード: OCR スキップして画面下部を即連打 ──
             # 前回 STORY_TAP かつ phash 変化が小さい（テキスト送り）→ 即タップ
             # MENU シーンはホームチュートリアル中の可能性があるため除外（指/金枠をOCRで確認）
-            # Result 画面は ADV_RAPID 禁止 (キャラアニメの phash 変動で誤発動する)
-            _last_texts = state.last_ocr_texts
-            _is_result_like = any(
-                any(k in t for k in ("Result", "EXP", "次へ"))
-                for t in _last_texts
-            )
             # ADV 連続3回以上確認 → phash 上限拡大 (背景変更でも OCR スキップ)
             _adv_phash_max = 40 if state.adv_confirmed_count >= 3 else ADV_RAPID_PHASH_MAX
             if (not _skip_rapid and
@@ -4315,100 +4314,53 @@ def main():
                                       "MINI_CONV_TAP", "MOYA_TAP", "MOVIE_SKIP", "MOVIE_WAIT",
                                       "SCENE_TAP") and
                     PHASH_THRESHOLD <= dist <= _adv_phash_max and
-                    state.current_scene not in ("MENU", "BATTLE") and
-                    not _is_result_like):
+                    state.current_scene not in ("MENU", "BATTLE", "MOVIE")):
                 # ── MOVIE_WAIT 脱出: 8回連続 (~24秒) 動画待機ならフルOCRへフォールスルー ──
                 _MOVIE_WAIT_ESCAPE = 8
                 if state.movie_wait_consecutive >= _MOVIE_WAIT_ESCAPE:
                     logger.warning(
                         "[MOVIE_ESCAPE] 動画待機 %d 回連続 → フルOCR解析にフォールスルー",
                         state.movie_wait_consecutive)
-                    state.movie_wait_consecutive = 0
+                    state.movie_wait_consecutive = 0; state.movie_static_count = 0
                     # continue しない → 下の OCR パスへ落ちる
                 else:
-                    _rapid_adv = detect_adv_scene_cached(img_path, state)
-                    # ── ADV↓アイコン検出 ──
-                    # ADVシーンではセリフが連続するため、↓が見える限りバーストタップ
+                    _rapid_adv = detect_adv_scene(img_path, roi=state.game_roi)
+                    # ── ADV↓アイコン検出 → 1回タップ ──
                     # NOTE: detect_adv_advance_icon() 単独ではバトル画面の「通常攻撃」
                     # ボタン領域の明るいピクセルを↓と誤検出するため、ADVツールバー判定
                     # (is_adv) を必須条件にする。↓単独ではADVに入らない。
                     _adv_tap_x = int(ANALYSIS_W * 0.93)
                     _adv_tap_y = int(ANALYSIS_H * 0.91)
                     if _rapid_adv.is_adv:
-                        # ── ADVバーストタップ: ↓が見える限り連続タップ (OCR/phashスキップ) ──
-                        _burst_count = 0
-                        _burst_max = 3  # 安全上限
-                        _burst_img = img_path
-                        while _burst_count < _burst_max:
-                            if detect_adv_advance_icon(_burst_img):
-                                _burst_count += 1
-                                logger.info("[ADV_BURST][iter %d] ↓検出 → タップ #%d (%d,%d)",
-                                            i, _burst_count, _adv_tap_x, _adv_tap_y)
-                                tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
-                                state.last_action = "ADV_RAPID_TAP"
-                                # 毎回スクショ (scrcpy: 10-15ms で sleep(0.3) より高速)
-                                _b_path, _b_w, _b_h, _ = take_screenshot()
-                                if _b_path is None:
-                                    break
-                                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
-                                actual_w, actual_h = _b_w, _b_h
-                            elif _rapid_adv.is_adv and _rapid_adv.next_btn_pos and _burst_count == 0:
-                                # ↓アイコンHSV未検出だがADVツールバーあり+座標あり → 1回タップ
-                                _adv_nx = int(_rapid_adv.next_btn_pos[0] * ANALYSIS_W / actual_w)
-                                _adv_ny = int(_rapid_adv.next_btn_pos[1] * ANALYSIS_H / actual_h)
-                                logger.info("[iter %d] ADV_RAPID → ↓ボタン座標 (%d,%d)", i, _adv_nx, _adv_ny)
-                                tap_device(_adv_nx, _adv_ny, state, "ADV_RAPID_TAP")
-                                state.last_action = "ADV_RAPID_TAP"
-                                _burst_count += 1
-                                _b_path, _b_w, _b_h, _ = take_screenshot()
-                                if _b_path is None:
-                                    break
-                                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
-                                actual_w, actual_h = _b_w, _b_h
-                            else:
-                                break
-                        if _burst_count > 0:
-                            logger.info("[ADV_BURST] 完了: %d タップ", _burst_count)
-                        state.movie_wait_consecutive = 0
-                        state.last_phash = ""  # バースト後はphashリセット
-                        img_path = _burst_img  # 最新画像で次の判定へ
+                        if detect_adv_advance_icon(img_path):
+                            logger.info("[ADV_RAPID][iter %d] ↓検出 → タップ (%d,%d)",
+                                        i, _adv_tap_x, _adv_tap_y)
+                            tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
+                            state.last_action = "ADV_RAPID_TAP"
+                        elif _rapid_adv.next_btn_pos:
+                            _adv_nx = int(_rapid_adv.next_btn_pos[0] * ANALYSIS_W / actual_w)
+                            _adv_ny = int(_rapid_adv.next_btn_pos[1] * ANALYSIS_H / actual_h)
+                            logger.info("[iter %d] ADV_RAPID → ↓ボタン座標 (%d,%d)", i, _adv_nx, _adv_ny)
+                            tap_device(_adv_nx, _adv_ny, state, "ADV_RAPID_TAP")
+                            state.last_action = "ADV_RAPID_TAP"
+                        state.movie_wait_consecutive = 0; state.movie_static_count = 0
+                        state.last_phash = ""
                         continue
-                    # ── ミニ会話バーストタップ: 吹き出しが見える限り連続タップ ──
+                    # ── ミニ会話タップ (1回) ──
                     _mc = detect_mini_conversation(img_path)
                     if _mc is not None:
-                        _burst_count = 0
-                        _burst_max = 5
-                        _burst_img = img_path
-                        while _burst_count < _burst_max:
-                            _mc_res = detect_mini_conversation(_burst_img)
-                            if _mc_res is not None:
-                                _mc_cx, _mc_cy, _mc_side = _mc_res
-                                _burst_count += 1
-                                logger.info("[MINI_CONV_BURST][iter %d] 吹き出し(%s) → タップ #%d (%d,%d)",
-                                            i, _mc_side, _burst_count, _mc_cx, _mc_cy)
-                                tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
-                                state.last_action = "MINI_CONV_TAP"
-                                # 偶数回 or 最終回のみスクショ
-                                if _burst_count % 2 == 0 or _burst_count >= _burst_max:
-                                    _b_path, _b_w, _b_h, _ = take_screenshot()
-                                    if _b_path is None:
-                                        break
-                                    _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
-                                    actual_w, actual_h = _b_w, _b_h
-                                else:
-                                    time.sleep(0.3)
-                            else:
-                                break
-                        if _burst_count > 0:
-                            logger.info("[MINI_CONV_BURST] 完了: %d タップ", _burst_count)
-                        state.movie_wait_consecutive = 0
+                        _mc_cx, _mc_cy, _mc_side = _mc
+                        logger.info("[MINI_CONV][iter %d] 吹き出し(%s) → タップ (%d,%d)",
+                                    i, _mc_side, _mc_cx, _mc_cy)
+                        tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
+                        state.last_action = "MINI_CONV_TAP"
+                        state.movie_wait_consecutive = 0; state.movie_static_count = 0
                         state.last_phash = ""
-                        img_path = _burst_img
                         continue
                     # ツールバーなし + ↓なし + 吹き出しなし → スコアリング動画判定
-                    _adv_cached = detect_adv_scene_cached(img_path, state)
+                    _adv_for_movie = detect_adv_scene(img_path, roi=state.game_roi)
                     _rapid_movie = detect_movie_scene(
-                        img_path, adv_result=_adv_cached,
+                        img_path, adv_result=_adv_for_movie,
                         ocr_texts=state.last_ocr_texts, phash_dist=dist)
                     if _rapid_movie.is_movie:
                         state.movie_wait_consecutive += 1
@@ -4450,7 +4402,7 @@ def main():
                                 i, dist, _st_x, _st_y)
                     tap_device(_st_x, _st_y, state, "SCENE_TAP")
                     state.last_action = "SCENE_TAP"
-                    state.movie_wait_consecutive = 0
+                    state.movie_wait_consecutive = 0; state.movie_static_count = 0
                     state.last_phash = cur_phash
                     continue
 
@@ -4517,19 +4469,39 @@ def main():
                         return  # 復旧不能 → 終了
                     continue   # 復旧後は次のイテレーションから
 
-            # ── 候補リトライ: 残り候補があれば OCR なしで次の候補をタップ ──
+            # ── 候補リトライ: 残り候補があれば次の候補をタップ ──
+            # シーン変化チェック: フレッシュスクショで phash 比較し、
+            # 画面が変わっていれば古い候補を破棄
             if (state.pending_candidates
                     and state.pending_candidate_idx < len(state.pending_candidates)):
-                _cand = state.pending_candidates[state.pending_candidate_idx]
-                state.pending_candidate_idx += 1
-                logger.info("[CANDIDATE_RETRY] #%d/%d: %s (%d,%d) — %s",
-                            state.pending_candidate_idx, len(state.pending_candidates),
-                            _cand.action, _cand.x, _cand.y, _cand.desc)
-                tap_device(_cand.x, _cand.y, state, _cand.desc or _cand.action)
-                state.last_action = _cand.action
-                state.same_phash_count = 0
-                state.last_phash = cur_phash
-                continue
+                _cr_path, _cr_w, _cr_h, _ = take_screenshot()
+                _cr_stale = False
+                if _cr_path:
+                    _cr_img = prepare_analysis_image(_cr_path, _cr_w, _cr_h)
+                    try:
+                        _cr_ph = compute_phash(_cr_img)
+                        _cr_dist = phash_distance(cur_phash, _cr_ph) if cur_phash and _cr_ph else 0
+                    except Exception:
+                        _cr_dist = 0
+                    if _cr_dist >= PHASH_THRESHOLD:
+                        logger.info("[CANDIDATE_RETRY] phash_dist=%d → シーン変化検出、候補破棄", _cr_dist)
+                        state.pending_candidates = []
+                        state.pending_candidate_idx = 0
+                        state.last_phash = _cr_ph
+                        _cr_stale = True
+                        img_path = _cr_img
+                        actual_w, actual_h = _cr_w, _cr_h
+                if not _cr_stale and state.pending_candidates:
+                    _cand = state.pending_candidates[state.pending_candidate_idx]
+                    state.pending_candidate_idx += 1
+                    logger.info("[CANDIDATE_RETRY] #%d/%d: %s (%d,%d) — %s",
+                                state.pending_candidate_idx, len(state.pending_candidates),
+                                _cand.action, _cand.x, _cand.y, _cand.desc)
+                    tap_device(_cand.x, _cand.y, state, _cand.desc or _cand.action)
+                    state.last_action = _cand.action
+                    state.same_phash_count = 0
+                    state.last_phash = cur_phash
+                    continue
 
             # N 回変化なし → 強制 OCR (デッドロック防止の核心)
             if state.same_phash_count >= FORCE_ANALYZE_AFTER:
@@ -4543,73 +4515,32 @@ def main():
                 if i % 3 == 0:
                     logger.info("[%s][iter %d] phash_dist=%d same=%d — polling (%.1fs)...",
                                 state.current_scene, i, dist, state.same_phash_count, _poll)
-                # ── ADV送り待ちアイコン検知: phash 安定中でもバーストタップ ──
+                # ── ADV送り待ちアイコン検知: phash 安定中でも1回タップ ──
                 _adv_tap_x = int(ANALYSIS_W * 0.93)
                 _adv_tap_y = int(ANALYSIS_H * 0.91)
                 if detect_adv_advance_icon(img_path):
-                    _burst_count = 0
-                    _burst_max = 3
-                    _burst_img = img_path
-                    while _burst_count < _burst_max:
-                        if detect_adv_advance_icon(_burst_img):
-                            _burst_count += 1
-                            logger.info("[ADV_BURST][iter %d] ↓検出 → タップ #%d", i, _burst_count)
-                            tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
-                            state.last_action = "ADV_RAPID_TAP"
-                            # 偶数回 or 最終回のみスクショ
-                            if _burst_count % 2 == 0 or _burst_count >= _burst_max:
-                                _b_path, _b_w, _b_h, _ = take_screenshot()
-                                if _b_path is None:
-                                    break
-                                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
-                                actual_w, actual_h = _b_w, _b_h
-                            else:
-                                time.sleep(0.3)
-                        else:
-                            break
-                    if _burst_count > 0:
-                        logger.info("[ADV_BURST] 完了: %d タップ", _burst_count)
+                    logger.info("[ADV][iter %d] ↓検出 → タップ (%d,%d)", i, _adv_tap_x, _adv_tap_y)
+                    tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
+                    state.last_action = "ADV_RAPID_TAP"
                     state.last_phash = ""
                     state.same_phash_count = 0
                     state.stall_start = 0.0
-                    img_path = _burst_img
                     continue
-                # ── ミニ会話バーストタップ (phash安定時) ──
+                # ── ミニ会話タップ (phash安定時, 1回) ──
                 _mc = detect_mini_conversation(img_path)
                 if _mc is not None:
-                    _burst_count = 0
-                    _burst_max = 3
-                    _burst_img = img_path
-                    while _burst_count < _burst_max:
-                        _mc_res = detect_mini_conversation(_burst_img)
-                        if _mc_res is not None:
-                            _mc_cx, _mc_cy, _mc_side = _mc_res
-                            _burst_count += 1
-                            logger.info("[MINI_CONV_BURST][iter %d] 吹き出し(%s) → タップ #%d (%d,%d)",
-                                        i, _mc_side, _burst_count, _mc_cx, _mc_cy)
-                            tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
-                            state.last_action = "MINI_CONV_TAP"
-                            # 偶数回 or 最終回のみスクショ
-                            if _burst_count % 2 == 0 or _burst_count >= _burst_max:
-                                _b_path, _b_w, _b_h, _ = take_screenshot()
-                                if _b_path is None:
-                                    break
-                                _burst_img = prepare_analysis_image(_b_path, _b_w, _b_h)
-                                actual_w, actual_h = _b_w, _b_h
-                            else:
-                                time.sleep(0.3)
-                        else:
-                            break
-                    if _burst_count > 0:
-                        logger.info("[MINI_CONV_BURST] 完了: %d タップ", _burst_count)
+                    _mc_cx, _mc_cy, _mc_side = _mc
+                    logger.info("[MINI_CONV][iter %d] 吹き出し(%s) → タップ (%d,%d)",
+                                i, _mc_side, _mc_cx, _mc_cy)
+                    tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
+                    state.last_action = "MINI_CONV_TAP"
                     state.last_phash = ""
                     state.same_phash_count = 0
                     state.stall_start = 0.0
-                    img_path = _burst_img
                     continue
                 # 動画シーンでは ADV ツールバーが無いためタップ抑制
                 if state.current_scene in ("STORY", "ADV", "UNKNOWN"):
-                    _aa_adv = detect_adv_scene_cached(img_path, state)
+                    _aa_adv = detect_adv_scene(img_path, roi=state.game_roi)
                     if _aa_adv.is_adv:
                         if _aa_adv.next_btn_pos:
                             logger.info("[ADV_ADVANCE][iter %d] ADVツールバー検出 → ↓ボタンタップ", i)
@@ -4672,7 +4603,7 @@ def main():
 
             if stall_elapsed >= STALL_TIMEOUT and not state.stall_corner_tried:
                 # ADVシーン中は右上タップ禁止 (ツールバー >| スキップを押してしまうため)
-                _stall_is_adv = is_adv_toolbar_cached(img_path, state) if img_path else False
+                _stall_is_adv = detect_adv_scene(img_path, roi=state.game_roi).is_adv if img_path else False
                 if _stall_is_adv:
                     logger.info(">>> %.0f秒スタック — ADVシーン → 右上×スキップ (セリフ送り代用)",
                                 stall_elapsed)
@@ -4775,6 +4706,17 @@ def main():
                         state.battle_rapid_consecutive.count)
             state.battle_rapid_consecutive.reset()
             _force_ocr_override = True
+        # ── バトルUIガード (メインループ BATTLE_RAPID): 3回に1回、通常攻撃ボタンの存在を確認 ──
+        if (state.current_scene == "BATTLE" and analysis_path is not None
+                and not _force_ocr_override and not _skip_rapid
+                and state.battle_rapid_consecutive.count > 0
+                and state.battle_rapid_consecutive.count % 3 == 0):
+            _atk_m = ASSET_MANAGER.match_single("battle_normal_attack", analysis_path)
+            if not _atk_m or _atk_m[2] < 0.70:
+                logger.info("[BATTLE_RAPID] 通常攻撃ボタン未検出 (count=%d) → OCR で再評価",
+                            state.battle_rapid_consecutive.count)
+                state.battle_rapid_consecutive.reset()
+                _force_ocr_override = True
         if (state.current_scene == "BATTLE" and analysis_path is not None
                 and not _force_ocr_override and not _skip_rapid):
             _rapid_tx = _rapid_ty = 0
@@ -4788,11 +4730,17 @@ def main():
 
             # ── Phase 0: チュートリアル金枠 → 最優先タップ ──
             # 指ブロブ有無に関わらず金枠を常時チェック (extent<0.55 で通常ボタンと区別)
+            # チュートリアル暗転中は空間フィルタをバイパスして全画面探索
             _gold_rho2 = True if state.current_scene == "BATTLE" else False
-            _gold_tap = detect_tutorial_gold_button_tap(analysis_path, right_half_only=_gold_rho2)
+            _is_overlay2 = detect_tutorial_overlay(analysis_path)
+            _gold_tap = detect_tutorial_gold_button_tap(
+                analysis_path, right_half_only=_gold_rho2, overlay_mode=_is_overlay2)
             if _gold_tap:
                 _rapid_tx, _rapid_ty = _gold_tap
                 _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
+                if _is_overlay2:
+                    logger.info("[BATTLE_RAPID] 暗転オーバーレイ → 全画面金枠 (%d,%d)",
+                                _rapid_tx, _rapid_ty)
 
             # ── Phase A: アクティブキャラ検出 (赤/ピンク発光ハロー) ──
             # 【永続ルール】キャラ選択モヤ = 赤/ピンクの発光。明度差で識別。
@@ -4955,9 +4903,9 @@ def main():
             state.last_phash = ""
             continue
 
-        # ── ADVシーン検出 (キャッシュ付き) ──
-        _adv_result = detect_adv_scene_cached(
-            analysis_path or img_path, state, ocr_items=ocr_results)
+        # ── ADVシーン検出 (毎回フレッシュ) ──
+        _adv_result = detect_adv_scene(
+            analysis_path or img_path, ocr_items=ocr_results, roi=state.game_roi)
 
         # ── シーン分類 ──
         scene, next_interval = classify_scene(
@@ -4969,6 +4917,12 @@ def main():
                 and any(kw in _joined_for_scene for kw in _BATTLE_UI_KWS)):
             logger.info("[SCENE_STICKY] %s→BATTLE保持 (バトルKW残存)", scene)
             scene = "BATTLE"
+        # ── シーン遷移時フラグリセット ──
+        if scene != state.current_scene:
+            if state.current_scene == "BATTLE" and scene != "BATTLE":
+                state.character_selected = False
+                state.battle_rapid_consecutive.reset()
+                logger.debug("[SCENE_CHANGE] BATTLE→%s: バトルフラグリセット", scene)
         state.current_scene = scene
         logger.info("[%s][iter %d] phash_dist=%d same=%d OCR(%d): %s",
                     scene, i, dist, state.same_phash_count, len(ocr_results), texts[:8])
@@ -4990,7 +4944,7 @@ def main():
                     _skip_item["text"], _sk_x, _sk_y)
                 tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP_OCR")
                 state.last_action = "MOVIE_SKIP"
-                state.movie_wait_consecutive = 0
+                state.movie_wait_consecutive = 0; state.movie_static_count = 0
                 state.last_phash = ""
                 continue
 
@@ -5010,7 +4964,7 @@ def main():
             logger.info("[CHARA_GET] キャラ獲得画面検出 (キオク) → 中央タップ (%d,%d)", _tap_x, _tap_y)
             tap_device(_tap_x, _tap_y, state, "CHARA_GET_TAP")
             state.last_action = "CHARA_GET_TAP"
-            state.movie_wait_consecutive = 0
+            state.movie_wait_consecutive = 0; state.movie_static_count = 0
             time.sleep(1.0)
             state.last_phash = ""
             continue
@@ -5028,7 +4982,7 @@ def main():
                     logger.warning(
                         "[MOVIE_GUARD_ESCAPE] DL直後+動画待機 %d 回 → SKIPタップ",
                         state.movie_wait_consecutive)
-                    state.movie_wait_consecutive = 0
+                    state.movie_wait_consecutive = 0; state.movie_static_count = 0
                     _resume_x, _resume_y = roi_to_device(
                         int(ANALYSIS_W * 0.93), int(ANALYSIS_H * 0.06), state.game_roi)
                     tap_device(_resume_x, _resume_y, state, "MOVIE_SKIP_ESCAPE")
@@ -5037,7 +4991,7 @@ def main():
                     logger.warning(
                         "[MOVIE_GUARD_ESCAPE] 動画待機 %d 回 → 画面中央タップ",
                         state.movie_wait_consecutive)
-                    state.movie_wait_consecutive = 0
+                    state.movie_wait_consecutive = 0; state.movie_static_count = 0
                     _resume_x, _resume_y = roi_to_device(
                         int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state.game_roi)
                     tap_device(_resume_x, _resume_y, state, "MOVIE_RESUME_TAP")
@@ -5073,83 +5027,7 @@ def main():
             state.pending_candidate_idx = 0
         # フルOCR解析に到達 → MOVIE_WAIT脱出カウンタリセット
         if action != "MOVIE_WAIT":
-            state.movie_wait_consecutive = 0
-
-        # ── 7) フルOCR後バースト再突入: ↓アイコン/吹き出しが残っていれば即連打 ──
-        # バトル/メニュー画面ではバーストしない (ボタン装飾の誤検出防止)
-        # ADVシーン(↓検出済み)ではミニ会話をスキップ (ツールバー誤検出防止)
-        _primary_action = action  # バースト前の主アクションを保存 (repeat counter用)
-        _pre_burst_last_action = state.last_action  # バースト前の前回アクション
-        _post_burst_img = analysis_path or img_path
-        _post_burst_count = 0
-        _post_burst_max = 5
-        _post_adv_x = int(ANALYSIS_W * 0.93)
-        _post_adv_y = int(ANALYSIS_H * 0.91)
-        _post_is_adv = _adv_result.is_adv  # ADVシーンならミニ会話をスキップ
-        _skip_burst = scene in ("BATTLE", "MENU") or state.current_scene == "BATTLE" or action in (
-            "DOWNLOAD_WAIT", "LOADING_WAIT", "MOVIE_WAIT", "MAIN_STORY_LOADING",
-            "WAIT_FOR_CHANGE")
-        while _post_burst_count < _post_burst_max and not _skip_burst:
-            # ADV ↓アイコン
-            if detect_adv_advance_icon(_post_burst_img):
-                _post_burst_count += 1
-                _post_is_adv = True  # ↓検出 = ADVシーン確定
-                logger.info("[POST_OCR_BURST] ↓アイコン → タップ #%d", _post_burst_count)
-                tap_device(_post_adv_x, _post_adv_y, state, "ADV_ADVANCE_TAP")
-                state.last_action = "ADV_RAPID_TAP"
-            elif not _post_is_adv:
-                # ADVシーンでない場合のみミニ会話吹き出しを検出
-                _post_mc = detect_mini_conversation(_post_burst_img)
-                if _post_mc is not None:
-                    _post_burst_count += 1
-                    _pm_cx, _pm_cy, _pm_side = _post_mc
-                    logger.info("[POST_OCR_BURST] 吹き出し(%s) → タップ #%d (%d,%d)",
-                                _pm_side, _post_burst_count, _pm_cx, _pm_cy)
-                    tap_device(_pm_cx, _pm_cy, state, "MINI_CONV_TAP")
-                    state.last_action = "MINI_CONV_TAP"
-                else:
-                    break
-            else:
-                break
-            # 偶数回 or 最終回のみスクショ + phash差分で画面変化検出
-            if _post_burst_count % 2 == 0 or _post_burst_count >= _post_burst_max:
-                _pb_path, _pb_w, _pb_h, _ = take_screenshot()
-                if _pb_path is None:
-                    break
-                _post_burst_img = prepare_analysis_image(_pb_path, _pb_w, _pb_h)
-                actual_w, actual_h = _pb_w, _pb_h
-                # 画面が大きく変化 → 会話/吹き出し終了とみなして即停止
-                _pb_ph = compute_phash(_post_burst_img)
-                if _pb_ph and state.last_phash:
-                    _pb_dist = phash_distance(_pb_ph, state.last_phash)
-                    if _pb_dist >= 12:
-                        logger.info("[POST_OCR_BURST] phash_dist=%d ≥ 12 → 画面変化検出、バースト終了", _pb_dist)
-                        break
-            else:
-                time.sleep(0.3)
-        if _post_burst_count > 0:
-            logger.info("[POST_OCR_BURST] 完了: %d タップ", _post_burst_count)
-            state.last_phash = ""
-            # ── repeat counter 更新 (continue で SCENE_REEVAL チェックをスキップするため) ──
-            # バースト内で state.last_action が上書きされるため、バースト前の値と比較
-            if _primary_action == _pre_burst_last_action and _primary_action not in (
-                "WAIT_FOR_CHANGE", "BATTLE_WAIT", "DOWNLOAD_WAIT",
-                "MOVIE_WAIT", "LOADING_WAIT", "ADV_WAIT", "HOME_CLEAR_CHECK",
-            ):
-                state.action_repeat_count += 1
-                if state.action_repeat_count >= _SCENE_REEVAL_THRESHOLD:
-                    logger.warning(
-                        "[SCENE_REEVAL] '%s' が %d 回連続 (POST_OCR_BURST 経由) → BACK脱出",
-                        _primary_action, state.action_repeat_count)
-                    adb("shell input keyevent KEYCODE_BACK")
-                    state.action_repeat_count = 0
-                    state.last_action = "REEVAL_BACK_ESCAPE"
-                    state.last_phash = ""
-                    time.sleep(1.0)
-                    continue
-            state.last_action = _primary_action
-            img_path = _post_burst_img
-            continue
+            state.movie_wait_consecutive = 0; state.movie_static_count = 0
 
         # ── WAIT_FOR_CHANGE スタック脱出: 3 回連続で中央タップ ──
         if action == "WAIT_FOR_CHANGE":
@@ -5202,24 +5080,12 @@ def main():
                 action, state.action_repeat_count,
             )
             state.scene_reeval_mode = True
-            # 新しいスクリーンショットでフル再判定 (phash 変化なければ OCR 再利用)
+            # 新しいスクリーンショットでフル再判定 (常にフレッシュOCR)
             try:
                 _re_img, _re_w, _re_h, _ = take_screenshot()
                 _re_analysis = prepare_analysis_image(_re_img, _re_w, _re_h)
-                # phash チェック: 画面が変わっていなければ既存 OCR を再利用
-                try:
-                    _re_phash = compute_phash(_re_analysis)
-                    _re_dist = phash_distance(state.last_phash, _re_phash) if state.last_phash and _re_phash else 999
-                except Exception:
-                    _re_dist = 999
-                _re_reuse_th = 8 if state.current_scene == "BATTLE" else 5
-                if _re_dist < _re_reuse_th and ocr_results:
-                    logger.info("[SCENE_REEVAL] phash_dist=%d < %d → 既存OCR再利用 (OCRスキップ)",
-                                _re_dist, _re_reuse_th)
-                    _re_ocr = ocr_results
-                else:
-                    _re_ocr = run_ocr(str(_re_analysis), lang=OCR_LANG,
-                                      min_confidence=OCR_MIN_CONF)
+                _re_ocr = run_ocr(str(_re_analysis), lang=OCR_LANG,
+                                  min_confidence=OCR_MIN_CONF)
                 _re_texts = all_texts(_re_ocr)
                 _re_adv = detect_adv_scene(_re_analysis, ocr_items=_re_ocr,
                                             roi=state.game_roi)
