@@ -4979,6 +4979,8 @@ def main():
         # ── 7) フルOCR後バースト再突入: ↓アイコン/吹き出しが残っていれば即連打 ──
         # バトル/メニュー画面ではバーストしない (ボタン装飾の誤検出防止)
         # ADVシーン(↓検出済み)ではミニ会話をスキップ (ツールバー誤検出防止)
+        _primary_action = action  # バースト前の主アクションを保存 (repeat counter用)
+        _pre_burst_last_action = state.last_action  # バースト前の前回アクション
         _post_burst_img = analysis_path or img_path
         _post_burst_count = 0
         _post_burst_max = 5
@@ -5029,7 +5031,24 @@ def main():
         if _post_burst_count > 0:
             logger.info("[POST_OCR_BURST] 完了: %d タップ", _post_burst_count)
             state.last_phash = ""
-            state.last_action = action  # 主アクションを復元 (repeat counter 用)
+            # ── repeat counter 更新 (continue で SCENE_REEVAL チェックをスキップするため) ──
+            # バースト内で state.last_action が上書きされるため、バースト前の値と比較
+            if _primary_action == _pre_burst_last_action and _primary_action not in (
+                "WAIT_FOR_CHANGE", "BATTLE_WAIT", "DOWNLOAD_WAIT",
+                "MOVIE_WAIT", "LOADING_WAIT", "ADV_WAIT", "HOME_CLEAR_CHECK",
+            ):
+                state.action_repeat_count += 1
+                if state.action_repeat_count >= _SCENE_REEVAL_THRESHOLD:
+                    logger.warning(
+                        "[SCENE_REEVAL] '%s' が %d 回連続 (POST_OCR_BURST 経由) → BACK脱出",
+                        _primary_action, state.action_repeat_count)
+                    adb("shell input keyevent KEYCODE_BACK")
+                    state.action_repeat_count = 0
+                    state.last_action = "REEVAL_BACK_ESCAPE"
+                    state.last_phash = ""
+                    time.sleep(1.0)
+                    continue
+            state.last_action = _primary_action
             img_path = _post_burst_img
             continue
 
