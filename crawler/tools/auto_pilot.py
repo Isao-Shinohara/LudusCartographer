@@ -1573,7 +1573,7 @@ def detect_and_act(ocr: list, state: PilotState,
                     return "CHALLENGE_TAP", 1.0
             # ── ホームチュートリアル: 指アイコン+金枠がある場合は優先タップ ──
             # 回数制限なし: 指+金枠が実在する限り何回でもタップ
-            _ht_blobs = find_finger_blobs(analysis_path) if analysis_path else []
+            _ht_blobs = find_finger_blobs(analysis_path, home_mode=True) if analysis_path else []
             _ht_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
             # 暗転オーバーレイ検出 (チュートリアル中は非ハイライト部分が暗い)
             _ht_dimmed = detect_tutorial_overlay(analysis_path) if analysis_path else False
@@ -1583,6 +1583,9 @@ def detect_and_act(ocr: list, state: PilotState,
                     _ht_chosen = max(_ht_blobs, key=lambda b: b[2])
                     _ht_bx, _ht_by = _ht_chosen[0], _ht_chosen[1]
                     _ht_gf = find_gold_frame_near(analysis_path, _ht_bx, _ht_by) if analysis_path else None
+                    # フッターナビ領域 (y > H*0.85) の金色要素を除外
+                    if _ht_gf and _ht_gf[1] > H * 0.85:
+                        _ht_gf = None
                     if _ht_gf:
                         _ht_fg_dist = ((_ht_bx - _ht_gf[0]) ** 2 + (_ht_by - _ht_gf[1]) ** 2) ** 0.5
                         if _ht_fg_dist <= 200:
@@ -2876,7 +2879,7 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
         else:
             state.consecutive_frozen_frames = 0
 
-        if state.consecutive_frozen_frames >= 5 and state.movie_wait_consecutive >= 5:
+        if state.consecutive_frozen_frames >= 8 and state.movie_wait_consecutive >= 8:
             logger.warning(
                 "[MOVIE_PAUSE_DETECT] frozen=%d wait=%d → 一時停止確定 → 中央タップで再開 (1回限り)",
                 state.consecutive_frozen_frames, state.movie_wait_consecutive)
@@ -4918,13 +4921,20 @@ def main():
                     break
             else:
                 break
-            # 偶数回 or 最終回のみスクショ
+            # 偶数回 or 最終回のみスクショ + phash差分で画面変化検出
             if _post_burst_count % 2 == 0 or _post_burst_count >= _post_burst_max:
                 _pb_path, _pb_w, _pb_h, _ = take_screenshot()
                 if _pb_path is None:
                     break
                 _post_burst_img = prepare_analysis_image(_pb_path, _pb_w, _pb_h)
                 actual_w, actual_h = _pb_w, _pb_h
+                # 画面が大きく変化 → 会話/吹き出し終了とみなして即停止
+                _pb_ph = compute_phash(_post_burst_img)
+                if _pb_ph and state.last_phash:
+                    _pb_dist = phash_distance(_pb_ph, state.last_phash)
+                    if _pb_dist >= 12:
+                        logger.info("[POST_OCR_BURST] phash_dist=%d ≥ 12 → 画面変化検出、バースト終了", _pb_dist)
+                        break
             else:
                 time.sleep(0.3)
         if _post_burst_count > 0:
