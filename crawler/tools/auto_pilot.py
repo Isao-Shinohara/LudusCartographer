@@ -699,20 +699,31 @@ def detect_and_act(ocr: list, state: PilotState,
     if _has_size_slash:
         _has_download_text = True
         _has_size_progress = True
-    # 確認/完了ダイアログ除外:
+    # 確認/完了/失敗ダイアログ除外:
     # - 「ダウンロードを開始しますか?」等の質問 or OK+キャンセル共存
     # - 「ダウンロード完了」等の完了通知 + OK ボタン
+    # - 「ダウンロードに失敗しました」等の失敗ダイアログ (リトライ確認)
     _dl_is_question = any("しますか" in t or "開始" in t for t in texts if "ダウンロード" in t)
     _dl_is_complete = any("完了" in t or "Complete" in t for t in texts)
+    _dl_is_failure = any("失敗" in t or "リトライ" in t for t in texts)
     _dl_has_ok = any("OK" in t for t in texts)
     _dl_has_cancel = any("キャンセル" in t for t in texts)
-    _dl_is_confirm_dialog = _dl_is_question or (_dl_has_ok and _dl_has_cancel) or (_dl_is_complete and _dl_has_ok)
+    _dl_is_confirm_dialog = (_dl_is_question or (_dl_has_ok and _dl_has_cancel)
+                             or (_dl_is_complete and _dl_has_ok) or _dl_is_failure)
     if _has_download_text and _has_size_progress and not _dl_is_confirm_dialog:
         _dl_texts = [t for t in texts if "Download" in t or "MB" in t or "GB" in t or "ダウンロード" in t]
         logger.info(">>> [DOWNLOAD_STRICT] 右下ゲージ確認: %s — ダウンロード待機", _dl_texts)
         state.download_active = True
         _log_milestone(state, "DL_START")
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
+    # ── DL失敗ダイアログ: OCR がボタンテキスト検出できない場合の安全網 ──
+    if _dl_is_failure and _has_download_text:
+        state.download_active = False
+        W, H = ANALYSIS_W, ANALYSIS_H
+        _ok_x, _ok_y = int(W * 0.62), int(H * 0.82)
+        logger.info("[DL_FAIL_RETRY] 失敗ダイアログ検出 → OK推定位置 (%d,%d) タップ", _ok_x, _ok_y)
+        tap_device(_ok_x, _ok_y, state, "DL_FAIL_RETRY_OK")
+        return "DL_FAIL_RETRY", 2.0
 
     # ── 【#-2.9】確認ダイアログ — 肯定ボタン最優先 ──
     # (A) OK/はい + キャンセル/いいえ が共存 → 確認ダイアログ → OK を必ずタップ。
@@ -4092,6 +4103,14 @@ def main():
                 if state.same_phash_count >= 10:
                     logger.info("[iter %d] DL/ロード中: %d回変化なし → 完了ダイアログ確認のため通常解析へ",
                                 i, state.same_phash_count)
+                    # ── 累積60回(3分)変化なし → DLモード強制解除 ──
+                    _dl_cumulative = getattr(state, "_dl_static_cumulative", 0) + state.same_phash_count
+                    state._dl_static_cumulative = _dl_cumulative  # type: ignore[attr-defined]
+                    if _dl_cumulative >= 60:
+                        logger.warning("[iter %d] DL静止 %d回累積 → DLモード強制解除", i, _dl_cumulative)
+                        state.download_active = False
+                        state.last_action = "DL_STALL_ESCAPE"
+                        state._dl_static_cumulative = 0  # type: ignore[attr-defined]
                     state.same_phash_count = 0
                     # fall through to detect_and_act
                 else:
