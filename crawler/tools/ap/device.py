@@ -585,18 +585,25 @@ def check_foreground_app() -> bool:
             pass  # wm size 失敗は無視して従来ロジックへ
 
         # ---- 2) mCurrentFocus / mFocusedApp 判定 ----
-        _r = subprocess.run(
-            ["adb"] + _serial_arg + ["shell", "dumpsys", "window", "displays"],
-            capture_output=True, timeout=3, text=True,
-        )
-        if _r.returncode != 0:
-            return False
+        # 端末によって `dumpsys window displays` に mCurrentFocus が含まれない
+        # (例: Xperia)。まず軽量な `displays` を試し、取れなければフルダンプにフォールバック。
         _focus_lines = []
-        for line in _r.stdout.splitlines():
-            if "mCurrentFocus" in line or "mFocusedApp" in line:
-                _focus_lines.append(line.strip())
-                if APP_PACKAGE in line:
-                    return False  # ゲームが前面 → 復帰不要
+        for _subcmd in (["dumpsys", "window", "displays"], ["dumpsys", "window"]):
+            _r = subprocess.run(
+                ["adb"] + _serial_arg + ["shell"] + _subcmd,
+                capture_output=True, timeout=5, text=True,
+            )
+            if _r.returncode != 0:
+                continue
+            for line in _r.stdout.splitlines():
+                if "mCurrentFocus" in line or "mFocusedApp" in line:
+                    _focus_lines.append(line.strip())
+                    if APP_PACKAGE in line:
+                        return False  # ゲームが前面 → 復帰不要
+            if _focus_lines:
+                break  # focus 情報が取れたらフォールバック不要
+        if not _focus_lines and _r.returncode != 0:
+            return False
         # focus 情報が取れない or null → ロード中の可能性 → 復帰しない
         if not _focus_lines:
             return False
