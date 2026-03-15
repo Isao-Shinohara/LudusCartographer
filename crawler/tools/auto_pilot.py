@@ -3416,7 +3416,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 return max(w, h)
         except Exception as e:
             logger.debug("[FRESH_INSTALL] wm size 取得失敗: %s", e)
-        return 1520
+        return 1920  # 安全なフォールバック (FHD 相当)
 
     def _is_play_store_foreground() -> bool:
         """Play Store がフォアグラウンドにあるか確認。"""
@@ -3917,12 +3917,15 @@ def main():
             pass
         _fresh_install_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
 
-    # ─── ゲーム未インストール保護 ───
+    # ─── ゲーム未インストール → 自動インストール ───
     if not is_app_installed(_ap_device.DEVICE_SERIAL, APP_PACKAGE):
-        logger.error("[ABORT] ゲーム '%s' がインストールされていません。", APP_PACKAGE)
-        logger.error("[ABORT] --fresh-install でのインストールに失敗した可能性があります。")
-        logger.error("[ABORT] 手動でインストールしてから再実行してください。")
-        sys.exit(1)
+        logger.info("[AUTO_INSTALL] ゲーム '%s' 未インストール → Play Store から自動インストール", APP_PACKAGE)
+        _fresh_install_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
+        if not is_app_installed(_ap_device.DEVICE_SERIAL, APP_PACKAGE):
+            logger.error("[ABORT] 自動インストール失敗。手動でインストールしてから再実行してください。")
+            sys.exit(1)
+        # 新規インストール = fresh start 扱い
+        args.fresh_install = True
 
     logger.info("=" * 62)
     logger.info("  まどドラ自律操縦 — Auto Pilot (ハイブリッド版)")
