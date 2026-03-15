@@ -3192,12 +3192,22 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
         _right_panel = [b for b in _rapid_blobs
                         if b[0] > _RIGHT_PANEL_X and b[1] > ANALYSIS_H * 0.45]
         if state.character_selected or state.char_just_selected:
-            if _rapid_right_g:
+            # B-0: テンプレートで battle_skill / battle_normal_attack を探す (精度最優先)
+            for _btn_name in ("battle_skill", "battle_normal_attack"):
+                _btn_m = ASSET_MANAGER.match_single(_btn_name, analysis_path)
+                if _btn_m and _btn_m[2] >= 0.60:
+                    _rapid_tx, _rapid_ty = _btn_m[0], _btn_m[1]
+                    _rapid_action = f"BATTLE_RAPID_TMPL_{_btn_name.upper()}"
+                    logger.info("[BATTLE_RAPID] テンプレ %s (%.2f) → tap(%d,%d)",
+                                _btn_name, _btn_m[2], _rapid_tx, _rapid_ty)
+                    break
+            # B-1: テンプレ未検出 → glow フォールバック
+            if not _rapid_action and _rapid_right_g:
                 _rr = max(_rapid_right_g, key=lambda g: g["area"])
                 _rapid_tx = _rr["cx"]
                 _rapid_ty = max(1, _rr["by"] + _rr["bh"] * 2 // 3)
                 _rapid_action = "BATTLE_RAPID_GLOW_P2"
-            elif _right_panel:
+            elif not _rapid_action and _right_panel:
                 _tb = max(_right_panel, key=lambda b: b[2])
                 _rapid_tx, _rapid_ty = _tb[0], _tb[1]
                 _rapid_action = "BATTLE_RAPID_MOYA_P2"
@@ -4856,14 +4866,20 @@ def main():
                                 if b[0] > _RIGHT_PANEL_X and b[1] > ANALYSIS_H * 0.45]
 
                 if state.character_selected or state.char_just_selected:
-                    # キャラ選択済み → 右スキル優先
-                    if _rapid_right_g:
+                    # B-0: テンプレートで battle_skill / battle_normal_attack を探す
+                    for _btn_name in ("battle_skill", "battle_normal_attack"):
+                        _btn_m = ASSET_MANAGER.match_single(_btn_name, analysis_path)
+                        if _btn_m and _btn_m[2] >= 0.60:
+                            _rapid_tx, _rapid_ty = _btn_m[0], _btn_m[1]
+                            _rapid_action = f"BATTLE_RAPID_TMPL_{_btn_name.upper()}"
+                            break
+                    # B-1: テンプレ未検出 → glow フォールバック
+                    if not _rapid_action and _rapid_right_g:
                         _rr = max(_rapid_right_g, key=lambda g: g["area"])
-                        # bbox上端 + 高さ2/3 = ボタン視覚中心
                         _rapid_tx = _rr["cx"]
                         _rapid_ty = max(1, _rr["by"] + _rr["bh"] * 2 // 3)
                         _rapid_action = "BATTLE_RAPID_GLOW_P2"
-                    elif _right_panel:
+                    elif not _rapid_action and _right_panel:
                         _tb = max(_right_panel, key=lambda b: b[2])
                         _rapid_tx, _rapid_ty = _tb[0], _tb[1]
                         _rapid_action = "BATTLE_RAPID_MOYA_P2"

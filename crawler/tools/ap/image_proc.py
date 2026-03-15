@@ -429,18 +429,33 @@ def _run_battle_glow_sm(
         return "GLOW_LEFT_CHAR", 0.3
 
     # P2: 右スキル発光 (キャラ選択済み)
-    if state.character_selected and right:
-        g = max(right, key=lambda g: g["area"])
-        # bbox上端 + 高さ2/3 = ボタン視覚中心
-        gx = g["cx"]
-        gy = max(1, g["by"] + g["bh"] * 2 // 3)
-        logger.info("[%s P2] 右発光 centroid(%d,%d) bbox_y=%d+%d → tap(%d,%d)",
-                    tag, g["cx"], g["cy"], g["by"], g["bh"], gx, gy)
-        tap_device(gx, gy, state, "GLOW_RIGHT_SKILL")
-        state.character_selected = False
-        state.char_just_selected = False
-        state.finger_detections += 1
-        return "GLOW_RIGHT_SKILL", 0.3
+    if state.character_selected and (right or True):
+        # P2-a: テンプレートで battle_skill / battle_normal_attack を探す (精度最優先)
+        _p2_tmpl_hit = False
+        for _btn in ("battle_skill", "battle_normal_attack"):
+            _bm = ASSET_MANAGER.match_single(_btn, analysis_path)
+            if _bm and _bm[2] >= 0.60:
+                gx, gy = _bm[0], _bm[1]
+                logger.info("[%s P2] テンプレ %s (%.2f) → tap(%d,%d)",
+                            tag, _btn, _bm[2], gx, gy)
+                tap_device(gx, gy, state, f"GLOW_RIGHT_{_btn.upper()}")
+                state.character_selected = False
+                state.char_just_selected = False
+                state.finger_detections += 1
+                _p2_tmpl_hit = True
+                return f"GLOW_RIGHT_{_btn.upper()}", 0.3
+        # P2-b: テンプレ未検出 → glow フォールバック
+        if not _p2_tmpl_hit and right:
+            g = max(right, key=lambda g: g["area"])
+            gx = g["cx"]
+            gy = max(1, g["by"] + g["bh"] * 2 // 3)
+            logger.info("[%s P2] 右発光 centroid(%d,%d) bbox_y=%d+%d → tap(%d,%d)",
+                        tag, g["cx"], g["cy"], g["by"], g["bh"], gx, gy)
+            tap_device(gx, gy, state, "GLOW_RIGHT_SKILL")
+            state.character_selected = False
+            state.char_just_selected = False
+            state.finger_detections += 1
+            return "GLOW_RIGHT_SKILL", 0.3
 
     # P3: キャラ選択済み + 発光なし → 通常攻撃 OCR フォールバック
     if state.character_selected and not right:
