@@ -3195,13 +3195,16 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
             # B-0: テンプレートで battle_skill / battle_normal_attack を探す (精度最優先)
             for _btn_name in ("battle_skill", "battle_normal_attack"):
                 _btn_m = ASSET_MANAGER.match_single(_btn_name, analysis_path)
-                logger.debug("[BATTLE_RAPID B-0] %s → %s", _btn_name, _btn_m)
                 if _btn_m and _btn_m[2] >= 0.60:
-                    _rapid_tx, _rapid_ty = _btn_m[0], _btn_m[1]
-                    _rapid_action = f"BATTLE_RAPID_TMPL_{_btn_name.upper()}"
+                    _tmpl_action = f"BATTLE_RAPID_TMPL_{_btn_name.upper()}"
                     logger.info("[BATTLE_RAPID] テンプレ %s (%.2f) → tap(%d,%d)",
-                                _btn_name, _btn_m[2], _rapid_tx, _rapid_ty)
-                    break
+                                _btn_name, _btn_m[2], _btn_m[0], _btn_m[1])
+                    tap_device(_btn_m[0], _btn_m[1], state, _tmpl_action)
+                    state.character_selected = False
+                    state.char_just_selected = False
+                    state.finger_detections += 1
+                    state.battle_rapid_consecutive.tick()
+                    return True
             # B-1: テンプレ未検出 → glow フォールバック
             if not _rapid_action and _rapid_right_g:
                 _rr = max(_rapid_right_g, key=lambda g: g["area"])
@@ -4871,8 +4874,16 @@ def main():
                     for _btn_name in ("battle_skill", "battle_normal_attack"):
                         _btn_m = ASSET_MANAGER.match_single(_btn_name, analysis_path)
                         if _btn_m and _btn_m[2] >= 0.60:
+                            _tmpl_action = f"BATTLE_RAPID_TMPL_{_btn_name.upper()}"
+                            logger.info("[BATTLE_RAPID] テンプレ %s (%.2f) → tap(%d,%d)",
+                                        _btn_name, _btn_m[2], _btn_m[0], _btn_m[1])
+                            tap_device(_btn_m[0], _btn_m[1], state, _tmpl_action)
+                            state.character_selected = False
+                            state.char_just_selected = False
+                            state.finger_detections += 1
+                            state.battle_rapid_consecutive.tick()
+                            _rapid_action = _tmpl_action
                             _rapid_tx, _rapid_ty = _btn_m[0], _btn_m[1]
-                            _rapid_action = f"BATTLE_RAPID_TMPL_{_btn_name.upper()}"
                             break
                     # B-1: テンプレ未検出 → glow フォールバック
                     if not _rapid_action and _rapid_right_g:
