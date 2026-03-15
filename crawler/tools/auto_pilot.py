@@ -4164,7 +4164,8 @@ def main():
                 time.sleep(2)
                 subprocess.run(["adb", "start-server"], timeout=5)
                 time.sleep(2)
-                if _ap_device.DEVICE_SERIAL:
+                # USB シリアル (`:` なし) には adb connect 不要 (DNS解決失敗する)
+                if _ap_device.DEVICE_SERIAL and ":" in _ap_device.DEVICE_SERIAL:
                     subprocess.run(["adb", "connect", _ap_device.DEVICE_SERIAL], timeout=5)
                     time.sleep(1)
                 # scrcpy が ADB 再起動で死んだ場合は再起動
@@ -5343,9 +5344,9 @@ def main():
                     "ASSET_TUTORIAL_DIALOG_NEXT", "GOLD_BTN_TAP",
                     "FINGER_GOLD_TAP",
                 ):
-                    # DIALOG_NEXT / GOLD_BTN スタック → BACK キーで閉じる
-                    if action in ("ASSET_TUTORIAL_DIALOG_NEXT",
-                                  "GOLD_BTN_TAP", "FINGER_GOLD_TAP"):
+                    # DIALOG_NEXT スタック → BACK キーで閉じる
+                    # GOLD_BTN/MOYA は ADV 中の装飾誤検出が多いため中央タップ
+                    if action == "ASSET_TUTORIAL_DIALOG_NEXT":
                         logger.warning(
                             "[SCENE_REEVAL_ESCAPE] '%s' スタック → BACK キーで脱出", action)
                         adb("shell input keyevent KEYCODE_BACK")

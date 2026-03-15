@@ -522,23 +522,17 @@ def swipe_device(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300,
 def check_adb_liveness() -> bool:
     """
     ADB 接続の物理的な生存を確認する。
+    echo コマンドのみで軽量チェック (screencap は USB で 3s 超えることがあり除外)。
     Returns: True=接続正常, False=タイムアウト/エラー(要再起動)
     """
     _serial_arg = ["-s", DEVICE_SERIAL] if DEVICE_SERIAL else []
     try:
         _r1 = subprocess.run(
             ["adb"] + _serial_arg + ["shell", "echo", "1"],
-            capture_output=True, timeout=3, text=True,
+            capture_output=True, timeout=5, text=True,
         )
         if _r1.returncode != 0 or _r1.stdout.strip() != "1":
             logger.warning("[WATCHDOG] echo 応答異常: rc=%d out=%r", _r1.returncode, _r1.stdout.strip())
-            return False
-        _r2 = subprocess.run(
-            ["adb"] + _serial_arg + ["shell", "screencap", "-p", "/dev/null"],
-            capture_output=True, timeout=3,
-        )
-        if _r2.returncode != 0:
-            logger.warning("[WATCHDOG] screencap ハング検出: rc=%d", _r2.returncode)
             return False
         return True
     except subprocess.TimeoutExpired:

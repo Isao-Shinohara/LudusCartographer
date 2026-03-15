@@ -250,7 +250,13 @@ def find_finger_blobs(img_path: Path, min_area: int = 400,
         # home_mode: 装飾 (area >= 40000) は引き続き排除。20000-39999 は金枠付きなら許可
         # max_area < デフォルト(15000): 呼び出し元が明示的にサイズ制限 → RESCUE 不要
         if _oversized and max_area >= 15000:
+            # 絶対上限: area >= 100000 (画面の9%超) は指ではありえない
+            _OVERSIZED_ABS_MAX = 100000
             for _ov in _oversized:
+                if _ov[2] >= _OVERSIZED_ABS_MAX:
+                    logger.info("[FINGER_OVERSIZED_SKIP] (%d,%d) area=%.0f >= %d → 巨大すぎて除外",
+                                _ov[0], _ov[1], _ov[2], _OVERSIZED_ABS_MAX)
+                    continue
                 # home_mode: area >= 40000 は装飾確定 → 金枠があっても排除
                 if home_mode and _ov[2] >= 40000:
                     logger.info("[FINGER_OVERSIZED_SKIP] (%d,%d) area=%.0f >= 40000 (home_mode) → 装飾除外",
