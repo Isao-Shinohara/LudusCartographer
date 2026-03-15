@@ -3195,6 +3195,7 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
             # B-0: テンプレートで battle_skill / battle_normal_attack を探す (精度最優先)
             for _btn_name in ("battle_skill", "battle_normal_attack"):
                 _btn_m = ASSET_MANAGER.match_single(_btn_name, analysis_path)
+                logger.info("[BATTLE_RAPID B-0] %s → %s", _btn_name, _btn_m)
                 if _btn_m and _btn_m[2] >= 0.60:
                     _rapid_tx, _rapid_ty = _btn_m[0], _btn_m[1]
                     _rapid_action = f"BATTLE_RAPID_TMPL_{_btn_name.upper()}"
@@ -3211,7 +3212,7 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
                 _tb = max(_right_panel, key=lambda b: b[2])
                 _rapid_tx, _rapid_ty = _tb[0], _tb[1]
                 _rapid_action = "BATTLE_RAPID_MOYA_P2"
-            else:
+            elif not _rapid_action:
                 _rapid_tx, _rapid_ty = roi_to_device(
                     int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
                 _rapid_action = "BATTLE_RAPID_NORMATK_P2"
@@ -4883,7 +4884,7 @@ def main():
                         _tb = max(_right_panel, key=lambda b: b[2])
                         _rapid_tx, _rapid_ty = _tb[0], _tb[1]
                         _rapid_action = "BATTLE_RAPID_MOYA_P2"
-                    else:
+                    elif not _rapid_action:
                         _rapid_tx, _rapid_ty = roi_to_device(
                             int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
                         _rapid_action = "BATTLE_RAPID_NORMATK_P2"
