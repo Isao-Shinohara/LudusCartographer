@@ -435,7 +435,7 @@ def handle_dialog_screen(
         # (ドット単体はホーム画面UIで誤検出多い → 背景ぼかし必須)
         _page_dots = count_page_dots(analysis_path) if analysis_path else 0
         _bypass_spatial = False
-        if _page_dots >= 2 and analysis_path:
+        if _page_dots >= 3 and analysis_path:
             _blur_img = imread_cached(analysis_path)
             if _blur_img is not None and _detect_background_blur(
                     _blur_img, _blur_img.shape[0], _blur_img.shape[1]):
@@ -1072,7 +1072,11 @@ def detect_and_act(ocr: list, state: PilotState,
     # 白ハンドポインタの指先方向がわかれば、その方向の金枠を優先タップ
     # 「矢印をタップ」画面では MAP_ARROW (#2-a) に委譲するためスキップ
     _arrow_instruction = any("矢印を" in t for t in texts)
-    if _pre_dialog_finger and analysis_path is not None and not _arrow_instruction:
+    # ホーム画面では WHITE_HAND+金枠が装飾UIで偽陽性 → ホーム検出に委譲
+    _home_kws_fg = ["光の間", "ショップ", "ガチャ", "ガシャ", "マップ", "レイヤ"]
+    _is_home_fg = sum(1 for kw in _home_kws_fg
+                      if any(kw in t or t in kw for t in texts)) >= 2
+    if _pre_dialog_finger and analysis_path is not None and not _arrow_instruction and not _is_home_fg:
         _hand_xy = None
         _hand_d = ""
         if _white_hand_pos is not None:
@@ -1230,6 +1234,14 @@ def detect_and_act(ocr: list, state: PilotState,
             if any("矢印を" in t for t in texts):
                 logger.info(">>> [Asset Match] DIALOG_NEXT を抑制 (矢印をタップ画面 → #2-a に委譲)")
                 asset_hit = None
+        # ホーム画面では FINGER_TEMPLATE 偽陽性を抑制 → ホーム検出ハンドラに委譲
+        if asset_hit and asset_hit[2] == "FINGER_TEMPLATE":
+            _home_kws_check = ["光の間", "ショップ", "ガチャ", "ガシャ", "マップ", "レイヤ"]
+            _home_kw_hits = sum(1 for kw in _home_kws_check
+                                if any(kw in t or t in kw for t in texts))
+            if _home_kw_hits >= 2:
+                logger.info("[Asset] FINGER_TEMPLATE をホーム画面で抑制 (home_kw=%d)", _home_kw_hits)
+                asset_hit = None
         if asset_hit:
             cx, cy, action, _asset_region = asset_hit
             # Text-Core: テンプレートマッチ領域 + OCR でテキスト中心優先座標を取得
@@ -1347,6 +1359,13 @@ def detect_and_act(ocr: list, state: PilotState,
             # その他のアセットアクション: タップして return (fallthrough なし)
             # GACHA_OK 入力フリーズ検出: 連続タップで応答がない場合 force-stop 復帰
             if action == "GACHA_OK":
+                # テンプレートマッチ座標はカード背景で不安定 → OCR "OK" テキスト中心を優先
+                _ocr_ok = has_text(ocr, "OK", min_conf=0.3)
+                if _ocr_ok:
+                    _ok_cx, _ok_cy = _ocr_ok["center"]
+                    logger.info("[GACHA_OK] OCR 'OK' center (%d,%d) 使用 (Template was %d,%d)",
+                                _ok_cx, _ok_cy, cx, cy)
+                    cx, cy = _ok_cx, _ok_cy
                 state.gacha_total.tick()
                 if state.gacha_total.stalled:
                     logger.warning("[GACHA_FREEZE] %d回タップ応答なし → Unity入力フリーズ → force-stop", state.gacha_total.count)
@@ -2021,11 +2040,13 @@ def detect_and_act(ocr: list, state: PilotState,
     # → 短いプレフィックスで双方向部分一致: keyword in text OR text in keyword
     home_indicators = ["光の間", "ショップ", "ガシャ", "ガチャ", "パーティ",
                        "クエスト", "ミッション", "メニュー", "ホーム",
-                       "お知らせ", "イベント", "フレンド", "マイページ", "編成"]
+                       "お知らせ", "イベント", "フレンド", "マイページ", "編成",
+                       "マップ", "レイヤー"]
     # 短縮プレフィックス (2文字以上一致で検出)
     _home_prefixes = ["光の", "ショッ", "ガシャ", "ガチャ", "パーテ",
                       "クエス", "ミッシ", "メニュ", "ホーム",
-                      "お知ら", "イベン", "フレン", "マイペ", "編成"]
+                      "お知ら", "イベン", "フレン", "マイペ", "編成",
+                      "マッ", "レイヤ"]
     def _home_match(t: str) -> int:
         """home_indicators のうち t にマッチする数を返す (完全 or プレフィックス)"""
         count = 0
@@ -2950,20 +2971,22 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     except Exception:
         pass
     # BATTLE 補助判定: 金枠オーバーレイでテンプレが失敗する場合
-    # 右下 (バトルボタン領域) に金枠が存在 → BATTLE 確定
-    try:
-        from tools.ap.image_proc import find_gold_frame_near
-        _battle_gold_cx = int(ANALYSIS_W * 0.88)
-        _battle_gold_cy = int(ANALYSIS_H * 0.80)
-        _bg_result = find_gold_frame_near(
-            img_path, _battle_gold_cx, _battle_gold_cy, search_radius=200)
-        if _bg_result is not None:
-            _bg_cx, _bg_cy, _bg_w, _bg_h = _bg_result
-            logger.info("[SCENE_EARLY] Battle補助: 右下金枠(%d,%d %dx%d) → BATTLE",
-                        _bg_cx, _bg_cy, _bg_w, _bg_h)
-            return "BATTLE"
-    except Exception:
-        pass
+    # 右下 (バトルボタン領域) に金枠が存在 → BATTLE 継続
+    # ※初回 BATTLE 判定には使わない (ホーム画面のナビバー金枠で偽陽性)
+    if state.current_scene == "BATTLE":
+        try:
+            from tools.ap.image_proc import find_gold_frame_near
+            _battle_gold_cx = int(ANALYSIS_W * 0.88)
+            _battle_gold_cy = int(ANALYSIS_H * 0.80)
+            _bg_result = find_gold_frame_near(
+                img_path, _battle_gold_cx, _battle_gold_cy, search_radius=200)
+            if _bg_result is not None:
+                _bg_cx, _bg_cy, _bg_w, _bg_h = _bg_result
+                logger.info("[SCENE_EARLY] Battle補助: 右下金枠(%d,%d %dx%d) → BATTLE",
+                            _bg_cx, _bg_cy, _bg_w, _bg_h)
+                return "BATTLE"
+        except Exception:
+            pass
 
     # ADV 継続: 前回 ADV + phash 小変化 + AUTO アイコン + ADV ツールバー → ADV 高速パス
     # dist ガード: ADV→BATTLE 遷移時 (dist>=20) はフォールスルーして再評価する
@@ -2996,7 +3019,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # (ドット単体はホーム画面UIアイコンで誤検出多い → 背景ぼかし必須)
     if img_path:
         _popup_dots = count_page_dots(img_path)
-        if _popup_dots >= 2:
+        if _popup_dots >= 3:
             _popup_img = imread_cached(img_path)
             _popup_blur = _popup_img is not None and _detect_background_blur(
                 _popup_img, _popup_img.shape[0], _popup_img.shape[1])

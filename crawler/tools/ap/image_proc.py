@@ -950,7 +950,7 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     # ── ポップアップ即棄却: ページドット + 背景ぼかし → 動画ではない ──
     if img_path:
         _pd = count_page_dots(img_path)
-        if _pd >= 2:
+        if _pd >= 3:
             _pi = imread_cached(img_path)
             if _pi is not None and _detect_background_blur(_pi, _pi.shape[0], _pi.shape[1]):
                 return MovieSceneResult()
@@ -1018,7 +1018,7 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
                 _img_blur = imread_cached(img_path)
                 if _img_blur is not None:
                     _Hb, _Wb = _img_blur.shape[:2]
-                    _has_dots = count_page_dots(_img_blur, _Hb, _Wb) >= 2
+                    _has_dots = count_page_dots(_img_blur, _Hb, _Wb) >= 3
                     _has_blur = _detect_background_blur(_img_blur, _Hb, _Wb)
                     if _has_dots and _has_blur:
                         logger.debug("[MOVIE_SCENE] ドット+背景ぼかし → MOVIE棄却 (ポップアップ)")
@@ -1542,7 +1542,7 @@ def count_page_dots(img_or_path, H: int = 720, W: int = 1520) -> int:
     _scale = (W * H) / (1520 * 720)
     _min_area = 15 * _scale
     _max_area = 800 * _scale
-    _dot_count = 0
+    _dots = []  # (cx, cy) リスト — 水平整列チェック用
     for _c in _cnts:
         _a = cv2.contourArea(_c)
         if _a < _min_area or _a > _max_area:
@@ -1550,8 +1550,25 @@ def count_page_dots(img_or_path, H: int = 720, W: int = 1520) -> int:
         _x, _y, _w, _h = cv2.boundingRect(_c)
         _asp = _w / max(_h, 1)
         if 0.5 < _asp < 2.0:  # roughly circular
-            _dot_count += 1
-    return _dot_count
+            _dots.append((_x + _w // 2, _y + _h // 2))
+    if len(_dots) < 2:
+        return len(_dots)
+    # 水平整列チェック: 実際のページドットは同一Y座標に並ぶ
+    # 最頻Y座標 ±5px 以内のドットだけカウント (装飾散乱を除外)
+    _roi_w = _x2 - _x1
+    _best_count = 0
+    for _ref_y in set(d[1] for d in _dots):
+        _row = [d for d in _dots if abs(d[1] - _ref_y) <= 5]
+        if len(_row) < 2:
+            continue
+        # x方向クラスタリング: ドットが中央に集中しているか確認
+        # 実際のページドットは ROI幅の40%以内に収まる (6ドットでも ~200px/1216px ≈ 16%)
+        _xs = [d[0] for d in _row]
+        _x_span = max(_xs) - min(_xs)
+        if _x_span > _roi_w * 0.30:
+            continue  # 散らばりすぎ → 装飾要素
+        _best_count = max(_best_count, len(_row))
+    return _best_count
 
 
 def _detect_page_dots(img, H: int, W: int) -> bool:
