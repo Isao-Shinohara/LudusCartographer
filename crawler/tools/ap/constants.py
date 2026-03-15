@@ -109,7 +109,12 @@ ANALYSIS_W = 1520
 ANALYSIS_H = 720
 
 # ─── 座標補正定数 ───
-_OCR_BBOX_Y_PADDING = 30       # PaddleOCR bbox 下部パディング補正
+# Vision framework は bbox が正確なので補正不要、PaddleOCR は下部パディングあり
+try:
+    from lc.ocr import _HAS_VISION as _VISION_AVAILABLE
+except ImportError:
+    _VISION_AVAILABLE = False
+_OCR_BBOX_Y_PADDING = 0 if _VISION_AVAILABLE else 30
 _GLOW_CENTER_Y_OFFSET = 35     # 発光ブロブ重心→ボタン視覚中心
 _GOLD_BTN_RETRY_Y_OFFSET = 30  # 金枠ボタン Y下方リトライ
 _FINGER_TIP_RATIO = 0.1        # 指ブロブ上端10% = 指先位置
