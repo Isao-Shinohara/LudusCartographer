@@ -951,9 +951,11 @@ def detect_and_act(ocr: list, state: PilotState,
                 break
         if _quest_chal:
             _qcx, _qcy = _quest_chal["center"]
+            # 挑戦ボタンは右端にあるため、OCR テキスト中心が左寄りの場合を補正
+            _qcx = max(_qcx, int(W * 0.88))
         else:
-            # 固定位置: 挑戦ボタンは画面下部中央 (x=50%, y=88%)
-            _qcx, _qcy = int(W * 0.50), int(H * 0.88)
+            # 固定位置: 挑戦ボタンは画面右下 (x=92%, y=90%)
+            _qcx, _qcy = int(W * 0.92), int(H * 0.90)
         if state.game_roi:
             _roi_max_y = state.game_roi[1] + state.game_roi[3] - 5
             _qcy = min(_qcy, _roi_max_y)
