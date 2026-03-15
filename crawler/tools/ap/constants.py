@@ -59,7 +59,7 @@ _GOLD_UI_ACTIONS: frozenset = frozenset([
 _SCENE_REEVAL_THRESHOLD = 5
 
 # ─── 確認ダイアログ キーワード (複数箇所で共有) ───
-_CONFIRM_POS_KWS: list[str] = ["OK", "はい", "わかった", "了解", "決定", "許可", "Allow", "ALLOW", "リトライ", "Retry"]
+_CONFIRM_POS_KWS: list[str] = ["OK", "はい", "わかった", "了解", "決定", "許可", "Allow", "ALLOW", "リトライ", "Retry", "挑戦"]
 _CONFIRM_NEG_KWS: list[str] = ["キャンセル", "いいえ", "戻る", "やめる", "許可しない", "拒否", "Deny"]
 
 # ─── 課金保護: 通貨消費キーワード ───

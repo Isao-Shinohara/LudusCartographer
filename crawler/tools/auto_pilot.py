@@ -448,13 +448,27 @@ def handle_dialog_screen(
                 _sg_best = max(_sg_blobs, key=lambda b: b[2])
                 _sg_dist = ((_dlg_x - _sg_best[0]) ** 2 + (_dlg_y - _sg_best[1]) ** 2) ** 0.5
                 if _sg_dist > 300:
-                    logger.info(
-                        ">>> [SPATIAL_GATE] 指(%d,%d)↔▷(%d,%d) 距離=%.0fpx>300 → #0-DIALOG スキップ",
-                        _sg_best[0], _sg_best[1], _dlg_x, _dlg_y, _sg_dist,
-                    )
-                    _dlg = None
-        # ── 白ハンドポインタ画面ガード ──────────────────────────
-        if _dlg is not None and not _bypass_spatial:
+                    # ▷ は指から遠い → 偽検出の可能性高い
+                    # ×ボタンがあれば × で閉じるフォールバック
+                    _sg_close_fb = ASSET_MANAGER.match_single(
+                        "tutorial_dialog_close", analysis_path,
+                        roi=(int(W * 0.85), 0, int(W * 0.15), int(H * 0.15)))
+                    if _sg_close_fb and _sg_close_fb[2] >= 0.70:
+                        logger.info(
+                            ">>> [SPATIAL_GATE] 指(%d,%d)↔▷(%d,%d) 距離=%.0fpx>300 → ×フォールバック(%d,%d) score=%.3f",
+                            _sg_best[0], _sg_best[1], _dlg_x, _dlg_y, _sg_dist,
+                            _sg_close_fb[0], _sg_close_fb[1], _sg_close_fb[2],
+                        )
+                        _dlg = ("close", _sg_close_fb[0], _sg_close_fb[1])
+                        _dlg_type, _dlg_x, _dlg_y = _dlg
+                    else:
+                        logger.info(
+                            ">>> [SPATIAL_GATE] 指(%d,%d)↔▷(%d,%d) 距離=%.0fpx>300 → #0-DIALOG スキップ",
+                            _sg_best[0], _sg_best[1], _dlg_x, _dlg_y, _sg_dist,
+                        )
+                        _dlg = None
+        # ── 白ハンドポインタ画面ガード (×フォールバック時はスキップ) ──
+        if _dlg is not None and not _bypass_spatial and _dlg_type != "close":
             _sg_white = detect_white_hand_pointer(analysis_path, threshold=0.90)
             if _sg_white is not None:
                 logger.info(
@@ -1078,13 +1092,41 @@ def detect_and_act(ocr: list, state: PilotState,
                       if any(kw in t or t in kw for t in texts)) >= 2
     # ─── メインクエスト選択画面: 「Main」ボタンを直接タップ ───
     # 金枠がバナー装飾を拾って空振りするため、OCRの「Main」テキスト位置をタップ
-    if any("メインクエスト" in t for t in texts):
+    # 白ハンドポインタがある場合は指差しガイドが優先 (Upgrade等を指す場合がある)
+    if any("メインクエスト" in t for t in texts) and _white_hand_pos is None:
         _main_btn = has_text(ocr, "Main", min_conf=0.3)
         if _main_btn:
             _mx, _my = _main_btn["center"]
             logger.info(">>> 【メインクエスト】 Main ボタン (%d,%d) タップ", _mx, _my)
             tap_device(_mx, _my, state, "MAIN_QUEST_TAP")
             return "MAIN_QUEST_TAP", 2.0
+    # ─── クエストマップ画面: ノード選択 + 挑戦ボタン ───
+    _has_main = has_text(ocr, "Main", min_conf=0.3)
+    _has_floor = any("階層" in t for t in texts)
+    _challenge_btn = has_text(ocr, "挑戦", min_conf=0.3)
+    # 挑戦ボタンが見えていればクエスト詳細パネルが開いている → 挑戦タップ
+    if _has_main and _challenge_btn:
+        _cx, _cy = _challenge_btn["center"]
+        logger.info(">>> 【クエストマップ】 挑戦ボタン (%d,%d) タップ", _cx, _cy)
+        tap_device(_cx, _cy, state, "QUEST_CHALLENGE_TAP")
+        return "QUEST_CHALLENGE_TAP", 3.0
+    if _has_main and _has_floor:
+        # ノードラベル "X-Y" パターンを探す
+        _quest_node = None
+        for _r in ocr:
+            if _r.get("confidence", 0) < 0.3:
+                continue
+            if re.fullmatch(r"\d+-\d+", _r["text"].strip()):
+                _quest_node = _r
+                break
+        if _quest_node:
+            _qx, _qy = _quest_node["center"]
+            # テキストラベルはノードアイコンの下にある → 60px上を狙う
+            _qy = max(_qy - 60, 10)
+            logger.info(">>> 【クエストマップ】 ノード '%s' (%d,%d) タップ",
+                        _quest_node["text"], _qx, _qy)
+            tap_device(_qx, _qy, state, "QUEST_NODE_TAP")
+            return "QUEST_NODE_TAP", 2.0
     if _pre_dialog_finger and analysis_path is not None and not _arrow_instruction and not _is_home_fg:
         _hand_xy = None
         _hand_d = ""
@@ -4612,15 +4654,25 @@ def main():
                             state.last_action = "ANIM_WAIT"
                             state.last_phash = _st_retry_ph
                             continue
-                    _st_x = int(ANALYSIS_W * 0.5)
-                    _st_y = int(ANALYSIS_H * 0.5)
-                    logger.info("[iter %d] phash_dist=%d 非動画静止画面 → SCENE_TAP (%d,%d)",
-                                i, dist, _st_x, _st_y)
-                    tap_device(_st_x, _st_y, state, "SCENE_TAP")
-                    state.last_action = "SCENE_TAP"
-                    state.movie_wait_consecutive = 0; state.movie_static_count = 0
-                    state.last_phash = cur_phash
-                    continue
+                    # SCENE_TAP 連続上限: 15回連続で画面が進まない → 強制 OCR へ
+                    _scene_tap_count = getattr(state, "_scene_tap_count", 0) + 1
+                    state._scene_tap_count = _scene_tap_count
+                    if _scene_tap_count >= 15:
+                        logger.warning("[iter %d] SCENE_TAP %d回連続 → 強制 OCR へフォールスルー",
+                                       i, _scene_tap_count)
+                        state._scene_tap_count = 0
+                        state.same_phash_count = FORCE_ANALYZE_AFTER
+                        # OCR パスへ落とすため continue しない
+                    else:
+                        _st_x = int(ANALYSIS_W * 0.5)
+                        _st_y = int(ANALYSIS_H * 0.5)
+                        logger.info("[iter %d] phash_dist=%d 非動画静止画面 → SCENE_TAP (%d,%d)",
+                                    i, dist, _st_x, _st_y)
+                        tap_device(_st_x, _st_y, state, "SCENE_TAP")
+                        state.last_action = "SCENE_TAP"
+                        state.movie_wait_consecutive = 0; state.movie_static_count = 0
+                        state.last_phash = cur_phash
+                        continue
 
         else:
             # 画面変化なし
@@ -5202,7 +5254,10 @@ def main():
              if "のキオク" in item.get("text", "") and len(item.get("text", "")) <= 15),
             None)
         _has_ok_btn = any("OK" in t for t in texts)
-        if _kioku_item and not _has_ok_btn and scene not in ("BATTLE",):
+        _has_result = any("Result" in t or "result" in t for t in texts)
+        # キャラ詳細画面は CHARA_GET ではない (詳細/限界突破/スキル/3D 等が見える)
+        _is_chara_detail = any(kw in t for t in texts for kw in ("詳細", "限界突破", "スキル"))
+        if _kioku_item and not _has_ok_btn and not _has_result and not _is_chara_detail and scene not in ("BATTLE",):
             _tap_x, _tap_y = roi_to_device(
                 int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state.game_roi)
             logger.info("[CHARA_GET] キャラ獲得画面検出 (キオク) → 中央タップ (%d,%d)", _tap_x, _tap_y)
