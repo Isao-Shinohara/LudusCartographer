@@ -77,6 +77,7 @@ def _build_scrcpy_args(device_serial: str) -> list:
     return [
         _scrcpy_bin,
         "-s", device_serial,
+        "--turn-screen-off",
         "--stay-awake",
         "--max-size", str(MAX_WIDTH),
     ]

@@ -2827,39 +2827,42 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 state.movie_wait_consecutive = 0; state.movie_static_count = 0
                 return "UNKNOWN"
 
-        # ── ADV 証拠チェック (ADV ツールバー or ↓ ボタン → MOVIE 脱出) ──
+        # ── phash 変化中 = 動画再生中 → 無条件で MOVIE 継続 (タップ厳禁) ──
+        if dist >= PHASH_THRESHOLD:
+            state.movie_static_count = 0  # 動的フレーム → 静止カウンタリセット
+            logger.info("[MOVIE_INERTIA] phash_dist=%d (動画再生中) → MOVIE継続", dist)
+            return "MOVIE"
+
+        # ── 以下は画面静止時 (dist < PHASH_THRESHOLD) ──
+        # 静止 = 動画終了ではない。他シーンへの遷移が確認できた場合のみ脱出する。
+        state.movie_static_count += 1
+
+        # ── ⏭ ボタン確認 → あれば動画継続 (一時停止 or 暗転シーン) ──
+        _movie_chk = detect_movie_scene(
+            img_path, adv_result=None, phash_dist=dist)
+        if _movie_chk.is_movie and _movie_chk.has_skip_btn:
+            return "MOVIE"
+
+        # ── 他シーンへの遷移チェック: 肯定的な証拠がある場合のみ MOVIE 脱出 ──
         adv = detect_adv_scene(img_path, roi=state.game_roi)
-        if adv.is_adv or state.current_scene in ("BATTLE", "MENU"):
-            # ADV/BATTLE/MENU の明確な証拠 → MOVIE 脱出
-            logger.info("[MOVIE_INERTIA] ADV/BATTLE/MENU 証拠あり → MOVIE脱出")
+        if adv.is_adv:
+            logger.info("[MOVIE_INERTIA] ADVツールバー検出 → ADV遷移確定, MOVIE脱出")
             state.last_action = "SCENE_TAP"
             state.movie_wait_consecutive = 0; state.movie_static_count = 0
             state._movie_resume_used = False
+        elif state.current_scene in ("BATTLE", "MENU"):
+            logger.info("[MOVIE_INERTIA] BATTLE/MENU シーン → MOVIE脱出")
+            state.last_action = "SCENE_TAP"
+            state.movie_wait_consecutive = 0; state.movie_static_count = 0
+        elif detect_adv_advance_icon(img_path):
+            logger.info("[MOVIE_INERTIA] ↓ボタン検出 → ADV遷移確定, MOVIE脱出")
+            state.last_action = "SCENE_TAP"
+            state.movie_wait_consecutive = 0; state.movie_static_count = 0
         else:
-            # ADV 証拠チェック: ↓ボタンのみ (MOVIE中はAUTO単独を信頼しない)
-            _adv_down = detect_adv_advance_icon(img_path)
-            if _adv_down:
-                logger.info("[MOVIE_INERTIA] ↓ボタン検出 → ADV確定, MOVIE脱出")
-                state.last_action = "SCENE_TAP"
-                state.movie_wait_consecutive = 0; state.movie_static_count = 0
-            else:
-                # ADV 証拠なし → ⏭ ボタンで動画継続/終了を判定
-                _movie_chk = detect_movie_scene(
-                    img_path, adv_result=adv, phash_dist=dist)
-                if _movie_chk.is_movie and _movie_chk.has_skip_btn:
-                    # ⏭ あり + ADV証拠なし → 動画継続
-                    return "MOVIE"
-                # ⏭ 未検出でも phash が変化中 (アニメーション) → 動画再生中
-                # 動画はタップ不要で自動終了→自動遷移するため、
-                # phash 変化中は MOVIE 維持して待機 (⏭テンプレの一時的不一致に耐性)
-                if dist >= PHASH_THRESHOLD:
-                    logger.info("[MOVIE_INERTIA] ⏭未検出だが phash_dist=%d (動画再生中) → MOVIE継続",
-                                dist)
-                    return "MOVIE"
-                # ⏭ なし + 画面静止 → 動画終了 (自動遷移済み)
-                logger.info("[MOVIE_INERTIA] ⏭消失+静止 (consecutive=%d, dist=%d) → 動画終了",
-                            state.movie_wait_consecutive, dist)
-                state.last_action = "SCENE_TAP"
+            # 他シーンの証拠なし → MOVIE 継続 (暗転・字幕・クレジット等)
+            logger.info("[MOVIE_INERTIA] ⏭未検出+静止 %d回 だが他シーン証拠なし → MOVIE継続",
+                        state.movie_static_count)
+            return "MOVIE"
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     # 10回に1回テンプレートで実在確認 (Result画面等での誤BATTLE継続を防止)
@@ -4133,6 +4136,7 @@ def main():
         # ── 2.5) ダウンロード/ロード中ショートカット ──
         # 前回アクションが DOWNLOAD_WAIT/LOADING_WAIT → phash/シーン判定をスキップ
         # phash だけ更新して detect_and_act へ直行 (DL 完了判定は detect_and_act 内で行う)
+        _dl_force_ocr = False
         if state.last_action in ("DOWNLOAD_WAIT", "LOADING_WAIT", "MAIN_STORY_LOADING"):
             try:
                 cur_phash = compute_phash(img_path)
@@ -4161,6 +4165,7 @@ def main():
                         state.last_action = "DL_STALL_ESCAPE"
                         state._dl_static_cumulative = 0  # type: ignore[attr-defined]
                     state.same_phash_count = 0
+                    _dl_force_ocr = True   # 完了ダイアログ即検出のため強制 OCR
                     # fall through to detect_and_act
                 else:
                     logger.debug("[iter %d] DL/ロード中: phash変化なし(dist=%d) → 3秒待機", i, dist)
@@ -4173,7 +4178,7 @@ def main():
             state.last_phash = cur_phash
             # DLショートカットで既に phash 計算済み → 通常 phash 計算をスキップ
             state.last_phash_dist = dist
-            screen_changed = dist >= PHASH_THRESHOLD
+            screen_changed = dist >= PHASH_THRESHOLD or _dl_force_ocr
             state.same_phash_count = 0
             _dl_shortcut_fell_through = True
         else:
@@ -5236,6 +5241,8 @@ def main():
                         if _dl_dist >= PHASH_THRESHOLD:
                             logger.info("  [DOWNLOAD_ADAPTIVE] 画面変化検出 (dist=%d) → 早期脱出", _dl_dist)
                             state.last_phash = _dl_ph
+                            # DL完了ダイアログの可能性 → 次イテレーションで即OCR
+                            state.same_phash_count = 9  # 次の +1 で 10 到達 → 即 fallthrough
                             break
                     except Exception:
                         pass

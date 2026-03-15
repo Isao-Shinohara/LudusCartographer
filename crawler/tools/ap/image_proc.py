@@ -604,24 +604,6 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
         return None
 
 
-def detect_adv_scene_cached(img_path: Path, state: "PilotState",
-                             ocr_items=None) -> AdvSceneResult:
-    """detect_adv_scene() の phash キャッシュ付きラッパー。同一 phash なら再計算しない。"""
-    cur = state.last_phash
-    if cur and cur == state._adv_toolbar_cache_phash and state._adv_scene_cache_result is not None:
-        return state._adv_scene_cache_result
-    roi = state.game_roi if hasattr(state, "game_roi") else None
-    result = detect_adv_scene(img_path, ocr_items=ocr_items, roi=roi)
-    state._adv_toolbar_cache_phash = cur
-    state._adv_toolbar_cache_result = result.is_adv  # 後方互換
-    state._adv_scene_cache_result = result
-    return result
-
-
-def is_adv_toolbar_cached(img_path: Path, state: "PilotState") -> bool:
-    """is_adv_toolbar_visible() の phash キャッシュ付きラッパー (後方互換)。"""
-    return detect_adv_scene_cached(img_path, state).is_adv
-
 
 def detect_adv_advance_icon(img_path: Path,
                              roi_x: int = int(ANALYSIS_W * 0.875),
@@ -1929,7 +1911,8 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
 
 # ─── Type B: 金枠ハイライトボタン検出 → 中心タップ ─────────────────────
 def detect_tutorial_gold_button_tap(img_path: Path,
-                                    right_half_only: bool = True
+                                    right_half_only: bool = True,
+                                    overlay_mode: bool = False,
                                     ) -> Optional[tuple[int, int]]:
     """
     チュートリアルバトルで指アイコンが指し示す「金枠ハイライトボタン」を検出し
@@ -1940,6 +1923,7 @@ def detect_tutorial_gold_button_tap(img_path: Path,
     - 面積 8000~150000px² (ボタン相当の大きさ)
     - 幅 100px以上 (細い軌跡線は除外)
     - right_half_only=True の場合: x中心 > W/2 のみ有効 (右側ボタン優先)
+    - overlay_mode=True の場合: チュートリアル暗転確定 → 上部除外・右半分フィルタをバイパス
 
     デバッグ画像: crawler/templates/tutorial/gold_btn_HHMMSS.png に自動保存。
     Returns: (tap_x, tap_y) or None
@@ -1991,11 +1975,12 @@ def detect_tutorial_gold_button_tap(img_path: Path,
                 cx = x + w // 2
                 cy = y + h // 2
                 # 画面上部 (y<35%) は除外 — ホーム画面装飾の誤検出防止
-                if cy < H_img * 0.35:
+                # overlay_mode (チュートリアル暗転確定) 時はバイパス
+                if not overlay_mode and cy < H_img * 0.35:
                     logger.debug("[GoldBtn] 上部除外: bbox=(%d,%d,%d,%d) cy=%d", x, y, w, h, cy)
                     continue
-                # 右半分のみフィルタ
-                if right_half_only and cx < W_img * 0.5:
+                # 右半分のみフィルタ (overlay_mode 時はバイパス)
+                if right_half_only and not overlay_mode and cx < W_img * 0.5:
                     continue
                 candidates.append((cx, cy, area, x, y, w, h))
 
