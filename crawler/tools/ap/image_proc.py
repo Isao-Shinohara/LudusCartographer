@@ -416,9 +416,9 @@ def _run_battle_glow_sm(
     # P1: 左キャラ発光 (キャラ未選択)
     if not state.character_selected and left:
         g = max(left, key=lambda g: g["area"])
-        # bbox上端 + 高さ1/3 = ボタン視覚中心 (centroidはハロに引かれ下にずれる)
+        # bbox上端 + 高さ2/3 = ボタン視覚中心 (centroidはハロに引かれ上にずれる)
         gx = g["cx"]
-        gy = max(1, g["by"] + g["bh"] // 3)
+        gy = max(1, g["by"] + g["bh"] * 2 // 3)
         logger.info("[%s P1] 左キャラ発光 centroid(%d,%d) bbox_y=%d+%d → tap(%d,%d)",
                     tag, g["cx"], g["cy"], g["by"], g["bh"], gx, gy)
         tap_device(gx, gy, state, "GLOW_LEFT_CHAR", rapid=True)
@@ -431,9 +431,9 @@ def _run_battle_glow_sm(
     # P2: 右スキル発光 (キャラ選択済み)
     if state.character_selected and right:
         g = max(right, key=lambda g: g["area"])
-        # bbox上端 + 高さ1/3 = ボタン視覚中心
+        # bbox上端 + 高さ2/3 = ボタン視覚中心
         gx = g["cx"]
-        gy = max(1, g["by"] + g["bh"] // 3)
+        gy = max(1, g["by"] + g["bh"] * 2 // 3)
         logger.info("[%s P2] 右発光 centroid(%d,%d) bbox_y=%d+%d → tap(%d,%d)",
                     tag, g["cx"], g["cy"], g["by"], g["bh"], gx, gy)
         tap_device(gx, gy, state, "GLOW_RIGHT_SKILL")

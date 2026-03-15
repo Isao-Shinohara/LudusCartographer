@@ -3195,7 +3195,7 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
             if _rapid_right_g:
                 _rr = max(_rapid_right_g, key=lambda g: g["area"])
                 _rapid_tx = _rr["cx"]
-                _rapid_ty = max(1, _rr["by"] + _rr["bh"] // 3)
+                _rapid_ty = max(1, _rr["by"] + _rr["bh"] * 2 // 3)
                 _rapid_action = "BATTLE_RAPID_GLOW_P2"
             elif _right_panel:
                 _tb = max(_right_panel, key=lambda b: b[2])
@@ -4859,9 +4859,9 @@ def main():
                     # キャラ選択済み → 右スキル優先
                     if _rapid_right_g:
                         _rr = max(_rapid_right_g, key=lambda g: g["area"])
-                        # bbox上端 + 高さ1/3 = ボタン視覚中心
+                        # bbox上端 + 高さ2/3 = ボタン視覚中心
                         _rapid_tx = _rr["cx"]
-                        _rapid_ty = max(1, _rr["by"] + _rr["bh"] // 3)
+                        _rapid_ty = max(1, _rr["by"] + _rr["bh"] * 2 // 3)
                         _rapid_action = "BATTLE_RAPID_GLOW_P2"
                     elif _right_panel:
                         _tb = max(_right_panel, key=lambda b: b[2])
