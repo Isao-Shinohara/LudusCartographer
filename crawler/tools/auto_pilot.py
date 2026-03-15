@@ -2085,6 +2085,15 @@ def detect_and_act(ocr: list, state: PilotState,
         _home_blobs = find_finger_blobs(analysis_path, home_mode=True) if analysis_path else []
         _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
         _home_dimmed = detect_tutorial_overlay(analysis_path) if analysis_path else False
+        # tutorial_hand_pointer テンプレートも指の証拠として使用
+        # (scrcpy 低解像度では find_finger_blobs の金枠検出が失敗することがある)
+        _hand_match = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path) if analysis_path else None
+        if _hand_match and _hand_match[2] >= 0.70 and not _home_blobs:
+            # ハンドポインタ座標を指ブロブとして追加 (area=10000 ダミー)
+            _hx, _hy = _hand_match[0], _hand_match[1]
+            logger.info(">>> ホーム: tutorial_hand_pointer(%.2f) (%d,%d) → 指ブロブとして追加",
+                        _hand_match[2], _hx, _hy)
+            _home_blobs = [(_hx, _hy, 10000.0, _hx - 20, _hy - 20, 40, 40)]
         if _home_blobs or _home_gold:
             _tap_target = None
             if _home_blobs:
