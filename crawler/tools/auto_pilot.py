@@ -1524,6 +1524,21 @@ def detect_and_act(ocr: list, state: PilotState,
                     carousel_match["text"][:10], close_x, close_y)
         tap_device(close_x, close_y, state, "CAROUSEL_CLOSE")
         return "CLOSE_POPUP", 1.0
+    # ─── プレゼントボックス画面: 「一括受取」タップ or BACK で戻る ───
+    _present_box = has_text(ocr, "プレゼントボックス", min_conf=0.3) or has_text(ocr, "プレゼントボックス", min_conf=0.2)
+    if _present_box:
+        _bulk_receive = has_text(ocr, "一括受取", min_conf=0.3)
+        if _bulk_receive:
+            _br_x, _br_y = _bulk_receive["center"]
+            logger.info(">>> 【プレゼントボックス】 一括受取 (%d,%d) タップ", _br_x, _br_y)
+            tap_device(_br_x, _br_y, state, "PRESENT_BULK_RECEIVE")
+            return "PRESENT_BULK_RECEIVE", 2.0
+        else:
+            # 一括受取ボタンが見えない → BACK キーで戻る
+            logger.info(">>> 【プレゼントボックス】 一括受取なし → BACK で戻る")
+            adb("shell input keyevent KEYCODE_BACK")
+            return "PRESENT_BOX_BACK", 1.0
+
     close_popup = has_any(ocr, close_popup_kws)
     if close_popup:
         # CLOSE_POPUP スタック脱出: 8回以上累計失敗 → BACK キーで閉じる
@@ -3874,13 +3889,24 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 break
             continue
 
+        # --- エラーダイアログ検出 (「インストールできません」) → BACK + 再表示 ---
+        _install_error = any("できません" in t for t in _ocr_texts)
+        if _install_error:
+            logger.info("[FRESH_INSTALL] エラーダイアログ検出 → BACK + Play Store 再表示")
+            _save_diag_screenshot(f"install_error_{attempt}")
+            _adb_key("4")  # BACK
+            time.sleep(2)
+            open_play_store(serial, package)
+            time.sleep(5)
+            continue
+
         # 「インストール」を OCR 検出
         _install_found = False
         for kw in INSTALL_KEYWORDS:
             hit = find_best(ocr_results, kw)
             if hit:
-                # 「アンインストール」除外
-                if "アン" in hit["text"]:
+                # 「アンインストール」「インストールできません」除外
+                if "アン" in hit["text"] or "できません" in hit["text"]:
                     continue
                 cx, cy = hit["center"]
                 logger.info("[FRESH_INSTALL] OCR「%s」検出 → タップ (%d,%d)", kw, cx, cy)
