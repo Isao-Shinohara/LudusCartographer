@@ -927,6 +927,15 @@ def detect_and_act(ocr: list, state: PilotState,
     # "Result" + "次へ" が見えたら即タップ (SWIPE_UP 誤マッチ防止)
     _is_result_early = any("Result" in t for t in texts)
     if _is_result_early:
+        state.result_total_taps += 1
+        # フリーズ検出: 30タップ超えたら force-stop で復旧
+        if state.result_total_taps >= 30:
+            logger.warning("[RESULT_FREEZE] RESULT_NEXT_EARLY %d回 → Unity入力フリーズ → force-stop",
+                           state.result_total_taps)
+            state.result_total_taps = 0
+            state.result_rapid_count = 0
+            watchdog_recover(state)
+            return "RESULT_FREEZE", 0.0
         _next_btn = has_text(ocr, "次へ", min_conf=0.3)
         if _next_btn:
             _nx, _ny = _next_btn["center"]
@@ -2864,6 +2873,14 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             state.movie_wait_consecutive = 0; state.movie_static_count = 0
             # → detect_scene_early は UNKNOWN を返す → フルOCRへ
 
+        # ── ハードリミット: 300回超 → 探索画面等の誤判定、強制脱出 ──
+        if state.movie_wait_consecutive >= 300:
+            logger.warning("[MOVIE_INERTIA] ハードリミット %d 回到達 → MOVIE強制脱出",
+                           state.movie_wait_consecutive)
+            state.movie_wait_consecutive = 0; state.movie_static_count = 0
+            state.last_action = "SCENE_TAP"
+            return "UNKNOWN"
+
         # ── phash 変化中 = 動画再生中 → 無条件で MOVIE 継続 (タップ厳禁) ──
         if dist >= PHASH_THRESHOLD:
             state.movie_static_count = 0  # 動的フレーム → 静止カウンタリセット
@@ -3074,7 +3091,19 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
         time.sleep(1.0)
         return True
 
-    # ── 長時間待機ログ ──
+    # ── 長時間待機: ハードリミット (探索画面等の誤MOVIE判定を脱出) ──
+    _MOVIE_HARD_LIMIT = 300  # ~3分: これ以上は動画ではない
+    if state.movie_wait_consecutive >= _MOVIE_HARD_LIMIT:
+        logger.warning("[MOVIE] ハードリミット %d 回到達 → 動画ではない、MOVIE強制脱出",
+                       state.movie_wait_consecutive)
+        state.movie_static_count = 0
+        state.movie_wait_consecutive = 0
+        state._movie_resume_count = 0  # type: ignore[attr-defined]
+        state.current_scene = "UNKNOWN"
+        state.last_action = "SCENE_TAP"
+        state.last_phash = ""
+        return False  # MOVIE ハンドラ脱出 → フルOCRへ
+
     if state.movie_wait_consecutive >= 30 and state.movie_wait_consecutive % 30 == 0:
         logger.info("[MOVIE] 長時間待機 %d 回 — 動画自動終了を待機中",
                     state.movie_wait_consecutive)
