@@ -3240,9 +3240,19 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
                 # プレイヤーターンに切り替わった → 再解析して正規パスへ
                 logger.info("[BATTLE] 再確認でACTIVE_CHAR検出 → 次ループで正規処理")
                 return True  # 次ループで handle_battle が再呼出される
-        _rapid_tx, _rapid_ty = roi_to_device(
-            int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
-        _rapid_action = "BATTLE_RAPID_NORMATK_FALLBACK"
+        # テンプレマッチで正しいボタン位置を探す (character_selected 不問)
+        for _fb_btn in ("battle_skill", "battle_normal_attack"):
+            _fb_m = ASSET_MANAGER.match_single(_fb_btn, analysis_path)
+            if _fb_m and _fb_m[2] >= 0.60:
+                _rapid_tx, _rapid_ty = _fb_m[0], _fb_m[1]
+                _rapid_action = f"BATTLE_RAPID_TMPL_{_fb_btn.upper()}"
+                logger.info("[BATTLE_RAPID] FALLBACK テンプレ %s (%.2f) → tap(%d,%d)",
+                            _fb_btn, _fb_m[2], _rapid_tx, _rapid_ty)
+                break
+        if not _rapid_action:
+            _rapid_tx, _rapid_ty = roi_to_device(
+                int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
+            _rapid_action = "BATTLE_RAPID_NORMATK_FALLBACK"
         state.normatk_fallback.tick()
     else:
         state.normatk_fallback.reset()
@@ -4923,9 +4933,19 @@ def main():
                             logger.info("[BATTLE_RAPID] 再確認でACTIVE_CHAR検出 → 次ループで正規処理")
                             img_path = _fb_analysis
                             continue
-                    _rapid_tx, _rapid_ty = roi_to_device(
-                        int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
-                    _rapid_action = "BATTLE_RAPID_NORMATK_FALLBACK"
+                    # テンプレマッチで正しいボタン位置を探す (character_selected 不問)
+                    for _fb_btn in ("battle_skill", "battle_normal_attack"):
+                        _fb_m = ASSET_MANAGER.match_single(_fb_btn, analysis_path)
+                        if _fb_m and _fb_m[2] >= 0.60:
+                            _rapid_tx, _rapid_ty = _fb_m[0], _fb_m[1]
+                            _rapid_action = f"BATTLE_RAPID_TMPL_{_fb_btn.upper()}"
+                            logger.info("[BATTLE_RAPID] FALLBACK テンプレ %s (%.2f) → tap(%d,%d)",
+                                        _fb_btn, _fb_m[2], _rapid_tx, _rapid_ty)
+                            break
+                    if not _rapid_action:
+                        _rapid_tx, _rapid_ty = roi_to_device(
+                            int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
+                        _rapid_action = "BATTLE_RAPID_NORMATK_FALLBACK"
                     state.normatk_fallback.tick()
             else:
                 state.normatk_fallback.reset()
