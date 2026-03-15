@@ -1947,7 +1947,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 if _gold_frame is not None:
                     state.gold_detections += 1
                 # 左キャラ選択後は char_just_selected / character_selected フラグをセット
-                if fx < 600 and fy > H * 0.76:
+                if fx < 600 and fy > H * 0.55:
                     state.char_just_selected = True
                     state.character_selected = True  # GLOW SM 用にも同期
                     logger.info("  (左キャラ選択完了 → 次は右スキル)")
@@ -3195,7 +3195,7 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
             # B-0: テンプレートで battle_skill / battle_normal_attack を探す (精度最優先)
             for _btn_name in ("battle_skill", "battle_normal_attack"):
                 _btn_m = ASSET_MANAGER.match_single(_btn_name, analysis_path)
-                logger.info("[BATTLE_RAPID B-0] %s → %s", _btn_name, _btn_m)
+                logger.debug("[BATTLE_RAPID B-0] %s → %s", _btn_name, _btn_m)
                 if _btn_m and _btn_m[2] >= 0.60:
                     _rapid_tx, _rapid_ty = _btn_m[0], _btn_m[1]
                     _rapid_action = f"BATTLE_RAPID_TMPL_{_btn_name.upper()}"
