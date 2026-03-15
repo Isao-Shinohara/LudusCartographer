@@ -685,6 +685,30 @@ def detect_and_act(ocr: list, state: PilotState,
         logger.debug("[detect_and_act] MOVIE シーン → タップ抑制, 待機")
         return "MOVIE_WAIT", 0.5
 
+    # ── 【#-3b】download_active 状態管理 ──
+    # download_active はDL完了ダイアログのOKタップ (DL_COMPLETE_OK) まで維持する。
+    # OCRテキスト消失だけでは解除しない (DL完了→ダイアログ表示の遷移中にOCR 0件になるため)。
+    if state.download_active:
+        # チュートリアル中のみ: DL完了ダイアログのOKを確認するまで download_active を維持
+        if not state.home_reached:
+            if len(texts) == 0:
+                # DL完了直後のアニメーション遷移中はOCR 0件。タップせず待機してリトライ
+                logger.info("[DL_PROTECT] download_active + OCR 0件 → DL完了ダイアログ待ち (DOWNLOAD_WAIT)")
+                return "DOWNLOAD_WAIT", 2.0
+            # OCR結果ありだがDL関連テキストも完了テキストもない → DL画面を完全に離脱
+            _dl_any = ["Download", "ダウンロード", "追加データ", "MB", "GB", "完了", "Complete"]
+            if not any(kw in joined for kw in _dl_any):
+                logger.info("[DL_PROTECT] OCRにDL/完了テキストなし → download_active 解除 (画面遷移済み)")
+                state.download_active = False
+                _log_milestone(state, "DL_END")
+        else:
+            # ホーム到達後: OCRにDLテキストがなければ即解除
+            _dl_kws_check = ["Download", "ダウンロード", "追加データ", "MB", "GB"]
+            if not any(kw in joined for kw in _dl_kws_check):
+                logger.info("[DL_PROTECT] ホーム後 + DLテキストなし → download_active 解除")
+                state.download_active = False
+                _log_milestone(state, "DL_END")
+
     # ── 【#-3a】Loading 画面保護 ──
     # "Now Loading" 等が表示されている間は金枠/指ブロブの誤検出でタップしない
     _loading_kws = ["Now Loading", "Loading", "読み込み中", "接続しています"]
@@ -773,6 +797,9 @@ def detect_and_act(ocr: list, state: PilotState,
         tap_device(_cp_x, _cp_y_adj, state, f"CONFIRM_DIALOG_OK '{_confirm_pos['text']}'")
         # DL完了ダイアログはDL専用アクションで返す (post_downloadフラグを保持)
         if _is_completion_dialog:
+            state.download_active = False
+            logger.info("[DL_PROTECT] DL完了ダイアログOK → download_active 解除")
+            _log_milestone(state, "DL_END")
             return "DL_COMPLETE_OK", 1.0
         return "ADV_CHOICE", 1.0
 
@@ -2827,6 +2854,12 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 state.movie_wait_consecutive = 0; state.movie_static_count = 0
                 return "UNKNOWN"
 
+        # ── チュートリアル中のDL完了チェック: MOVIE脱出してフルOCRへ ──
+        if state.download_active and not state.home_reached:
+            logger.info("[MOVIE_INERTIA] download_active=True (チュートリアル) → MOVIE脱出 (DL完了チェック優先)")
+            state.movie_wait_consecutive = 0; state.movie_static_count = 0
+            # → detect_scene_early は UNKNOWN を返す → フルOCRへ
+
         # ── phash 変化中 = 動画再生中 → 無条件で MOVIE 継続 (タップ厳禁) ──
         if dist >= PHASH_THRESHOLD:
             state.movie_static_count = 0  # 動的フレーム → 静止カウンタリセット
@@ -2951,6 +2984,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 return "UNKNOWN"
 
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
+    # チュートリアル中 + download_active → MOVIE 判定スキップ (DL完了ダイアログ優先)
+    if state.download_active and not state.home_reached:
+        logger.info("[SCENE_EARLY] download_active=True (チュートリアル) → MOVIE判定スキップ (DL完了ダイアログ優先)")
+        return "UNKNOWN"
     if state.last_action not in _MOVIE_ACTIONS:
         _adv = detect_adv_scene(img_path, roi=state.game_roi)
         _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist)
@@ -2972,6 +3009,12 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     """
     W, H = ANALYSIS_W, ANALYSIS_H
 
+    # ── チュートリアル中のDL完了チェック: MOVIEハンドラをバイパス ──
+    if state.download_active and not state.home_reached:
+        logger.info("[MOVIE] download_active=True (チュートリアル) → MOVIEハンドラ脱出 (フルOCRへ)")
+        state.movie_wait_consecutive = 0; state.movie_static_count = 0
+        return False  # フルOCRへ
+
     # ── DL直後 + SKIP 表示 → DL完了後ループ脱出 ──
     # ダウンロード完了後に動画がループする現象: SKIP をタップして抜ける
     if state.post_download:
@@ -2992,12 +3035,33 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     _MOVIE_PAUSE_THRESHOLD = 8  # 8回静止 (~4秒) で一時停止と判定
     if dist < PHASH_THRESHOLD:
         state.movie_static_count += 1
+        # 動的フレームカウンタリセット (RESUME 成功判定用)
+        state._movie_dynamic_frames = 0  # type: ignore[attr-defined]
     else:
         state.movie_static_count = 0  # 動画再生中 (画面変化あり) → リセット
+        # RESUME 後に動的フレームが5回連続 → 本当に再生再開 → 空振りカウンタリセット
+        _dyn = getattr(state, '_movie_dynamic_frames', 0) + 1
+        state._movie_dynamic_frames = _dyn  # type: ignore[attr-defined]
+        if _dyn >= 5:
+            state._movie_resume_count = 0  # type: ignore[attr-defined]
+            state._movie_dynamic_frames = 0  # type: ignore[attr-defined]
 
     if state.movie_static_count >= _MOVIE_PAUSE_THRESHOLD:
-        logger.warning("[MOVIE_PAUSE] 静止 %d 回連続 (dist=%d) → 一時停止と判定、タップで再開",
-                       state.movie_static_count, dist)
+        # MOVIE_RESUME 連続空振りチェック: 3回タップしても静止に戻るなら動画ではない
+        _resume_count = getattr(state, '_movie_resume_count', 0) + 1
+        state._movie_resume_count = _resume_count  # type: ignore[attr-defined]
+        if _resume_count >= 3:
+            logger.warning("[MOVIE_PAUSE] RESUME %d 回空振り → 動画ではない、MOVIE強制脱出",
+                           _resume_count)
+            state.movie_static_count = 0
+            state.movie_wait_consecutive = 0
+            state._movie_resume_count = 0  # type: ignore[attr-defined]
+            state.current_scene = "UNKNOWN"
+            state.last_action = "SCENE_TAP"
+            state.last_phash = ""
+            return False  # MOVIE ハンドラ脱出 → フルOCRへ
+        logger.warning("[MOVIE_PAUSE] 静止 %d 回連続 (dist=%d) → 一時停止と判定、タップで再開 (%d/3)",
+                       state.movie_static_count, dist, _resume_count)
         tap_device(int(W * 0.5), int(H * 0.5), state, "MOVIE_RESUME")
         state.movie_static_count = 0
         state.last_phash = ""  # phash リセットして次フレームで変化を見る
@@ -4199,11 +4263,9 @@ def main():
 
             screen_changed = dist >= PHASH_THRESHOLD
 
-        # ── ダウンロード保護フラグ解除: 大きな画面変化でDL終了を検出 ──
-        if state.download_active and dist >= 20:
-            logger.info("[DL_PROTECT] phash_dist=%d >= 20 → download_active 解除", dist)
-            state.download_active = False
-            _log_milestone(state, "DL_END")
+        # ── ダウンロード保護フラグ: phash変化だけではクリアしない ──
+        # DL進行中もゲージ更新でphash変化20-38が発生するため、phashベースの解除は不適切。
+        # download_active のクリアは OCR でDLテキストが消えた場合のみ (detect_and_act 内)。
 
         # ── 動的しきい値: Gold UI アクション後はアニメーション変化でも即解析 ──
         if not screen_changed and state.last_action in _GOLD_UI_ACTIONS and dist >= 1:
@@ -4324,7 +4386,7 @@ def main():
                                       "ADV_NEXT_FALLBACK", "ADV_SKIP_TAP",
                                       "STORY_TAP_HINT", "BUBBLE_TAP",
                                       "MINI_CONV_TAP", "MOYA_TAP", "MOVIE_SKIP", "MOVIE_WAIT",
-                                      "SCENE_TAP") and
+                                      "ANIM_WAIT", "SCENE_TAP") and
                     PHASH_THRESHOLD <= dist <= _adv_phash_max and
                     state.current_scene not in ("MENU", "BATTLE", "MOVIE")):
                 # ── MOVIE_WAIT 脱出: 8回連続 (~24秒) 動画待機ならフルOCRへフォールスルー ──
@@ -4405,7 +4467,7 @@ def main():
                         if _st_retry_dist >= PHASH_THRESHOLD:
                             logger.info("[iter %d] SCENE_TAP前検査: 0.5s後phash_dist=%d → アニメーション中 → 待機",
                                         i, _st_retry_dist)
-                            state.last_action = "MOVIE_WAIT"
+                            state.last_action = "ANIM_WAIT"
                             state.last_phash = _st_retry_ph
                             continue
                     _st_x = int(ANALYSIS_W * 0.5)
@@ -4482,6 +4544,10 @@ def main():
                     continue   # 復旧後は次のイテレーションから
 
             # ── 候補リトライ: 残り候補があれば次の候補をタップ ──
+            # ホーム画面到達判定中は候補タップ禁止 (画面遷移で HOME_CLEAR_CHECK が中断される)
+            if state.home_reached and not state.grind_mode:
+                state.pending_candidates = []
+                state.pending_candidate_idx = 0
             # シーン変化チェック: フレッシュスクショで phash 比較し、
             # 画面が変わっていれば古い候補を破棄
             if (state.pending_candidates
@@ -4585,7 +4651,7 @@ def main():
                             if _st2_dist >= PHASH_THRESHOLD:
                                 logger.info("[iter %d] SCENE_TAP前検査: 0.5s後phash_dist=%d → アニメーション中 → 待機",
                                             i, _st2_dist)
-                                state.last_action = "MOVIE_WAIT"
+                                state.last_action = "ANIM_WAIT"
                                 state.stall_start = 0.0
                                 state.last_phash = _st2_ph
                                 continue
