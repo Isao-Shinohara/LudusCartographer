@@ -3987,15 +3987,29 @@ def main():
             logger.info("[STARTUP] アプリが前面にない → am start で起動します (mCurrentFocus: %s)",
                         _focus.strip())
             adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
-            # ポーリングで起動確認
+            # ポーリングで起動確認 (mCurrentFocus が空の端末もあるため ps も併用)
+            _app_started = False
             for _poll in range(10):
                 time.sleep(2)
                 _focus2 = adb("shell dumpsys window | grep mCurrentFocus")
                 if APP_PACKAGE in _focus2:
                     logger.info("[STARTUP] アプリ前面確認 (%.1f秒)", (_poll + 1) * 2)
+                    _app_started = True
+                    break
+                # mCurrentFocus が空でもプロセスが起動していれば OK
+                _ps = adb(f"shell pidof {APP_PACKAGE}")
+                if _ps.strip():
+                    logger.info("[STARTUP] アプリプロセス検出 PID=%s (%.1f秒)",
+                                _ps.strip(), (_poll + 1) * 2)
+                    _app_started = True
                     break
                 logger.info("[STARTUP] 起動待ち (%d/10)... mCurrentFocus: %s",
                             _poll + 1, _focus2.strip())
+            if not _app_started:
+                # 10回失敗 → 再度 am start (Play Store 終了直後のタイミング問題対策)
+                logger.warning("[STARTUP] 10回待機後もアプリ未検出 → am start を再試行")
+                adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
+                time.sleep(5)
         else:
             logger.info("[STARTUP] アプリ既に前面: %s", APP_PACKAGE)
     except Exception as _e:
