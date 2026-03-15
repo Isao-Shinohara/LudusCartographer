@@ -1061,7 +1061,9 @@ def detect_and_act(ocr: list, state: PilotState,
     # ─── 【指+金枠ボタン】PRE_DIALOG_GUARD で指ブロブ検出 → ゴールドボタン直タップ ───
     # ダイアログ×ボタンがない画面 (プレゼントボックス等) で指が金色ボタンを指している場合
     # 白ハンドポインタの指先方向がわかれば、その方向の金枠を優先タップ
-    if _pre_dialog_finger and analysis_path is not None:
+    # 「矢印をタップ」画面では MAP_ARROW (#2-a) に委譲するためスキップ
+    _arrow_instruction = any("矢印を" in t for t in texts)
+    if _pre_dialog_finger and analysis_path is not None and not _arrow_instruction:
         _hand_xy = None
         _hand_d = ""
         if _white_hand_pos is not None:
