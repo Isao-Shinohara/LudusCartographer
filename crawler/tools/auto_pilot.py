@@ -1076,6 +1076,15 @@ def detect_and_act(ocr: list, state: PilotState,
     _home_kws_fg = ["光の間", "ショップ", "ガチャ", "ガシャ", "マップ", "レイヤ"]
     _is_home_fg = sum(1 for kw in _home_kws_fg
                       if any(kw in t or t in kw for t in texts)) >= 2
+    # ─── メインクエスト選択画面: 「Main」ボタンを直接タップ ───
+    # 金枠がバナー装飾を拾って空振りするため、OCRの「Main」テキスト位置をタップ
+    if any("メインクエスト" in t for t in texts):
+        _main_btn = has_text(ocr, "Main", min_conf=0.3)
+        if _main_btn:
+            _mx, _my = _main_btn["center"]
+            logger.info(">>> 【メインクエスト】 Main ボタン (%d,%d) タップ", _mx, _my)
+            tap_device(_mx, _my, state, "MAIN_QUEST_TAP")
+            return "MAIN_QUEST_TAP", 2.0
     if _pre_dialog_finger and analysis_path is not None and not _arrow_instruction and not _is_home_fg:
         _hand_xy = None
         _hand_d = ""
@@ -5352,12 +5361,30 @@ def main():
                         adb("shell input keyevent KEYCODE_BACK")
                         state.last_action = "REEVAL_BACK_ESCAPE"
                     else:
-                        logger.warning(
-                            "[SCENE_REEVAL_ESCAPE] 再判定でも '%s' → 中央タップでエスケープ",
-                            action,
-                        )
-                        tap_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state,
-                                   desc="REEVAL_CENTER_ESCAPE")
+                        # 代替候補があれば最優先で試行 (金枠の空振り脱出)
+                        # STORY_TAP 系候補を優先 (CONFIRM_OK は金枠と近い位置のことが多い)
+                        _esc_cand = None
+                        for _c in state.pending_candidates:
+                            if "STORY" in _c.action or "GOLD_BTN" in _c.action:
+                                _esc_cand = _c
+                                break
+                        if _esc_cand is None and state.pending_candidates:
+                            _esc_cand = state.pending_candidates[-1]  # 最後の候補にフォールバック
+                        if _esc_cand:
+                            logger.warning(
+                                "[SCENE_REEVAL_ESCAPE] '%s' スタック → 代替候補 %s (%d,%d) にフォールバック",
+                                action, _esc_cand.action, _esc_cand.x, _esc_cand.y)
+                            tap_device(_esc_cand.x, _esc_cand.y, state,
+                                       desc=f"REEVAL_CAND_{_esc_cand.action}")
+                            state.pending_candidates = []
+                            state.pending_candidate_idx = 0
+                        else:
+                            logger.warning(
+                                "[SCENE_REEVAL_ESCAPE] 再判定でも '%s' → 中央タップでエスケープ",
+                                action,
+                            )
+                            tap_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state,
+                                       desc="REEVAL_CENTER_ESCAPE")
                         state.last_action = "REEVAL_CENTER_ESCAPE"
             except Exception as _re_err:
                 logger.debug("[SCENE_REEVAL] 再評価例外: %s", _re_err)
