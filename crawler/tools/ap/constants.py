@@ -77,6 +77,7 @@ _SINGLE_ONLY: frozenset = frozenset([
     "adv_next_btn",
     "adv_icon_menu", "adv_icon_log", "adv_icon_auto", "adv_icon_ff", "adv_icon_skip",
     "battle_normal_attack", "battle_skill",
+    "tutorial_dialog_close",  # カード表示画面で偽陽性(0.93)するため一般マッチから除外
 ])
 
 # ─── ダイアログ・ファースト: 検知キーワード一覧 ───────────────────────────────
