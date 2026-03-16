@@ -2024,10 +2024,13 @@ def detect_and_act(ocr: list, state: PilotState,
                     return "RECOVERY_FINAL_WAIT", 0.5
             else:
                 # ── Step3-pre: 指タップ静止検出 → スワイプシーン自動切替 ──
-                # 3回以上 MOYA_TAP しても画面が変わらない + OCR テキスト少ない
-                # → タップでは進まないスワイプシーン (チェック柄チュートリアル等)
-                # len<=1: OCR誤検出 ('1','口' 等) 1件までは許容
+                # チュートリアル中のチェック柄移動シーン専用。
+                # 条件: チュートリアル中 + GoldSwipe直前実行 + 3回タップ空振り + OCRテキスト少ない
+                _SWIPE_AUTO_ACTIONS = ("GOLD_SWIPE_UP", "GOLD_SWIPE_DOWN", "SWIPE_UP",
+                                       "SWIPE_AUTO", "MOYA_TAP")
                 if (state.finger_tap_static.stalled
+                        and not state.home_reached
+                        and state.last_action in _SWIPE_AUTO_ACTIONS
                         and _gold_frame is None
                         and len(texts) <= 1):
                     logger.info(
