@@ -1,0 +1,72 @@
+"""
+ap/handlers — detect_and_act のシーン別ハンドラ
+
+detect_and_act() はエントリポイントとして DetectContext を構築し、
+dispatch() を呼び出して各ハンドラに順次委譲する。
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+from tools.ap.context import DetectContext
+from tools.ap.state import PilotState
+
+from tools.ap.handlers.common import handle_common_guards
+from tools.ap.handlers.quest import handle_quest_early
+from tools.ap.handlers.dialog_phase import handle_dialog_phase
+from tools.ap.handlers.tutorial import handle_tutorial
+from tools.ap.handlers.finger import handle_finger_detection
+from tools.ap.handlers.navigation import handle_navigation
+from tools.ap.handlers.home import handle_home
+from tools.ap.handlers.scene import handle_scene_specific
+from tools.ap.handlers.fallback import handle_fallback
+
+
+def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
+    """detect_and_act のメインディスパッチャ。
+
+    各ハンドラを優先順に呼び出し、最初に結果を返したハンドラの
+    (action_name, wait_seconds) を返す。
+    """
+    # Phase 1: 共通ガード (ブラウザ脱出, MOVIE, DL, Loading, 確認ダイアログ, 権限, 設定, ご注意)
+    r = handle_common_guards(ctx, state)
+    if r is not None:
+        return r
+
+    # Phase 2: クエスト/UI 早期検出 (MAIN STORY, Result早期, クエスト詳細)
+    r = handle_quest_early(ctx, state)
+    if r is not None:
+        return r
+
+    # Phase 3: バトル前ガード + ダイアログハンドラ
+    r = handle_dialog_phase(ctx, state)
+    if r is not None:
+        return r
+
+    # Phase 4: チュートリアル (名前入力, 指+金枠, スワイプ, アセットマッチ, ポップアップ)
+    r = handle_tutorial(ctx, state)
+    if r is not None:
+        return r
+
+    # Phase 5: バトル発光SM + 指ブロブ検出
+    r = handle_finger_detection(ctx, state)
+    if r is not None:
+        return r
+
+    # Phase 6: マップ矢印 / ハイライト指示 / ストーリータップ
+    r = handle_navigation(ctx, state)
+    if r is not None:
+        return r
+
+    # Phase 7: ホーム画面検出 + チュートリアル完了判定
+    r = handle_home(ctx, state)
+    if r is not None:
+        return r
+
+    # Phase 8: シーン固有 (DL二次, クエストマップ, バトルOCR, バトル結果, ADV)
+    r = handle_scene_specific(ctx, state)
+    if r is not None:
+        return r
+
+    # Phase 9: フォールバック (閉じるボタン, システムダイアログ, 規約, 確認, ストーリー, etc.)
+    return handle_fallback(ctx, state)

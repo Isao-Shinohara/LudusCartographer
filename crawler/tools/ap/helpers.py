@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -12,6 +13,8 @@ from typing import Optional
 from lc.ocr import find_best
 from tools.ap.constants import (
     SCENE_INTERVAL, _BATTLE_CORE_KWS, EVIDENCE_DIR,
+    APP_PACKAGE, APP_ACTIVITY,
+    WATCHDOG_MAX_TOTAL_RECOVERIES,
 )
 
 logger = logging.getLogger("auto_pilot")
@@ -122,3 +125,70 @@ def has_text(ocr: list, keyword: str, min_conf: float = 0.3) -> Optional[dict]:
 
 def all_texts(ocr: list) -> list[str]:
     return [r["text"] for r in ocr]
+
+
+# ─── マイルストーン到達時間ログ ────────────────────────
+def log_milestone(state, milestone: str) -> None:
+    """目標到達時の経過時間をログ出力する。同一マイルストーンは初回のみ記録。"""
+    if milestone in state.milestone_logged:
+        return
+    _now = time.time()
+    _elapsed = _now - state.launch_time
+    _m, _s = divmod(int(_elapsed), 60)
+    _h, _m = divmod(_m, 60)
+    if state.is_fresh_start:
+        logger.info("  [TIMER] %s — 起動から %d時間%02d分%02d秒 (新規スタート)",
+                    milestone, _h, _m, _s)
+    else:
+        logger.info("  [TIMER] %s — 起動から %d時間%02d分%02d秒 (途中再開のため総所要時間は計測不可)",
+                    milestone, _h, _m, _s)
+    state.milestone_logged[milestone] = _elapsed
+
+
+# ─── Watchdog: デッドロック自動復旧 ─────────────────────
+def watchdog_recover(state) -> bool:
+    """Unityメインスレッドのデッドロックを検出した際の自動復旧。
+
+    戦略 (pm clear は一切使用しない — BAN リスク排除):
+      1〜3回目: am force-stop → am start (ソフト再起動のみ)
+      4回目以降: 諦めて False を返す (人間に委譲)
+
+    Returns: True=復旧試行を実施, False=諦め(mainが終了する)
+    """
+    from tools.ap.device import adb  # 遅延 import (循環防止)
+
+    state.watchdog_recovery_count += 1
+    count = state.watchdog_recovery_count
+    elapsed = time.time() - state.last_screen_change_time
+
+    if count > WATCHDOG_MAX_TOTAL_RECOVERIES:
+        logger.error(
+            "[WATCHDOG] 復旧試行%d回失敗 (last_action=%s, %.0f秒経過) — 人間の介入が必要です。停止します。",
+            count - 1, state.last_action, elapsed
+        )
+        return False
+
+    logger.warning(
+        "[WATCHDOG] デッドロック判定: 画面変化なし %.0f秒 / last_action=%s / 復旧試行 #%d",
+        elapsed, state.last_action, count
+    )
+    logger.warning("[WATCHDOG] → am force-stop → am start (ソフト再起動のみ。pm clearは使用しない)")
+    adb(f"shell am force-stop {APP_PACKAGE}")
+    time.sleep(3)
+
+    adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
+    logger.info("[WATCHDOG] am start 実行 — 15秒待機 (初期化 + ご注意画面の出現を待つ)")
+    time.sleep(15)
+
+    state.last_phash = ""
+    state.same_phash_count = 0
+    state.stall_start = 0.0
+    state.stall_corner_tried = False
+    state.home_reached = False
+    state.auto_activated = False
+    state.character_selected = False
+    state.char_just_selected = False
+    state.battle_wait_count = 0
+    state.last_action = "WATCHDOG_RECOVERY"
+    state.last_screen_change_time = time.time()
+    return True

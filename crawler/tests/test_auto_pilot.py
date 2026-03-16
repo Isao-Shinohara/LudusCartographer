@@ -185,8 +185,8 @@ class TestHandleResultScreen:
         s.device_h = 0
         return s
 
-    @patch("tools.auto_pilot.tap_device")
-    @patch("tools.auto_pilot.detect_guide_glow")
+    @patch("tools.ap.handlers.result.tap_device")
+    @patch("tools.ap.handlers.result.detect_guide_glow")
     def test_rapid_mode_with_glow(self, mock_glow, mock_tap, state, tmp_path):
         from tools.auto_pilot import handle_result_screen
         state.last_action = "RESULT_TAP"
@@ -203,7 +203,7 @@ class TestHandleResultScreen:
         assert state.result_rapid_count == 1
         mock_tap.assert_called_once()
 
-    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.ap.handlers.result.tap_device")
     def test_ocr_mode_gacha(self, mock_tap, state):
         from tools.auto_pilot import handle_result_screen
         ocr = [_make_ocr_item("NEW", 100, 100),
@@ -216,7 +216,7 @@ class TestHandleResultScreen:
         assert result[1] == 1.0
         assert mock_tap.call_count == 2  # ダブルタップ
 
-    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.ap.handlers.result.tap_device")
     def test_ocr_mode_battle(self, mock_tap, state):
         from tools.auto_pilot import handle_result_screen
         ocr = [_make_ocr_item("Result", 760, 50),
@@ -228,7 +228,7 @@ class TestHandleResultScreen:
         assert result[1] == 1.0
         assert mock_tap.call_count == 1  # シングルタップ
 
-    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.ap.handlers.result.tap_device")
     def test_returns_none_for_non_result(self, mock_tap, state):
         from tools.auto_pilot import handle_result_screen
         ocr = [_make_ocr_item("クエスト", 100, 100)]
@@ -236,9 +236,9 @@ class TestHandleResultScreen:
         assert result is None
         mock_tap.assert_not_called()
 
-    @patch("tools.auto_pilot.watchdog_recover", return_value=True)
-    @patch("tools.auto_pilot.tap_device")
-    @patch("tools.auto_pilot.detect_guide_glow", return_value=[])
+    @patch("tools.ap.handlers.result.watchdog_recover", return_value=True)
+    @patch("tools.ap.handlers.result.tap_device")
+    @patch("tools.ap.handlers.result.detect_guide_glow", return_value=[])
     def test_freeze_recovery_at_30_taps(self, mock_glow, mock_tap,
                                          mock_watchdog, state, tmp_path):
         from tools.auto_pilot import handle_result_screen
@@ -356,10 +356,10 @@ class TestHandleDialogScreen:
         result = handle_dialog_screen(state, analysis, [], [], False, True)
         assert result is None
 
-    @patch("tools.auto_pilot.find_finger_blobs", return_value=[])
-    @patch("tools.auto_pilot.detect_white_hand_pointer", return_value=None)
-    @patch("tools.auto_pilot.tap_device")
-    @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("close", 100, 50))
+    @patch("tools.ap.handlers.dialog_phase.find_finger_blobs", return_value=[])
+    @patch("tools.ap.handlers.dialog_phase.detect_white_hand_pointer", return_value=None)
+    @patch("tools.ap.handlers.dialog_phase.tap_device")
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav", return_value=("close", 100, 50))
     def test_dialog_close_returns_action(self, mock_dlg, mock_tap, mock_white,
                                           mock_finger, state, tmp_path):
         from tools.auto_pilot import handle_dialog_screen
@@ -371,11 +371,11 @@ class TestHandleDialogScreen:
         assert result[1] == 1.0
         mock_tap.assert_called_once()
 
-    @patch("tools.auto_pilot.find_finger_blobs", return_value=[])
-    @patch("tools.auto_pilot.detect_white_hand_pointer", return_value=None)
-    @patch("tools.auto_pilot.tap_device")
-    @patch("tools.auto_pilot.process_paging_dialog", return_value="DIALOG_CLOSED")
-    @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("next", 800, 400))
+    @patch("tools.ap.handlers.dialog_phase.find_finger_blobs", return_value=[])
+    @patch("tools.ap.handlers.dialog_phase.detect_white_hand_pointer", return_value=None)
+    @patch("tools.ap.handlers.dialog_phase.tap_device")
+    @patch("tools.ap.handlers.dialog_phase.process_paging_dialog", return_value="DIALOG_CLOSED")
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav", return_value=("next", 800, 400))
     def test_paging_dialog_returns_action(self, mock_dlg, mock_paging, mock_tap,
                                            mock_white, mock_finger, state, tmp_path):
         from tools.auto_pilot import handle_dialog_screen
@@ -387,8 +387,8 @@ class TestHandleDialogScreen:
         assert result[1] == 1.0
         mock_paging.assert_called_once()
 
-    @patch("tools.auto_pilot.tap_device")
-    @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("close", 1400, 50))
+    @patch("tools.ap.handlers.dialog_phase.tap_device")
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav", return_value=("close", 1400, 50))
     def test_notice_popup_close_bypasses_all_guards(self, mock_dlg, mock_tap,
                                                       state, tmp_path):
         """お知らせポップアップ: is_notice_popup=True → ガード全バイパスで×閉じ。"""
@@ -403,11 +403,11 @@ class TestHandleDialogScreen:
         assert result[1] == 1.0
         mock_tap.assert_called_once()
 
-    @patch("tools.auto_pilot.take_screenshot", return_value=(Path("/tmp/test.png"), 1520, 720, 0))
-    @patch("tools.auto_pilot.prepare_analysis_image", return_value=Path("/tmp/test.png"))
-    @patch("tools.auto_pilot.tap_device")
-    @patch("tools.auto_pilot.count_page_dots", return_value=3)
-    @patch("tools.auto_pilot.detect_dialog_frame_and_nav")
+    @patch("tools.ap.handlers.dialog_phase.take_screenshot", return_value=(Path("/tmp/test.png"), 1520, 720, 0))
+    @patch("tools.ap.handlers.dialog_phase.prepare_analysis_image", return_value=Path("/tmp/test.png"))
+    @patch("tools.ap.handlers.dialog_phase.tap_device")
+    @patch("tools.ap.handlers.dialog_phase.count_page_dots", return_value=3)
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav")
     def test_notice_popup_paging_bypasses_all_guards(self, mock_dlg, mock_dots,
                                                        mock_tap, mock_prep,
                                                        mock_ss, state, tmp_path):
@@ -429,7 +429,7 @@ class TestHandleDialogScreen:
         # ドット3 → ▷2回 + ×1回 = 3タップ
         assert mock_tap.call_count == 3
 
-    @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("close", 100, 50))
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav", return_value=("close", 100, 50))
     def test_battle_dialog_guard_skips_close_in_top(self, mock_dlg, state, tmp_path):
         from tools.auto_pilot import handle_dialog_screen
         analysis = tmp_path / "test.png"
@@ -437,10 +437,10 @@ class TestHandleDialogScreen:
         result = handle_dialog_screen(state, analysis, [], [], True, False)
         assert result is None
 
-    @patch("tools.auto_pilot.find_finger_blobs", return_value=[])
-    @patch("tools.auto_pilot.detect_white_hand_pointer", return_value=None)
-    @patch("tools.auto_pilot.adb")
-    @patch("tools.auto_pilot.detect_dialog_frame_and_nav", return_value=("close", 100, 400))
+    @patch("tools.ap.handlers.dialog_phase.find_finger_blobs", return_value=[])
+    @patch("tools.ap.handlers.dialog_phase.detect_white_hand_pointer", return_value=None)
+    @patch("tools.ap.handlers.dialog_phase.adb")
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav", return_value=("close", 100, 400))
     def test_escalation_back_at_8_attempts(self, mock_dlg, mock_adb, mock_white,
                                             mock_finger, state, tmp_path):
         from tools.auto_pilot import handle_dialog_screen
@@ -558,7 +558,7 @@ class TestCoordinateConstants:
     def test_ocr_bbox_y_padding(self):
         from tools.auto_pilot import _OCR_BBOX_Y_PADDING
         assert isinstance(_OCR_BBOX_Y_PADDING, int)
-        assert 0 < _OCR_BBOX_Y_PADDING <= 100
+        assert 0 <= _OCR_BBOX_Y_PADDING <= 100  # Vision OCR: 0, PaddleOCR: 30
 
     def test_glow_center_y_offset(self):
         from tools.auto_pilot import _GLOW_CENTER_Y_OFFSET
@@ -1071,14 +1071,14 @@ class TestMovieInertiaSkipBtn:
 
     @patch("tools.auto_pilot.detect_movie_scene")
     @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
-    @patch("tools.auto_pilot.detect_adv_scene_cached")
-    def test_skip_btn_gone_exits_movie(self, mock_adv_cached, mock_adv_down, mock_movie, state, tmp_path):
-        """⏭ 消失 → 動画終了 → UNKNOWN。"""
+    @patch("tools.auto_pilot.detect_adv_scene")
+    def test_skip_btn_gone_stays_movie_without_evidence(self, mock_adv, mock_adv_down, mock_movie, state, tmp_path):
+        """⏭ 消失 + 他シーン証拠なし → MOVIE 継続 (保守的判定)。"""
         from tools.auto_pilot import detect_scene_early
         from tools.ap.image_proc import AdvSceneResult
         from unittest.mock import MagicMock
 
-        mock_adv_cached.return_value = AdvSceneResult(is_adv=False)
+        mock_adv.return_value = AdvSceneResult(is_adv=False)
         _movie_result = MagicMock()
         _movie_result.is_movie = False
         _movie_result.has_skip_btn = False
@@ -1091,12 +1091,12 @@ class TestMovieInertiaSkipBtn:
         cv2.imwrite(str(img_path), np.zeros((720, 1520, 3), dtype=np.uint8))
 
         result = detect_scene_early(img_path, state, dist=2)
-        assert result != "MOVIE"
-        assert state.movie_wait_consecutive == 0
+        # 他シーンの肯定的証拠がない場合は MOVIE 継続
+        assert result == "MOVIE"
 
     @patch("tools.auto_pilot.detect_movie_scene")
     @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
-    @patch("tools.auto_pilot.detect_adv_scene_cached")
+    @patch("tools.auto_pilot.detect_adv_scene")
     def test_skip_btn_present_continues_movie(self, mock_adv_cached, mock_adv_down, mock_movie, state, tmp_path):
         """⏭ あり → MOVIE 継続 (一時停止含む)。"""
         from tools.auto_pilot import detect_scene_early
@@ -1118,14 +1118,21 @@ class TestMovieInertiaSkipBtn:
         result = detect_scene_early(img_path, state, dist=0)  # phash安定でも⏭あれば継続
         assert result == "MOVIE"
 
+    @patch("tools.auto_pilot.detect_movie_scene")
     @patch("tools.auto_pilot.detect_adv_advance_icon", return_value=False)
-    @patch("tools.auto_pilot.detect_adv_scene_cached")
-    def test_adv_evidence_exits_movie(self, mock_adv_cached, mock_adv_down, state, tmp_path):
-        """ADV 証拠 (is_adv=True) → MOVIE 脱出。"""
+    @patch("tools.auto_pilot.detect_adv_scene")
+    def test_adv_evidence_exits_movie(self, mock_adv, mock_adv_down, mock_movie, state, tmp_path):
+        """ADV 証拠 (is_adv=True) + 画面静止 → MOVIE 脱出。"""
         from tools.auto_pilot import detect_scene_early
         from tools.ap.image_proc import AdvSceneResult
+        from unittest.mock import MagicMock
 
-        mock_adv_cached.return_value = AdvSceneResult(is_adv=True)
+        mock_adv.return_value = AdvSceneResult(is_adv=True)
+        # detect_movie_scene は ⏭ なしを返す (ADV遷移チェックに到達させる)
+        _movie_result = MagicMock()
+        _movie_result.is_movie = False
+        _movie_result.has_skip_btn = False
+        mock_movie.return_value = _movie_result
         state.movie_wait_consecutive = 10
         state.game_roi = (0, 0, 1520, 720)
 
@@ -1133,7 +1140,8 @@ class TestMovieInertiaSkipBtn:
         import cv2, numpy as np
         cv2.imwrite(str(img_path), np.zeros((720, 1520, 3), dtype=np.uint8))
 
-        result = detect_scene_early(img_path, state, dist=5)
+        # dist < PHASH_THRESHOLD (5) で静止状態にする → ADV チェックに到達
+        result = detect_scene_early(img_path, state, dist=2)
         assert result != "MOVIE"
         assert state.movie_wait_consecutive == 0
 
@@ -1152,7 +1160,7 @@ class TestCurrencyDialogProtection:
         s.game_roi = (0, 0, 1520, 720)
         return s
 
-    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.ap.handlers.common.tap_device")
     def test_currency_dialog_taps_cancel(self, mock_tap, state):
         """OCR に 'マギカストーン50個消費' + OK + キャンセル → Cancel タップ。"""
         from tools.auto_pilot import detect_and_act
@@ -1165,7 +1173,7 @@ class TestCurrencyDialogProtection:
         assert action == "CURRENCY_CANCEL"
         assert mock_tap.called
 
-    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.ap.handlers.common.tap_device")
     def test_normal_dialog_taps_ok(self, mock_tap, state):
         """OCR に 'データをダウンロード' + OK + キャンセル → OK タップ。"""
         from tools.auto_pilot import detect_and_act
@@ -1178,7 +1186,7 @@ class TestCurrencyDialogProtection:
         assert action == "ADV_CHOICE"  # 通常の確認ダイアログ OK タップ
         assert mock_tap.called
 
-    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.ap.handlers.common.tap_device")
     def test_story_skip_still_cancels(self, mock_tap, state):
         """OCR に 'スキップ' + OK + キャンセル → Cancel (既存動作保持)。"""
         from tools.auto_pilot import detect_and_act
@@ -1206,9 +1214,9 @@ class TestTitleScreenDetection:
         s.home_reached = False
         return s
 
-    @patch("tools.auto_pilot.detect_tutorial_gold_swipe", return_value=None)
-    @patch("tools.auto_pilot.is_tutorial_walk_scene", return_value=False)
-    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.ap.handlers.tutorial.detect_tutorial_gold_swipe", return_value=None)
+    @patch("tools.ap.handlers.tutorial.is_tutorial_walk_scene", return_value=False)
+    @patch("tools.ap.handlers.finger.tap_device")
     def test_tap_to_start_triggers(self, mock_tap, mock_walk, mock_swipe, state, tmp_path):
         """OCR 'TAP TO START' + 'MAGIA EXEDRA' → title=True。"""
         import cv2
@@ -1223,7 +1231,7 @@ class TestTitleScreenDetection:
         action, wait = detect_and_act(ocr, state, analysis_path=img)
         assert action == "TITLE_TAP"
 
-    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.ap.handlers.fallback.tap_device")
     def test_browser_magia_no_trigger(self, mock_tap, state, tmp_path):
         """OCR 'MAGIA EXEDRA' のみ → title=False (ブラウザ誤検出防止)。"""
         import cv2
@@ -1238,7 +1246,7 @@ class TestTitleScreenDetection:
         action, wait = detect_and_act(ocr, state, analysis_path=img)
         assert action != "TITLE_TAP"
 
-    @patch("tools.auto_pilot.tap_device")
+    @patch("tools.ap.handlers.fallback.tap_device")
     def test_home_reached_blocks(self, mock_tap, state, tmp_path):
         """home_reached=True → TAP TO START でもタイトル判定しない。"""
         import cv2
