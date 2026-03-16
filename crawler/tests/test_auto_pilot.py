@@ -36,7 +36,10 @@ class TestAssetManagerRequireOcr:
                 "threshold": 0.5,
                 "action": "TEST_ACTION",
                 "offset": [0, 0],
+                "edge_weight": 0,
+                "edge_img": None,
                 "require_ocr": require_ocr,
+                "require_ocr_all": [],
             }
         }
         return manager
@@ -970,25 +973,23 @@ class TestMovieSkipButton:
         cv2.imwrite(str(img_path), img)
         assert detect_movie_skip_button(img_path) is None
 
-    def test_solid_gold_circle_detected(self, tmp_path):
-        """コンパクトな金色円 (⏭ ボタン相当) → 座標返却。"""
+    def test_synthetic_circle_not_detected(self, tmp_path):
+        """合成金色円はテンプレートと一致しない → None (テンプレートベース検出)。"""
         import cv2
         import numpy as np
         from tools.ap.image_proc import detect_movie_skip_button, ANALYSIS_W, ANALYSIS_H
 
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
-        # ROI 内に金色の円を描画 (半径 12px, 面積 ~452)
+        # ROI 内に金色の円を描画 (半径 12px)
         _cx = int(ANALYSIS_W * 0.94)
         _cy = int(ANALYSIS_H * 0.06)
-        # HSV 金色 → BGR (H=25, S=150, V=200)
         cv2.circle(img, (_cx, _cy), 12, (50, 165, 210), -1)
 
         img_path = tmp_path / "solid_gold.png"
         cv2.imwrite(str(img_path), img)
+        # HSV ベース検出は廃止済み → テンプレートマッチのみ → 合成円は非検出
         result = detect_movie_skip_button(img_path)
-        assert result is not None
-        assert isinstance(result, tuple)
-        assert len(result) == 2
+        assert result is None
 
 
 # ─── Fix 2: detect_adv_scene 2アイコン+↓ボタン救済テスト ──────────────
