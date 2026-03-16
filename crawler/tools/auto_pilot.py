@@ -557,7 +557,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # MOVIE 慣性: 直前が動画アクション → 毎フレーム ⏭ ボタンで継続/終了を判定
     # TTL は使わない。⏭ が見えている限り MOVIE を維持 (一時停止含む)。
     # ⏭ が消えたら動画終了 → UNKNOWN に脱出。
-    _MOVIE_ACTIONS = ("MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_SKIP_ESCAPE")
+    _MOVIE_ACTIONS = ("MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_SKIP_ESCAPE", "MOVIE_RESUME")
     _MOVIE_WAIT_MAX = 200  # ~100秒: ガチャ演出等で脱出できない場合の強制脱出
     if state.last_action in _MOVIE_ACTIONS and img_path:
         # ── 長時間待機の強制脱出 (ガチャ演出等のアニメーションで静止カウンタが回らないケース) ──
@@ -816,13 +816,23 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     # ── 待機カウンタ ──
     state.movie_wait_consecutive += 1
 
-    # ── 静止フレームカウント (ゲームルール: 動画中は絶対にタップしない) ──
-    # 字幕・暗転・クレジット等で静止することがあるが、タップは一時停止を引き起こすため禁止。
-    # detect_scene_early の MOVIE_INERTIA が他シーン遷移を検出したら自動脱出する。
-    if dist < PHASH_THRESHOLD:
+    # ── 静止フレームカウント ──
+    # dist==0 (phash完全一致) = 一時停止。dist>0 なら再生中 (字幕シーンでも微差あり)。
+    if dist == 0:
         state.movie_static_count += 1
     else:
         state.movie_static_count = 0
+
+    # ── 一時停止検出: dist==0 が10秒 (~17回) 続いたら中央タップで再開 ──
+    _PAUSE_THRESHOLD = 17  # ~10秒 (ループ間隔 ~0.6秒)
+    if state.movie_static_count >= _PAUSE_THRESHOLD:
+        logger.warning("[MOVIE] 一時停止検出 (dist=0 が %d 回連続) → 中央タップで再開",
+                       state.movie_static_count)
+        tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "MOVIE_RESUME")
+        state.movie_static_count = 0
+        state.last_phash = ""
+        time.sleep(1.0)
+        return True
 
     # ── 長時間待機: ハードリミット (探索画面等の誤MOVIE判定を脱出) ──
     _MOVIE_HARD_LIMIT = 300  # ~3分: これ以上は動画ではない
