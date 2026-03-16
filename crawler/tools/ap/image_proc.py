@@ -1538,8 +1538,8 @@ def count_page_dots(img_or_path, H: int = 720, W: int = 1520) -> int:
         H, W = img.shape[:2]
     else:
         img = img_or_path
-    # ROI: 下部8%, 中央80%
-    _y1 = int(H * 0.92)
+    # ROI: 下部20%, 中央80%  (ドットが y=85% 付近に出るケースに対応)
+    _y1 = int(H * 0.80)
     _x1 = int(W * 0.10)
     _x2 = int(W * 0.90)
     _roi = img[_y1:H, _x1:_x2]
@@ -1753,15 +1753,35 @@ def process_paging_dialog(
                 _phash_tolerance = 2 if _total_dots >= 2 else 1
                 if _phash_fail_count >= _phash_tolerance:
                     logger.info(
-                        "[PAGING] ▷タップ後 phash変化なし(dist=%d<4) %d回連続 → ループ中断",
+                        "[PAGING] ▷タップ後 phash変化なし(dist=%d<4) %d回連続 → ×クローズ試行",
                         _ph_dist, _phash_fail_count,
                     )
+                    # ▷ が効かない = 最終ページの可能性 → × ボタンを探してクローズ
+                    _fallback_dlg = detect_dialog_frame_and_nav(
+                        analysis_path, W, H, roi=_roi,
+                        ocr_texts=ocr_texts,
+                    )
+                    if _fallback_dlg and _fallback_dlg[0] == "close":
+                        tap_device(_fallback_dlg[1], _fallback_dlg[2], state, "PAGING_CLOSE_FALLBACK")
+                        logger.info("[PAGING] ×フォールバッククローズ成功")
+                        state.dialog_detections += 1
+                        return "DIALOG_CLOSED"
                     return "DIALOG_PAGING_TIMEOUT"
                 logger.debug("[PAGING] phash変化小(dist=%d) %d/%d → 続行", _ph_dist, _phash_fail_count, _phash_tolerance)
             else:
                 _phash_fail_count = 0
         _prev_phash = _new_phash
-    logger.warning("[PAGING] max_pages=%d 超過 → タイムアウト", max_pages)
+    logger.warning("[PAGING] max_pages=%d 超過 → ×クローズ試行", max_pages)
+    # 最終ページ到達後 → × ボタンを探してクローズ
+    _final_dlg = detect_dialog_frame_and_nav(
+        analysis_path, W, H, roi=_roi,
+        ocr_texts=ocr_texts,
+    )
+    if _final_dlg and _final_dlg[0] == "close":
+        tap_device(_final_dlg[1], _final_dlg[2], state, "PAGING_CLOSE_MAXPAGE")
+        logger.info("[PAGING] max_pages超過後 ×クローズ成功")
+        state.dialog_detections += 1
+        return "DIALOG_CLOSED"
     return "DIALOG_PAGING_TIMEOUT"
 
 
