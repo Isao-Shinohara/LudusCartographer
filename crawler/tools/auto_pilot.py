@@ -558,7 +558,15 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # TTL は使わない。⏭ が見えている限り MOVIE を維持 (一時停止含む)。
     # ⏭ が消えたら動画終了 → UNKNOWN に脱出。
     _MOVIE_ACTIONS = ("MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_SKIP_ESCAPE")
+    _MOVIE_WAIT_MAX = 200  # ~100秒: ガチャ演出等で脱出できない場合の強制脱出
     if state.last_action in _MOVIE_ACTIONS and img_path:
+        # ── 長時間待機の強制脱出 (ガチャ演出等のアニメーションで静止カウンタが回らないケース) ──
+        if state.movie_wait_consecutive >= _MOVIE_WAIT_MAX:
+            logger.warning("[MOVIE_INERTIA] 待機 %d 回超過 → 強制脱出 (フルOCRへ)",
+                           state.movie_wait_consecutive)
+            state.movie_wait_consecutive = 0; state.movie_static_count = 0
+            state.current_scene = "UNKNOWN"
+            return "UNKNOWN"
         # ── ポップアップ脱出 (MOVIE慣性より優先) ──
         # ただし phash 変化中 (動画再生中) はポップアップ誤検出の可能性が高いためスキップ
         # 動画の映像がドット+ぼかしに誤検出されるケースを防止
