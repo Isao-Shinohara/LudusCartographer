@@ -406,7 +406,8 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
             continue
         has_device = SCRCPY_DEVICE in line
         has_correct_size = f"--max-size {_expected_ms}" in line
-        if has_device and has_correct_size:
+        has_no_control = "--no-control" in line
+        if has_device and has_correct_size and has_no_control:
             conforming_pid = pid
             logger.info("[SCRCPY] 規定プロセス検出 PID=%d — 継続", pid)
         else:
