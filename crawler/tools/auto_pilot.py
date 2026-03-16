@@ -1335,43 +1335,18 @@ def detect_and_act(ocr: list, state: PilotState,
     # 次優先: セリフ/ADVテキスト確認 (後続の#0/#3-ADV処理)
     if analysis_path is not None:
         asset_hit = ASSET_MANAGER.match(analysis_path, ocr_texts=texts)
-        # DIALOG_NAV_RIGHT 連続空振りガード: 画面変化なく繰り返す場合は偽陽性
+        # DIALOG_NAV_RIGHT: ページ送りダイアログの ▷ ボタン
+        # ロジック: ▷ が見える限りタップしてページ送り。
+        # 最終ページに到達すると × ボタンが出現するので、× を検出したら閉じる。
         if asset_hit and asset_hit[2] == "DIALOG_NAV_RIGHT":
-            # ページドット必須: ページングダイアログには必ずドットがある。
-            # ドット0個 = ページングダイアログではない → ▷ テンプレは偽陽性
-            _popup_dots_nav = count_page_dots(analysis_path) if analysis_path else 0
-            if _popup_dots_nav == 0:
-                logger.info("[DIALOG_NAV] ページドット未検出 → ▷ マッチは偽陽性、スキップ")
-                asset_hit = None
-            # ポップアップ(ドット+blur)内では偽陽性率が高い → OCRカルーセルハンドラに委譲
-            if _popup_dots_nav >= 2:
-                _pi_nav = imread_cached(analysis_path) if analysis_path else None
-                if _pi_nav is not None and _detect_background_blur(
-                        _pi_nav, _pi_nav.shape[0], _pi_nav.shape[1]):
-                    logger.info("[DIALOG_NAV] ポップアップ内 (dots=%d) → OCRハンドラに委譲",
-                                _popup_dots_nav)
-                    asset_hit = None
-            # 抑制期間中 (stall発動後 16iter) は DIALOG_NAV_RIGHT を常に無視
-            if asset_hit:
-                _dns = getattr(state, '_dialog_nav_suppress', 0)
-                if _dns > 0:
-                    state._dialog_nav_suppress = _dns - 1
-                    asset_hit = None
-            if asset_hit and state.last_phash_dist < 8:
-                state.dialog_nav_stall.tick()
-                if state.dialog_nav_stall.stalled:
-                    logger.warning(
-                        "[DIALOG_NAV_STALL] %d回空振り (phash変化なし) → 16iter抑制",
-                        state.dialog_nav_stall.count)
-                    state.dialog_nav_stall.reset()
-                    state._dialog_nav_suppress = 16
-                    asset_hit = None  # フォールスルーして他の検出器に委譲
-            else:
-                state.dialog_nav_stall.reset()
-                state._dialog_nav_suppress = 0
-        elif asset_hit:
-            state.dialog_nav_stall.reset()  # 別アクションが来たらリセット
-            state._dialog_nav_suppress = 0
+            # × ボタン検出 → 最終ページ到達 → × をタップして閉じる (▷ より優先)
+            _nav_close = ASSET_MANAGER.match_single("close_btn", analysis_path)
+            if _nav_close and _nav_close[2] >= 0.60:
+                logger.info("[DIALOG_NAV] × ボタン検出 (%.2f) → 最終ページ、× タップ (%d,%d)",
+                            _nav_close[2], _nav_close[0], _nav_close[1])
+                tap_device(_nav_close[0], _nav_close[1], state, "DIALOG_NAV_CLOSE")
+                return "DIALOG_NAV_CLOSE", 1.0
+            # ▷ タップでページ送り (× が出るまで繰り返す)
         # 「矢印をタップ」画面では DIALOG_NEXT 誤マッチを無視 → #2-a MAP_ARROW に委譲
         if asset_hit and asset_hit[2] == "ASSET_TUTORIAL_DIALOG_NEXT":
             if any("矢印を" in t for t in texts):

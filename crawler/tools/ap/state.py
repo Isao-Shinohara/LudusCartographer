@@ -129,9 +129,7 @@ class PilotState:
     # ─── 隠れ動的属性の昇格 ───
     gacha_total: StallCounter = field(
         default_factory=lambda: StallCounter("gacha_total", threshold=15))
-    # ─── DIALOG_NAV_RIGHT 連続空振りカウンタ ───
-    dialog_nav_stall: StallCounter = field(
-        default_factory=lambda: StallCounter("dialog_nav_stall", threshold=8))
+    # dialog_nav_stall は廃止 — ▷は×ボタン出現まで無条件タップに変更
     unity_restart_count: int = 0      # Unity force-restart 試行回数 [0..3]
     wifi_fail_streak: int = 0         # Wi-Fi破損連続失敗カウンタ [0..5]
     last_phash_dist: int = 999        # 直近の phash 距離 (detect_and_act 内で参照)
