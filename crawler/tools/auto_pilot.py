@@ -587,11 +587,25 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             state.movie_wait_consecutive = 0; state.movie_static_count = 0
             # → detect_scene_early は UNKNOWN を返す → フルOCRへ
 
-        # ── phash 変化中 = 動画再生中 → 無条件で MOVIE 継続 (タップ厳禁) ──
+        # ── phash 変化中 = 動画再生中だがバトル等の可能性もある ──
         if dist >= PHASH_THRESHOLD:
-            state.movie_static_count = 0  # 動的フレーム → 静止カウンタリセット
-            logger.info("[MOVIE_INERTIA] phash_dist=%d (動画再生中) → MOVIE継続", dist)
-            return "MOVIE"
+            # バトルテンプレートが見えればMOVIEではない → 脱出してフルOCRへ
+            from tools.ap.image_proc import ASSET_MANAGER as _AM_inertia
+            _inertia_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
+                            int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+            _i_atk = _AM_inertia.match_single("battle_normal_attack", img_path, roi=_inertia_roi)
+            _i_skl = _AM_inertia.match_single("battle_skill", img_path, roi=_inertia_roi)
+            _i_best = max((_i_atk[2] if _i_atk else 0), (_i_skl[2] if _i_skl else 0))
+            if _i_best >= 0.70:
+                logger.warning("[MOVIE_INERTIA] phash_dist=%d だがバトルテンプレ検出 (%.2f) → MOVIE脱出",
+                               dist, _i_best)
+                state.movie_wait_consecutive = 0; state.movie_static_count = 0
+                state.current_scene = "UNKNOWN"
+                # フォールスルー → フルOCRへ
+            else:
+                state.movie_static_count = 0  # 動的フレーム → 静止カウンタリセット
+                logger.info("[MOVIE_INERTIA] phash_dist=%d (動画再生中) → MOVIE継続", dist)
+                return "MOVIE"
 
         # ── 以下は画面静止時 (dist < PHASH_THRESHOLD) ──
         # 静止 = 動画終了ではない。他シーンへの遷移が確認できた場合のみ脱出する。
