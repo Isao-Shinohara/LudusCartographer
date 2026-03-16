@@ -2039,14 +2039,7 @@ def main():
                 if state.same_phash_count >= 10:
                     logger.info("[iter %d] DL/ロード中: %d回変化なし → 完了ダイアログ確認のため通常解析へ",
                                 i, state.same_phash_count)
-                    # ── 累積60回(3分)変化なし → DLモード強制解除 ──
-                    _dl_cumulative = getattr(state, "_dl_static_cumulative", 0) + state.same_phash_count
-                    state._dl_static_cumulative = _dl_cumulative  # type: ignore[attr-defined]
-                    if _dl_cumulative >= 60:
-                        logger.warning("[iter %d] DL静止 %d回累積 → DLモード強制解除", i, _dl_cumulative)
-                        state.download_active = False
-                        state.last_action = "DL_STALL_ESCAPE"
-                        state._dl_static_cumulative = 0  # type: ignore[attr-defined]
+                    # DL完了は自動遷移 or 完了ダイアログで検出する (強制解除は行わない)
                     state.same_phash_count = 0
                     _dl_force_ocr = True   # 完了ダイアログ即検出のため強制 OCR
                     # fall through to detect_and_act
