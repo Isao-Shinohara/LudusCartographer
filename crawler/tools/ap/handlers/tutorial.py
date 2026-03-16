@@ -38,6 +38,7 @@ from tools.ap.image_proc import (
     detect_text_input_area,
     detect_movie_scene,
     detect_adv_scene,
+    prepare_analysis_image,
 )
 from lc.ocr import run_ocr
 from lc.utils import compute_phash, phash_distance
@@ -198,7 +199,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             swipe_device(_sx, _fy, _sx, _ty, _dur, state=state, desc=f"GoldSwipe_{_dir}")
             # スワイプ後にシーン変化を確認 — MOVIE/ADV/BATTLE/UI出現で停止
             time.sleep(0.3)
-            _gs_ss, _gs_path, _gs_analysis, _ = take_screenshot()
+            _gs_path, _gs_w, _gs_h, _ = take_screenshot()
+            _gs_analysis = prepare_analysis_image(_gs_path, _gs_w, _gs_h) if _gs_path else None
             if _gs_analysis:
                 _gs_movie = detect_movie_scene(_gs_analysis, adv_result=None, phash_dist=99)
                 _gs_adv = detect_adv_scene(_gs_analysis, roi=state.game_roi)
@@ -232,11 +234,12 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             logger.info(">>> [GoldBtn] 金枠ボタン検出 → tap(%d,%d)", _bx, _by)
             _base_ph_gb = compute_phash(analysis_path)
             tap_device(_bx, _by, state, "GOLD_BTN_TAP")
-            _new_ss_gb, _, _new_analysis_gb, _ = take_screenshot()
+            _new_path_gb, _new_w_gb, _new_h_gb, _ = take_screenshot()
             try:
-                _new_ph_gb = compute_phash(_new_ss_gb)
+                _new_ph_gb = compute_phash(_new_path_gb)
             except Exception:
                 _new_ph_gb = None
+            _new_analysis_gb = prepare_analysis_image(_new_path_gb, _new_w_gb, _new_h_gb) if _new_path_gb else None
             if (not _base_ph_gb or not _new_ph_gb or
                     phash_distance(_base_ph_gb, _new_ph_gb) < PHASH_THRESHOLD):
                 # 変化なし → OCR再取得して近傍テキスト中心でリトライ (最大2回)

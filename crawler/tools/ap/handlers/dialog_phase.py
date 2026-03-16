@@ -211,12 +211,13 @@ def handle_dialog_screen(
             logger.debug("[DIALOG] BACK キー送信例外: %s", _e)
         # 12回以上: OCR再実行してダイアログ存在確認
         if state.pre_popup_tap_count >= 12:
-            _recheck_ss, _recheck_path, _, _ = take_screenshot()
-            _recheck_ocr = run_ocr(_recheck_path) if _recheck_path else []
+            _recheck_path, _recheck_w, _recheck_h, _ = take_screenshot()
+            _recheck_analysis = prepare_analysis_image(_recheck_path, _recheck_w, _recheck_h) if _recheck_path else None
+            _recheck_ocr = run_ocr(_recheck_analysis) if _recheck_analysis else []
             _recheck_texts = [e.get("text", "") for e in _recheck_ocr]
             _recheck_dlg = detect_dialog_frame_and_nav(
-                _recheck_ss, W, H, ocr_texts=_recheck_texts,
-                roi=state.game_roi) if _recheck_ss else None
+                _recheck_analysis, W, H, ocr_texts=_recheck_texts,
+                roi=state.game_roi) if _recheck_analysis else None
             if _recheck_dlg is None:
                 logger.info(">>> 【ダイアログ#0-DIALOG】OCR再確認: ダイアログ消失 → スキップ")
                 state.pre_popup_tap_count = 0
