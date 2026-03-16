@@ -837,15 +837,13 @@ def detect_and_act(ocr: list, state: PilotState,
                 logger.info("[ConfirmDialog][DEBUG] 座標可視化保存: %s", _dbg_path)
         except Exception as _dbg_e:
             logger.debug("[ConfirmDialog][DEBUG] 座標可視化失敗: %s", _dbg_e)
-        # ── DL完了ダイアログ: 右側ゴールドボタン優先タップ ──
-        # OCR座標は「OK」テキスト位置を誤検出しやすい (ボタン間の隙間に落ちる)
-        # → 右側ゴールドボタンの固定座標を最優先で使用
+        # ── DL完了ダイアログ: OCR座標でOKタップ + phash検証 ──
         if _is_completion_dialog:
             _base_ph_cd = compute_phash(analysis_path)
             _tap_variants = [
-                (int(ANALYSIS_W * 0.76), int(ANALYSIS_H * 0.71), "RIGHT_GOLD"),
-                (int(ANALYSIS_W * 0.76), int(ANALYSIS_H * 0.75), "RIGHT_GOLD_LOW"),
-                (_cp_x, _cp_y_adj, "OCR_FALLBACK"),
+                (_cp_x, _cp_y_adj, "OCR"),
+                (_cp_x, max(0, _cp_y_adj - 20), "OCR_UP"),
+                (_cp_x + 30, _cp_y_adj, "OCR_RIGHT"),
             ]
             for _tv_i, (_tv_x, _tv_y, _tv_label) in enumerate(_tap_variants):
                 tap_device(_tv_x, _tv_y, state,
