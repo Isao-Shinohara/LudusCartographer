@@ -2320,23 +2320,34 @@ def detect_and_act(ocr: list, state: PilotState,
                 state._home_clear_count = 0
             tap_device(_btx, _bty, state, "BUBBLE_TAP")
             return "BUBBLE_TAP", 0.3
-        # ── 指アイコンも金枠もない → 連続カウンタで完了判定 ──
-        # 同一フレーム (phash_dist < 5) での重複カウントを防ぎ、異なるフレーム5回で確定
+        # ── チュートリアル完了判定 ──
+        # 条件: 暗転なし + 指なし + 金枠なし → 通常ホーム画面
+        # 暗転中は指/金枠検出が失敗しているだけでチュートリアル中
         if not hasattr(state, '_home_clear_count'):
             state._home_clear_count = 0
             state._home_clear_last_phash = ""
-        # 同一フレームならカウントしない
+        if _home_dimmed:
+            # 暗転中 = チュートリアル中 → 完了判定リセット
+            if state._home_clear_count > 0:
+                logger.info(">>> ホーム画面 暗転あり → チュートリアル中 (HOME_CLEAR_COUNT %d→0)",
+                            state._home_clear_count)
+                state._home_clear_count = 0
+            else:
+                logger.info(">>> ホーム画面 暗転あり → チュートリアル中 (指/金枠未検出だが暗転)")
+            return "HOME_CLEAR_CHECK", 0.5
+        # 暗転なし + 指なし + 金枠なし → 通常ホームの可能性
+        # 同一フレーム (phash同一) での重複カウントを防止
         _cur_phash = getattr(state, 'last_phash', "")
         if _cur_phash and _cur_phash == state._home_clear_last_phash:
-            logger.info(">>> ホーム画面 指/金枠なし (同一フレーム, %d/5) → スキップ",
+            logger.info(">>> ホーム画面 指/金枠/暗転なし (同一フレーム, %d/3) → スキップ",
                         state._home_clear_count)
             return "HOME_CLEAR_CHECK", 1.0
         state._home_clear_last_phash = _cur_phash
         state._home_clear_count += 1
-        if state._home_clear_count < 5:
-            logger.info(">>> ホーム画面 指/金枠なし (%d/5) → 確認待ち", state._home_clear_count)
+        if state._home_clear_count < 3:
+            logger.info(">>> ホーム画面 指/金枠/暗転なし (%d/3) → 確認待ち", state._home_clear_count)
             return "HOME_CLEAR_CHECK", 0.5
-        logger.info(">>> ホーム画面 指/金枠なし 5フレーム連続 → チュートリアル完了!")
+        logger.info(">>> ホーム画面 指/金枠/暗転なし 3フレーム連続 → チュートリアル完了!")
         # nav カウンタをリセット (チュートリアル指標消失)
         state.home_nav_count = 0
         state.blob_same_count = 0
