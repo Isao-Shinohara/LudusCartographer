@@ -557,7 +557,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # MOVIE 慣性: 直前が動画アクション → 毎フレーム ⏭ ボタンで継続/終了を判定
     # TTL は使わない。⏭ が見えている限り MOVIE を維持 (一時停止含む)。
     # ⏭ が消えたら動画終了 → UNKNOWN に脱出。
-    _MOVIE_ACTIONS = ("MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_RESUME_TAP", "MOVIE_SKIP_ESCAPE")
+    _MOVIE_ACTIONS = ("MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_SKIP_ESCAPE")
     if state.last_action in _MOVIE_ACTIONS and img_path:
         # ── ポップアップ脱出 (MOVIE慣性より優先) ──
         # ただし phash 変化中 (動画再生中) はポップアップ誤検出の可能性が高いためスキップ
@@ -609,7 +609,6 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             logger.info("[MOVIE_INERTIA] ADVツールバー検出 → ADV遷移確定, MOVIE脱出")
             state.last_action = "SCENE_TAP"
             state.movie_wait_consecutive = 0; state.movie_static_count = 0
-            state._movie_resume_used = False
         elif state.current_scene in ("BATTLE", "MENU"):
             logger.info("[MOVIE_INERTIA] BATTLE/MENU シーン → MOVIE脱出")
             state.last_action = "SCENE_TAP"
@@ -784,44 +783,13 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     # ── 待機カウンタ ──
     state.movie_wait_consecutive += 1
 
-    # ── 一時停止検知: phash 変化なし (静止) が連続 → 誤って一時停止された可能性 ──
-    _MOVIE_PAUSE_THRESHOLD = 8  # 8回静止 (~4秒) で一時停止と判定
+    # ── 静止フレームカウント (ゲームルール: 動画中は絶対にタップしない) ──
+    # 字幕・暗転・クレジット等で静止することがあるが、タップは一時停止を引き起こすため禁止。
+    # detect_scene_early の MOVIE_INERTIA が他シーン遷移を検出したら自動脱出する。
     if dist < PHASH_THRESHOLD:
         state.movie_static_count += 1
-        # 動的フレームカウンタリセット (RESUME 成功判定用)
-        state._movie_dynamic_frames = 0  # type: ignore[attr-defined]
     else:
-        state.movie_static_count = 0  # 動画再生中 (画面変化あり) → リセット
-        # RESUME 後に動的フレームが5回連続 → 本当に再生再開 → 空振りカウンタリセット
-        _dyn = getattr(state, '_movie_dynamic_frames', 0) + 1
-        state._movie_dynamic_frames = _dyn  # type: ignore[attr-defined]
-        if _dyn >= 5:
-            state._movie_resume_count = 0  # type: ignore[attr-defined]
-            state._movie_dynamic_frames = 0  # type: ignore[attr-defined]
-
-    if state.movie_static_count >= _MOVIE_PAUSE_THRESHOLD:
-        # MOVIE_RESUME 連続空振りチェック: 3回タップしても静止に戻るなら動画ではない
-        _resume_count = getattr(state, '_movie_resume_count', 0) + 1
-        state._movie_resume_count = _resume_count  # type: ignore[attr-defined]
-        if _resume_count >= 3:
-            logger.warning("[MOVIE_PAUSE] RESUME %d 回空振り → 動画ではない、MOVIE強制脱出",
-                           _resume_count)
-            state.movie_static_count = 0
-            state.movie_wait_consecutive = 0
-            state._movie_resume_count = 0  # type: ignore[attr-defined]
-            state.current_scene = "UNKNOWN"
-            state.last_action = "SCENE_TAP"
-            state.last_phash = ""
-            return False  # MOVIE ハンドラ脱出 → フルOCRへ
-        logger.warning("[MOVIE_PAUSE] 静止 %d 回連続 (dist=%d) → 一時停止と判定、タップで再開 (%d/3)",
-                       state.movie_static_count, dist, _resume_count)
-        tap_device(int(W * 0.5), int(H * 0.5), state, "MOVIE_RESUME")
         state.movie_static_count = 0
-        state.last_phash = ""  # phash リセットして次フレームで変化を見る
-        state.last_action = "MOVIE_WAIT"
-        state.stall_start = 0.0
-        time.sleep(1.0)
-        return True
 
     # ── 長時間待機: ハードリミット (探索画面等の誤MOVIE判定を脱出) ──
     _MOVIE_HARD_LIMIT = 300  # ~3分: これ以上は動画ではない
@@ -830,7 +798,6 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
                        state.movie_wait_consecutive)
         state.movie_static_count = 0
         state.movie_wait_consecutive = 0
-        state._movie_resume_count = 0  # type: ignore[attr-defined]
         state.current_scene = "UNKNOWN"
         state.last_action = "SCENE_TAP"
         state.last_phash = ""
@@ -841,9 +808,9 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
                     state.movie_wait_consecutive)
 
     # ── 通常待機 (動画は自動終了するのでタップせず待つ) ──
-    logger.info("[MOVIE] 待機 (%d) dist=%d static=%d/%d",
+    logger.info("[MOVIE] 待機 (%d) dist=%d static=%d",
                 state.movie_wait_consecutive, dist,
-                state.movie_static_count, _MOVIE_PAUSE_THRESHOLD)
+                state.movie_static_count)
     state.last_action = "MOVIE_WAIT"
     state.stall_start = 0.0
     time.sleep(0.5)
@@ -2891,16 +2858,13 @@ def main():
                     tap_device(_resume_x, _resume_y, state, "MOVIE_SKIP_ESCAPE")
                     state.last_action = "MOVIE_SKIP"
                 else:
+                    # タップは一時停止を引き起こすため禁止。慣性を断ち切りフルOCRへ。
                     logger.warning(
-                        "[MOVIE_GUARD_ESCAPE] 動画待機 %d 回 → 画面中央タップ",
+                        "[MOVIE_GUARD_ESCAPE] 動画待機 %d 回 → タップせずMOVIE慣性断ち切り",
                         state.movie_wait_consecutive)
                     state.movie_wait_consecutive = 0; state.movie_static_count = 0
-                    _resume_x, _resume_y = roi_to_device(
-                        int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state.game_roi)
-                    tap_device(_resume_x, _resume_y, state, "MOVIE_RESUME_TAP")
-                    # MOVIE慣性を断ち切る: last_action を非MOVIE系にして
-                    # detect_scene_early() がフルOCRに落ちるようにする
                     state.last_action = "SCENE_TAP"
+                    state.current_scene = "UNKNOWN"
                 state.last_phash = ""
                 state.same_phash_count = 0
                 continue
@@ -3059,7 +3023,7 @@ def main():
         # ON: DL画面検出時 → 永続化 (プロセス再起動でも復元される)
         # OFF: DL/動画/ロード以外のシーンに遷移した時 → 削除
         _DL_MOVIE_ACTIONS = frozenset((
-            "DOWNLOAD_WAIT", "MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_RESUME_TAP",
+            "DOWNLOAD_WAIT", "MOVIE_WAIT", "MOVIE_SKIP",
             "MOVIE_SKIP_ESCAPE", "LOADING_WAIT", "WAIT_FOR_CHANGE",
             "DARK_SCENE_TAP", "MAIN_STORY_LOADING",
             "DL_COMPLETE_OK", "SYSTEM_DLG_OK", "MOVIE_SKIP_OCR",
