@@ -837,13 +837,37 @@ def detect_and_act(ocr: list, state: PilotState,
                 logger.info("[ConfirmDialog][DEBUG] 座標可視化保存: %s", _dbg_path)
         except Exception as _dbg_e:
             logger.debug("[ConfirmDialog][DEBUG] 座標可視化失敗: %s", _dbg_e)
-        tap_device(_cp_x, _cp_y_adj, state, f"CONFIRM_DIALOG_OK '{_confirm_pos['text']}'")
-        # DL完了ダイアログはDL専用アクションで返す (post_downloadフラグを保持)
+        # ── DL完了ダイアログ: phash検証付きOKタップ (空振り防止) ──
         if _is_completion_dialog:
+            _base_ph_cd = compute_phash(analysis_path)
+            # OCR座標 → 上方30px補正 (ダイアログ外タップ防止) を第2候補に用意
+            _tap_variants = [
+                (_cp_x, _cp_y_adj, "OCR"),
+                (_cp_x, max(0, _cp_y_adj - 30), "OCR-30"),
+                (int(ANALYSIS_W * 0.62), int(ANALYSIS_H * 0.78), "FIXED"),
+            ]
+            for _tv_i, (_tv_x, _tv_y, _tv_label) in enumerate(_tap_variants):
+                tap_device(_tv_x, _tv_y, state,
+                           f"DL_COMPLETE_OK_R{_tv_i}({_tv_label})")
+                logger.info("[DL_COMPLETE] タップ #%d (%d,%d) [%s] → phash検証",
+                            _tv_i + 1, _tv_x, _tv_y, _tv_label)
+                time.sleep(0.5)
+                _new_ss_cd, _, _, _ = take_screenshot()
+                _new_ph_cd = compute_phash(_new_ss_cd)
+                if _base_ph_cd and _new_ph_cd:
+                    _cd_dist = phash_distance(_base_ph_cd, _new_ph_cd)
+                    if _cd_dist >= PHASH_THRESHOLD:
+                        logger.info("[DL_COMPLETE] ✅ 変化検知 (dist=%d) #%d [%s] → 成功",
+                                    _cd_dist, _tv_i + 1, _tv_label)
+                        break
+                    logger.info("[DL_COMPLETE] 変化なし (dist=%d) #%d [%s] → 次座標",
+                                _cd_dist, _tv_i + 1, _tv_label)
+                    _base_ph_cd = _new_ph_cd
             state.download_active = False
             logger.info("[DL_PROTECT] DL完了ダイアログOK → download_active 解除")
             _log_milestone(state, "DL_END")
             return "DL_COMPLETE_OK", 1.0
+        tap_device(_cp_x, _cp_y_adj, state, f"CONFIRM_DIALOG_OK '{_confirm_pos['text']}'")
         return "ADV_CHOICE", 1.0
 
     # ── 【#-2.5】SKIP ボタン汎用ハンドラ — 無効化 (ストーリースキップ禁止) ──
