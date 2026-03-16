@@ -908,9 +908,25 @@ def detect_and_act(ocr: list, state: PilotState,
                 logger.info(">>> 【ご注意→phash計算失敗】 #%d → 次座標で再試行", _retry_i + 1)
 
         if _agree_changed:
-            logger.info(">>> 【Unity初期化待機】 30秒 Watchdog停止 (NOTICE_DISMISS exempt)")
+            # ポーリングで画面安定を待つ (最大10秒, 0.5秒間隔)
+            # 旧: 30秒固定wait → 利用規約画面が即表示されても30秒無駄に待っていた
+            _poll_ph = _new_ph
+            for _poll_i in range(20):  # 0.5s × 20 = 最大10秒
+                time.sleep(0.5)
+                _poll_ss, _, _, _ = take_screenshot()
+                _poll_new = compute_phash(_poll_ss)
+                if _poll_ph and _poll_new:
+                    _poll_dist = phash_distance(_poll_ph, _poll_new)
+                    if _poll_dist < PHASH_THRESHOLD:
+                        # 画面が安定した → 即脱出
+                        logger.info(">>> 【NOTICE_DISMISS】 画面安定検知 (poll=%d, dist=%d) → 即続行",
+                                    _poll_i + 1, _poll_dist)
+                        break
+                    _poll_ph = _poll_new
+            else:
+                logger.info(">>> 【NOTICE_DISMISS】 10秒経過 → 続行")
             _log_milestone(state, "NOTICE_DISMISS")
-            return "NOTICE_DISMISS", 30.0
+            return "NOTICE_DISMISS", 0.5
         else:
             logger.info(">>> 【ご注意→リトライ上限(5回)】 次ループで再検出")
             return "NOTICE_DISMISS", 3.0
@@ -3039,7 +3055,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                        int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
         for _btn_name in ("battle_normal_attack", "battle_skill"):
             _battle_m = _AM_battle.match_single(_btn_name, img_path, roi=_battle_roi)
-            if _battle_m and _battle_m[2] >= 0.60:
+            if _battle_m and _battle_m[2] >= 0.65:
                 logger.info("[SCENE_EARLY] Battle初回検出 (%s score=%.2f) → BATTLE",
                             _btn_name, _battle_m[2])
                 return "BATTLE"
