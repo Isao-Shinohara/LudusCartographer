@@ -2348,10 +2348,12 @@ def main():
             if state.home_reached and not state.grind_mode:
                 state.pending_candidates = []
                 state.pending_candidate_idx = 0
-            # シーン変化チェック: フレッシュスクショで phash 比較し、
-            # 画面が変わっていれば古い候補を破棄
+            # 候補タップ後は数イテレーション待って画面変化を確認してから次候補へ
+            # (即連打するとシーン遷移後のstaleタップが動画等に当たる)
+            _CANDIDATE_WAIT_ITERS = 3
             if (state.pending_candidates
-                    and state.pending_candidate_idx < len(state.pending_candidates)):
+                    and state.pending_candidate_idx < len(state.pending_candidates)
+                    and state.same_phash_count >= _CANDIDATE_WAIT_ITERS):
                 _cr_path, _cr_w, _cr_h, _ = take_screenshot()
                 _cr_stale = False
                 if _cr_path:
