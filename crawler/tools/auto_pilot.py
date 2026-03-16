@@ -1187,8 +1187,7 @@ def detect_and_act(ocr: list, state: PilotState,
                 break
         if _quest_node:
             _qx, _qy = _quest_node["center"]
-            # テキストラベルはノードアイコンの下にある → 60px上を狙う
-            _qy = max(_qy - 60, 10)
+            # テキストラベルの中心をそのままタップ (ノードのヒットボックスはラベル領域も含む)
             logger.info(">>> 【クエストマップ】 ノード '%s' (%d,%d) タップ",
                         _quest_node["text"], _qx, _qy)
             tap_device(_qx, _qy, state, "QUEST_NODE_TAP")
@@ -1290,17 +1289,44 @@ def detect_and_act(ocr: list, state: PilotState,
             logger.info(">>> [GoldBtn] 金枠ボタン検出 → tap(%d,%d)", _bx, _by)
             _base_ph_gb = compute_phash(analysis_path)
             tap_device(_bx, _by, state, "GOLD_BTN_TAP")
-            _new_ss_gb, _, _, _ = take_screenshot()
+            _new_ss_gb, _, _new_analysis_gb, _ = take_screenshot()
             try:
                 _new_ph_gb = compute_phash(_new_ss_gb)
             except Exception:
                 _new_ph_gb = None
             if (not _base_ph_gb or not _new_ph_gb or
                     phash_distance(_base_ph_gb, _new_ph_gb) < PHASH_THRESHOLD):
-                # 変化なし → Y方向に+30pxずらして再試行
-                logger.info(">>> [GoldBtn] phash変化なし → +%dpx 再タップ (%d,%d)",
-                            _GOLD_BTN_RETRY_Y_OFFSET, _bx, _by + _GOLD_BTN_RETRY_Y_OFFSET)
-                tap_device(_bx, _by + _GOLD_BTN_RETRY_Y_OFFSET, state, "GOLD_BTN_TAP_RETRY")
+                # 変化なし → OCR再取得して近傍テキスト中心でリトライ (最大2回)
+                _gb_retried = False
+                if _new_analysis_gb:
+                    _retry_ocr = run_ocr(_new_analysis_gb)
+                    for _retry_e in _retry_ocr:
+                        _rc = _retry_e.get("center", (0, 0))
+                        _rt = _retry_e.get("text", "")
+                        if (len(_rt) >= 2 and abs(_rc[0] - _bx) < 150 and abs(_rc[1] - _by) < 150
+                                and _rc[1] < H * 0.85):
+                            logger.info(">>> [GoldBtn] phash変化なし → OCRリトライ '%s'(%d,%d)",
+                                        _rt, _rc[0], _rc[1])
+                            tap_device(_rc[0], _rc[1], state, "GOLD_BTN_TAP_OCR_RETRY")
+                            _gb_retried = True
+                            break
+                if not _gb_retried:
+                    # OCR近傍テキストなし → Y方向に±20px探索 (3回)
+                    for _gb_dy in [20, -20, 40]:
+                        _ry = _by + _gb_dy
+                        if 0 < _ry < H:
+                            logger.info(">>> [GoldBtn] OCRリトライ失敗 → Y%+dpx (%d,%d)",
+                                        _gb_dy, _bx, _ry)
+                            tap_device(_bx, _ry, state, "GOLD_BTN_TAP_Y_RETRY")
+                            time.sleep(0.3)
+                            _retry_ss, _, _, _ = take_screenshot()
+                            try:
+                                _retry_ph = compute_phash(_retry_ss)
+                            except Exception:
+                                _retry_ph = None
+                            if (_retry_ph and _base_ph_gb and
+                                    phash_distance(_base_ph_gb, _retry_ph) >= PHASH_THRESHOLD):
+                                break
             return "GOLD_BTN_TAP", BATTLE_WAIT
 
     # ─── 【最優先 #0-a】テンプレートマッチング (Asset Match) — 最速 ~0.1s ───
