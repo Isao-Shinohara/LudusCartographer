@@ -1010,14 +1010,10 @@ def detect_and_act(ocr: list, state: PilotState,
     _is_result_early = any("Result" in t for t in texts)
     if _is_result_early:
         state.result_total_taps += 1
-        # フリーズ検出: 30タップ超えたら force-stop で復旧
-        if state.result_total_taps >= 30:
-            logger.warning("[RESULT_FREEZE] RESULT_NEXT_EARLY %d回 → Unity入力フリーズ → force-stop",
+        # 30タップ超えても座標ズレの可能性が高い — ログのみ出して継続
+        if state.result_total_taps >= 30 and state.result_total_taps % 30 == 0:
+            logger.warning("[RESULT_STALL] RESULT_NEXT_EARLY %d回 — 座標ズレの可能性 (force-stop しない)",
                            state.result_total_taps)
-            state.result_total_taps = 0
-            state.result_rapid_count = 0
-            watchdog_recover(state)
-            return "RESULT_FREEZE", 0.0
         _next_btn = has_text(ocr, "次へ", min_conf=0.3)
         if _next_btn:
             _nx, _ny = _next_btn["center"]
@@ -2311,7 +2307,7 @@ def detect_and_act(ocr: list, state: PilotState,
                          and not _BUBBLE_NUM_RE.match(r["text"])
                          and not _BUBBLE_ALPHANUM_NOISE_RE.match(r["text"])
                          and len(r["text"]) > 2]
-        if _bubble_texts and state.home_tutorial_tap_count < 10:
+        if _bubble_texts:
             _bt = _bubble_texts[0]
             _btx, _bty = _bt["center"]
             logger.info(">>> ホーム画面 + 吹き出しセリフ '%s' → チュートリアル継続 (%d,%d)",
@@ -2339,6 +2335,12 @@ def detect_and_act(ocr: list, state: PilotState,
         # 同一フレーム (phash同一) での重複カウントを防止
         _cur_phash = getattr(state, 'last_phash', "")
         if _cur_phash and _cur_phash == state._home_clear_last_phash:
+            # 同一フレームでも暗転オーバーレイがあればチュートリアル中 → リセット
+            if _home_dimmed and state._home_clear_count > 0:
+                logger.info(">>> ホーム画面 同一フレームだが暗転あり → チュートリアル中 (HOME_CLEAR_COUNT %d→0)",
+                            state._home_clear_count)
+                state._home_clear_count = 0
+                return "HOME_CLEAR_CHECK", 0.5
             logger.info(">>> ホーム画面 指/金枠/暗転なし (同一フレーム, %d/3) → スキップ",
                         state._home_clear_count)
             return "HOME_CLEAR_CHECK", 1.0
@@ -3327,9 +3329,10 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
 
     # BATTLE_RAPID 連続ループ上限
     if state.battle_rapid_consecutive.stalled:
-        logger.info("[BATTLE] 連続 %d 回 → OCR で再評価",
+        logger.info("[BATTLE] 連続 %d 回 → シーンリセット + OCR で再評価",
                     state.battle_rapid_consecutive.count)
         state.battle_rapid_consecutive.reset()
+        state.current_scene = "UNKNOWN"
         return False
 
     # ── バトルUIガード: 通常攻撃ボタンが見えなければ Result/ADV の可能性 → OCR へ ──
