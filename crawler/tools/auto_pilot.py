@@ -3157,8 +3157,17 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 _adv_check = detect_adv_scene(img_path, roi=state.game_roi)
                 if _adv_check.is_adv:
                     return "ADV"
-                # ツールバーなし + AUTO あり → BATTLE の可能性。フォールスルー
-                logger.info("[SCENE_EARLY] ADV継続: AUTO(%.2f)だがツールバーなし → UNKNOWN",
+                # ツールバーなし + AUTO あり → BATTLE テンプレートで確認
+                _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
+                               int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+                _b_atk = _AM_adv.match_single("battle_normal_attack", img_path, roi=_battle_roi)
+                _b_skl = _AM_adv.match_single("battle_skill", img_path, roi=_battle_roi)
+                _b_best = max((_b_atk[2] if _b_atk else 0), (_b_skl[2] if _b_skl else 0))
+                if _b_best >= 0.65:
+                    logger.info("[SCENE_EARLY] ADV継続: AUTO(%.2f)+BATTLEテンプレ(%.2f) → BATTLE",
+                                _auto_m[2], _b_best)
+                    return "BATTLE"
+                logger.info("[SCENE_EARLY] ADV継続: AUTO(%.2f) ADVでもBATTLEでもなし → UNKNOWN",
                             _auto_m[2])
         except Exception:
             pass
