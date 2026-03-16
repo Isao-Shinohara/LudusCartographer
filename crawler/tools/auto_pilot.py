@@ -647,7 +647,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     try:
         _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
                        int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
-        for _btn_name in ("battle_normal_attack", "battle_skill"):
+        for _btn_name in ("battle_normal_attack", "battle_skill", "battle_special"):
             _battle_m = _AM_battle.match_single(_btn_name, img_path, roi=_battle_roi)
             if _battle_m and _battle_m[2] >= 0.65:
                 logger.info("[SCENE_EARLY] Battle初回検出 (%s score=%.2f) → BATTLE",
@@ -958,8 +958,8 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
         _right_panel = [b for b in _rapid_blobs
                         if b[0] > _RIGHT_PANEL_X and b[1] > ANALYSIS_H * 0.45]
         if state.character_selected or state.char_just_selected:
-            # B-0: テンプレートで battle_skill / battle_normal_attack を探す (精度最優先)
-            for _btn_name in ("battle_skill", "battle_normal_attack"):
+            # B-0: テンプレートで battle_special / battle_skill / battle_normal_attack を探す (精度最優先)
+            for _btn_name in ("battle_special", "battle_skill", "battle_normal_attack"):
                 _btn_m = ASSET_MANAGER.match_single(_btn_name, analysis_path)
                 if _btn_m and _btn_m[2] >= 0.60:
                     _tmpl_action = f"BATTLE_RAPID_TMPL_{_btn_name.upper()}"
@@ -1005,7 +1005,7 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
                 logger.info("[BATTLE] 再確認でACTIVE_CHAR検出 → 次ループで正規処理")
                 return True  # 次ループで handle_battle が再呼出される
         # テンプレマッチで正しいボタン位置を探す (character_selected 不問)
-        for _fb_btn in ("battle_skill", "battle_normal_attack"):
+        for _fb_btn in ("battle_special", "battle_skill", "battle_normal_attack"):
             _fb_m = ASSET_MANAGER.match_single(_fb_btn, analysis_path)
             if _fb_m and _fb_m[2] >= 0.60:
                 _rapid_tx, _rapid_ty = _fb_m[0], _fb_m[1]
@@ -2661,8 +2661,8 @@ def main():
                                 if b[0] > _RIGHT_PANEL_X and b[1] > ANALYSIS_H * 0.45]
 
                 if state.character_selected or state.char_just_selected:
-                    # B-0: テンプレートで battle_skill / battle_normal_attack を探す
-                    for _btn_name in ("battle_skill", "battle_normal_attack"):
+                    # B-0: テンプレートで battle_special / battle_skill / battle_normal_attack を探す
+                    for _btn_name in ("battle_special", "battle_skill", "battle_normal_attack"):
                         _btn_m = ASSET_MANAGER.match_single(_btn_name, analysis_path)
                         if _btn_m and _btn_m[2] >= 0.60:
                             _tmpl_action = f"BATTLE_RAPID_TMPL_{_btn_name.upper()}"
@@ -2713,7 +2713,7 @@ def main():
                             img_path = _fb_analysis
                             continue
                     # テンプレマッチで正しいボタン位置を探す (character_selected 不問)
-                    for _fb_btn in ("battle_skill", "battle_normal_attack"):
+                    for _fb_btn in ("battle_special", "battle_skill", "battle_normal_attack"):
                         _fb_m = ASSET_MANAGER.match_single(_fb_btn, analysis_path)
                         if _fb_m and _fb_m[2] >= 0.60:
                             _rapid_tx, _rapid_ty = _fb_m[0], _fb_m[1]
