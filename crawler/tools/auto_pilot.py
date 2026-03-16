@@ -777,7 +777,7 @@ def detect_and_act(ocr: list, state: PilotState,
     # ダウンロードの次、SKIP より先に評価する。
     _confirm_pos = has_any(ocr, _CONFIRM_POS_KWS)
     _confirm_neg = has_any(ocr, _CONFIRM_NEG_KWS)
-    _is_completion_dialog = _confirm_pos and not _confirm_neg and _dl_is_complete
+    _is_completion_dialog = _confirm_pos and _dl_is_complete
     if (_confirm_pos and _confirm_neg) or _is_completion_dialog:
         # ── 課金保護: 通貨消費キーワード → キャンセル ──
         _is_currency = any(kw in joined for kw in _CURRENCY_SPEND_KWS)
@@ -808,6 +808,35 @@ def detect_and_act(ocr: list, state: PilotState,
             "[ConfirmDialog] '%s' (%d,%d→Y%d) タップ (否定='%s'無視)",
             _confirm_pos["text"], _cp_x, _cp_y, _cp_y_adj, _neg_label,
         )
+        # ── デバッグ: ConfirmDialog のスクリーンショットにタップ座標を描画して保存 ──
+        try:
+            import cv2 as _cv2_dbg
+            _dbg_img = _cv2_dbg.imread(str(analysis_path))
+            if _dbg_img is not None:
+                # 肯定ボタン (タップ先) を赤丸で描画
+                _cv2_dbg.circle(_dbg_img, (_cp_x, _cp_y_adj), 15, (0, 0, 255), 3)
+                _cv2_dbg.putText(_dbg_img, f"OK({_cp_x},{_cp_y_adj})",
+                                 (_cp_x - 60, _cp_y_adj - 20),
+                                 _cv2_dbg.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                # 否定ボタンを青丸で描画
+                if _confirm_neg:
+                    _cn_cx, _cn_cy = _confirm_neg["center"]
+                    _cv2_dbg.circle(_dbg_img, (_cn_cx, _cn_cy), 15, (255, 0, 0), 3)
+                    _cv2_dbg.putText(_dbg_img, f"Cancel({_cn_cx},{_cn_cy})",
+                                     (_cn_cx - 80, _cn_cy - 20),
+                                     _cv2_dbg.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+                # 全OCR結果のbboxも描画
+                for _ocr_item in ocr:
+                    _oc = _ocr_item.get("center")
+                    if _oc:
+                        _cv2_dbg.circle(_dbg_img, (_oc[0], _oc[1]), 5, (0, 255, 0), -1)
+                _dbg_ts = datetime.now().strftime("%H%M%S")
+                _dbg_path = Path("storage/evidence") / f"confirm_dialog_{_dbg_ts}.png"
+                _dbg_path.parent.mkdir(parents=True, exist_ok=True)
+                _cv2_dbg.imwrite(str(_dbg_path), _dbg_img)
+                logger.info("[ConfirmDialog][DEBUG] 座標可視化保存: %s", _dbg_path)
+        except Exception as _dbg_e:
+            logger.debug("[ConfirmDialog][DEBUG] 座標可視化失敗: %s", _dbg_e)
         tap_device(_cp_x, _cp_y_adj, state, f"CONFIRM_DIALOG_OK '{_confirm_pos['text']}'")
         # DL完了ダイアログはDL専用アクションで返す (post_downloadフラグを保持)
         if _is_completion_dialog:
