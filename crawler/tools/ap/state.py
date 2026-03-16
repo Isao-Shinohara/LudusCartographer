@@ -121,8 +121,7 @@ class PilotState:
     # ─── 指アイコン静止画面カウンタ (スワイプシーン検出用) ───
     finger_tap_static: StallCounter = field(
         default_factory=lambda: StallCounter("finger_tap_static", threshold=3))
-    # ─── ダイアログclose累計試行 (リセットなし、エスカレーション用) ───
-    dialog_close_total: int = 0  # close失敗が蓄積 → 8回でBACK, 12回でスキップ
+    # dialog_close_total は廃止 — pre_popup_tap_count に一本化 (エスカレーション: 4=OK, 8=BACK, 12=OCR再確認)
     # ─── Result画面ハンドラ状態 ───
     result_rapid_count: int = 0       # RESULT_RAPID ループ反復 [0..15]
     result_total_taps: int = 0        # Result画面での累積タップ [0..30]

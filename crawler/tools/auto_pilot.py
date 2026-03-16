@@ -419,7 +419,6 @@ def handle_dialog_screen(
             logger.info("[NOTICE_POPUP] ×閉じ完了 (total=%d pages)", _total_pages)
 
         state.pre_popup_tap_count = 0
-        state.dialog_close_total = 0
         return "NOTICE_POPUP_CLOSE", 1.0
 
     # ── 指ガード: ×のみダイアログは指がある場合スキップ ──
@@ -493,30 +492,33 @@ def handle_dialog_screen(
         return None
 
     state.pre_popup_tap_count += 1
-    state.dialog_close_total += 1
     state.dialog_detections += 1
 
-    # ── エスカレーション: 12回以上 → ダイアログ検出自体をスキップ ──
-    if state.dialog_close_total >= 12:
-        logger.warning(
-            ">>> 【ダイアログ#0-DIALOG】累計%d回スタック → ダイアログ検出スキップ (他処理へ)",
-            state.dialog_close_total,
-        )
-        state.dialog_close_total = 0
-        state.pre_popup_tap_count = 0
-        return None
-
-    # ── エスカレーション: 8回以上 → Android BACK キー ──
-    if state.dialog_close_total >= 8:
+    # ── エスカレーション (pre_popup_tap_count 一本化) ──
+    # 8-11: BACK キー送信
+    if state.pre_popup_tap_count >= 8:
         logger.warning(
             ">>> 【ダイアログ#0-DIALOG】累計%d回失敗 → BACK キー押下",
-            state.dialog_close_total,
+            state.pre_popup_tap_count,
         )
         try:
             adb("shell input keyevent KEYCODE_BACK")
         except Exception as _e:
             logger.debug("[DIALOG] BACK キー送信例外: %s", _e)
-        state.pre_popup_tap_count = 0
+        # 12回以上: OCR再実行してダイアログ存在確認
+        if state.pre_popup_tap_count >= 12:
+            _recheck_ss, _recheck_path, _, _ = take_screenshot()
+            _recheck_ocr = run_ocr(_recheck_path) if _recheck_path else []
+            _recheck_texts = [e.get("text", "") for e in _recheck_ocr]
+            _recheck_dlg = detect_dialog(_recheck_path, _recheck_ocr, _recheck_texts,
+                                         W, H) if _recheck_path else None
+            if _recheck_dlg is None:
+                logger.info(">>> 【ダイアログ#0-DIALOG】OCR再確認: ダイアログ消失 → スキップ")
+                state.pre_popup_tap_count = 0
+                return None
+            logger.warning(">>> 【ダイアログ#0-DIALOG】OCR再確認: ダイアログ存続 → 座標更新してリトライ")
+            _dlg_type, _dlg_x, _dlg_y = _recheck_dlg
+            state.pre_popup_tap_count = 8  # BACK エスカレーションに留まる
         return "DIALOG_BACK_ESCALATION", 2.0
 
     if _dlg_type in ("next", "bottom"):
@@ -567,8 +569,8 @@ def handle_dialog_screen(
             state.pre_popup_tap_count = 0
             return "DIALOG_BOTTOM_FALLBACK", 1.0
         logger.info(
-            ">>> 【ダイアログ#0-DIALOG】%s(%d,%d) (試行%d回/累計%d)",
-            _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count, state.dialog_close_total,
+            ">>> 【ダイアログ#0-DIALOG】%s(%d,%d) (試行%d回)",
+            _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
         )
         tap_device(_dlg_x, _dlg_y, state, "DIALOG_CLOSE")
         return "DIALOG_CLOSE", 1.0
@@ -1657,14 +1659,14 @@ def detect_and_act(ocr: list, state: PilotState,
     close_popup = has_any(ocr, close_popup_kws)
     if close_popup:
         # CLOSE_POPUP スタック脱出: 8回以上累計失敗 → BACK キーで閉じる
-        if state.dialog_close_total >= 8:
+        if state.pre_popup_tap_count >= 8:
             logger.warning(">>> 【%s ポップアップ】 × が8回空振り → BACK キーで脱出",
                            close_popup["text"][:6])
             try:
                 adb("shell input keyevent KEYCODE_BACK")
             except Exception as _e:
                 logger.debug("[CLOSE_POPUP] BACK キー送信例外: %s", _e)
-            state.dialog_close_total = 0
+            state.pre_popup_tap_count = 0
             return "CLOSE_POPUP_BACK", 1.0
         # テンプレートマッチングで正確な × 位置を取得 (固定座標より優先)
         _close_match = ASSET_MANAGER.match_single("close_btn", analysis_path) if analysis_path else None
@@ -1677,7 +1679,7 @@ def detect_and_act(ocr: list, state: PilotState,
             close_y = _CLOSE_BTN_OFFSET
             logger.info(">>> 【%s ポップアップ】 → × 固定座標 (%d,%d) タップ",
                         close_popup["text"][:6], close_x, close_y)
-        state.dialog_close_total += 1
+        state.pre_popup_tap_count += 1
         tap_device(close_x, close_y, state, f"CLOSE_POPUP_{close_popup['text'][:6]}")
         return "CLOSE_POPUP", 1.0
 
@@ -4626,8 +4628,7 @@ def main():
             state.consecutive_frozen_frames = 0
             state.stall_start = 0.0
             state.stall_corner_tried = False
-            state.pre_popup_tap_count = 0  # ポップアップ試行カウンタもリセット
-            state.dialog_close_total = 0  # ダイアログclose累計もリセット
+            state.pre_popup_tap_count = 0  # ポップアップ試行カウンタリセット
             state.pending_candidates = []  # 候補リストクリア
             state.pending_candidate_idx = 0
             # 指スワイプ判定: MOYA_TAP 後の微小変化 (dist<PHASH_THRESHOLD) では
