@@ -321,10 +321,9 @@ class TestPilotStateDynamicAttrsRemoved:
         state.unity_restart_count = 2
         assert state.unity_restart_count == 2
 
-    def test_gold_swipe_is_stall_counter(self, state):
-        from tools.auto_pilot import StallCounter
-        assert isinstance(state.gold_swipe, StallCounter)
-        assert state.gold_swipe.threshold == 3
+    def test_gold_swipe_stall_counter_removed(self, state):
+        """gold_swipe StallCounter は廃止済み — 属性が存在しないことを確認"""
+        assert not hasattr(state, 'gold_swipe')
 
     def test_normatk_fallback_is_stall_counter(self, state):
         from tools.auto_pilot import StallCounter

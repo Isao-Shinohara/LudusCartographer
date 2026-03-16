@@ -1233,47 +1233,41 @@ def detect_and_act(ocr: list, state: PilotState,
     if analysis_path is not None and not _is_battle_ui and not _adv_result.is_adv and not _has_dialog_kw and not _is_home_screen:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:
-            # 連続スワイプ上限チェック: 閾値超えたら GoldSwipe をスキップして他の処理へ
-            if state.gold_swipe.stalled:
-                logger.warning(
-                    "[GoldSwipe] detect_and_act: 連続 %d 回 → スキップ (別アクション探索)",
-                    state.gold_swipe.count,
-                )
-                state.gold_swipe.reset()
-            else:
-                _dir, _sx, _fy, _ty, _dur = _gold
-                state.gold_swipe.tick()
-                _base_ph_gs = compute_phash(analysis_path)
-                # 距離が短すぎる場合はフルスクリーンスワイプを強制 (解像度差対策)
-                _min_dist = int(ANALYSIS_H * 0.6)
-                if abs(_fy - _ty) < _min_dist:
-                    if _dir == "UP":
-                        _fy = ANALYSIS_H - 50   # 画面下端
-                        _ty = 50                 # 画面上端
+            _dir, _sx, _fy, _ty, _dur = _gold
+            # 距離が短すぎる場合はフルスクリーンスワイプを強制 (解像度差対策)
+            _min_dist = int(ANALYSIS_H * 0.6)
+            if abs(_fy - _ty) < _min_dist:
+                if _dir == "UP":
+                    _fy = ANALYSIS_H - 50
+                    _ty = 50
+                else:
+                    _fy = 50
+                    _ty = ANALYSIS_H - 50
+            _gs_action = "GOLD_SWIPE_UP" if _dir == "UP" else "GOLD_SWIPE_DOWN"
+            logger.info(">>> [GoldSwipe] %s (%d,%d)→(%d,%d) %dms",
+                        _dir, _sx, _fy, _sx, _ty, _dur)
+            swipe_device(_sx, _fy, _sx, _ty, _dur, state=state, desc=f"GoldSwipe_{_dir}")
+            # スワイプ後にシーン変化を確認 — MOVIE/ADV/BATTLE/UI出現で停止
+            time.sleep(0.3)
+            _gs_ss, _gs_path, _gs_analysis, _ = take_screenshot()
+            if _gs_analysis:
+                _gs_movie = detect_movie_scene(_gs_analysis, adv_result=None, phash_dist=99)
+                _gs_adv = detect_adv_scene(_gs_analysis, roi=state.game_roi)
+                if _gs_movie.is_movie:
+                    logger.info(">>> [GoldSwipe] スワイプ後 MOVIE 検出 → スワイプ完了")
+                    state.current_scene = "MOVIE"
+                elif _gs_adv.is_adv:
+                    logger.info(">>> [GoldSwipe] スワイプ後 ADV 検出 → スワイプ完了")
+                    state.current_scene = "ADV"
+                else:
+                    # OCR でテキスト増加チェック (UI出現)
+                    _gs_ocr = run_ocr(_gs_analysis)
+                    if len(_gs_ocr) >= 5:
+                        logger.info(">>> [GoldSwipe] スワイプ後 UI出現 (OCR %d件) → スワイプ完了",
+                                    len(_gs_ocr))
                     else:
-                        _fy = 50
-                        _ty = ANALYSIS_H - 50
-                for _gs_retry in range(2):
-                    if _dir == "UP":
-                        logger.info(">>> [GoldSwipe] SWIPE_UP (%d,%d)→(%d,%d) %dms (試行%d)",
-                                    _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
-                        swipe_device(_sx, _fy, _sx, _ty, _dur, state=state, desc="GoldSwipe_UP")
-                    else:
-                        logger.info(">>> [GoldSwipe] SWIPE_DOWN (%d,%d)→(%d,%d) %dms (試行%d)",
-                                    _sx, _fy, _sx, _ty, _dur, _gs_retry + 1)
-                        swipe_device(_sx, _fy, _sx, _ty, _dur, state=state, desc="GoldSwipe_DOWN")
-                    time.sleep(0.3)
-                    _new_ss, _, _, _ = take_screenshot()
-                    if _new_ss is None:
-                        continue  # 破損スクリーンショット → リトライ
-                    _new_ph = compute_phash(_new_ss)
-                    if _base_ph_gs and _new_ph and phash_distance(_base_ph_gs, _new_ph) >= PHASH_THRESHOLD:
-                        state.gold_swipe.reset()  # 画面変化 → リセット
-                        break  # 変化検知 → 成功
-                    _base_ph_gs = _new_ph
-                    # 座標を少しずらして再試行 (+40px x方向)
-                    _sx += 40
-                return "GOLD_SWIPE_UP" if _dir == "UP" else "GOLD_SWIPE_DOWN", BATTLE_WAIT
+                        logger.info(">>> [GoldSwipe] スワイプ後 シーン変化なし → 次ループで継続")
+            return _gs_action, BATTLE_WAIT
 
     # ─── 【最優先 #0-ab】HSV金枠ボタン検出 → 中心タップ (Type B) ───
     # バトルチュートリアルで指アイコンが金枠ハイライトボタンを指している場面。
@@ -1372,17 +1366,9 @@ def detect_and_act(ocr: list, state: PilotState,
             cx, cy = _tc_x, _tc_y
             # スワイプ系アクションの処理
             if action == "SWIPE_UP":
-                # 安全ネット1: ダイアログKWが見えるときはポップアップ上のスワイプ誤発火を防止
+                # 安全ネット: ダイアログKWが見えるときはポップアップ上のスワイプ誤発火を防止
                 _swipe_skip = any(kw in joined for kw in _DIALOG_FIRST_KWS)
-                # 安全ネット2: SWIPE_UP 連続空振り → テンプレート誤検出と判断しスキップ
-                if state.gold_swipe.stalled:
-                    logger.warning(
-                        "[SWIPE_UP] Asset Match 連続 %d 回空振り → スキップ (誤検出)",
-                        state.gold_swipe.count)
-                    state.gold_swipe.reset()
-                    _swipe_skip = True
                 if not _swipe_skip:
-                    state.gold_swipe.tick()
                     tmpl_meta = ASSET_MANAGER._templates.get("tutorial_swipe_pointer", {})
                     # ratio ベース座標 (解像度非依存)
                     _sw_fx_r = tmpl_meta.get("swipe_from_x_ratio", 0.691)
@@ -5244,41 +5230,17 @@ def main():
         if state.current_scene == "BATTLE" and not _force_ocr_override and not _skip_rapid:
             _fast_action, _fast_wait = _battle_fast_check(analysis_path, state)
             if _fast_action:
-                # GoldSwipe 連続回数制限: 6回超えたら OCR へフォールバック
-                if "GOLD_SWIPE" in _fast_action:
-                    state.gold_swipe.tick()
-                    if state.gold_swipe.stalled:
-                        logger.warning(
-                            "[GoldSwipe] 連続 %d 回 → OCR フォールバック (ループ脱出)",
-                            state.gold_swipe.count,
-                        )
-                        state.gold_swipe.reset()
-                        # FAST_PATH をスキップして通常 OCR へ
-                    else:
-                        state.last_action = _fast_action
-                        state.stall_start = 0.0
-                        state.stall_corner_tried = False
-                        state.same_phash_count = 0
-                        if _fast_wait > 0:
-                            logger.info("  [FAST][%s] wait %.1fs (OCR skip)", _fast_action, _fast_wait)
-                            time.sleep(_fast_wait)
-                        _fms = (time.time() - _loop_t0) * 1000
-                        state.total_loop_ms += _fms
-                        logger.info("  [PERF] Loop %.0fms (FAST_PATH)", _fms)
-                        continue  # OCR スキップ
-                else:
-                    state.gold_swipe.reset()  # GoldSwipe 以外でカウンタリセット
-                    state.last_action = _fast_action
-                    state.stall_start = 0.0
-                    state.stall_corner_tried = False
-                    state.same_phash_count = 0
-                    if _fast_wait > 0:
-                        logger.info("  [FAST][%s] wait %.1fs (OCR skip)", _fast_action, _fast_wait)
-                        time.sleep(_fast_wait)
-                    _fms = (time.time() - _loop_t0) * 1000
-                    state.total_loop_ms += _fms
-                    logger.info("  [PERF] Loop %.0fms (FAST_PATH)", _fms)
-                    continue  # OCR スキップ
+                state.last_action = _fast_action
+                state.stall_start = 0.0
+                state.stall_corner_tried = False
+                state.same_phash_count = 0
+                if _fast_wait > 0:
+                    logger.info("  [FAST][%s] wait %.1fs (OCR skip)", _fast_action, _fast_wait)
+                    time.sleep(_fast_wait)
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                logger.info("  [PERF] Loop %.0fms (FAST_PATH)", _fms)
+                continue  # OCR スキップ
 
         # ── 5) OCR 精査 ──
         state.total_ocr_calls += 1

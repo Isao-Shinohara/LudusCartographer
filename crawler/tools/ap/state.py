@@ -106,8 +106,7 @@ class PilotState:
     last_download_progress_log: float = 0.0
     # ─── スクリーンショット破損リトライ統計 ───
     screenshot_retry_count: int = 0  # SIGSEGV防止リトライ発生回数
-    # GoldSwipe連続検出カウンタ (N回超えたらOCRへフォールバック)
-    gold_swipe: StallCounter = field(default_factory=lambda: StallCounter("gold_swipe", threshold=3))
+    # gold_swipe StallCounter は廃止 — スワイプ後のシーン判定で停止判断に変更
     # ─── デバッグ: 最新スクリーンショット (numpy ndarray) ───
     last_screen: object = None  # cv2.imread 結果を格納 (型ヒント省略でdataclass互換)
     # ─── ROI: ゲーム描画領域 (レターボックス除外) ───
