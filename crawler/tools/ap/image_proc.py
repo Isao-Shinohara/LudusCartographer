@@ -1677,13 +1677,14 @@ def process_paging_dialog(
     _roi = state.game_roi
     _prev_phash = compute_phash(analysis_path)
     _no_close_streak = 0  # × ROI bright_pixels=0 の連続回数
-    # ページドットで総ページ数を把握 → phash 停止を緩和
+    # ページドットで総ページ数を把握
     _total_dots = count_page_dots(analysis_path)
     if _total_dots >= 2:
-        max_pages = max(max_pages, _total_dots)
-        logger.info("[PAGING] ページドット=%d検出 → max_pages=%d", _total_dots, max_pages)
+        logger.info("[PAGING] ページドット=%d検出", _total_dots)
     _phash_fail_count = 0  # phash変化なし連続回数
-    for _page in range(max_pages):
+    _EXTRA_PAGES_FOR_CLOSE = 5  # ドット数送った後 × が出るまでの追加試行回数
+    _max_iter = max(max_pages, _total_dots + _EXTRA_PAGES_FOR_CLOSE) if _total_dots >= 2 else max_pages
+    for _page in range(_max_iter):
         # page=0 かつ initial_dlg が渡されている場合は外側の検出結果を再利用
         if _page == 0 and initial_dlg is not None:
             _dlg = initial_dlg
@@ -1707,40 +1708,15 @@ def process_paging_dialog(
             logger.info("[PAGING] ×タップ (page=%d) → クローズ完了", _page + 1)
             state.dialog_detections += 1
             return "DIALOG_CLOSED"
-        # × ROI 輝度チェック: bright_pixels=0 が続く場合は強制脱出
-        try:
-            _img_c = imread_cached(analysis_path)
-            if _img_c is not None:
-                _Hc, _Wc = _img_c.shape[:2]
-                _close_roi_c = _img_c[0:int(_Hc * 0.14), int(_Wc * 0.88):]
-                _gray_cl = cv2.cvtColor(_close_roi_c, cv2.COLOR_BGR2GRAY)
-                _bright_cl = cv2.countNonZero(
-                    cv2.threshold(_gray_cl, 155, 255, cv2.THRESH_BINARY)[1]
-                )
-                if _bright_cl == 0:
-                    _no_close_streak += 1
-                else:
-                    _no_close_streak = 0
-        except Exception as _e:
-            logger.debug("[PAGING] × ROI 判定例外: %s", _e)
-        if _no_close_streak >= 8:
-            # × ボタンが画面右上に存在しない → 枠外 or 下部中央を叩いて強制脱出
-            _esc_x, _esc_y = W // 2, H - 60
-            logger.info(
-                "[PAGING] × ROI 暗(%d回連続) → 強制脱出タップ(%d,%d)",
-                _no_close_streak, _esc_x, _esc_y,
-            )
-            tap_device(_esc_x, _esc_y, state, "PAGING_ESCAPE")
-            return "DIALOG_PAGING_TIMEOUT"
         # "next" or "bottom" → ▷ タップして次ページ
         tap_device(_dx, _dy, state, "PAGING_NEXT")
-        logger.info("[PAGING] ▷タップ (page=%d/%d)", _page + 1, max_pages)
+        logger.info("[PAGING] ▷タップ (page=%d/%d, dots=%d)", _page + 1, _max_iter, _total_dots)
         state.dialog_detections += 1
         time.sleep(0.05)
         # 次ページのスクリーンショットを取得して解析
         _img_path, _aw, _ah, _ = take_screenshot()
         analysis_path = prepare_analysis_image(_img_path, _aw, _ah)
-        # phash変化監視: 変化なし → ページが進んでいない可能性
+        # phash変化監視: 変化なし → ページが進んでいない → × を探す
         try:
             _new_phash = compute_phash(analysis_path)
         except (ValueError, Exception):
@@ -1749,14 +1725,13 @@ def process_paging_dialog(
             _ph_dist = phash_distance(_prev_phash, _new_phash)
             if _ph_dist < 4:
                 _phash_fail_count += 1
-                # ページドットあり → 2回連続まで許容 (類似ページ間遷移)
-                _phash_tolerance = 2 if _total_dots >= 2 else 1
+                _phash_tolerance = 3 if _total_dots >= 2 else 2
                 if _phash_fail_count >= _phash_tolerance:
                     logger.info(
-                        "[PAGING] ▷タップ後 phash変化なし(dist=%d<4) %d回連続 → ×クローズ試行",
-                        _ph_dist, _phash_fail_count,
+                        "[PAGING] phash変化なし %d回連続 → ×クローズ試行",
+                        _phash_fail_count,
                     )
-                    # ▷ が効かない = 最終ページの可能性 → × ボタンを探してクローズ
+                    # ▷ が効かない = 最終ページ → × ボタンを探してクローズ
                     _fallback_dlg = detect_dialog_frame_and_nav(
                         analysis_path, W, H, roi=_roi,
                         ocr_texts=ocr_texts,
@@ -1766,12 +1741,19 @@ def process_paging_dialog(
                         logger.info("[PAGING] ×フォールバッククローズ成功")
                         state.dialog_detections += 1
                         return "DIALOG_CLOSED"
+                    # × がまだ出ていない → もう少し▷を叩く (アニメーション遅延など)
+                    if _phash_fail_count < _phash_tolerance + 3:
+                        logger.info("[PAGING] ×未検出 → ▷追加試行 (%d/%d)",
+                                    _phash_fail_count, _phash_tolerance + 3)
+                        _prev_phash = _new_phash
+                        continue
                     return "DIALOG_PAGING_TIMEOUT"
-                logger.debug("[PAGING] phash変化小(dist=%d) %d/%d → 続行", _ph_dist, _phash_fail_count, _phash_tolerance)
+                logger.debug("[PAGING] phash変化小(dist=%d) %d/%d → 続行",
+                             _ph_dist, _phash_fail_count, _phash_tolerance)
             else:
                 _phash_fail_count = 0
         _prev_phash = _new_phash
-    logger.warning("[PAGING] max_pages=%d 超過 → ×クローズ試行", max_pages)
+    logger.warning("[PAGING] max_iter=%d 超過 → ×クローズ試行", _max_iter)
     # 最終ページ到達後 → × ボタンを探してクローズ
     _final_dlg = detect_dialog_frame_and_nav(
         analysis_path, W, H, roi=_roi,
@@ -1779,7 +1761,7 @@ def process_paging_dialog(
     )
     if _final_dlg and _final_dlg[0] == "close":
         tap_device(_final_dlg[1], _final_dlg[2], state, "PAGING_CLOSE_MAXPAGE")
-        logger.info("[PAGING] max_pages超過後 ×クローズ成功")
+        logger.info("[PAGING] max超過後 ×クローズ成功")
         state.dialog_detections += 1
         return "DIALOG_CLOSED"
     return "DIALOG_PAGING_TIMEOUT"
