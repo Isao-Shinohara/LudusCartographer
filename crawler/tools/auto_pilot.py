@@ -1150,6 +1150,9 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     ACCEPT_KEYWORDS = ["同意する", "Accept", "OK", "続行", "Continue"]
     OPEN_KEYWORDS = ["開く", "Open", "プレイ", "Play"]  # uiautomator用 (完全一致)
     _OCR_OPEN_KEYWORDS = ["開く", "プレイ"]  # OCR用 (部分一致なので "Play"/"Open" は除外)
+    # アプリ詳細ページ確認用キーワード (これらがページ内にあればまどドラページ)
+    _APP_PAGE_VERIFY_KWS = ["マギアエクセドラ", "magia", "Magia", "MAGIA", "aniplex", "Aniplex",
+                             "まどか", "マドカ", "magireco", "マギレコ"]
     # ページ読み込み中の兆候 (これらが見えたら待機)
     _LOADING_HINTS = ["読み込み中", "Loading", "接続しています", "Connecting"]
     # ポップアップ / ダイアログを閉じるべきキーワード
@@ -1432,7 +1435,8 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     # --- Step 2.5: Play Store ページ読み込み待機 ---
     # 初回は十分に待つ (BACK 乱発でページロードが途切れるのを防止)
     # uiautomator + OCR 両方で読み込み完了を検出 (Play Store は WebView ベースのため uiautomator が効かない場合がある)
-    _PAGE_READY_KWS = ["インストール", "Install", "install",
+    # ページ読み込み完了: まどドラ関連キーワード + インストール/開くボタン
+    _PAGE_READY_KWS = _APP_PAGE_VERIFY_KWS + ["インストール", "Install", "install",
                        "開く", "Open", "プレイ", "Play", "更新", "Update"]
     logger.info("[FRESH_INSTALL] Play Store ページ読み込み待機中...")
     _page_loaded = False
@@ -1527,8 +1531,14 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 time.sleep(5)
                 continue
 
-            # --- 1st: uiautomator でインストールボタン ---
+            # --- 1st: uiautomator でインストールボタン (まどドラページ確認) ---
+            _ui_on_app_page = any(
+                kw in t for t in ui_texts for kw in _APP_PAGE_VERIFY_KWS
+            )
             _ui_pos = _uiautomator_find_button(INSTALL_KEYWORDS, xml_text=xml)
+            if _ui_pos and not _ui_on_app_page:
+                logger.warning("[FRESH_INSTALL] uiautomator: まどドラページではない → スキップ")
+                _ui_pos = None
             if _ui_pos:
                 if _ui_pos[1] < _screen_h * 0.75:
                     _adb_tap(_ui_pos[0], _ui_pos[1])
@@ -1605,7 +1615,19 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             time.sleep(5)
             continue
 
-        # 「インストール」を OCR 検出
+        # 「インストール」を OCR 検出 — まどドラのページであることを確認してからタップ
+        _on_app_page = any(
+            kw in t for t in _ocr_texts for kw in _APP_PAGE_VERIFY_KWS
+        )
+        if not _on_app_page:
+            logger.warning("[FRESH_INSTALL] まどドラのページではない (OCR: %s) → Play Store 再表示",
+                           _ocr_texts[:5])
+            _adb_key("4")  # BACK
+            time.sleep(2)
+            open_play_store(serial, package)
+            time.sleep(5)
+            continue
+
         _install_found = False
         for kw in INSTALL_KEYWORDS:
             hit = find_best(ocr_results, kw)
