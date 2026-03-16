@@ -4634,6 +4634,7 @@ def main():
             # ADV 連続3回以上確認 → phash 上限拡大 (背景変更でも OCR スキップ)
             _adv_phash_max = 40 if state.adv_confirmed_count >= 3 else ADV_RAPID_PHASH_MAX
             if (not _skip_rapid and
+                    not state.download_active and
                     state.last_action in ("STORY_TAP", "ADV_RAPID_TAP", "ADV_NEXT_TAP", "ADV_WAIT",
                                       "ADV_NEXT_FALLBACK", "ADV_SKIP_TAP",
                                       "STORY_TAP_HINT", "BUBBLE_TAP",
