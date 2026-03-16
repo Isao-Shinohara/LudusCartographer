@@ -125,63 +125,9 @@ def handle_dialog_screen(
         state.pre_popup_tap_count = 0
         return "NOTICE_POPUP_CLOSE", 1.0
 
-    # ── 指ガード: ×のみダイアログは指がある場合スキップ ──
-    # ページングダイアログ (▷) は SPATIAL_GATE に委任して指との距離で判断
-    # scene_reeval_mode 中はガード緩和 (誤認識からの脱出のため)
-    if has_finger_guard and _dlg_type == "close" and not state.scene_reeval_mode:
-        logger.debug("[DIALOG_FINGER_GUARD] 指ブロブ + ×のみ → スキップ")
-        return None
-
-    # ── [SPATIAL GATE] ▷ページングより指アイコンを最優先 ──────────────
-    if _dlg_type in ("next", "bottom"):
-        # ── ページドット + 背景ぼかし = ポップアップ確定 → SPATIAL_GATE バイパス ──
-        # (ドット単体はホーム画面UIで誤検出多い → 背景ぼかし必須)
-        _page_dots = count_page_dots(analysis_path) if analysis_path else 0
-        _bypass_spatial = False
-        if _page_dots >= 3 and analysis_path:
-            _blur_img = imread_cached(analysis_path)
-            if _blur_img is not None and _detect_background_blur(
-                    _blur_img, _blur_img.shape[0], _blur_img.shape[1]):
-                _bypass_spatial = True
-                logger.info("[SPATIAL_GATE_BYPASS] ドット=%d+背景ぼかし → ポップアップ確定, SPATIAL_GATE スキップ", _page_dots)
-        if not _bypass_spatial:
-            _sg_blobs = find_finger_blobs(analysis_path, min_area=400)
-            _sg_blobs = [b for b in _sg_blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
-            if _sg_blobs:
-                _sg_best = max(_sg_blobs, key=lambda b: b[2])
-                _sg_dist = ((_dlg_x - _sg_best[0]) ** 2 + (_dlg_y - _sg_best[1]) ** 2) ** 0.5
-                if _sg_dist > 300:
-                    # ▷ は指から遠い → 偽検出の可能性高い
-                    # ×ボタンがあれば × で閉じるフォールバック
-                    _sg_close_fb = ASSET_MANAGER.match_single(
-                        "tutorial_dialog_close", analysis_path,
-                        roi=(int(W * 0.85), 0, int(W * 0.15), int(H * 0.15)))
-                    if _sg_close_fb and _sg_close_fb[2] >= 0.70:
-                        logger.info(
-                            ">>> [SPATIAL_GATE] 指(%d,%d)↔▷(%d,%d) 距離=%.0fpx>300 → ×フォールバック(%d,%d) score=%.3f",
-                            _sg_best[0], _sg_best[1], _dlg_x, _dlg_y, _sg_dist,
-                            _sg_close_fb[0], _sg_close_fb[1], _sg_close_fb[2],
-                        )
-                        _dlg = ("close", _sg_close_fb[0], _sg_close_fb[1])
-                        _dlg_type, _dlg_x, _dlg_y = _dlg
-                    else:
-                        logger.info(
-                            ">>> [SPATIAL_GATE] 指(%d,%d)↔▷(%d,%d) 距離=%.0fpx>300 → #0-DIALOG スキップ",
-                            _sg_best[0], _sg_best[1], _dlg_x, _dlg_y, _sg_dist,
-                        )
-                        _dlg = None
-        # ── 白ハンドポインタ画面ガード (×フォールバック時はスキップ) ──
-        if _dlg is not None and not _bypass_spatial and _dlg_type != "close":
-            _sg_white = detect_white_hand_pointer(analysis_path, threshold=0.90)
-            if _sg_white is not None:
-                logger.info(
-                    "[SPATIAL_GATE] 白ハンドポインタ(%d,%d) score=%.3f → #0-DIALOG(▷) スキップ",
-                    _sg_white[0], _sg_white[1], _sg_white[2],
-                )
-                _dlg = None
-            elif any(any(k in t for k in ("NEW", "報酬", "推奖", "报酬")) for t in texts):
-                logger.info("[SPATIAL_GATE] クエストKW検出(補助) → #0-DIALOG(▷) スキップ")
-                _dlg = None
+    # ── [SPATIAL GATE / 指ガード 撤廃] ──────────────────────────────────
+    # 指ブロブ・金枠・白ハンドポインタによるダイアログスキップは廃止。
+    # チュートリアルポップアップの▷/×処理をブロックする誤検出が多発するため。
 
     # ── バトル中 × 誤検出ガード ──────────────────────────────────────────
     if (_dlg is not None and _dlg_type == "close"

@@ -97,15 +97,6 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             logger.info(">>> 【名前入力】 'MadoDora' 入力完了 → OK タップ待ち")
             return "NAME_INPUT_TEXT", 1.5
 
-    # ─── 【指+金枠ボタン】PRE_DIALOG_GUARD で指ブロブ検出 → ゴールドボタン直タップ ───
-    # ダイアログ×ボタンがない画面 (プレゼントボックス等) で指が金色ボタンを指している場合
-    # 白ハンドポインタの指先方向がわかれば、その方向の金枠を優先タップ
-    # 「矢印をタップ」画面では MAP_ARROW (#2-a) に委譲するためスキップ
-    _arrow_instruction = any("矢印を" in t for t in texts)
-    # ホーム画面では WHITE_HAND+金枠が装飾UIで偽陽性 → ホーム検出に委譲
-    _home_kws_fg = ["光の間", "ショップ", "ガチャ", "ガシャ", "マップ", "レイヤ"]
-    _is_home_fg = sum(1 for kw in _home_kws_fg
-                      if any(kw in t or t in kw for t in texts)) >= 2
     # ─── メインクエスト選択画面: 「Main」ボタンを直接タップ ───
     # 金枠がバナー装飾を拾って空振りするため、OCRの「Main」テキスト位置をタップ
     # 白ハンドポインタがある場合は指差しガイドが優先 (Upgrade等を指す場合がある)
@@ -142,20 +133,6 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                         _quest_node["text"], _qx, _qy)
             tap_device(_qx, _qy, state, "QUEST_NODE_TAP")
             return "QUEST_NODE_TAP", 2.0
-    if ctx.pre_dialog_finger and analysis_path is not None and not _arrow_instruction and not _is_home_fg:
-        _hand_xy = None
-        _hand_d = ""
-        if ctx.white_hand_pos is not None:
-            _hand_xy = (ctx.white_hand_pos[0], ctx.white_hand_pos[1])
-            _hand_d = ctx.white_hand_pos[3] if len(ctx.white_hand_pos) >= 4 else ""
-        _finger_gold_pos = find_golden_highlighted_button(
-            analysis_path, hand_pos=_hand_xy, hand_dir=_hand_d)
-        if _finger_gold_pos:
-            _fg_x, _fg_y = _finger_gold_pos
-            logger.info(">>> [FINGER_GOLD_TAP] 指ブロブ+金色ボタン → (%d,%d)", _fg_x, _fg_y)
-            tap_device(_fg_x, _fg_y, state, "GOLD_BTN_TAP")
-            return "GOLD_BTN_TAP", 1.0
-
     # ─── 【最優先 #0-aa】HSV金色ポインター検出 → ホールドスワイプ (Type A) ───
     # 縦長金色領域 h/w>=3.5 かつ幅<=100px のみ有効 (ボタン/カード誤検出防止)。
     # ─── 【最優先 #0-walk】チュートリアル歩行シーン (白黒背景) → 上ホールドスワイプ ───
