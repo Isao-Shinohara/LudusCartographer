@@ -3079,19 +3079,19 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 state.movie_wait_consecutive = 0; state.movie_static_count = 0
                 return "UNKNOWN"
 
-        # ── チュートリアル中のDL完了チェック: MOVIE脱出してフルOCRへ ──
+        # ── DL画面背景動画: download_active 中はDL完了ダイアログ検出のためフルOCRへ ──
+        # DL背景動画はDL完了OKを押すまでループし続ける。
+        # キャンセル誤タップ時はSKIPボタンが表示されるので検出して脱出。
         if state.download_active and not state.home_reached:
-            logger.info("[MOVIE_INERTIA] download_active=True (チュートリアル) → MOVIE脱出 (DL完了チェック優先)")
+            # SKIPボタン検出 → キャンセル誤タップからの復帰
+            _dl_movie_chk = detect_movie_scene(img_path, adv_result=None, phash_dist=dist)
+            if _dl_movie_chk.is_movie and _dl_movie_chk.has_skip_btn:
+                logger.warning("[MOVIE_INERTIA] download_active + SKIPボタン検出 → キャンセル誤タップ復帰")
+                state.movie_wait_consecutive = 0; state.movie_static_count = 0
+                return "MOVIE"  # → MOVIEハンドラがSKIPをタップ
+            logger.info("[MOVIE_INERTIA] download_active=True → MOVIE脱出 (DL完了チェック優先)")
             state.movie_wait_consecutive = 0; state.movie_static_count = 0
             # → detect_scene_early は UNKNOWN を返す → フルOCRへ
-
-        # ── ハードリミット: 300回超 → 探索画面等の誤判定、強制脱出 ──
-        if state.movie_wait_consecutive >= 300:
-            logger.warning("[MOVIE_INERTIA] ハードリミット %d 回到達 → MOVIE強制脱出",
-                           state.movie_wait_consecutive)
-            state.movie_wait_consecutive = 0; state.movie_static_count = 0
-            state.last_action = "SCENE_TAP"
-            return "UNKNOWN"
 
         # ── phash 変化中 = 動画再生中 → 無条件で MOVIE 継続 (タップ厳禁) ──
         if dist >= PHASH_THRESHOLD:
@@ -3219,8 +3219,13 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 return "UNKNOWN"
 
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
-    # チュートリアル中 + download_active → MOVIE 判定スキップ (DL完了ダイアログ優先)
+    # チュートリアル中 + download_active → DL完了ダイアログ優先 (SKIPボタン以外はスキップ)
     if state.download_active and not state.home_reached:
+        # SKIPボタン検出 → キャンセル誤タップからの復帰 (MOVIE判定を許可)
+        _dl_init_movie = detect_movie_scene(img_path, adv_result=None, phash_dist=dist)
+        if _dl_init_movie.is_movie and _dl_init_movie.has_skip_btn:
+            logger.warning("[SCENE_EARLY] download_active + SKIPボタン検出 → キャンセル誤タップ復帰 → MOVIE")
+            return "MOVIE"
         logger.info("[SCENE_EARLY] download_active=True (チュートリアル) → MOVIE判定スキップ (DL完了ダイアログ優先)")
         return "UNKNOWN"
     if state.last_action not in _MOVIE_ACTIONS:
@@ -3244,11 +3249,21 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     """
     W, H = ANALYSIS_W, ANALYSIS_H
 
-    # ── チュートリアル中のDL完了チェック: MOVIEハンドラをバイパス ──
+    # ── DL画面背景動画: SKIPボタンが出たらキャンセル誤タップ → SKIPで脱出 ──
     if state.download_active and not state.home_reached:
-        logger.info("[MOVIE] download_active=True (チュートリアル) → MOVIEハンドラ脱出 (フルOCRへ)")
+        _dl_skip = detect_movie_skip_button(img_path)
+        if _dl_skip:
+            _dsk_x, _dsk_y = roi_to_device(_dl_skip[0], _dl_skip[1], state.game_roi)
+            logger.warning("[MOVIE] download_active + SKIP検出 → キャンセル誤タップ復帰 SKIPタップ (%d,%d)",
+                           _dsk_x, _dsk_y)
+            tap_device(_dsk_x, _dsk_y, state, "MOVIE_SKIP")
+            state.movie_wait_consecutive = 0; state.movie_static_count = 0
+            state.last_phash = ""
+            return True
+        # SKIP なし → DL完了ダイアログ検出のためフルOCRへ
+        logger.info("[MOVIE] download_active=True → MOVIEハンドラ脱出 (DL完了チェック優先)")
         state.movie_wait_consecutive = 0; state.movie_static_count = 0
-        return False  # フルOCRへ
+        return False
 
     # ── DL直後 + SKIP 表示 → DL完了後ループ脱出 ──
     # ダウンロード完了後に動画がループする現象: SKIP をタップして抜ける
