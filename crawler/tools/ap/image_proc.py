@@ -1470,25 +1470,31 @@ def detect_dialog_frame_and_nav(
         # × 検出は STEP 0 テンプレートマッチングに一元化。
 
         # ── ▷ ボタン (スクリーン右エッジ) ────────────────────────────────
+        # ROI を右端6% × 中央帯に限定 (枠装飾の誤マッチ防止)
+        _nav_rx1 = int(_W * 0.94)
+        _nav_ry1 = int(_H * 0.30)
+        _nav_ry2 = int(_H * 0.70)
         if _DIALOG_NEXT_TEMPLATE.exists():
             _next_tmpl = imread_cached(_DIALOG_NEXT_TEMPLATE, cv2.IMREAD_GRAYSCALE)
             _roi_next = cv2.cvtColor(
-                img[int(_H * 0.22): int(_H * 0.78), int(_W * 0.83):],
+                img[_nav_ry1:_nav_ry2, _nav_rx1:],
                 cv2.COLOR_BGR2GRAY)
-            _r2 = cv2.matchTemplate(
-                _roi_next,
-                _next_tmpl,
-                cv2.TM_CCOEFF_NORMED,
-            )
-            _, _mv2, _, _ml2 = cv2.minMaxLoc(_r2)
-            if _mv2 >= 0.65:
-                _th2, _tw2 = _next_tmpl.shape[:2]
-                return ("next",
-                        int(_W * 0.83) + _ml2[0] + _tw2 // 2,
-                        int(_H * 0.22) + _ml2[1] + _th2 // 2)
+            if (_roi_next.shape[0] >= _next_tmpl.shape[0]
+                    and _roi_next.shape[1] >= _next_tmpl.shape[1]):
+                _r2 = cv2.matchTemplate(
+                    _roi_next,
+                    _next_tmpl,
+                    cv2.TM_CCOEFF_NORMED,
+                )
+                _, _mv2, _, _ml2 = cv2.minMaxLoc(_r2)
+                if _mv2 >= 0.65:
+                    _th2, _tw2 = _next_tmpl.shape[:2]
+                    return ("next",
+                            _nav_rx1 + _ml2[0] + _tw2 // 2,
+                            _nav_ry1 + _ml2[1] + _th2 // 2)
 
-        _rx1n, _ry1n = int(_W * 0.83), int(_H * 0.22)
-        _rx2n, _ry2n = _W, int(_H * 0.78)
+        _rx1n, _ry1n = _nav_rx1, _nav_ry1
+        _rx2n, _ry2n = _W, _nav_ry2
         _roi_n = img[_ry1n:_ry2n, _rx1n:_rx2n]
         if _roi_n.size > 0:
             _lns_n, _gray_n = _canny_lines(_roi_n)
