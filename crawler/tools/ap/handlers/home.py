@@ -26,6 +26,37 @@ from tools.ap.state import PilotState
 logger = logging.getLogger("auto_pilot")
 
 
+def _handle_grind_nav(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
+    """周回モード: ホーム到達 → クエストへ自動ナビゲート。"""
+    state.grind_cycles_completed += 1
+    logger.info("=" * 50)
+    logger.info("  [GRIND] 周回 #%d 完了! → クエストへ自動ナビゲート",
+                state.grind_cycles_completed)
+    logger.info("=" * 50)
+    if 0 < state.grind_max_cycles <= state.grind_cycles_completed:
+        logger.info("[GRIND] 目標周回数 %d に到達 → 終了", state.grind_max_cycles)
+        return "GRIND_COMPLETE", 0
+    state.battle_wait_count = 0
+    state.auto_activated = False
+    state.result_rapid_count = 0
+    state.result_total_taps = 0
+    state.result_subtype = ""
+    state.home_nav_count = 0
+    state.home_tutorial_tap_count = 0
+    state.char_just_selected = False
+    state.character_selected = False
+    quest_btn = has_text(ctx.ocr, "クエスト", min_conf=0.3)
+    if quest_btn:
+        cx, cy = quest_btn["center"]
+        logger.info(">>> [GRIND] クエストボタン (%d,%d) タップ", cx, cy)
+        tap_device(cx, cy, state, "GRIND_QUEST_NAV")
+    else:
+        _qf_x, _qf_y = roi_to_device(int(ctx.W * 0.88), int(ctx.H * 0.96), state.game_roi)
+        logger.info(">>> [GRIND] クエスト固定位置 (%d,%d) タップ", _qf_x, _qf_y)
+        tap_device(_qf_x, _qf_y, state, "GRIND_QUEST_NAV_FIXED")
+    return "GRIND_QUEST_NAV", 3.0
+
+
 def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, float]]:
     """ホーム画面検出 + チュートリアル完了判定。"""
     ocr = ctx.ocr
@@ -65,12 +96,24 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
         return None
 
     state.home_reached = True
-    # ── 指アイコン+金枠 → まだホームチュートリアル中 ──
-    # 「ホーム画面かつ指+金枠がない」= チュートリアル終了
-    # 回数制限なし: 指+金枠+暗転オーバーレイで判定 (カウンタ偽検出は廃止)
+
+    # ── チュートリアル判定: 暗転オーバーレイが必須条件 ──
+    # 暗転なし → チュートリアルではない → 指/金枠検出スキップ
+    _home_dimmed = detect_tutorial_overlay(analysis_path) if analysis_path else False
+    if not _home_dimmed:
+        # 暗転なし = 通常ホーム画面
+        if not state.tutorial_cleared:
+            logger.info(">>> ホーム画面 暗転なし → チュートリアルではない")
+            state.tutorial_cleared = True
+            log_milestone(state, "HOME_REACHED")
+        logger.info(">>> ホーム画面検出 (%d個) — チュートリアル完了済み", home_count)
+        if state.grind_mode:
+            return _handle_grind_nav(ctx, state)
+        return "HOME_IDLE", 2.0
+
+    # ── 暗転あり → チュートリアル中: 指/金枠を検出してタップ ──
     _home_blobs = find_finger_blobs(analysis_path, home_mode=True) if analysis_path else []
     _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
-    _home_dimmed = detect_tutorial_overlay(analysis_path) if analysis_path else False
     # tutorial_hand_pointer テンプレートも指の証拠として使用
     # (scrcpy 低解像度では find_finger_blobs の金枠検出が失敗することがある)
     _hand_match = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path) if analysis_path else None
@@ -144,16 +187,8 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
                 logger.info(">>> ホームチュートリアル: 金ボタン(%d,%d) [暗転なし・指なし]", *_home_gold)
         if _tap_target:
             state.home_tutorial_tap_count += 1
-            # 指/金枠を検出 → チュートリアル未完了なので HOME_CLEAR_CHECK を常にリセット
-            if hasattr(state, '_home_clear_count'):
-                state._home_clear_count = 0
             tap_device(_tap_target[0], _tap_target[1], state, "HOME_TUTORIAL_TAP")
             return "HOME_TUTORIAL_TAP", 0.5
-        # blob/gold検出あるがタップ対象なし → 指/金枠の存在自体がチュートリアル未完了の証拠
-        if hasattr(state, '_home_clear_count') and state._home_clear_count > 0:
-            logger.info(">>> 指/金枠検出あり(タップ対象なし) → HOME_CLEAR_COUNT リセット (%d→0)",
-                        state._home_clear_count)
-            state._home_clear_count = 0
         if state.blob_same_count >= 5:
             logger.info(">>> ホーム画面 + もやスタック → クエストへナビゲート")
             state.blob_same_count = 0
@@ -187,80 +222,8 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
         _btx, _bty = _bt["center"]
         logger.info(">>> ホーム画面 + 吹き出しセリフ '%s' → チュートリアル継続 (%d,%d)",
                     _bt["text"][:10], _btx, _bty)
-        if hasattr(state, '_home_clear_count'):
-            state._home_clear_count = 0
         tap_device(_btx, _bty, state, "BUBBLE_TAP")
         return "BUBBLE_TAP", 0.3
-    # ── チュートリアル完了判定 ──
-    # 条件: 暗転なし + 指なし + 金枠なし → 通常ホーム画面
-    # 暗転中は指/金枠検出が失敗しているだけでチュートリアル中
-    if not hasattr(state, '_home_clear_count'):
-        state._home_clear_count = 0
-        state._home_clear_last_phash = ""
-    if _home_dimmed:
-        # 暗転中 = チュートリアル中 → 完了判定リセット
-        if state._home_clear_count > 0:
-            logger.info(">>> ホーム画面 暗転あり → チュートリアル中 (HOME_CLEAR_COUNT %d→0)",
-                        state._home_clear_count)
-            state._home_clear_count = 0
-        else:
-            logger.info(">>> ホーム画面 暗転あり → チュートリアル中 (指/金枠未検出だが暗転)")
-        return "HOME_CLEAR_CHECK", 0.5
-    # 暗転なし + 指なし + 金枠なし → 通常ホームの可能性
-    # 同一フレーム (phash同一) での重複カウントを防止
-    _cur_phash = getattr(state, 'last_phash', "")
-    if _cur_phash and _cur_phash == state._home_clear_last_phash:
-        # 同一フレームでも暗転オーバーレイがあればチュートリアル中 → リセット
-        if _home_dimmed and state._home_clear_count > 0:
-            logger.info(">>> ホーム画面 同一フレームだが暗転あり → チュートリアル中 (HOME_CLEAR_COUNT %d→0)",
-                        state._home_clear_count)
-            state._home_clear_count = 0
-            return "HOME_CLEAR_CHECK", 0.5
-        logger.info(">>> ホーム画面 指/金枠/暗転なし (同一フレーム, %d/3) → スキップ",
-                    state._home_clear_count)
-        return "HOME_CLEAR_CHECK", 1.0
-    state._home_clear_last_phash = _cur_phash
-    state._home_clear_count += 1
-    if state._home_clear_count < 3:
-        logger.info(">>> ホーム画面 指/金枠/暗転なし (%d/3) → 確認待ち", state._home_clear_count)
-        return "HOME_CLEAR_CHECK", 0.5
-    logger.info(">>> ホーム画面 指/金枠/暗転なし 3フレーム連続 → チュートリアル完了!")
-    # nav カウンタをリセット (チュートリアル指標消失)
-    state.home_nav_count = 0
-    state.blob_same_count = 0
-    if state.grind_mode:
-        # ── 周回モード: ホーム到達 → クエストへ自動ナビゲート ──
-        state.grind_cycles_completed += 1
-        logger.info("=" * 50)
-        logger.info("  [GRIND] 周回 #%d 完了! → クエストへ自動ナビゲート",
-                    state.grind_cycles_completed)
-        logger.info("=" * 50)
-        # 周回上限チェック
-        if 0 < state.grind_max_cycles <= state.grind_cycles_completed:
-            logger.info("[GRIND] 目標周回数 %d に到達 → 終了",
-                        state.grind_max_cycles)
-            return "GRIND_COMPLETE", 0
-        # バトル関連カウンタをリセット
-        state.battle_wait_count = 0
-        state.auto_activated = False
-        state.result_rapid_count = 0
-        state.result_total_taps = 0
-        state.result_subtype = ""
-        state.home_nav_count = 0
-        state.home_tutorial_tap_count = 0
-        state.char_just_selected = False
-        state.character_selected = False
-        # クエストボタンをタップ
-        quest_btn = has_text(ocr, "クエスト", min_conf=0.3)
-        if quest_btn:
-            cx, cy = quest_btn["center"]
-            logger.info(">>> [GRIND] クエストボタン (%d,%d) タップ", cx, cy)
-            tap_device(cx, cy, state, "GRIND_QUEST_NAV")
-        else:
-            _qf_x, _qf_y = roi_to_device(int(W * 0.88), int(H * 0.96), state.game_roi)
-            logger.info(">>> [GRIND] クエスト固定位置 (%d,%d) タップ", _qf_x, _qf_y)
-            tap_device(_qf_x, _qf_y, state, "GRIND_QUEST_NAV_FIXED")
-        return "GRIND_QUEST_NAV", 3.0
-    logger.info(">>> ホーム画面検出! (%d個) 指/金枠なし → チュートリアル完了!", home_count)
-    log_milestone(state, "HOME_REACHED")
-    return "HOME_REACHED", 0
+    # ── 暗転あるが指/金枠/吹き出しなし → 待機 ──
+    logger.info(">>> ホーム画面 暗転あり + 指/金枠/吹き出しなし → 待機")
+    return "HOME_CLEAR_CHECK", 0.5

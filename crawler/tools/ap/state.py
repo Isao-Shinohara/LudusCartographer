@@ -69,6 +69,7 @@ class PilotState:
     battle_wait_count: int = 0
     auto_activated: bool = False
     home_reached: bool = False
+    tutorial_cleared: bool = False  # True: ホームチュートリアル完了確認済み (指/金枠検出スキップ)
     total_taps: int = 0
     total_ocr_calls: int = 0
     total_ocr_skipped: int = 0
