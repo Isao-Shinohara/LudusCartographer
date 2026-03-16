@@ -191,7 +191,7 @@ from tools.ap.image_proc import (  # noqa: E402
     find_gold_frame_near, detect_adv_advance_icon,
     is_adv_toolbar_visible, detect_movie_skip_button, detect_mini_conversation,
     detect_tutorial_dialog_nav, detect_dialog_frame_and_nav,
-    process_paging_dialog, detect_notice_popup, count_page_dots, _detect_background_blur,
+    process_paging_dialog, detect_notice_popup, count_page_dots, detect_background_blur,
     detect_text_input_area,
     detect_tutorial_gold_swipe, detect_tutorial_gold_button_tap, detect_tutorial_overlay,
     smart_tap_button, find_golden_highlighted_button, find_3d_arrow,
@@ -573,7 +573,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         _inertia_dots = count_page_dots(img_path)
         if _inertia_dots >= 2 and dist < PHASH_THRESHOLD:
             _img_blur = imread_cached(img_path)
-            _is_popup = _img_blur is not None and _detect_background_blur(
+            _is_popup = _img_blur is not None and detect_background_blur(
                 _img_blur, _img_blur.shape[0], _img_blur.shape[1])
             if _is_popup:
                 logger.info("[SCENE_EARLY] MOVIE慣性中だがドット=%d+背景ぼかし+静止 → ポップアップ脱出", _inertia_dots)
@@ -747,7 +747,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         _popup_dots = count_page_dots(img_path)
         if _popup_dots >= 3:
             _popup_img = imread_cached(img_path)
-            _popup_blur = _popup_img is not None and _detect_background_blur(
+            _popup_blur = _popup_img is not None and detect_background_blur(
                 _popup_img, _popup_img.shape[0], _popup_img.shape[1])
             if _popup_blur:
                 logger.info("[SCENE_EARLY] ドット=%d+背景ぼかし → ポップアップ確定, MOVIE判定スキップ", _popup_dots)

@@ -1413,7 +1413,7 @@ class TestMovieSceneDetection:
             ocr_texts=["OK", "ダウンロード", "設定"])
         assert result.is_movie is False
 
-    @patch("tools.ap.image_proc._detect_background_blur", return_value=False)
+    @patch("tools.ap.image_proc.detect_background_blur", return_value=False)
     @patch("tools.ap.image_proc.detect_movie_skip_button")
     def test_movie_with_skip_no_toolbar(self, mock_skip, mock_blur, black_image):
         """⏭ + ツールバーなし → is_movie=True。"""
@@ -1424,7 +1424,7 @@ class TestMovieSceneDetection:
         assert result.is_movie is True
         assert result.confidence >= 0.50
 
-    @patch("tools.ap.image_proc._detect_background_blur", return_value=False)
+    @patch("tools.ap.image_proc.detect_background_blur", return_value=False)
     @patch("tools.ap.image_proc.detect_movie_skip_button")
     def test_movie_with_subtitles(self, mock_skip, mock_blur, black_image):
         """⏭ + ツールバーなし + OCR 3件 (字幕) → is_movie=True。"""

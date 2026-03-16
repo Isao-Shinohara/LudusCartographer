@@ -963,7 +963,7 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
         _pd = count_page_dots(img_path)
         if _pd >= 3:
             _pi = imread_cached(img_path)
-            if _pi is not None and _detect_background_blur(_pi, _pi.shape[0], _pi.shape[1]):
+            if _pi is not None and detect_background_blur(_pi, _pi.shape[0], _pi.shape[1]):
                 return MovieSceneResult()
 
     # ── ⏭ スキップボタン検出 ──
@@ -1030,7 +1030,7 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
                 if _img_blur is not None:
                     _Hb, _Wb = _img_blur.shape[:2]
                     _has_dots = count_page_dots(_img_blur, _Hb, _Wb) >= 3
-                    _has_blur = _detect_background_blur(_img_blur, _Hb, _Wb)
+                    _has_blur = detect_background_blur(_img_blur, _Hb, _Wb)
                     if _has_dots and _has_blur:
                         logger.debug("[MOVIE_SCENE] ドット+背景ぼかし → MOVIE棄却 (ポップアップ)")
                         return MovieSceneResult()
@@ -1593,7 +1593,7 @@ def _detect_page_dots(img, H: int, W: int) -> bool:
     return count_page_dots(img, H, W) >= 3
 
 
-def _detect_background_blur(img, H: int, W: int) -> bool:
+def detect_background_blur(img, H: int, W: int) -> bool:
     """ポップアップ外の左端ストリップがぼかされているか (HSV彩度分散低下) を検出。"""
     # 左端ストリップ: x=0~6%, y=15~85% (ポップアップ外の背景領域)
     _lx2 = int(W * 0.06)
@@ -1649,7 +1649,7 @@ def detect_notice_popup(
         _has_dots = _detect_page_dots(img, _H, _W)
 
         # 2c: 背景ぼかし (HSV彩度低下)
-        _has_blur = _detect_background_blur(img, _H, _W)
+        _has_blur = detect_background_blur(img, _H, _W)
 
         if _has_close and _has_dots and _has_blur:
             logger.info("[NOTICE_POPUP] 補助条件成立: ×=%s dots=%s blur=%s",
