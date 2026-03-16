@@ -598,28 +598,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         state.movie_static_count += 1
 
         # ── ⏭ ボタン確認 → あれば動画継続 (一時停止 or 暗転シーン) ──
-        # ただし static escape 上限に達したら SKIP ボタンがあっても脱出 (ガチャ結果等)
-        _INERTIA_STATIC_ESCAPE = 60
         _movie_chk = detect_movie_scene(
             img_path, adv_result=None, phash_dist=dist)
         if _movie_chk.is_movie and _movie_chk.has_skip_btn:
-            if state.movie_static_count >= _INERTIA_STATIC_ESCAPE:
-                logger.warning("[MOVIE_INERTIA] ⏭検出+静止 %d回 → ガチャ等の静止画面と判断, MOVIE脱出 (フルOCRへ)",
-                               state.movie_static_count)
-                state.last_action = "SCENE_TAP"
-                state.movie_wait_consecutive = 0; state.movie_static_count = 0
-                state.current_scene = "UNKNOWN"
-                # フォールスルー (MOVIE を返さない)
-            else:
-                return "MOVIE"
-        elif state.movie_static_count >= _INERTIA_STATIC_ESCAPE:
-            # ⏭未検出 + 長時間静止 → 動画ではない可能性が高い
-            logger.warning("[MOVIE_INERTIA] ⏭未検出+静止 %d回 → MOVIE脱出 (フルOCRへ)",
-                           state.movie_static_count)
-            state.last_action = "SCENE_TAP"
-            state.movie_wait_consecutive = 0; state.movie_static_count = 0
-            state.current_scene = "UNKNOWN"
-            # フォールスルー
+            return "MOVIE"
 
         # ── 他シーンへの遷移チェック: 肯定的な証拠がある場合のみ MOVIE 脱出 ──
         adv = detect_adv_scene(img_path, roi=state.game_roi)
@@ -636,11 +618,21 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             state.last_action = "SCENE_TAP"
             state.movie_wait_consecutive = 0; state.movie_static_count = 0
         else:
-            # 他シーンの証拠なし → MOVIE 継続 (暗転・字幕・クレジット等)
-            # (static escape は上段で処理済み)
-            logger.info("[MOVIE_INERTIA] ⏭未検出+静止 %d回 だが他シーン証拠なし → MOVIE継続",
-                        state.movie_static_count)
-            return "MOVIE"
+            # ⏭未検出 + 長時間静止 → 動画ではない可能性が高い (ガチャ演出等)
+            # 60フレーム (~30秒) でフルOCRにフォールスルーして判断を委任
+            _INERTIA_STATIC_ESCAPE = 60
+            if state.movie_static_count >= _INERTIA_STATIC_ESCAPE:
+                logger.warning("[MOVIE_INERTIA] ⏭未検出+静止 %d回 → MOVIE脱出 (フルOCRへ)",
+                               state.movie_static_count)
+                state.last_action = "SCENE_TAP"
+                state.movie_wait_consecutive = 0; state.movie_static_count = 0
+                state.current_scene = "UNKNOWN"
+                # フォールスルー (MOVIE を返さない)
+            else:
+                # 他シーンの証拠なし → MOVIE 継続 (暗転・字幕・クレジット等)
+                logger.info("[MOVIE_INERTIA] ⏭未検出+静止 %d回 だが他シーン証拠なし → MOVIE継続",
+                            state.movie_static_count)
+                return "MOVIE"
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     # 10回に1回テンプレートで実在確認 (Result画面等での誤BATTLE継続を防止)
