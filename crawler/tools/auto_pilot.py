@@ -190,7 +190,7 @@ from tools.ap.image_proc import (  # noqa: E402
     detect_guide_glow, _run_battle_glow_sm, detect_active_battle_char,
     find_gold_frame_near, detect_adv_advance_icon,
     is_adv_toolbar_visible, detect_movie_skip_button, detect_mini_conversation,
-    detect_tutorial_dialog_nav, detect_dialog_frame_and_nav,
+    detect_dialog_nav, detect_dialog_frame_and_nav,
     process_paging_dialog, detect_notice_popup, count_page_dots, detect_background_blur,
     detect_text_input_area,
     detect_tutorial_gold_swipe, detect_tutorial_gold_button_tap, detect_tutorial_overlay,

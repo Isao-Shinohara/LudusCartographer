@@ -1176,11 +1176,11 @@ _DIALOG_CLOSE_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "tutorial_dial
 _DIALOG_NEXT_TEMPLATE  = _CRAWLER_ROOT / "assets" / "templates" / "tutorial_dialog_next.png"
 
 
-def detect_tutorial_dialog_nav(img_path: Path,
-                                W: int = 1520, H: int = 720,
-                                threshold: float = 0.85) -> Optional[tuple[str, int, int]]:
+def detect_dialog_nav(img_path: Path,
+                      W: int = 1520, H: int = 720,
+                      threshold: float = 0.85) -> Optional[tuple[str, int, int]]:
     """
-    チュートリアルダイアログの ▷(次へ) または ×(閉じる) ボタンを検出する。
+    ダイアログの ▷(次へ) または ×(閉じる) ボタンを検出する。
 
     テンプレート画像が存在する場合はテンプレートマッチング、
     存在しない場合は固定座標フォールバックを返す。
@@ -1232,7 +1232,7 @@ def detect_tutorial_dialog_nav(img_path: Path,
         return None
 
     except Exception as _e:
-        logger.debug("detect_tutorial_dialog_nav error: %s", _e)
+        logger.debug("detect_dialog_nav error: %s", _e)
         return None
 
 

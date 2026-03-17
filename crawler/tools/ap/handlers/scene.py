@@ -13,7 +13,7 @@ from tools.ap.constants import ANALYSIS_W, ANALYSIS_H, BATTLE_WAIT, DOWNLOAD_WAI
 from tools.ap.context import DetectContext
 from tools.ap.device import tap_device
 from tools.ap.helpers import has_any, has_text
-from tools.ap.image_proc import detect_tutorial_dialog_nav, roi_to_device
+from tools.ap.image_proc import detect_dialog_nav, roi_to_device
 from tools.ap.state import PilotState
 
 logger = logging.getLogger("auto_pilot")
@@ -143,7 +143,7 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
             return "BATTLE_TUTORIAL", 0.5
         if tutorial_popup:
             # ── テンプレートマッチングで ▷/× を優先検出 ──
-            _btl_nav = detect_tutorial_dialog_nav(analysis_path, W, H) if analysis_path else None
+            _btl_nav = detect_dialog_nav(analysis_path, W, H) if analysis_path else None
             if _btl_nav:
                 _btn, _bx, _by = _btl_nav
                 logger.info(">>> バトルチュートリアル popup '%s' %s→(%d,%d) [template]",

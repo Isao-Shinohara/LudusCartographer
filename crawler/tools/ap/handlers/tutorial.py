@@ -32,7 +32,7 @@ from tools.ap.image_proc import (
     detect_tutorial_gold_button_tap,
     detect_white_hand_pointer,
     smart_tap_button,
-    detect_tutorial_dialog_nav,
+    detect_dialog_nav,
     process_paging_dialog,
     count_page_dots,
     detect_text_input_area,
@@ -439,7 +439,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
         # ── ページドット検出: ドット≥2 → ページングが必要 (× 即タップではなく全ページ走査) ──
         _popup_dots = count_page_dots(analysis_path) if analysis_path else 0
         # ── テンプレートマッチングで ▷/× を優先検出 ──
-        _nav = detect_tutorial_dialog_nav(analysis_path, W, H) if analysis_path else None
+        _nav = detect_dialog_nav(analysis_path, W, H) if analysis_path else None
         if _nav:
             _nav_type, cx, cy = _nav
             if _nav_type == "close" and _popup_dots < 2:
