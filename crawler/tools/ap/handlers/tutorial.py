@@ -27,6 +27,7 @@ from tools.ap.image_proc import (
     ASSET_MANAGER,
     roi_to_device,
     find_golden_highlighted_button,
+    find_gold_frame_near,
     is_tutorial_walk_scene,
     detect_tutorial_gold_swipe,
     detect_tutorial_gold_button_tap,
@@ -369,13 +370,34 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                         logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → OCR '%s'(%d,%d) dist=%d",
                                     cx, cy, _hand_dir, _dir_items[0][3], tap_x, tap_y, _dir_items[0][2])
 
-                # 【フォールバック】OCR なし or 距離内に該当なし → 指アイコン方向にオフセット
+                # 【フォールバック】OCR なし or 距離内に該当なし → 金枠検出
                 if not _ocr_found:
-                    _offset = -80 if _hand_dir == "up" else 160
-                    tap_x, tap_y = smart_tap_button(
-                        analysis_path, _hx, _hy + _offset, search_r=160, ocr_items=ocr)
-                    logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → offset(%d,%d)",
-                                cx, cy, _hand_dir, tap_x, tap_y)
+                    # 指の方向にある金枠ボタンを探す
+                    _gold = find_gold_frame_near(analysis_path, _hx, _hy,
+                                                 search_radius=200) if analysis_path else None
+                    if _gold:
+                        _gx, _gy = _gold[0], _gold[1]
+                        # 方向フィルタ: 指の向きと逆方向の金枠は無視
+                        _dir_ok = True
+                        if _hand_dir == "up" and _gy > _hy + 30:
+                            _dir_ok = False
+                        elif _hand_dir == "down" and _gy < _hy - 30:
+                            _dir_ok = False
+                        if _dir_ok:
+                            tap_x, tap_y = _gx, _gy
+                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → 金枠(%d,%d)",
+                                        _hx, _hy, _hand_dir, tap_x, tap_y)
+                        else:
+                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 金枠(%d,%d) が指方向(%s)と逆 → smart_tap",
+                                        _gx, _gy, _hand_dir)
+                            tap_x, tap_y = smart_tap_button(
+                                analysis_path, _hx, _hy, search_r=160, ocr_items=ocr)
+                    else:
+                        # 金枠なし → smart_tap_button で指の位置付近を探索
+                        tap_x, tap_y = smart_tap_button(
+                            analysis_path, _hx, _hy, search_r=160, ocr_items=ocr)
+                        logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → smart_tap(%d,%d) [金枠なし]",
+                                    _hx, _hy, _hand_dir, tap_x, tap_y)
 
                 tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
                 return "TAP_HIGHLIGHTED_NAV", 1.0
