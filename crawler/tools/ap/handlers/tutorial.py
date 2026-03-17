@@ -278,15 +278,15 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                     if not detect_background_blur(_blur_img, _bH, _bW):
                         logger.info("[Asset] DIALOG_NAV_RIGHT を背景ぼかしなしのため抑制 (BLUR_GUARD)")
                         asset_hit = None
-        if asset_hit and asset_hit[2] == "DIALOG_NAV_RIGHT":
-            # × ボタン検出 → 最終ページ到達 → × をタップして閉じる (▷ より優先)
-            _nav_close = ASSET_MANAGER.match_single("close_btn", analysis_path)
-            if _nav_close and _nav_close[2] >= 0.60:
-                logger.info("[DIALOG_NAV] × ボタン検出 (%.2f) → 最終ページ、× タップ (%d,%d)",
-                            _nav_close[2], _nav_close[0], _nav_close[1])
-                tap_device(_nav_close[0], _nav_close[1], state, "DIALOG_NAV_CLOSE")
-                return "DIALOG_NAV_CLOSE", 1.0
-            # ▷ タップでページ送り (× が出るまで繰り返す)
+            if asset_hit:
+                # ガード通過 → × ボタン検出 → 最終ページなら × をタップして閉じる
+                _nav_close = ASSET_MANAGER.match_single("close_btn", analysis_path)
+                if _nav_close and _nav_close[2] >= 0.60:
+                    logger.info("[DIALOG_NAV] × ボタン検出 (%.2f) → 最終ページ、× タップ (%d,%d)",
+                                _nav_close[2], _nav_close[0], _nav_close[1])
+                    tap_device(_nav_close[0], _nav_close[1], state, "DIALOG_NAV_CLOSE")
+                    return "DIALOG_NAV_CLOSE", 1.0
+                # ▷ タップでページ送り (× が出るまで繰り返す)
         # 「矢印をタップ」画面では DIALOG_NEXT 誤マッチを無視 → #2-a MAP_ARROW に委譲
         if asset_hit and asset_hit[2] == "ASSET_TUTORIAL_DIALOG_NEXT":
             if any("矢印を" in t for t in texts):

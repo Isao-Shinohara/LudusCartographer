@@ -77,14 +77,6 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
                       "クエス", "ミッシ", "メニュ", "ホーム",
                       "お知ら", "イベン", "フレン", "マイペ", "編成",
                       "マッ", "レイヤ"]
-    def _home_match(t: str) -> int:
-        """home_indicators のうち t にマッチする数を返す (完全 or プレフィックス)"""
-        count = 0
-        for h, p in zip(home_indicators, _home_prefixes):
-            if h in t or p in t or t in h:
-                count += 1
-        return count
-    home_count = sum(min(1, _home_match(t)) for t in texts)
     # 重複排除: 同じ indicator に複数テキストがマッチしても1回
     _matched = set()
     for t in texts:

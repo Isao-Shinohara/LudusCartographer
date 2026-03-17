@@ -956,12 +956,15 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     joined = " ".join(texts) if texts else ""
 
     # ── ポップアップ即棄却: ページドット + 背景ぼかし → 動画ではない ──
+    _popup_dots = False
+    _popup_blur = False
     if img_path:
-        _pd = count_page_dots(img_path)
-        if _pd >= 3:
-            _pi = imread_cached(img_path)
-            if _pi is not None and detect_background_blur(_pi, _pi.shape[0], _pi.shape[1]):
-                return MovieSceneResult()
+        _pi = imread_cached(img_path)
+        if _pi is not None:
+            _popup_dots = count_page_dots(_pi, _pi.shape[0], _pi.shape[1]) >= 3
+            _popup_blur = detect_background_blur(_pi, _pi.shape[0], _pi.shape[1])
+        if _popup_dots and _popup_blur:
+            return MovieSceneResult()
 
     # ── ⏭ スキップボタン検出 ──
     skip_btn = detect_movie_skip_button(img_path) if img_path else None
@@ -1021,21 +1024,14 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
                     return MovieSceneResult()
             except Exception:
                 pass
-            # 即棄却: ページドット≥2 + 背景ぼかし → ポップアップ
-            try:
-                _img_blur = imread_cached(img_path)
-                if _img_blur is not None:
-                    _Hb, _Wb = _img_blur.shape[:2]
-                    _has_dots = count_page_dots(_img_blur, _Hb, _Wb) >= 3
-                    _has_blur = detect_background_blur(_img_blur, _Hb, _Wb)
-                    if _has_dots and _has_blur:
-                        logger.debug("[MOVIE_SCENE] ドット+背景ぼかし → MOVIE棄却 (ポップアップ)")
-                        return MovieSceneResult()
-                    if _has_blur:
-                        logger.debug("[MOVIE_SCENE] 背景ぼかし検出 → MOVIE棄却 (ポップアップ)")
-                        return MovieSceneResult()
-            except Exception:
-                pass
+            # 即棄却: ページドット + 背景ぼかし or 背景ぼかし単独 → ポップアップ
+            # (ドット/ぼかしは冒頭で計算済みのキャッシュを再利用)
+            if _popup_dots and _popup_blur:
+                logger.debug("[MOVIE_SCENE] ドット+背景ぼかし → MOVIE棄却 (ポップアップ)")
+                return MovieSceneResult()
+            if _popup_blur:
+                logger.debug("[MOVIE_SCENE] 背景ぼかし検出 → MOVIE棄却 (ポップアップ)")
+                return MovieSceneResult()
 
     score = 0.0
     # ⏭ スキップボタン (既に上で検出済み)
