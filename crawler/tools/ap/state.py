@@ -148,6 +148,9 @@ class PilotState:
     movie_wait_consecutive: int = 0
     # ─── MOVIE 一時停止検知 (phash 静止カウンタ) ───
     movie_static_count: int = 0
+    # ─── phash 連続変化カウンタ (動画検出用) ───
+    # phash_dist >= 閾値 が連続した回数。動画フレームは常に変化するため高くなる
+    phash_moving_count: int = 0
     # ─── ADV 連続検出カウンタ (phash 動的拡大用) ───
     adv_confirmed_count: int = 0
     # ─── ADV_EARLY 連続ハンドル回数 (スタック脱出用) ───

@@ -547,7 +547,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     1. BATTLE 継続 (前回 BATTLE + phash 小変化) → BATTLE
     2. ADV 継続 (前回 ADV + AUTO アイコン) → ADV
     3. ADV ツールバー初回検出 (3/5 アイコン) → ADV
-    4. MOVIE 初回検出 (⏭ 必須) → MOVIE  ← 最後 (特定要素が最も少ない)
+    4. MOVIE 初回検出 (phash連続変化 or ⏭) → MOVIE  ← 最後 (特定要素が最も少ない)
     5. それ以外 → UNKNOWN (フルOCR 必要)
 
     NOTE: MOVIE 慣性 (MOVIE_INERTIA) は廃止。VisionOCR + scrcpy キャプチャにより
@@ -654,6 +654,14 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 logger.info("[SCENE_EARLY] ドット=%d+背景ぼかし → ポップアップ確定, MOVIE判定スキップ", _popup_dots)
                 return "UNKNOWN"
 
+    # ── phash 連続変化カウンタ更新 ──
+    # BATTLE/ADV は上で return 済み。ここに来るのは UNKNOWN 候補のみ。
+    _PHASH_MOVING_THRESHOLD = 5  # phash_dist >= 5 で「フレーム変化あり」
+    if dist >= _PHASH_MOVING_THRESHOLD:
+        state.phash_moving_count += 1
+    else:
+        state.phash_moving_count = 0
+
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
     # チュートリアル中 + download_active → DL完了ダイアログ優先 (SKIPボタン以外はスキップ)
     if state.download_active and not state.home_reached:
@@ -665,9 +673,14 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         logger.info("[SCENE_EARLY] download_active=True (チュートリアル) → MOVIE判定スキップ (DL完了ダイアログ優先)")
         return "UNKNOWN"
     _adv = detect_adv_scene(img_path, roi=state.game_roi)
-    _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist)
-    if _movie.is_movie and _movie.has_skip_btn:
-        logger.info("[SCENE_EARLY] Movie検出 (conf=%.2f, ⏭あり) → MOVIE", _movie.confidence)
+    _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist,
+                                phash_moving_count=state.phash_moving_count)
+    if _movie.is_movie:
+        if _movie.has_skip_btn:
+            logger.info("[SCENE_EARLY] Movie検出 (conf=%.2f, ⏭あり) → MOVIE", _movie.confidence)
+        else:
+            logger.info("[SCENE_EARLY] Movie検出 (conf=%.2f, phash連続変化=%d) → MOVIE",
+                        _movie.confidence, state.phash_moving_count)
         return "MOVIE"
 
     return "UNKNOWN"

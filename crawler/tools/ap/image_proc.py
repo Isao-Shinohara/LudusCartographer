@@ -937,7 +937,7 @@ _MOVIE_UI_PENALTY_KWS = (
 
 
 def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
-                       phash_dist=0):
+                       phash_dist=0, phash_moving_count=0):
     """動画シーン判定 (重み付きスコアリング)。
 
     正の信号:
@@ -945,6 +945,7 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
       ADV ツールバーなし             +0.25
       OCR テキスト少ない (<=1件)     +0.15
       phash 変化大 (アニメーション)  +0.10
+      phash 連続変化 (>=3回連続)     +0.30  ← 動画の最も確実な証拠
 
     負の信号 (即棄却):
       ADV ツールバーあり             → 即 False
@@ -996,18 +997,18 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     elif adv_result is not None and adv_result.is_adv:
         _adv_evidence_strong = "ADVツールバー"
 
+    # ── ADV 証拠による即棄却 ──
+    if _adv_evidence_strong:
+        logger.info("[MOVIE_SCENE] %s → ADV確定, MOVIE棄却", _adv_evidence_strong)
+        return MovieSceneResult()
     if has_skip:
-        if _adv_evidence_strong:
-            logger.info("[MOVIE_SCENE] ⏭検出 + %s → ADV確定, MOVIE棄却", _adv_evidence_strong)
-            return MovieSceneResult()
         # ⏭あり + 強い証拠なし → MOVIE (AUTO単独は信頼しない)
         logger.info("[MOVIE_SCENE] ⏭検出 + ADV証拠なし → MOVIE確定")
     else:
-        # ⏭ なし → MOVIE ではない
-        # ⏭がない場合は AUTO 単独でも ADV 判定 OK
-        _adv_evidence = _adv_evidence_strong or ("AUTOボタン" if _has_auto_icon else None)
-        if _adv_evidence:
-            logger.debug("[MOVIE_SCENE] %s → ADV確定, MOVIE棄却", _adv_evidence)
+        # ⏭ なし: phash 連続変化があれば動画の可能性を残す
+        # AUTO 単独でも ADV 判定 OK (⏭なし時)
+        if _has_auto_icon:
+            logger.debug("[MOVIE_SCENE] AUTOボタン → ADV確定, MOVIE棄却")
             return MovieSceneResult()
 
         # 即棄却: バトルキーワード
@@ -1058,6 +1059,12 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     # phash 変化大 (アニメーション)
     if phash_dist >= 8:
         score += 0.10
+
+    # phash 連続変化 (動画の最も確実な証拠)
+    # フレームが3回以上連続で変化 → 動画再生中の可能性が高い
+    _PHASH_MOVING_MIN = 3
+    if phash_moving_count >= _PHASH_MOVING_MIN:
+        score += 0.30
 
     # 減点: UI テキスト
     if any(kw in joined for kw in _MOVIE_UI_PENALTY_KWS):
