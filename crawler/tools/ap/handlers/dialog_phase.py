@@ -30,8 +30,8 @@ from tools.ap.image_proc import (
     detect_notice_popup, detect_mini_conversation,
     find_finger_blobs, detect_white_hand_pointer,
     detect_dialog_frame_and_nav, process_paging_dialog,
-    count_page_dots, detect_background_blur,
-    imread_cached, ASSET_MANAGER, prepare_analysis_image,
+    count_page_dots, detect_dialog,
+    ASSET_MANAGER, prepare_analysis_image,
     roi_to_device,
 )
 from lc.ocr import run_ocr
@@ -176,13 +176,10 @@ def handle_dialog_screen(
     if _dlg_type in ("next", "bottom"):
         # ── 背景ぼかし必須ガード: ポップアップは必ず背景がぼける ──
         # ホーム画面の金色枠装飾をダイアログと誤検出する問題の根本対策
-        _blur_img = imread_cached(analysis_path) if analysis_path else None
-        if _blur_img is not None:
-            _bH, _bW = _blur_img.shape[:2]
-            if not detect_background_blur(_blur_img, _bH, _bW):
-                logger.info(
-                    "[DIALOG_BLUR_GUARD] 背景ぼかしなし → ポップアップではない、PAGING スキップ")
-                return None
+        if analysis_path and not detect_dialog(analysis_path, W, H, require_blur=True):
+            logger.info(
+                "[DIALOG_BLUR_GUARD] 背景ぼかしなし or ▷/× 未検出 → ポップアップではない、PAGING スキップ")
+            return None
         # ページング式ダイアログ: ▷ → … → × を一括処理
         logger.info(
             ">>> 【ダイアログ#0-DIALOG-PAGING】%s(%d,%d) (試行%d回) → process_paging_dialog",

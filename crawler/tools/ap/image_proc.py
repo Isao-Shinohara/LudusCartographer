@@ -1236,6 +1236,22 @@ def detect_dialog_nav(img_path: Path,
         return None
 
 
+def detect_dialog(img_path: Path, W: int = 1520, H: int = 720,
+                  require_blur: bool = True) -> Optional[tuple[str, int, int]]:
+    """背景ぼかし確認 + ▷/× ボタン検出を一括で行う。
+
+    require_blur=True (default): 背景ぼかしがない場合は None を返す。
+    Returns: ("next", cx, cy) | ("close", cx, cy) | None
+    """
+    if require_blur:
+        img = imread_cached(img_path)
+        if img is not None:
+            bH, bW = img.shape[:2]
+            if not detect_background_blur(img, bH, bW):
+                return None
+    return detect_dialog_nav(img_path, W, H)
+
+
 # ─── ダイアログ枠検出 + × / ▷ ボタン探索 ──────────────────────────────────
 def detect_dialog_frame_and_nav(
     img_path: Path, W: int = 1520, H: int = 720,

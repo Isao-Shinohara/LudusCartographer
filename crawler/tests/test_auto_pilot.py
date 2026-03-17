@@ -379,7 +379,8 @@ class TestHandleDialogScreen:
     @patch("tools.ap.handlers.dialog_phase.tap_device")
     @patch("tools.ap.handlers.dialog_phase.process_paging_dialog", return_value="DIALOG_CLOSED")
     @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav", return_value=("next", 800, 400))
-    def test_paging_dialog_returns_action(self, mock_dlg, mock_paging, mock_tap,
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog", return_value=("next", 800, 400))
+    def test_paging_dialog_returns_action(self, mock_detect_dialog, mock_dlg, mock_paging, mock_tap,
                                            mock_white, mock_finger, state, tmp_path):
         from tools.auto_pilot import handle_dialog_screen
         analysis = tmp_path / "test.png"
