@@ -372,31 +372,24 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
 
                 # 【フォールバック】OCR なし or 距離内に該当なし → 金枠検出
                 if not _ocr_found:
-                    # 指の方向にある金枠ボタンを探す
                     _gold = find_gold_frame_near(analysis_path, _hx, _hy,
                                                  search_radius=200) if analysis_path else None
+                    # 方向フィルタ: 指の向きと逆方向の金枠は除外
                     if _gold:
                         _gx, _gy = _gold[0], _gold[1]
-                        # 方向フィルタ: 指の向きと逆方向の金枠は無視
-                        _dir_ok = True
-                        if _hand_dir == "up" and _gy > _hy + 30:
-                            _dir_ok = False
-                        elif _hand_dir == "down" and _gy < _hy - 30:
-                            _dir_ok = False
-                        if _dir_ok:
-                            tap_x, tap_y = _gx, _gy
-                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → 金枠(%d,%d)",
-                                        _hx, _hy, _hand_dir, tap_x, tap_y)
-                        else:
-                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 金枠(%d,%d) が指方向(%s)と逆 → smart_tap",
+                        if (_hand_dir == "up" and _gy > _hy + 30) or \
+                           (_hand_dir == "down" and _gy < _hy - 30):
+                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 金枠(%d,%d) が指方向(%s)と逆 → 除外",
                                         _gx, _gy, _hand_dir)
-                            tap_x, tap_y = smart_tap_button(
-                                analysis_path, _hx, _hy, search_r=160, ocr_items=ocr)
+                            _gold = None
+                    if _gold:
+                        tap_x, tap_y = _gx, _gy
+                        logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → 金枠(%d,%d)",
+                                    _hx, _hy, _hand_dir, tap_x, tap_y)
                     else:
-                        # 金枠なし → smart_tap_button で指の位置付近を探索
                         tap_x, tap_y = smart_tap_button(
                             analysis_path, _hx, _hy, search_r=160, ocr_items=ocr)
-                        logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → smart_tap(%d,%d) [金枠なし]",
+                        logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → smart_tap(%d,%d)",
                                     _hx, _hy, _hand_dir, tap_x, tap_y)
 
                 tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
