@@ -35,7 +35,7 @@ def _handle_grind_nav(ctx: DetectContext, state: PilotState) -> tuple[str, float
     logger.info("=" * 50)
     if 0 < state.grind_max_cycles <= state.grind_cycles_completed:
         logger.info("[GRIND] 目標周回数 %d に到達 → 終了", state.grind_max_cycles)
-        return "GRIND_COMPLETE", 0
+        return "GOAL_GRIND_COMPLETE", 0
     state.battle_wait_count = 0
     state.auto_activated = False
     state.result_rapid_count = 0
@@ -109,7 +109,7 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
         logger.info(">>> ホーム画面検出 (%d個) — チュートリアル完了済み", home_count)
         if state.grind_mode:
             return _handle_grind_nav(ctx, state)
-        return "HOME_IDLE", 2.0
+        return "GOAL_HOME_REACHED", 0
 
     # ── 暗転あり → チュートリアル中: 指/金枠を検出してタップ ──
     _home_blobs = find_finger_blobs(analysis_path, home_mode=True) if analysis_path else []

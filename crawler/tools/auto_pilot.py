@@ -359,6 +359,8 @@ _PHASE_LABELS: dict[str, str] = {
     "DL_END":         "ダウンロード完了",
     "NAME_INPUT":     "名前入力",
     "HOME_REACHED":   "ホーム画面到達",
+    "GOAL_HOME_REACHED":   "目的達成: ホーム画面到達",
+    "GOAL_GRIND_COMPLETE": "目的達成: 周回完了",
 }
 
 
@@ -2945,16 +2947,18 @@ def main():
                 state.last_download_progress_log = _now
 
         # エビデンス保存
-        if i % 20 == 0 or action in ("HOME_REACHED", "GRIND_COMPLETE", "GRIND_QUEST_NAV",
-                                      "SKIP", "AGREE", "RESULT_TAP"):
+        if i % 20 == 0 or action.startswith("GOAL_") or action in (
+                "GRIND_QUEST_NAV", "SKIP", "AGREE", "RESULT_TAP"):
             save_evidence(img_path, ocr_results, action, state)
 
-        # ── 7) ホーム到達 / 周回完了チェック ──
-        if action in ("HOME_REACHED", "GRIND_COMPLETE"):
-            if action == "GRIND_COMPLETE":
-                _reason = f"周回完了 ({state.grind_cycles_completed}/{state.grind_max_cycles}周)"
-            else:
-                _reason = "ホーム画面到達 (チュートリアル完了)"
+        # ── 7) 目的達成チェック ──
+        # GOAL_ プレフィックスを持つアクションは目的達成シグナル → 自動停止
+        if action.startswith("GOAL_"):
+            _GOAL_REASONS = {
+                "GOAL_HOME_REACHED": "ホーム画面到達 (チュートリアル完了)",
+                "GOAL_GRIND_COMPLETE": f"周回完了 ({state.grind_cycles_completed}/{state.grind_max_cycles}周)",
+            }
+            _reason = _GOAL_REASONS.get(action, f"目的達成 ({action})")
             logger.info("=" * 62)
             logger.info("  %s", _reason)
             _log_milestone(state, _reason)
@@ -2964,7 +2968,7 @@ def main():
                         state.total_ocr_calls, state.total_ocr_skipped,
                         state.total_blackout_skipped)
             logger.info("=" * 62)
-            save_evidence(img_path, ocr_results, "FINAL_HOME", state)
+            save_evidence(img_path, ocr_results, action, state)
             if _scrcpy_proc and _scrcpy_proc.poll() is None:
                 _scrcpy_proc.terminate()
                 logger.info("[SCRCPY] 終了 PID=%d", _scrcpy_proc.pid)
