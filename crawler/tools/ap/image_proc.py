@@ -1173,6 +1173,8 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
 
 _DIALOG_CLOSE_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "tutorial_dialog_close.png"
 _DIALOG_NEXT_TEMPLATE  = _CRAWLER_ROOT / "assets" / "templates" / "tutorial_dialog_next.png"
+_DIALOG_CORNER_TL      = _CRAWLER_ROOT / "assets" / "templates" / "dialog_corner_tl.png"
+_DIALOG_CORNER_BL      = _CRAWLER_ROOT / "assets" / "templates" / "dialog_corner_bl.png"
 
 
 def detect_dialog_nav(img_path: Path,
@@ -1341,56 +1343,41 @@ def detect_dialog_frame_and_nav(
             return None
 
         # ──────────────────────────────────────────────────────────────
-        # STEP 1: HSV 金色枠で大矩形ダイアログを検出
+        # STEP 1: ダイアログボックス検出 (コーナー装飾テンプレートマッチ)
+        #   ダイアログ共通のコーナー装飾パターンで中央ダイアログ存在を判定。
         # ──────────────────────────────────────────────────────────────
-        def _detect_gold_frame(img_bgr, _H, _W):
-            """画面中央付近に金色枠のダイアログ矩形があるか検出する。"""
-            _hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-            _mask_g = cv2.inRange(
-                _hsv,
-                np.array([12, 50, 140], np.uint8),
-                np.array([55, 255, 255], np.uint8),
-            )
-            _k3 = np.ones((3, 3), np.uint8)
-            _mask_g = cv2.dilate(_mask_g, _k3, iterations=2)
-            _cnts, _ = cv2.findContours(_mask_g, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        def _detect_dialog_box(img_bgr, _H, _W):
+            """コーナー装飾テンプレートでダイアログボックスの存在を判定する。"""
+            _CORNER_THRESHOLD = 0.65
+            for _tpl_path in (_DIALOG_CORNER_TL, _DIALOG_CORNER_BL):
+                if not _tpl_path.exists():
+                    continue
+                _tpl = imread_cached(_tpl_path)
+                if _tpl is None:
+                    continue
+                # 左半分のみ探索 (コーナーは左側にある)
+                if _tpl_path == _DIALOG_CORNER_TL:
+                    _roi = img_bgr[: _H // 2, : _W // 2]
+                else:
+                    _roi = img_bgr[_H // 2 :, : _W // 2]
+                if (_roi.shape[0] < _tpl.shape[0]
+                        or _roi.shape[1] < _tpl.shape[1]):
+                    continue
+                _r = cv2.matchTemplate(_roi, _tpl, cv2.TM_CCOEFF_NORMED)
+                _, _mv, _, _ = cv2.minMaxLoc(_r)
+                if _mv >= _CORNER_THRESHOLD:
+                    return True
+            return False
 
-            _frame: Optional[tuple] = None
-            _best_area = 0
-            _scx, _scy = _W // 2, _H // 2
-
-            for _c in _cnts:
-                _a = cv2.contourArea(_c)
-                if _a < 8000:
-                    continue
-                _x, _y, _w, _h = cv2.boundingRect(_c)
-                if _w < 280 or _h < 160:
-                    continue
-                if _w > _W * 0.97 or _h > _H * 0.97:
-                    continue
-                _asp = _w / max(_h, 1)
-                if not (0.3 < _asp < 5.5):
-                    continue
-                _dcx = _x + _w // 2
-                _dcy = _y + _h // 2
-                if not (_W * 0.20 <= _dcx <= _W * 0.80):
-                    continue
-                if abs(_dcy - _scy) > _H * 0.45:
-                    continue
-                if _a > _best_area:
-                    _best_area = _a
-                    _frame = (_x, _y, _w, _h)
-            return _frame
-
-        _frame = _detect_gold_frame(img, _H, _W)
+        _frame_detected = _detect_dialog_box(img, _H, _W)
 
         # ──────────────────────────────────────────────────────────────
         # STEP 0: × ボタン先行検出
-        #   × + 中央ダイアログ枠の両方が揃って初めてダイアログと判定。
-        #   カード詳細等の非ダイアログ画面での誤検出を防止。
+        #   × + 中央ダイアログボックス(コーナー装飾)の両方が揃って初めて
+        #   ダイアログと判定。カード詳細等の非ダイアログ画面での誤検出を防止。
         # ──────────────────────────────────────────────────────────────
         _close_x_pos = _find_close_x(img, _H, _W)
-        if _close_x_pos is not None and _frame is not None:
+        if _close_x_pos is not None and _frame_detected:
             # ページング矢印 (>) チェック: 矢印があれば close ではなく next を優先
             _arrow_pos = _has_page_arrow(img, _H, _W)
             if _arrow_pos is not None:
@@ -1402,8 +1389,6 @@ def detect_dialog_frame_and_nav(
         elif _close_x_pos is not None:
             logger.debug("[Dialog×] STEP0: × 検出(%d,%d) だが中央ダイアログ枠なし → 棄却",
                          _close_x_pos[0], _close_x_pos[1])
-
-        _frame_detected = _frame is not None
 
         # OCR キーワード補助: 枠未検出でもキーワードがあればフォールバック実行
         _ocr_trigger = False
@@ -1447,37 +1432,7 @@ def detect_dialog_frame_and_nav(
                 return (int((_ur[2] + _dr[2]) / 2), int((_ur[3] + _dr[3]) / 2))
             return None
 
-        # 検索 ROI: テンプレートなければ Canny、それも失敗したら輝度、最後に固定座標
-        # フレーム検出時はフレーム右上を優先、画面右上はフォールバック
-
-        # ── × ボタン検索 ──────────────────────────────────────────────
-        # Phase A: フレーム検出時 → フレーム右上隅で × を探す
-        if _frame_detected:
-            _fx, _fy, _fw, _fh = _frame
-            # フレーム右上角周辺を探索 (±40px マージン)
-            _frx1 = max(0, _fx + _fw - 60)
-            _fry1 = max(0, _fy - 30)
-            _frx2 = min(_W, _fx + _fw + 40)
-            _fry2 = min(_H, _fy + 50)
-            _froi = img[_fry1:_fry2, _frx1:_frx2]
-            if _froi.size > 0:
-                # テンプレートマッチング
-                if _DIALOG_CLOSE_TEMPLATE.exists():
-                    _tpl = imread_cached(_DIALOG_CLOSE_TEMPLATE)
-                    if _froi.shape[0] >= _tpl.shape[0] and _froi.shape[1] >= _tpl.shape[1]:
-                        _r_f = cv2.matchTemplate(_froi, _tpl, cv2.TM_CCOEFF_NORMED)
-                        _, _mv_f, _, _ml_f = cv2.minMaxLoc(_r_f)
-                        if _mv_f >= 0.65:
-                            _tw_f = _tpl.shape[1]
-                            _th_f = _tpl.shape[0]
-                            _cx_f = _frx1 + _ml_f[0] + _tw_f // 2
-                            _cy_f = _fry1 + _ml_f[1] + _th_f // 2
-                            logger.debug("[Dialog×] フレーム右上テンプレ: (%d,%d) score=%.2f", _cx_f, _cy_f, _mv_f)
-                            return ("close", _cx_f, _cy_f)
-                # Note: Canny / 輝度フォールバックは誤検出率が高いため廃止。
-                # × 検出は STEP 0 テンプレートマッチングのみが権威ある判定。
-
-        # Phase B: フレーム未検出 or フレーム右上で × 未発見 → 画面右上隅で探す
+        # ── × ボタン検索 (画面右上隅) ────────────────────────────────────
         if _DIALOG_CLOSE_TEMPLATE.exists():
             _close_tmpl = imread_cached(_DIALOG_CLOSE_TEMPLATE)
             _r = cv2.matchTemplate(
@@ -1534,18 +1489,11 @@ def detect_dialog_frame_and_nav(
                 logger.debug("[Dialog▷] 輝度FB(ROI補正): (%d,%d)", _nx_fb, _ny_fb)
                 return ("next", _nx_fb, _ny_fb)
 
-        # ── フォールバック: 固定座標 ▷ ──────────────────────────────────
-        if _frame_detected:
-            # 枠が確認できている場合は枠下部中央を安全タップ
-            _fx, _fy, _fw, _fh = _frame
-            _fb_x, _fb_y = _fx + _fw // 2, _fy + int(_fh * 0.85)
-            logger.debug("[Dialog] 枠下部フォールバック: (%d,%d)", _fb_x, _fb_y)
-            return ("bottom", _fb_x, _fb_y)
-
-        # OCR キーワードのみで枠未検出 → ROI 補正済み固定座標 ▷
+        # ── フォールバック: ROI 補正済み固定座標 ▷ ─────────────────────
         _r = roi if roi else (0, 0, _W, _H)
-        _nx_ocr, _ny_ocr = roi_to_device(int(ANALYSIS_W * 0.91), int(ANALYSIS_H * 0.49), _r)
-        return ("next", _nx_ocr, _ny_ocr)
+        _nx_fb, _ny_fb = roi_to_device(int(ANALYSIS_W * 0.91), int(ANALYSIS_H * 0.49), _r)
+        logger.debug("[Dialog] フォールバック▷(ROI補正): (%d,%d)", _nx_fb, _ny_fb)
+        return ("next", _nx_fb, _ny_fb)
 
     except Exception as _e:
         logger.debug("detect_dialog_frame_and_nav error: %s", _e)
