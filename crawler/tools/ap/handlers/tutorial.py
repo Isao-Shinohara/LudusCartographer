@@ -387,10 +387,35 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                         logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → 金枠(%d,%d)",
                                     _hx, _hy, _hand_dir, tap_x, tap_y)
                     else:
-                        tap_x, tap_y = smart_tap_button(
-                            analysis_path, _hx, _hy, search_r=160, ocr_items=ocr)
-                        logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → smart_tap(%d,%d)",
-                                    _hx, _hy, _hand_dir, tap_x, tap_y)
+                        # 【フォールバック2】金枠ボタンテンプレートで指近傍を検索
+                        _asset_hit = None
+                        if analysis_path:
+                            _search_r = 200
+                            _aroi = (max(0, _hx - _search_r), max(0, _hy - _search_r),
+                                     _search_r * 2, _search_r * 2)
+                            for _btn_name in ("back_btn_gold",):
+                                _m = ASSET_MANAGER.match_single(
+                                    _btn_name, analysis_path, roi=_aroi)
+                                if _m and _m[2] >= 0.65:
+                                    _asset_hit = (_m[0], _m[1], _m[2], _btn_name)
+                                    break
+                        if _asset_hit:
+                            _ax, _ay = _asset_hit[0], _asset_hit[1]
+                            # 方向フィルタ
+                            if (_hand_dir == "up" and _ay > _hy + 30) or \
+                               (_hand_dir == "down" and _ay < _hy - 30):
+                                logger.info(">>> [TAP_HIGHLIGHTED_NAV] Asset '%s'(%d,%d) が指方向(%s)と逆 → 除外",
+                                            _asset_hit[3], _ax, _ay, _hand_dir)
+                                _asset_hit = None
+                        if _asset_hit:
+                            tap_x, tap_y = _asset_hit[0], _asset_hit[1]
+                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → Asset '%s'(%d,%d) score=%.3f",
+                                        _hx, _hy, _hand_dir, _asset_hit[3], tap_x, tap_y, _asset_hit[2])
+                        else:
+                            tap_x, tap_y = smart_tap_button(
+                                analysis_path, _hx, _hy, search_r=160, ocr_items=ocr)
+                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → smart_tap(%d,%d)",
+                                        _hx, _hy, _hand_dir, tap_x, tap_y)
 
                 tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
                 return "TAP_HIGHLIGHTED_NAV", 1.0

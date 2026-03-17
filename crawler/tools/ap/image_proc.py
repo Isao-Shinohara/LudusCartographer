@@ -2350,6 +2350,42 @@ class AssetManager:
             pass
         return None
 
+    def match_best_in_roi(self, screenshot_path: Path,
+                         roi: tuple[int, int, int, int],
+                         threshold: float = 0.65,
+                         ) -> Optional[tuple[int, int, float, str]]:
+        """ROI 内で全テンプレートを検索し、最高スコアの結果を返す。
+
+        Returns: (cx, cy, score, template_name) or None
+            座標は元画像基準。
+        """
+        img = imread_cached(screenshot_path, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            return None
+        _rx, _ry, _rw, _rh = roi
+        _roi_img = img[max(0, _ry):min(img.shape[0], _ry + _rh),
+                       max(0, _rx):min(img.shape[1], _rx + _rw)]
+        if _roi_img.size == 0:
+            return None
+        _best_score = 0.0
+        _best: Optional[tuple[int, int, float, str]] = None
+        for name, data in self._templates.items():
+            tmpl = data["img"]
+            if tmpl.shape[0] > _roi_img.shape[0] or tmpl.shape[1] > _roi_img.shape[1]:
+                continue
+            try:
+                res = cv2.matchTemplate(_roi_img, tmpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val >= threshold and max_val > _best_score:
+                    _best_score = max_val
+                    h, w = tmpl.shape
+                    cx = max(0, _rx) + max_loc[0] + w // 2
+                    cy = max(0, _ry) + max_loc[1] + h // 2
+                    _best = (cx, cy, max_val, name)
+            except Exception:
+                pass
+        return _best
+
     def save_template(self, screenshot_path: Path,
                       x1: int, y1: int, x2: int, y2: int,
                       name: str, action: str,
