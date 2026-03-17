@@ -1340,57 +1340,68 @@ def detect_dialog_frame_and_nav(
                 return (_ax, _ay)
             return None
 
-        _close_x_pos = _find_close_x(img, _H, _W)
-        if _close_x_pos is not None:
-            # ページング矢印 (>) チェック: 矢印があれば close ではなく next を優先
-            _arrow_pos = _has_page_arrow(img, _H, _W)
-            if _arrow_pos is not None:
-                logger.debug("[Dialog] STEP0: × 検出(%d,%d) + 矢印(%d,%d) → next 優先 (ページング)",
-                             _close_x_pos[0], _close_x_pos[1], _arrow_pos[0], _arrow_pos[1])
-                return ("next", _arrow_pos[0], _arrow_pos[1])
-            logger.debug("[Dialog×] STEP0 先行検出: (%d,%d)", _close_x_pos[0], _close_x_pos[1])
-            return ("close", _close_x_pos[0], _close_x_pos[1])
-
         # ──────────────────────────────────────────────────────────────
         # STEP 1: HSV 金色枠で大矩形ダイアログを検出
         # ──────────────────────────────────────────────────────────────
-        _hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        _mask_g = cv2.inRange(
-            _hsv,
-            np.array([12, 50, 140], np.uint8),
-            np.array([55, 255, 255], np.uint8),
-        )
-        _k3 = np.ones((3, 3), np.uint8)
-        _mask_g = cv2.dilate(_mask_g, _k3, iterations=2)
-        _cnts, _ = cv2.findContours(_mask_g, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        def _detect_gold_frame(img_bgr, _H, _W):
+            """画面中央付近に金色枠のダイアログ矩形があるか検出する。"""
+            _hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+            _mask_g = cv2.inRange(
+                _hsv,
+                np.array([12, 50, 140], np.uint8),
+                np.array([55, 255, 255], np.uint8),
+            )
+            _k3 = np.ones((3, 3), np.uint8)
+            _mask_g = cv2.dilate(_mask_g, _k3, iterations=2)
+            _cnts, _ = cv2.findContours(_mask_g, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        _frame: Optional[tuple] = None  # (x, y, w, h)
-        _best_area = 0
-        _scx, _scy = _W // 2, _H // 2   # 画面中心
+            _frame: Optional[tuple] = None
+            _best_area = 0
+            _scx, _scy = _W // 2, _H // 2
 
-        for _c in _cnts:
-            _a = cv2.contourArea(_c)
-            if _a < 8000:
-                continue
-            _x, _y, _w, _h = cv2.boundingRect(_c)
-            if _w < 280 or _h < 160:          # 小さすぎ → カード等を除外
-                continue
-            if _w > _W * 0.97 or _h > _H * 0.97:  # 全画面 → 除外
-                continue
-            _asp = _w / max(_h, 1)
-            if not (0.3 < _asp < 5.5):
-                continue
-            # Golden Rule 3: ダイアログ中心 X が 20%〜80% 範囲内のみ有効
-            # 右端パネル・装飾要素による誤タップを防止
-            _dcx = _x + _w // 2
-            _dcy = _y + _h // 2
-            if not (_W * 0.20 <= _dcx <= _W * 0.80):
-                continue
-            if abs(_dcy - _scy) > _H * 0.45:
-                continue
-            if _a > _best_area:
-                _best_area = _a
-                _frame = (_x, _y, _w, _h)
+            for _c in _cnts:
+                _a = cv2.contourArea(_c)
+                if _a < 8000:
+                    continue
+                _x, _y, _w, _h = cv2.boundingRect(_c)
+                if _w < 280 or _h < 160:
+                    continue
+                if _w > _W * 0.97 or _h > _H * 0.97:
+                    continue
+                _asp = _w / max(_h, 1)
+                if not (0.3 < _asp < 5.5):
+                    continue
+                _dcx = _x + _w // 2
+                _dcy = _y + _h // 2
+                if not (_W * 0.20 <= _dcx <= _W * 0.80):
+                    continue
+                if abs(_dcy - _scy) > _H * 0.45:
+                    continue
+                if _a > _best_area:
+                    _best_area = _a
+                    _frame = (_x, _y, _w, _h)
+            return _frame
+
+        _frame = _detect_gold_frame(img, _H, _W)
+
+        # ──────────────────────────────────────────────────────────────
+        # STEP 0: × ボタン先行検出
+        #   × + 中央ダイアログ枠の両方が揃って初めてダイアログと判定。
+        #   カード詳細等の非ダイアログ画面での誤検出を防止。
+        # ──────────────────────────────────────────────────────────────
+        _close_x_pos = _find_close_x(img, _H, _W)
+        if _close_x_pos is not None and _frame is not None:
+            # ページング矢印 (>) チェック: 矢印があれば close ではなく next を優先
+            _arrow_pos = _has_page_arrow(img, _H, _W)
+            if _arrow_pos is not None:
+                logger.debug("[Dialog] STEP0: × 検出(%d,%d) + 矢印(%d,%d) + 枠あり → next 優先 (ページング)",
+                             _close_x_pos[0], _close_x_pos[1], _arrow_pos[0], _arrow_pos[1])
+                return ("next", _arrow_pos[0], _arrow_pos[1])
+            logger.debug("[Dialog×] STEP0 先行検出: (%d,%d) + 枠あり", _close_x_pos[0], _close_x_pos[1])
+            return ("close", _close_x_pos[0], _close_x_pos[1])
+        elif _close_x_pos is not None:
+            logger.debug("[Dialog×] STEP0: × 検出(%d,%d) だが中央ダイアログ枠なし → 棄却",
+                         _close_x_pos[0], _close_x_pos[1])
 
         _frame_detected = _frame is not None
 
