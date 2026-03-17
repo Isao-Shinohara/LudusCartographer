@@ -559,6 +559,11 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     Returns: "MOVIE" | "BATTLE" | "ADV" | "UNKNOWN"
     """
 
+    # ── MOVIE 継続: 動画再生中は絶対にタップしない (CLAUDE.md §0) ──
+    # 動画は再生完了で自動遷移する。脱出は handle_movie のハードリミットに委ねる。
+    if state.current_scene == "MOVIE":
+        return "MOVIE"
+
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     # 10回に1回テンプレートで実在確認 (Result画面等での誤BATTLE継続を防止)
     if state.current_scene == "BATTLE" and dist < 30:
@@ -644,11 +649,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             return "ADV"
 
     # ── ポップアップ検出: MOVIE判定より先にチェック ──
-    # ページドット≥2 AND 背景ぼかし → ポップアップ確定 → MOVIE にしない
-    # (ドット単体はホーム画面UIアイコンで誤検出多い → 背景ぼかし必須)
+    # ページドット≥1 AND 背景オーバーレイ → ポップアップ確定 → MOVIE にしない
     if img_path:
         _popup_dots = count_page_dots(img_path)
-        if _popup_dots >= 3:
+        if _popup_dots >= 1:
             _popup_img = imread_cached(img_path)
             _popup_blur = _popup_img is not None and detect_background_blur(
                 _popup_img, _popup_img.shape[0], _popup_img.shape[1])

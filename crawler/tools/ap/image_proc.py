@@ -961,7 +961,7 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     if img_path:
         _pi = imread_cached(img_path)
         if _pi is not None:
-            _popup_dots = count_page_dots(_pi, _pi.shape[0], _pi.shape[1]) >= 3
+            _popup_dots = count_page_dots(_pi, _pi.shape[0], _pi.shape[1]) >= 1
             _popup_blur = detect_background_blur(_pi, _pi.shape[0], _pi.shape[1])
         if _popup_dots and _popup_blur:
             return MovieSceneResult()
@@ -1012,6 +1012,11 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
 
         # 即棄却: バトルキーワード
         if any(kw in joined for kw in _MOVIE_REJECT_BATTLE_KWS):
+            return MovieSceneResult()
+
+        # 即棄却: お知らせポップアップ
+        if "今日は表示しない" in joined:
+            logger.info("[MOVIE_SCENE] 「今日は表示しない」→ MOVIE棄却 (お知らせ)")
             return MovieSceneResult()
 
         # 即棄却: ダイアログ枠 (×ボタン / ゴールド枠) が視覚検出された場合
@@ -1568,20 +1573,34 @@ def _detect_page_dots(img, H: int, W: int) -> bool:
 
 
 def detect_background_blur(img, H: int, W: int) -> bool:
-    """ポップアップ外の左端ストリップがぼかされているか (HSV彩度分散低下) を検出。"""
-    # 左端ストリップ: x=0~6%, y=15~85% (ポップアップ外の背景領域)
+    """ポップアップ外の背景がぼかし or 半透明ダークオーバーレイかを検出。"""
+    # ── 方式1: 左端ストリップ HSV 彩度分散 (ガウシアンぼかし検出) ──
     _lx2 = int(W * 0.06)
     _ly1, _ly2 = int(H * 0.15), int(H * 0.85)
     _left = img[_ly1:_ly2, 0:_lx2]
-    if _left.size == 0:
-        return False
-    _hsv = cv2.cvtColor(_left, cv2.COLOR_BGR2HSV)
-    _sat_var = float(_hsv[:, :, 1].var())
-    # ぼかし背景: 彩度の分散が低い (鮮明な画像は分散が大きい)
-    _is_blur = _sat_var < 800
-    logger.debug("[NOTICE_POPUP] 背景ぼかし: sat_var=%.1f (threshold=800) → %s",
-                 _sat_var, "blur" if _is_blur else "sharp")
-    return _is_blur
+    if _left.size > 0:
+        _hsv = cv2.cvtColor(_left, cv2.COLOR_BGR2HSV)
+        _sat_var = float(_hsv[:, :, 1].var())
+        if _sat_var < 800:
+            logger.debug("[BG_OVERLAY] ぼかし検出: sat_var=%.1f < 800", _sat_var)
+            return True
+
+    # ── 方式2: 半透明ダークオーバーレイ (四隅の暗さ) ──
+    # お知らせポップアップ等: 背景にダーク半透明を重ねるため四隅が暗くなる
+    _gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _sz = 40
+    _corners = [
+        _gray[0:_sz, 0:_sz],           # TL
+        _gray[0:_sz, W - _sz:W],       # TR
+        _gray[H - _sz:H, 0:_sz],       # BL
+        _gray[H - _sz:H, W - _sz:W],   # BR
+    ]
+    _dark_count = sum(1 for c in _corners if c.mean() < 80)
+    if _dark_count >= 3:
+        logger.debug("[BG_OVERLAY] ダークオーバーレイ検出: %d/4 隅が暗い", _dark_count)
+        return True
+
+    return False
 
 
 def detect_notice_popup(
