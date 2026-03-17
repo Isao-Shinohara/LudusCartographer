@@ -393,7 +393,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                             _search_r = 200
                             _aroi = (max(0, _hx - _search_r), max(0, _hy - _search_r),
                                      _search_r * 2, _search_r * 2)
-                            for _btn_name in ("back_btn_gold",):
+                            for _btn_name in ("gold_frame_small", "nav_back"):
                                 _m = ASSET_MANAGER.match_single(
                                     _btn_name, analysis_path, roi=_aroi)
                                 if _m and _m[2] >= 0.65:
