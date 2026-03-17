@@ -1465,6 +1465,21 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         _ocr_texts = [r["text"] for r in ocr_results]
         logger.info("[FRESH_INSTALL] OCR texts: %s", _ocr_texts[:15])
 
+        # --- ダウンロード/インストール進行中チェック (OCR) ---
+        # NOTE: 「プレイ」チェックより先に実行する。インストール中に「プレイ」が
+        # 一時的に表示される場合があり、先にチェックすると誤って再アンインストールしてしまう。
+        _DL_PROGRESS_OCR_KWS = ["キャンセル", "Cancel", "MB", "ダウンロード中",
+                                "インストール中", "Installing", "Downloading"]
+        _ocr_downloading = any(
+            kw in t for t in _ocr_texts for kw in _DL_PROGRESS_OCR_KWS
+        )
+        if _ocr_downloading:
+            logger.info("[FRESH_INSTALL] ダウンロード進行中 (OCR) → タップせず待機")
+            if _verify_install_started():
+                installed_via_tap = True
+                break
+            continue
+
         # 「開く」「プレイ」検出 → pm 確認 → 再アンインストール
         _ocr_open_hit = False
         for kw in _OCR_OPEN_KEYWORDS:
@@ -1486,19 +1501,6 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                     logger.info("[FRESH_INSTALL] 「%s」検出だがpm未確認 → 継続", kw)
                 break
         if _ocr_open_hit:
-            continue
-
-        # --- ダウンロード進行中チェック (OCR) ---
-        _DL_PROGRESS_OCR_KWS = ["キャンセル", "Cancel", "MB", "ダウンロード中",
-                                "インストール中", "Installing", "Downloading"]
-        _ocr_downloading = any(
-            kw in t for t in _ocr_texts for kw in _DL_PROGRESS_OCR_KWS
-        )
-        if _ocr_downloading:
-            logger.info("[FRESH_INSTALL] ダウンロード進行中 (OCR) → タップせず待機")
-            if _verify_install_started():
-                installed_via_tap = True
-                break
             continue
 
         # --- エラーダイアログ検出 (「インストールできません」) → BACK + 再表示 ---
