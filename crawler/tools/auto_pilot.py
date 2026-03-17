@@ -609,6 +609,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                                dist, _i_best)
                 state.movie_wait_consecutive = 0; state.movie_static_count = 0
                 state.current_scene = "UNKNOWN"
+                state.last_action = "SCENE_TAP"  # MOVIE_ACTIONS から外す → 再進入防止
                 # フォールスルー → フルOCRへ
             else:
                 state.movie_static_count = 0  # 動的フレーム → 静止カウンタリセット
