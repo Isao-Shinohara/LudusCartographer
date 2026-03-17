@@ -26,7 +26,6 @@ from tools.ap.helpers import (
 from tools.ap.image_proc import (
     ASSET_MANAGER,
     roi_to_device,
-    find_golden_highlighted_button,
     find_gold_frame_near,
     is_tutorial_walk_scene,
     detect_tutorial_gold_swipe,

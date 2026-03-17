@@ -854,10 +854,6 @@ def detect_adv_toolbar_buttons(img_path: Path, threshold: float = 0.65) -> bool:
     return detect_adv_scene(img_path, icon_threshold=threshold).is_adv
 
 
-def is_adv_toolbar_visible(img_path: Path) -> bool:
-    """ADVパートの右上ツールバー（AUTO/>>ボタン）をテンプレートマッチで検出。"""
-    return detect_adv_toolbar_buttons(img_path)
-
 
 def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
     """
@@ -2191,102 +2187,6 @@ def smart_tap_button(
     # フォールバック: OCR 座標をそのまま使用
     logger.debug("[SmartTap] fallback OCR-direct (%d,%d)", ocr_cx, ocr_cy)
     return ocr_cx, ocr_cy
-
-
-# ─── チュートリアル: 金色ハイライトボタンを全画面スキャンで検出 ──────────────
-def find_golden_highlighted_button(
-    img_path: Path,
-    hand_pos: Optional[tuple[int, int]] = None,
-    hand_dir: str = "",
-) -> Optional[tuple[int, int]]:
-    """
-    チュートリアル指差しアイコンが指す「金色ハイライトされたボタン/カード」を
-    HSV 色域スキャンで検出する。
-
-    hand_pos / hand_dir が指定された場合、指先方向にある金枠を優先する。
-      hand_dir="up"   → ハンドより上方の金枠を優先
-      hand_dir="down"  → ハンドより下方の金枠を優先
-
-    返値: (cx, cy) ― 金色領域の中心座標、検出失敗時は None
-    """
-    try:
-        img_bgr = imread_cached(img_path)
-        if img_bgr is None:
-            return None
-        h_img, w_img = img_bgr.shape[:2]
-
-        hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-
-        # 金色グロー: H=15-42, S=80-220, V=150-255 (より高輝度)
-        lower = np.array([15, 80, 150], dtype=np.uint8)
-        upper = np.array([42, 220, 255], dtype=np.uint8)
-        mask = cv2.inRange(hsv, lower, upper)
-
-        # モルフォロジー: 枠線を繋げて矩形を再現
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-        mask = cv2.dilate(mask, kernel, iterations=3)
-        mask = cv2.erode(mask, kernel, iterations=2)
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        # 最大面積の輪郭を採用 (小さなノイズ・細い枠線を除外)
-        valid = []
-        for c in contours:
-            _ca = cv2.contourArea(c)
-            if _ca <= 500:
-                continue
-            _rx, _ry, _rw, _rh = cv2.boundingRect(c)
-            # 幅・高さが30px未満の細い枠線装飾は除外
-            if _rw < 30 or _rh < 30:
-                continue
-            valid.append((_ca, c, _rx, _ry, _rw, _rh))
-        if not valid:
-            return None
-
-        # ---- ハンド近接フィルタ: hand_pos が指定された場合、方向+距離で金枠を選択 ----
-        if hand_pos:
-            hx, hy = hand_pos
-
-            # hand_dir が指定されている場合、指先方向にある金枠のみを候補にする
-            if hand_dir == "up":
-                directional = [v for v in valid if (v[3] + v[5] // 2) < hy]
-            elif hand_dir == "down":
-                directional = [v for v in valid if (v[3] + v[5] // 2) > hy]
-            else:
-                directional = valid
-
-            # 方向フィルタ後に候補がなければ None (逆方向の金枠を誤タップしない)
-            if not directional:
-                logger.info("  [GoldHighlight] ハンド(%d,%d,dir=%s) 方向に金枠なし (全%d件は逆方向)",
-                            hx, hy, hand_dir, len(valid))
-                return None
-            pool = directional
-
-            def _dist_to_hand(item):
-                _ca, _c, _rx, _ry, _rw, _rh = item
-                _cx = _rx + _rw // 2
-                _cy = _ry + _rh // 2
-                return (hx - _cx) ** 2 + (hy - _cy) ** 2
-
-            best_item = min(pool, key=_dist_to_hand)
-            _, _, rx, ry, rw, rh = best_item
-            cx = rx + rw // 2
-            cy = ry + rh // 2
-            logger.info("  [GoldHighlight] ハンド(%d,%d,dir=%s)→金枠 rect=(%d,%d,%d,%d) → center=(%d,%d) [候補%d/%d]",
-                        hx, hy, hand_dir, rx, ry, rw, rh, cx, cy, len(pool), len(valid))
-            return cx, cy
-
-        # フォールバック: 最大面積の輪郭
-        _, best_cnt, rx, ry, rw, rh = max(valid, key=lambda x: x[0])
-        cx = rx + rw // 2
-        cy = ry + rh // 2
-        logger.info("  [GoldHighlight] 金色ハイライト検出 rect=(%d,%d,%d,%d) → center=(%d,%d)",
-                    rx, ry, rw, rh, cx, cy)
-        return cx, cy
-
-    except Exception as e:
-        logger.debug("  [GoldHighlight] エラー: %s", e)
-        return None
 
 
 # ─── OCR テキスト検索ヘルパー ──────────────────────
