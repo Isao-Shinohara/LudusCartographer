@@ -544,118 +544,18 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     """OCR 前にシーンを判定する。
 
     優先順位 (特定要素が多い順):
-    1. MOVIE 慣性 (前回 MOVIE + ADV/BATTLE 証拠なし) → MOVIE
-    2. BATTLE 継続 (前回 BATTLE + phash 小変化) → BATTLE
-    3. ADV 継続 (前回 ADV + AUTO アイコン) → ADV
-    4. ADV ツールバー初回検出 (3/5 アイコン) → ADV
-    5. MOVIE 初回検出 (⏭ 必須) → MOVIE  ← 最後 (特定要素が最も少ない)
-    6. それ以外 → UNKNOWN (フルOCR 必要)
+    1. BATTLE 継続 (前回 BATTLE + phash 小変化) → BATTLE
+    2. ADV 継続 (前回 ADV + AUTO アイコン) → ADV
+    3. ADV ツールバー初回検出 (3/5 アイコン) → ADV
+    4. MOVIE 初回検出 (⏭ 必須) → MOVIE  ← 最後 (特定要素が最も少ない)
+    5. それ以外 → UNKNOWN (フルOCR 必要)
+
+    NOTE: MOVIE 慣性 (MOVIE_INERTIA) は廃止。VisionOCR + scrcpy キャプチャにより
+    毎フレーム OCR のコストが許容範囲になったため、毎ループ通常判定フローを通す。
+    これによりシーン遷移 (MOVIE→BATTLE 等) の検出遅延がゼロになる。
 
     Returns: "MOVIE" | "BATTLE" | "ADV" | "UNKNOWN"
     """
-
-    # MOVIE 慣性: 直前が動画アクション → 毎フレーム ⏭ ボタンで継続/終了を判定
-    # TTL は使わない。⏭ が見えている限り MOVIE を維持 (一時停止含む)。
-    # ⏭ が消えたら動画終了 → UNKNOWN に脱出。
-    _MOVIE_ACTIONS = ("MOVIE_WAIT", "MOVIE_SKIP", "MOVIE_SKIP_ESCAPE", "MOVIE_RESUME")
-    _MOVIE_WAIT_MAX = 200  # ~100秒: ガチャ演出等で脱出できない場合の強制脱出
-    if state.last_action in _MOVIE_ACTIONS and img_path:
-        # ── 長時間待機の強制脱出 (ガチャ演出等のアニメーションで静止カウンタが回らないケース) ──
-        if state.movie_wait_consecutive >= _MOVIE_WAIT_MAX:
-            logger.warning("[MOVIE_INERTIA] 待機 %d 回超過 → 強制脱出 (フルOCRへ)",
-                           state.movie_wait_consecutive)
-            state.movie_wait_consecutive = 0; state.movie_static_count = 0
-            state.current_scene = "UNKNOWN"
-            return "UNKNOWN"
-        # ── ポップアップ脱出 (MOVIE慣性より優先) ──
-        # ただし phash 変化中 (動画再生中) はポップアップ誤検出の可能性が高いためスキップ
-        # 動画の映像がドット+ぼかしに誤検出されるケースを防止
-        _inertia_dots = count_page_dots(img_path)
-        if _inertia_dots >= 2 and dist < PHASH_THRESHOLD:
-            _img_blur = imread_cached(img_path)
-            _is_popup = _img_blur is not None and detect_background_blur(
-                _img_blur, _img_blur.shape[0], _img_blur.shape[1])
-            if _is_popup:
-                logger.info("[SCENE_EARLY] MOVIE慣性中だがドット=%d+背景ぼかし+静止 → ポップアップ脱出", _inertia_dots)
-                state.last_action = "SCENE_TAP"
-                state.movie_wait_consecutive = 0; state.movie_static_count = 0
-                return "UNKNOWN"
-
-        # ── DL画面背景動画: download_active 中はDL完了ダイアログ検出のためフルOCRへ ──
-        # DL背景動画はDL完了OKを押すまでループし続ける。
-        # キャンセル誤タップ時はSKIPボタンが表示されるので検出して脱出。
-        if state.download_active and not state.home_reached:
-            # SKIPボタン検出 → キャンセル誤タップからの復帰
-            _dl_movie_chk = detect_movie_scene(img_path, adv_result=None, phash_dist=dist)
-            if _dl_movie_chk.is_movie and _dl_movie_chk.has_skip_btn:
-                logger.warning("[MOVIE_INERTIA] download_active + SKIPボタン検出 → キャンセル誤タップ復帰")
-                state.movie_wait_consecutive = 0; state.movie_static_count = 0
-                return "MOVIE"  # → MOVIEハンドラがSKIPをタップ
-            logger.info("[MOVIE_INERTIA] download_active=True → MOVIE脱出 (DL完了チェック優先)")
-            state.movie_wait_consecutive = 0; state.movie_static_count = 0
-            # → detect_scene_early は UNKNOWN を返す → フルOCRへ
-
-        # ── phash 変化中 = 動画再生中だがバトル等の可能性もある ──
-        if dist >= PHASH_THRESHOLD:
-            # バトルテンプレートが見えればMOVIEではない → 脱出してフルOCRへ
-            from tools.ap.image_proc import ASSET_MANAGER as _AM_inertia
-            _inertia_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
-                            int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
-            _i_atk = _AM_inertia.match_single("battle_normal_attack", img_path, roi=_inertia_roi)
-            _i_skl = _AM_inertia.match_single("battle_skill", img_path, roi=_inertia_roi)
-            _i_best = max((_i_atk[2] if _i_atk else 0), (_i_skl[2] if _i_skl else 0))
-            if _i_best >= 0.70:
-                logger.warning("[MOVIE_INERTIA] phash_dist=%d だがバトルテンプレ検出 (%.2f) → MOVIE脱出",
-                               dist, _i_best)
-                state.movie_wait_consecutive = 0; state.movie_static_count = 0
-                state.current_scene = "UNKNOWN"
-                state.last_action = "SCENE_TAP"  # MOVIE_ACTIONS から外す → 再進入防止
-                # フォールスルー → フルOCRへ
-            else:
-                state.movie_static_count = 0  # 動的フレーム → 静止カウンタリセット
-                logger.info("[MOVIE_INERTIA] phash_dist=%d (動画再生中) → MOVIE継続", dist)
-                return "MOVIE"
-
-        # ── 以下は画面静止時 (dist < PHASH_THRESHOLD) ──
-        # 静止 = 動画終了ではない。他シーンへの遷移が確認できた場合のみ脱出する。
-        state.movie_static_count += 1
-
-        # ── ⏭ ボタン確認 → あれば動画継続 (一時停止 or 暗転シーン) ──
-        _movie_chk = detect_movie_scene(
-            img_path, adv_result=None, phash_dist=dist)
-        if _movie_chk.is_movie and _movie_chk.has_skip_btn:
-            return "MOVIE"
-
-        # ── 他シーンへの遷移チェック: 肯定的な証拠がある場合のみ MOVIE 脱出 ──
-        adv = detect_adv_scene(img_path, roi=state.game_roi)
-        if adv.is_adv:
-            logger.info("[MOVIE_INERTIA] ADVツールバー検出 → ADV遷移確定, MOVIE脱出")
-            state.last_action = "SCENE_TAP"
-            state.movie_wait_consecutive = 0; state.movie_static_count = 0
-        elif state.current_scene in ("BATTLE", "MENU"):
-            logger.info("[MOVIE_INERTIA] BATTLE/MENU シーン → MOVIE脱出")
-            state.last_action = "SCENE_TAP"
-            state.movie_wait_consecutive = 0; state.movie_static_count = 0
-        elif detect_adv_advance_icon(img_path):
-            logger.info("[MOVIE_INERTIA] ↓ボタン検出 → ADV遷移確定, MOVIE脱出")
-            state.last_action = "SCENE_TAP"
-            state.movie_wait_consecutive = 0; state.movie_static_count = 0
-        else:
-            # ⏭未検出 + 長時間静止 → 動画ではない可能性が高い (ガチャ演出等)
-            # 60フレーム (~30秒) でフルOCRにフォールスルーして判断を委任
-            _INERTIA_STATIC_ESCAPE = 60
-            if state.movie_static_count >= _INERTIA_STATIC_ESCAPE:
-                logger.warning("[MOVIE_INERTIA] ⏭未検出+静止 %d回 → MOVIE脱出 (フルOCRへ)",
-                               state.movie_static_count)
-                state.last_action = "SCENE_TAP"
-                state.movie_wait_consecutive = 0; state.movie_static_count = 0
-                state.current_scene = "UNKNOWN"
-                # フォールスルー (MOVIE を返さない)
-            else:
-                # 他シーンの証拠なし → MOVIE 継続 (暗転・字幕・クレジット等)
-                logger.info("[MOVIE_INERTIA] ⏭未検出+静止 %d回 だが他シーン証拠なし → MOVIE継続",
-                            state.movie_static_count)
-                return "MOVIE"
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     # 10回に1回テンプレートで実在確認 (Result画面等での誤BATTLE継続を防止)
@@ -764,12 +664,11 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             return "MOVIE"
         logger.info("[SCENE_EARLY] download_active=True (チュートリアル) → MOVIE判定スキップ (DL完了ダイアログ優先)")
         return "UNKNOWN"
-    if state.last_action not in _MOVIE_ACTIONS:
-        _adv = detect_adv_scene(img_path, roi=state.game_roi)
-        _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist)
-        if _movie.is_movie and _movie.has_skip_btn:
-            logger.info("[SCENE_EARLY] Movie初回検出 (conf=%.2f, ⏭あり) → MOVIE", _movie.confidence)
-            return "MOVIE"
+    _adv = detect_adv_scene(img_path, roi=state.game_roi)
+    _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist)
+    if _movie.is_movie and _movie.has_skip_btn:
+        logger.info("[SCENE_EARLY] Movie検出 (conf=%.2f, ⏭あり) → MOVIE", _movie.confidence)
+        return "MOVIE"
 
     return "UNKNOWN"
 
