@@ -39,6 +39,8 @@ from tools.ap.image_proc import (
     detect_movie_scene,
     detect_adv_scene,
     prepare_analysis_image,
+    detect_background_blur,
+    imread_cached,
 )
 from lc.ocr import run_ocr
 from lc.utils import compute_phash, phash_distance
@@ -268,14 +270,23 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                 logger.info("[Asset] DIALOG_NAV_RIGHT を指ブロブ検出中のため抑制 → 指+金枠ハンドラへ")
                 asset_hit = None
             else:
-                # × ボタン検出 → 最終ページ到達 → × をタップして閉じる (▷ より優先)
-                _nav_close = ASSET_MANAGER.match_single("close_btn", analysis_path)
-                if _nav_close and _nav_close[2] >= 0.60:
-                    logger.info("[DIALOG_NAV] × ボタン検出 (%.2f) → 最終ページ、× タップ (%d,%d)",
-                                _nav_close[2], _nav_close[0], _nav_close[1])
-                    tap_device(_nav_close[0], _nav_close[1], state, "DIALOG_NAV_CLOSE")
-                    return "DIALOG_NAV_CLOSE", 1.0
-                # ▷ タップでページ送り (× が出るまで繰り返す)
+                # BLUR_GUARD: ダイアログ ▷ は必ず背景ぼかしを伴う
+                # バトル画面等の非ダイアログ画面での誤検出を排除
+                _blur_img = imread_cached(analysis_path) if analysis_path else None
+                if _blur_img is not None:
+                    _bH, _bW = _blur_img.shape[:2]
+                    if not detect_background_blur(_blur_img, _bH, _bW):
+                        logger.info("[Asset] DIALOG_NAV_RIGHT を背景ぼかしなしのため抑制 (BLUR_GUARD)")
+                        asset_hit = None
+        if asset_hit and asset_hit[2] == "DIALOG_NAV_RIGHT":
+            # × ボタン検出 → 最終ページ到達 → × をタップして閉じる (▷ より優先)
+            _nav_close = ASSET_MANAGER.match_single("close_btn", analysis_path)
+            if _nav_close and _nav_close[2] >= 0.60:
+                logger.info("[DIALOG_NAV] × ボタン検出 (%.2f) → 最終ページ、× タップ (%d,%d)",
+                            _nav_close[2], _nav_close[0], _nav_close[1])
+                tap_device(_nav_close[0], _nav_close[1], state, "DIALOG_NAV_CLOSE")
+                return "DIALOG_NAV_CLOSE", 1.0
+            # ▷ タップでページ送り (× が出るまで繰り返す)
         # 「矢印をタップ」画面では DIALOG_NEXT 誤マッチを無視 → #2-a MAP_ARROW に委譲
         if asset_hit and asset_hit[2] == "ASSET_TUTORIAL_DIALOG_NEXT":
             if any("矢印を" in t for t in texts):
