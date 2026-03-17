@@ -49,16 +49,15 @@ def handle_dialog_screen(
     ocr: list,
     texts: list[str],
     is_battle_early: bool,
-    has_finger_guard: bool,
     is_notice_popup: bool = False,
 ) -> Optional[tuple[str, float]]:
     """ダイアログ検出ハンドラ (#0-DIALOG)。
 
     detect_dialog_frame_and_nav() で金色枠/×/▷ を検出し、
-    Spatial Gate / White Hand ガード / エスカレーション を経てタップ実行。
+    バトルガード / エスカレーション を経てタップ実行。
 
     is_notice_popup=True の場合:
-      - 全ガード (指/SPATIAL_GATE/バトル) をバイパス
+      - 全ガード (SPATIAL_GATE/バトル) をバイパス
       - ページング可能 → 最終ページまで▷タップ後×で閉じる
       - ページング不可 → そのまま×で閉じる (確認ダイアログ等への誤転送なし)
 
@@ -125,9 +124,11 @@ def handle_dialog_screen(
         state.pre_popup_tap_count = 0
         return "NOTICE_POPUP_CLOSE", 1.0
 
-    # ── [SPATIAL GATE / 指ガード 撤廃] ──────────────────────────────────
-    # 指ブロブ・金枠・白ハンドポインタによるダイアログスキップは廃止。
+    # ── [SPATIAL GATE 撤廃] ──────────────────────────────────
+    # handle_dialog_screen 内部での指ブロブ・金枠によるダイアログスキップは廃止。
     # チュートリアルポップアップの▷/×処理をブロックする誤検出が多発するため。
+    # ※ 指ガードは handle_dialog_phase → ctx.pre_dialog_finger 経由で
+    #   tutorial.py の Asset Match (DIALOG_NAV_RIGHT) に対してのみ有効。
 
     # ── バトル中 × 誤検出ガード ──────────────────────────────────────────
     if (_dlg is not None and _dlg_type == "close"
@@ -174,7 +175,7 @@ def handle_dialog_screen(
         return "DIALOG_BACK_ESCALATION", 2.0
 
     if _dlg_type in ("next", "bottom"):
-        # ── 背景ぼかし必須ガード: ポップアップは必ず背景がぼける ──
+        # ── ダイアログ再確認ガード: 背景ぼかし + ▷/× 存在を二重検証 ──
         # ホーム画面の金色枠装飾をダイアログと誤検出する問題の根本対策
         if analysis_path and not detect_dialog(analysis_path, W, H, require_blur=True):
             logger.info(
@@ -330,7 +331,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
 
     # ─── 【最優先 #0-DIALOG】ダイアログ・ファースト ────────────
     _dialog_result = handle_dialog_screen(
-        state, analysis_path, ocr, texts, _is_battle_early, _pre_dialog_finger,
+        state, analysis_path, ocr, texts, _is_battle_early,
         is_notice_popup=_is_notice)
     if _dialog_result is not None:
         return _dialog_result

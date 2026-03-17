@@ -272,6 +272,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             else:
                 # BLUR_GUARD: ダイアログ ▷ は必ず背景ぼかしを伴う
                 # バトル画面等の非ダイアログ画面での誤検出を排除
+                # (Asset Match で DIALOG_NAV_RIGHT 検出済みのため、ぼかしのみ確認で十分)
                 _blur_img = imread_cached(analysis_path) if analysis_path else None
                 if _blur_img is not None:
                     _bH, _bW = _blur_img.shape[:2]

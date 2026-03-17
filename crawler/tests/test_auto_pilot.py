@@ -349,14 +349,7 @@ class TestHandleDialogScreen:
 
     def test_returns_none_when_no_analysis_path(self, state):
         from tools.auto_pilot import handle_dialog_screen
-        result = handle_dialog_screen(state, None, [], [], False, False)
-        assert result is None
-
-    def test_returns_none_when_finger_guard_active(self, state, tmp_path):
-        from tools.auto_pilot import handle_dialog_screen
-        analysis = tmp_path / "test.png"
-        analysis.touch()
-        result = handle_dialog_screen(state, analysis, [], [], False, True)
+        result = handle_dialog_screen(state, None, [], [], False)
         assert result is None
 
     @patch("tools.ap.handlers.dialog_phase.find_finger_blobs", return_value=[])
@@ -368,7 +361,7 @@ class TestHandleDialogScreen:
         from tools.auto_pilot import handle_dialog_screen
         analysis = tmp_path / "test.png"
         analysis.touch()
-        result = handle_dialog_screen(state, analysis, [], [], False, False)
+        result = handle_dialog_screen(state, analysis, [], [], False)
         assert result is not None
         assert result[0] == "DIALOG_CLOSE"
         assert result[1] == 1.0
@@ -385,7 +378,7 @@ class TestHandleDialogScreen:
         from tools.auto_pilot import handle_dialog_screen
         analysis = tmp_path / "test.png"
         analysis.touch()
-        result = handle_dialog_screen(state, analysis, [], [], False, False)
+        result = handle_dialog_screen(state, analysis, [], [], False)
         assert result is not None
         assert result[0] == "DIALOG_CLOSED"
         assert result[1] == 1.0
@@ -399,8 +392,7 @@ class TestHandleDialogScreen:
         from tools.auto_pilot import handle_dialog_screen
         analysis = tmp_path / "test.png"
         analysis.touch()
-        # has_finger_guard=True でも is_notice_popup=True でバイパスされる
-        result = handle_dialog_screen(state, analysis, [], [], False, True,
+        result = handle_dialog_screen(state, analysis, [], [], False,
                                        is_notice_popup=True)
         assert result is not None
         assert result[0] == "NOTICE_POPUP_CLOSE"
@@ -425,7 +417,7 @@ class TestHandleDialogScreen:
         ]
         analysis = tmp_path / "test.png"
         analysis.touch()
-        result = handle_dialog_screen(state, analysis, [], [], False, True,
+        result = handle_dialog_screen(state, analysis, [], [], False,
                                        is_notice_popup=True)
         assert result is not None
         assert result[0] == "NOTICE_POPUP_CLOSE"
@@ -438,7 +430,7 @@ class TestHandleDialogScreen:
         from tools.auto_pilot import handle_dialog_screen
         analysis = tmp_path / "test.png"
         analysis.touch()
-        result = handle_dialog_screen(state, analysis, [], [], True, False)
+        result = handle_dialog_screen(state, analysis, [], [], True)
         assert result is None
 
     @patch("tools.ap.handlers.dialog_phase.find_finger_blobs", return_value=[])
@@ -451,7 +443,7 @@ class TestHandleDialogScreen:
         state.pre_popup_tap_count = 7  # 次で8
         analysis = tmp_path / "test.png"
         analysis.touch()
-        result = handle_dialog_screen(state, analysis, [], [], False, False)
+        result = handle_dialog_screen(state, analysis, [], [], False)
         assert result is not None
         assert result[0] == "DIALOG_BACK_ESCALATION"
         assert result[1] == 2.0
