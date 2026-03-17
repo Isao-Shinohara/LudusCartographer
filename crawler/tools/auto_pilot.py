@@ -1623,8 +1623,10 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
 # ─── メインループ ─────────────────────────────────
 def main():
     import tools.ap.constants as _ap_const  # _DEBUG_SAVE_IMAGES 直接書換え用
+    from tools.ap.mission import select_mission
 
     args = parse_args()
+    mission = select_mission(args)
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
         _ap_const._DEBUG_SAVE_IMAGES = True
@@ -1677,17 +1679,13 @@ def main():
     logger.info("=" * 62)
     logger.info("  まどドラ自律操縦 — Auto Pilot (ハイブリッド版)")
     logger.info("  デバイス: %s", _ap_device.DEVICE_SERIAL)
+    logger.info("  ミッション: %s", mission.banner_info())
     logger.info("  ポーリング: %.1fs  強制解析: %d回変化なし  スタックTimeout: %.0fs",
                 POLL_INTERVAL, FORCE_ANALYZE_AFTER, STALL_TIMEOUT)
-    if args.grind:
-        _cycle_str = f"{args.max_cycles}周" if args.max_cycles > 0 else "無制限"
-        logger.info("  周回モード: ON (%s)", _cycle_str)
     logger.info("=" * 62)
 
     state = PilotState()
-    state.grind_mode = args.grind
-    state.grind_max_cycles = args.max_cycles
-    state.is_fresh_start = args.fresh_install
+    mission.configure_state(state, args)
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
     # ── SQLite から永続状態を復元 ──
@@ -2952,28 +2950,28 @@ def main():
             save_evidence(img_path, ocr_results, action, state)
 
         # ── 7) 目的達成チェック ──
-        # GOAL_ プレフィックスを持つアクションは目的達成シグナル → 自動停止
+        # GOAL_ プレフィックスを持つアクション → ミッションに判定を委譲
         if action.startswith("GOAL_"):
-            _GOAL_REASONS = {
-                "GOAL_HOME_REACHED": "ホーム画面到達 (チュートリアル完了)",
-                "GOAL_GRIND_COMPLETE": f"周回完了 ({state.grind_cycles_completed}/{state.grind_max_cycles}周)",
-            }
-            _reason = _GOAL_REASONS.get(action, f"目的達成 ({action})")
-            logger.info("=" * 62)
-            logger.info("  %s", _reason)
-            _log_milestone(state, _reason)
-            logger.info("  総タップ: %d  イテレーション: %d  周回: %d",
-                        state.total_taps, i + 1, state.grind_cycles_completed)
-            logger.info("  OCR実行: %d  スキップ: %d  暗転: %d",
-                        state.total_ocr_calls, state.total_ocr_skipped,
-                        state.total_blackout_skipped)
-            logger.info("=" * 62)
-            save_evidence(img_path, ocr_results, action, state)
-            if _scrcpy_proc and _scrcpy_proc.poll() is None:
-                _scrcpy_proc.terminate()
-                logger.info("[SCRCPY] 終了 PID=%d", _scrcpy_proc.pid)
-            generate_and_copy_report(state, _reason)
-            return
+            if mission.is_goal(action, state):
+                _reason = mission.goal_reason(action, state)
+                logger.info("=" * 62)
+                logger.info("  [%s] %s", mission.name, _reason)
+                _log_milestone(state, _reason)
+                logger.info("  総タップ: %d  イテレーション: %d  周回: %d",
+                            state.total_taps, i + 1, state.grind_cycles_completed)
+                logger.info("  OCR実行: %d  スキップ: %d  暗転: %d",
+                            state.total_ocr_calls, state.total_ocr_skipped,
+                            state.total_blackout_skipped)
+                logger.info("=" * 62)
+                save_evidence(img_path, ocr_results, action, state)
+                if _scrcpy_proc and _scrcpy_proc.poll() is None:
+                    _scrcpy_proc.terminate()
+                    logger.info("[SCRCPY] 終了 PID=%d", _scrcpy_proc.pid)
+                generate_and_copy_report(state, _reason)
+                return
+            else:
+                logger.info("[MISSION] %s は %s の完了条件ではない → 続行",
+                            action, mission.name)
 
         # ── 8) 待機 ──
         # 短い wait (< 5.0s) はスキップ: MIN_TAP_INTERVAL + phash ポーリングが制御
