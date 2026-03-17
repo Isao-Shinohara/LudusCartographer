@@ -289,12 +289,12 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                     return "DIALOG_NAV_CLOSE", 1.0
                 # ▷ タップでページ送り (× が出るまで繰り返す)
         # 「矢印をタップ」画面では DIALOG_NEXT 誤マッチを無視 → #2-a MAP_ARROW に委譲
-        if asset_hit and asset_hit[2] == "ASSET_TUTORIAL_DIALOG_NEXT":
+        elif asset_hit and asset_hit[2] == "ASSET_TUTORIAL_DIALOG_NEXT":
             if any("矢印を" in t for t in texts):
                 logger.info(">>> [Asset Match] DIALOG_NEXT を抑制 (矢印をタップ画面 → #2-a に委譲)")
                 asset_hit = None
         # ホーム画面では FINGER_TEMPLATE 偽陽性を抑制 → ホーム検出ハンドラに委譲
-        if asset_hit and asset_hit[2] == "FINGER_TEMPLATE":
+        elif asset_hit and asset_hit[2] == "FINGER_TEMPLATE":
             _home_kws_check = ["光の間", "ショップ", "ガチャ", "ガシャ", "マップ", "レイヤ"]
             _home_kw_hits = sum(1 for kw in _home_kws_check
                                 if any(kw in t or t in kw for t in texts))
