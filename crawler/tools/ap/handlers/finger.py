@@ -464,6 +464,15 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
                     tap_y = f_by + max(1, int(f_bh * _FINGER_TIP_RATIO))
                     logger.info("FINGER_DETECTED (%d,%d) area=%.0f → tip(%d,%d) count=%d",
                                 fx, fy, fa, tap_x, tap_y, state.blob_same_count)
+                # ── タップ直前 MOVIE チェック: 動画遷移中のタップ防止 ──
+                from tools.ap.image_proc import detect_movie_scene, detect_adv_scene
+                _pre_tap_movie = detect_movie_scene(
+                    analysis_path, adv_result=detect_adv_scene(analysis_path, roi=state.game_roi),
+                    phash_dist=dist)
+                if _pre_tap_movie.is_movie:
+                    logger.info("[MOYA_TAP] タップ直前に MOVIE 検出 → タップ中止")
+                    state.current_scene = "MOVIE"
+                    return "MOVIE_WAIT", 0.5
                 tap_device(tap_x, tap_y, state, f"MOYA_TAP ({tap_x},{tap_y})",
                            finger_box=(f_bx, f_by, f_bw, f_bh),
                            gold_box=_gbox)
