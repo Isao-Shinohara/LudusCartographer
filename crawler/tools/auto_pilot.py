@@ -2084,6 +2084,11 @@ def main():
             state.adv_confirmed_count = 0
             state.adv_early_consecutive = 0  # ADV 以外のシーン → カウンタリセット
 
+        # MOVIE→別シーン遷移時にカウンタリセット
+        if _early_scene != "MOVIE" and state.current_scene == "MOVIE":
+            state.movie_wait_consecutive = 0
+            state.movie_static_count = 0
+
         if _early_scene == "MOVIE":
             if state.current_scene == "BATTLE":
                 state.character_selected = False
