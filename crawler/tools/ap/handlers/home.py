@@ -88,23 +88,39 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
 
     state.home_reached = True
 
-    # ── チュートリアル判定: テンプレートマッチ (tutorial_hand_pointer) を主判定 ──
-    # チュートリアル中のホーム画面には指アイコンが常に1つだけ表示される。
-    # チュートリアル完了後は指アイコンなし。
-    # テンプレートマッチで指アイコンを正確に検出する。
-    _hand_match = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path) if analysis_path else None
-    _has_hand = _hand_match is not None and _hand_match[2] >= 0.70
+    # ── チュートリアル判定: 全方向の指テンプレート + 金枠 ──
+    # チュートリアル中: 指アイコン(上/下/左/右) が常に1つ + 金枠が1つ表示される
+    # チュートリアル完了後: 指アイコンなし + 金枠なし
+    _FINGER_TEMPLATES = [
+        "tutorial_hand_pointer",   # 白い上向き手
+        "tutorial_finger_down",    # 金色下向き手
+        "tutorial_finger_up",      # 金色上向き手
+        "tutorial_finger_right",   # 金色右向き手
+        "tutorial_finger_left",    # 金色左向き手
+    ]
+    _hand_match = None
+    _has_hand = False
+    if analysis_path:
+        for _ft_name in _FINGER_TEMPLATES:
+            _ft_m = ASSET_MANAGER.match_single(_ft_name, analysis_path)
+            if _ft_m and _ft_m[2] >= 0.70:
+                _hand_match = _ft_m
+                _has_hand = True
+                logger.info(">>> ホーム: %s(%.2f) (%d,%d) 検出 → チュートリアル中",
+                            _ft_name, _ft_m[2], _ft_m[0], _ft_m[1])
+                break
+
+    # 金枠検出
+    _home_gold_tmpl = ASSET_MANAGER.match_single("gold_frame_small", analysis_path) if analysis_path else None
     _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
 
     if _has_hand:
         _hx, _hy = _hand_match[0], _hand_match[1]
-        logger.info(">>> ホーム: tutorial_hand_pointer(%.2f) (%d,%d) 検出 → チュートリアル中",
-                    _hand_match[2], _hx, _hy)
         _home_blobs = [(_hx, _hy, 10000.0, _hx - 20, _hy - 20, 40, 40)]
     else:
         _home_blobs = []
 
-    _has_tutorial_evidence = _has_hand or (_home_gold is not None)
+    _has_tutorial_evidence = _has_hand or (_home_gold is not None) or (_home_gold_tmpl is not None)
 
     if not _has_tutorial_evidence:
         # 指アイコンなし + 金枠なし = チュートリアル完了
