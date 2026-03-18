@@ -980,39 +980,28 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
 
 def handle_adv(img_path: Path, state: PilotState, dist: int,
                cur_phash: str, actual_w: int, actual_h: int) -> bool:
-    """ADV シーン専用ハンドラ。↓ボタン / バーストタップ / ミニ会話。
+    """ADV シーン専用ハンドラ。↓ボタン / ミニ会話。
 
-    GoldSwipe / 指アイコン / バトル判定なし。
+    detect_scene_early で ADV 判定済みのため、ここでは detect_adv_scene を
+    再呼び出ししない（2重チェック廃止）。
 
     Returns: True if handled, False for fallthrough to OCR.
     """
-    W, H = ANALYSIS_W, ANALYSIS_H
-    adv = detect_adv_scene(img_path, roi=state.game_roi)
-    _adv_tap_x = int(W * 0.93)
-    _adv_tap_y = int(H * 0.91)
+    _adv_tap_x = int(ANALYSIS_W * 0.93)
+    _adv_tap_y = int(ANALYSIS_H * 0.91)
 
-    # ── ADV ↓ボタン → 1回タップ ──
-    # detect_scene_early で ADV 判定済みなので、↓ボタンテンプレートを直接チェック
+    # ── ↓ボタンテンプレートマッチ → タップ ──
     _adv_next = ASSET_MANAGER.match_single("adv_next_btn", img_path,
-                roi=(int(ANALYSIS_W * 0.85), int(ANALYSIS_H * 0.80),
-                     int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20)))
+                roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75),
+                     int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25)))
     if _adv_next:
         logger.info("[ADV] ↓検出 (score=%.2f) → タップ (%d,%d)", _adv_next[2], _adv_tap_x, _adv_tap_y)
         tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
         state.last_action = "ADV_RAPID_TAP"
         state.last_phash = ""
         return True
-    if adv.is_adv:
-        if adv.next_btn_pos:
-            _adv_nx = int(adv.next_btn_pos[0] * W / actual_w)
-            _adv_ny = int(adv.next_btn_pos[1] * H / actual_h)
-            logger.info("[ADV] ↓ボタン座標 (%d,%d)", _adv_nx, _adv_ny)
-            tap_device(_adv_nx, _adv_ny, state, "ADV_RAPID_TAP")
-            state.last_action = "ADV_RAPID_TAP"
-            state.last_phash = ""
-            return True
 
-    # ── ミニ会話タップ (1回) ──
+    # ── ミニ会話タップ ──
     _mc = detect_mini_conversation(img_path)
     if _mc is not None:
         _mc_cx, _mc_cy, _mc_side = _mc
@@ -2173,7 +2162,7 @@ def main():
                 _adv_tap_x = int(ANALYSIS_W * 0.93)
                 _adv_tap_y = int(ANALYSIS_H * 0.91)
                 if _rapid_adv.is_adv:
-                    if ASSET_MANAGER.match_single("adv_next_btn", img_path, roi=(int(ANALYSIS_W * 0.85), int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))):
+                    if ASSET_MANAGER.match_single("adv_next_btn", img_path, roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75), int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25))):
                         logger.info("[ADV_RAPID][iter %d] ↓検出 → タップ (%d,%d)",
                                     i, _adv_tap_x, _adv_tap_y)
                         tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
@@ -2316,7 +2305,7 @@ def main():
                 # ── ADV送り待ちアイコン検知: phash 安定中でも1回タップ ──
                 _adv_tap_x = int(ANALYSIS_W * 0.93)
                 _adv_tap_y = int(ANALYSIS_H * 0.91)
-                if ASSET_MANAGER.match_single("adv_next_btn", img_path, roi=(int(ANALYSIS_W * 0.85), int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))):
+                if ASSET_MANAGER.match_single("adv_next_btn", img_path, roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75), int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25))):
                     logger.info("[ADV][iter %d] ↓検出 → タップ (%d,%d)", i, _adv_tap_x, _adv_tap_y)
                     tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
                     state.last_action = "ADV_RAPID_TAP"

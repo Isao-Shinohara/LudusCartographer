@@ -615,8 +615,8 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
     _has_advance_icon = False
     if _has_auto or (_matched_count >= 2 and _matched_count < 3 and _has_adv_specific):
         _adv_btn = ASSET_MANAGER.match_single("adv_next_btn", img_path,
-                    roi=(int(ANALYSIS_W * 0.85), int(ANALYSIS_H * 0.80),
-                         int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20)))
+                    roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75),
+                         int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25)))
         _has_advance_icon = _adv_btn is not None
     # 判定: 3アイコン | 2アイコン(ADV固有含む)+↓ | AUTO+↓+ADV専用アイコン
     # NOTE: AUTO+↓ だけではバトル画面でも成立するため、ADV専用アイコンを要求
@@ -820,8 +820,8 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     #   2. ADV ツールバー (右上5アイコン: menu,log,AUTO,>>,>|)
     #   3. 上部 AUTO ボタン単独 — ADV 確定
     _adv_btn_movie = ASSET_MANAGER.match_single("adv_next_btn", img_path,
-                    roi=(int(ANALYSIS_W * 0.85), int(ANALYSIS_H * 0.80),
-                         int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))) if img_path else None
+                    roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75),
+                         int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25))) if img_path else None
     _has_adv_advance = _adv_btn_movie is not None
     _has_auto_icon = False
     if img_path:
