@@ -89,24 +89,28 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
 
     state.home_reached = True
 
-    # ── チュートリアル判定: 指/金枠/ハンドポインタ + 暗転オーバーレイ ──
-    # いずれかの証拠があればチュートリアル中と判断
-    _home_blobs = find_finger_blobs(analysis_path, home_mode=True) if analysis_path else []
-    _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
+    # ── チュートリアル判定: テンプレートマッチ (tutorial_hand_pointer) を主判定 ──
+    # チュートリアル中のホーム画面には指アイコンが常に1つだけ表示される。
+    # チュートリアル完了後は指アイコンなし。
+    # find_finger_blobs は偽陽性が多い (装飾で18個検出等) ためテンプレートを優先。
     _hand_match = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path) if analysis_path else None
-    if _hand_match and _hand_match[2] >= 0.70 and not _home_blobs:
+    _has_hand = _hand_match is not None and _hand_match[2] >= 0.70
+    _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
+
+    if _has_hand:
         _hx, _hy = _hand_match[0], _hand_match[1]
-        logger.info(">>> ホーム: tutorial_hand_pointer(%.2f) (%d,%d) → 指ブロブとして追加",
+        logger.info(">>> ホーム: tutorial_hand_pointer(%.2f) (%d,%d) 検出 → チュートリアル中",
                     _hand_match[2], _hx, _hy)
         _home_blobs = [(_hx, _hy, 10000.0, _hx - 20, _hy - 20, 40, 40)]
+    else:
+        _home_blobs = []
 
-    _has_tutorial_evidence = bool(_home_blobs or _home_gold)
-    _home_dimmed = detect_tutorial_overlay(analysis_path) if analysis_path else False
+    _has_tutorial_evidence = _has_hand or (_home_gold is not None)
 
-    if not _has_tutorial_evidence and not _home_dimmed:
-        # 指/金枠なし + 暗転なし = 通常ホーム画面
+    if not _has_tutorial_evidence:
+        # 指アイコンなし + 金枠なし = チュートリアル完了
         if not state.tutorial_cleared:
-            logger.info(">>> ホーム画面 指/金枠なし+暗転なし → チュートリアル完了")
+            logger.info(">>> ホーム画面 指テンプレなし+金枠なし → チュートリアル完了")
             state.tutorial_cleared = True
             log_milestone(state, "HOME_REACHED")
         logger.info(">>> ホーム画面検出 (%d個) — チュートリアル完了済み", home_count)
@@ -115,9 +119,8 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
         return "GOAL_HOME_REACHED", 0
 
     # ── チュートリアル中: 指/金枠を検出してタップ ──
-    if _has_tutorial_evidence:
-        logger.info(">>> ホーム画面 チュートリアル中 (指=%d 金枠=%s 暗転=%s)",
-                    len(_home_blobs), _home_gold is not None, _home_dimmed)
+    logger.info(">>> ホーム画面 チュートリアル中 (指=%s 金枠=%s)",
+                _has_hand, _home_gold is not None)
     if _home_blobs or _home_gold:
         _tap_target = None
         if _home_blobs:
