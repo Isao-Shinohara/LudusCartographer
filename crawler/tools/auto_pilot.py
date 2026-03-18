@@ -644,10 +644,14 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         except Exception:
             pass
 
-    # ADV: ツールバー検出 (MENU シーンは OCR でボタン検出が必要)
+    # ADV: ↓ボタンテンプレートで直接判定
+    # ↓ボタン (adv_next_btn) は ADV シーン固有。バトル/MOVIE には存在しない。
+    # detect_adv_scene は OCR 必須のため detect_scene_early では使えない。
     if state.current_scene != "MENU":
-        adv = detect_adv_scene(img_path, roi=state.game_roi)
-        if adv.is_adv:
+        _adv_next_early = ASSET_MANAGER.match_single("adv_next_btn", img_path,
+                    roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75),
+                         int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25)))
+        if _adv_next_early:
             return "ADV"
 
     # NOTE: ポップアップ検出 (ドット+背景ぼかし) は廃止。

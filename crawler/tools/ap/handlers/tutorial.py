@@ -345,15 +345,14 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                 tap_x, tap_y = cx, cy  # デフォルト
 
                 # 【プライマリ】テンプレートマッチで指近傍のアイコンを検索
-                # nav_back/back_arrow: テンプレ座標をそのままタップ（小アイコンなので正確）
-                # gold_frame_small: 金枠の一部にマッチするため座標がずれる
-                #   → 指の方向に120pxオフセットした位置をタップ（金枠全体の中心を狙う）
+                # nav_back/back_arrow のみ。gold_frame_small は大きなアイコンの
+                # 端にマッチして中心を外すため除外。
                 _tmpl_found = False
                 if analysis_path:
                     _search_r = 200
                     _aroi = (max(0, _hx - _search_r), max(0, _hy - _search_r),
                              _search_r * 2, _search_r * 2)
-                    for _btn_name in ("nav_back", "back_arrow", "gold_frame_small"):
+                    for _btn_name in ("nav_back", "back_arrow"):
                         _m = ASSET_MANAGER.match_single(
                             _btn_name, analysis_path, roi=_aroi)
                         if _m and _m[2] >= 0.65:
