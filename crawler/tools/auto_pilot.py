@@ -991,17 +991,19 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
     _adv_tap_x = int(W * 0.93)
     _adv_tap_y = int(H * 0.91)
 
-    # ── ADV ツールバー確認 → 1回タップ ──
-    # NOTE: detect_adv_advance_icon() 単独ではバトル画面で偽陽性が出るため
-    # ADVツールバー判定 (is_adv) を必須条件にする
+    # ── ADV ↓ボタン → 1回タップ ──
+    # detect_scene_early で ADV 判定済みなので、↓ボタンテンプレートを直接チェック
+    _adv_next = ASSET_MANAGER.match_single("adv_next_btn", img_path,
+                roi=(int(ANALYSIS_W * 0.85), int(ANALYSIS_H * 0.80),
+                     int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20)))
+    if _adv_next:
+        logger.info("[ADV] ↓検出 (score=%.2f) → タップ (%d,%d)", _adv_next[2], _adv_tap_x, _adv_tap_y)
+        tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
+        state.last_action = "ADV_RAPID_TAP"
+        state.last_phash = ""
+        return True
     if adv.is_adv:
-        if ASSET_MANAGER.match_single("adv_next_btn", img_path, roi=(int(ANALYSIS_W * 0.85), int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))):
-            logger.info("[ADV] ↓検出 → タップ (%d,%d)", _adv_tap_x, _adv_tap_y)
-            tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
-            state.last_action = "ADV_RAPID_TAP"
-            state.last_phash = ""
-            return True
-        elif adv.next_btn_pos:
+        if adv.next_btn_pos:
             _adv_nx = int(adv.next_btn_pos[0] * W / actual_w)
             _adv_ny = int(adv.next_btn_pos[1] * H / actual_h)
             logger.info("[ADV] ↓ボタン座標 (%d,%d)", _adv_nx, _adv_ny)
