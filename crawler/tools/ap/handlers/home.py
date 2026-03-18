@@ -89,13 +89,24 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
 
     state.home_reached = True
 
-    # ── チュートリアル判定: 暗転オーバーレイが必須条件 ──
-    # 暗転なし → チュートリアルではない → 指/金枠検出スキップ
+    # ── チュートリアル判定: 指/金枠/ハンドポインタ + 暗転オーバーレイ ──
+    # いずれかの証拠があればチュートリアル中と判断
+    _home_blobs = find_finger_blobs(analysis_path, home_mode=True) if analysis_path else []
+    _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
+    _hand_match = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path) if analysis_path else None
+    if _hand_match and _hand_match[2] >= 0.70 and not _home_blobs:
+        _hx, _hy = _hand_match[0], _hand_match[1]
+        logger.info(">>> ホーム: tutorial_hand_pointer(%.2f) (%d,%d) → 指ブロブとして追加",
+                    _hand_match[2], _hx, _hy)
+        _home_blobs = [(_hx, _hy, 10000.0, _hx - 20, _hy - 20, 40, 40)]
+
+    _has_tutorial_evidence = bool(_home_blobs or _home_gold)
     _home_dimmed = detect_tutorial_overlay(analysis_path) if analysis_path else False
-    if not _home_dimmed:
-        # 暗転なし = 通常ホーム画面
+
+    if not _has_tutorial_evidence and not _home_dimmed:
+        # 指/金枠なし + 暗転なし = 通常ホーム画面
         if not state.tutorial_cleared:
-            logger.info(">>> ホーム画面 暗転なし → チュートリアルではない")
+            logger.info(">>> ホーム画面 指/金枠なし+暗転なし → チュートリアル完了")
             state.tutorial_cleared = True
             log_milestone(state, "HOME_REACHED")
         logger.info(">>> ホーム画面検出 (%d個) — チュートリアル完了済み", home_count)
@@ -103,18 +114,10 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
             return _handle_grind_nav(ctx, state)
         return "GOAL_HOME_REACHED", 0
 
-    # ── 暗転あり → チュートリアル中: 指/金枠を検出してタップ ──
-    _home_blobs = find_finger_blobs(analysis_path, home_mode=True) if analysis_path else []
-    _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
-    # tutorial_hand_pointer テンプレートも指の証拠として使用
-    # (scrcpy 低解像度では find_finger_blobs の金枠検出が失敗することがある)
-    _hand_match = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path) if analysis_path else None
-    if _hand_match and _hand_match[2] >= 0.70 and not _home_blobs:
-        # ハンドポインタ座標を指ブロブとして追加 (area=10000 ダミー)
-        _hx, _hy = _hand_match[0], _hand_match[1]
-        logger.info(">>> ホーム: tutorial_hand_pointer(%.2f) (%d,%d) → 指ブロブとして追加",
-                    _hand_match[2], _hx, _hy)
-        _home_blobs = [(_hx, _hy, 10000.0, _hx - 20, _hy - 20, 40, 40)]
+    # ── チュートリアル中: 指/金枠を検出してタップ ──
+    if _has_tutorial_evidence:
+        logger.info(">>> ホーム画面 チュートリアル中 (指=%d 金枠=%s 暗転=%s)",
+                    len(_home_blobs), _home_gold is not None, _home_dimmed)
     if _home_blobs or _home_gold:
         _tap_target = None
         if _home_blobs:
