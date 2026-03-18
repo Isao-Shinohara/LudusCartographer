@@ -650,17 +650,9 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         if adv.is_adv:
             return "ADV"
 
-    # ── ポップアップ検出: MOVIE判定より先にチェック ──
-    # ページドット≥1 AND 背景オーバーレイ → ポップアップ確定 → MOVIE にしない
-    if img_path:
-        _popup_dots = count_page_dots(img_path)
-        if _popup_dots >= 1:
-            _popup_img = imread_cached(img_path)
-            _popup_blur = _popup_img is not None and detect_background_blur(
-                _popup_img, _popup_img.shape[0], _popup_img.shape[1])
-            if _popup_blur:
-                logger.info("[SCENE_EARLY] ドット=%d+背景ぼかし → ポップアップ確定, MOVIE判定スキップ", _popup_dots)
-                return "UNKNOWN"
+    # NOTE: ポップアップ検出 (ドット+背景ぼかし) は廃止。
+    # ADV セリフ画面で偽陽性が多発し UNKNOWN に落としてスタックする問題の根本原因だった。
+    # MOVIE 判定は phash 安定チェック付きなのでポップアップを MOVIE と誤判定するリスクはない。
 
     # ── phash 連続変化カウンタ更新 ──
     # BATTLE/ADV は上で return 済み。ここに来るのは UNKNOWN 候補のみ。
