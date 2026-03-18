@@ -188,7 +188,7 @@ from tools.ap.image_proc import (  # noqa: E402
     prepare_analysis_image,
     detect_white_hand_pointer, create_finger_mask_image,
     detect_guide_glow, _run_battle_glow_sm, detect_active_battle_char,
-    find_gold_frame_near, detect_adv_advance_icon,
+    find_gold_frame_near,
     detect_movie_skip_button, detect_mini_conversation,
     detect_dialog, detect_dialog_nav, detect_dialog_frame_and_nav,
     process_paging_dialog, detect_notice_popup, count_page_dots, detect_background_blur,
@@ -1003,7 +1003,7 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
     # NOTE: detect_adv_advance_icon() 単独ではバトル画面で偽陽性が出るため
     # ADVツールバー判定 (is_adv) を必須条件にする
     if adv.is_adv:
-        if detect_adv_advance_icon(img_path):
+        if ASSET_MANAGER.match_single("adv_next_btn", img_path, roi=(int(ANALYSIS_W * 0.85), int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))):
             logger.info("[ADV] ↓検出 → タップ (%d,%d)", _adv_tap_x, _adv_tap_y)
             tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
             state.last_action = "ADV_RAPID_TAP"
@@ -2179,7 +2179,7 @@ def main():
                 _adv_tap_x = int(ANALYSIS_W * 0.93)
                 _adv_tap_y = int(ANALYSIS_H * 0.91)
                 if _rapid_adv.is_adv:
-                    if detect_adv_advance_icon(img_path):
+                    if ASSET_MANAGER.match_single("adv_next_btn", img_path, roi=(int(ANALYSIS_W * 0.85), int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))):
                         logger.info("[ADV_RAPID][iter %d] ↓検出 → タップ (%d,%d)",
                                     i, _adv_tap_x, _adv_tap_y)
                         tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
@@ -2322,7 +2322,7 @@ def main():
                 # ── ADV送り待ちアイコン検知: phash 安定中でも1回タップ ──
                 _adv_tap_x = int(ANALYSIS_W * 0.93)
                 _adv_tap_y = int(ANALYSIS_H * 0.91)
-                if detect_adv_advance_icon(img_path):
+                if ASSET_MANAGER.match_single("adv_next_btn", img_path, roi=(int(ANALYSIS_W * 0.85), int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))):
                     logger.info("[ADV][iter %d] ↓検出 → タップ (%d,%d)", i, _adv_tap_x, _adv_tap_y)
                     tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
                     state.last_action = "ADV_RAPID_TAP"

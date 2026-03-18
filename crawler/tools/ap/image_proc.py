@@ -522,56 +522,6 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
 
 
 
-def detect_adv_advance_icon(img_path: Path,
-                             roi_x: int = int(ANALYSIS_W * 0.875),
-                             roi_y: int = int(ANALYSIS_H * 0.847),
-                             roi_w: int = int(ANALYSIS_W * 0.112),
-                             roi_h: int = int(ANALYSIS_H * 0.125),
-                             min_bright: int = 20,
-                             max_bright: int = 500) -> bool:
-    """
-    ADV送り待ちアイコン（◆/▼）を検出。
-    テキストボックス右下 ROI 内に孤立した明るい小クラスターを探す。
-
-    ROI デフォルト: x=1330-1500, y=610-700 (landscape 1520x720)
-    明るい白/淡色ピクセル: HSV V>210, S<60 が min_bright〜max_bright 個 → True
-    max_bright で大量の白テキスト (利用規約画面等) を排除。
-    """
-    try:
-        _img = imread_cached(img_path)
-        if _img is None:
-            return False
-        _H, _W = _img.shape[:2]
-        _x1 = max(0, roi_x)
-        _y1 = max(0, roi_y)
-        _x2 = min(_W, roi_x + roi_w)
-        _y2 = min(_H, roi_y + roi_h)
-        if _x2 <= _x1 or _y2 <= _y1:
-            return False
-        _roi = _img[_y1:_y2, _x1:_x2]
-        _hsv = cv2.cvtColor(_roi, cv2.COLOR_BGR2HSV)
-        _mask = cv2.inRange(_hsv, (0, 0, 210), (180, 60, 255))
-        _bright = int(cv2.countNonZero(_mask))
-        if _bright >= min_bright and _bright <= max_bright:
-            logger.debug("[ADV_ADVANCE] 明るいピクセル %d 個 @ ROI(%d,%d,%d,%d)",
-                         _bright, roi_x, roi_y, roi_w, roi_h)
-            return True
-        if _bright > max_bright:
-            logger.debug("[ADV_ADVANCE] 白テキスト排除: bright=%d > max=%d", _bright, max_bright)
-        # HSV 失敗時: テンプレートマッチフォールバック
-        try:
-            _tmpl = ASSET_MANAGER.match_single("adv_next_btn", img_path,
-                                                roi=(roi_x, roi_y, roi_w, roi_h))
-            if _tmpl and _tmpl[2] >= 0.65:
-                logger.debug("[ADV_ADVANCE] テンプレートFB: score=%.3f → True", _tmpl[2])
-                return True
-        except Exception:
-            pass
-        return False
-    except Exception as _e:
-        logger.debug("detect_adv_advance_icon error: %s", _e)
-        return False
-
 
 # ─── ADV ツールバー: 5個別アイコン名 ──────────────────────────────
 _ADV_TOOLBAR_ICON_NAMES = (
@@ -664,7 +614,10 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
     # ↓ボタン検出 (AUTO あり or ADV固有アイコン含む2アイコン救済時のみ実行)
     _has_advance_icon = False
     if _has_auto or (_matched_count >= 2 and _matched_count < 3 and _has_adv_specific):
-        _has_advance_icon = detect_adv_advance_icon(img_path)
+        _adv_btn = ASSET_MANAGER.match_single("adv_next_btn", img_path,
+                    roi=(int(ANALYSIS_W * 0.85), int(ANALYSIS_H * 0.80),
+                         int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20)))
+        _has_advance_icon = _adv_btn is not None
     # 判定: 3アイコン | 2アイコン(ADV固有含む)+↓ | AUTO+↓+ADV専用アイコン
     # NOTE: AUTO+↓ だけではバトル画面でも成立するため、ADV専用アイコンを要求
     _all_matched = (_matched_count >= 3
@@ -866,7 +819,10 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     #   1. ↓送りボタン (右下) — セリフ送り可能時に表示
     #   2. ADV ツールバー (右上5アイコン: menu,log,AUTO,>>,>|)
     #   3. 上部 AUTO ボタン単独 — ADV 確定
-    _has_adv_advance = detect_adv_advance_icon(img_path) if img_path else False
+    _adv_btn_movie = ASSET_MANAGER.match_single("adv_next_btn", img_path,
+                    roi=(int(ANALYSIS_W * 0.85), int(ANALYSIS_H * 0.80),
+                         int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))) if img_path else None
+    _has_adv_advance = _adv_btn_movie is not None
     _has_auto_icon = False
     if img_path:
         try:
