@@ -278,8 +278,9 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
     # ─── 【最優先 #-1】「ご注意」画面 (Google Play 起動時 portrait 注意書き) ───
     # アプリ初回起動時に portrait で表示される法的注意画面。
     # 「同意してゲームを始める」ボタン (右側ゴールドボタン) をOCRで検出してタップ。
-    # ホーム到達後はスキップ (お知らせポップアップの「ご注意ください」で誤発火防止)
-    if not state.home_reached and (
+    # 「今日は表示しない」があればお知らせポップアップなのでスキップ (誤発火防止)
+    _is_notice_text = any("今日は表示しない" in t for t in texts)
+    if not _is_notice_text and (
         has_text(ocr, "ご注意", min_conf=0.3) or (
             has_text(ocr, "基本無料", min_conf=0.3) and has_text(ocr, "未成年", min_conf=0.3)
         )
