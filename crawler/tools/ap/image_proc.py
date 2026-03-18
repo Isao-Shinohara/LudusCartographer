@@ -857,6 +857,15 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
             logger.debug("[MOVIE_SCENE] AUTOボタン → ADV確定, MOVIE棄却")
             return MovieSceneResult()
 
+        # 即棄却: バトルテンプレート (通常攻撃/スキル/必殺)
+        _battle_roi_chk = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
+                           int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+        for _b_name in ("battle_normal_attack", "battle_skill", "battle_special"):
+            _b_m = ASSET_MANAGER.match_single(_b_name, img_path, roi=_battle_roi_chk)
+            if _b_m and _b_m[2] >= 0.50:
+                logger.info("[MOVIE_SCENE] バトルテンプレ %s(%.2f) → MOVIE棄却", _b_name, _b_m[2])
+                return MovieSceneResult()
+
         # 即棄却: バトルキーワード
         if any(kw in joined for kw in _MOVIE_REJECT_BATTLE_KWS):
             return MovieSceneResult()
