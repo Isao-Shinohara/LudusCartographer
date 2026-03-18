@@ -71,6 +71,21 @@ def handle_dialog_screen(
     _dlg = detect_dialog_frame_and_nav(
         analysis_path, W, H, ocr_texts=texts, roi=state.game_roi
     )
+
+    # ── お知らせポップアップ: ダイアログ枠未検出でも処理続行 ──
+    # OCR で「今日は表示しない」が確定しているため、▷/× を直接検索する
+    if is_notice_popup and _dlg is None:
+        _notice_nav = detect_dialog_nav(analysis_path, W, H)
+        if _notice_nav is not None:
+            _dlg = _notice_nav
+            logger.info("[NOTICE_POPUP] ダイアログ枠未検出だが ▷/× を直接検出 → 続行")
+        else:
+            # ▷/× も見つからない → 右上固定座標で × を狙う
+            _fx, _fy = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
+            logger.info("[NOTICE_POPUP] ▷/× 未検出 → 右上 × 固定座標 (%d,%d) で閉じる", _fx, _fy)
+            tap_device(_fx, _fy, state, "NOTICE_POPUP_CLOSE_DIRECT")
+            return "NOTICE_POPUP_CLOSE", 1.0
+
     if _dlg is None:
         return None
 
