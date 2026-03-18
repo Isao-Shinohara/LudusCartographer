@@ -344,29 +344,52 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                 _hx, _hy = _hand_pos
                 tap_x, tap_y = cx, cy  # デフォルト
 
-                # 【プライマリ】指の方向にある最近接OCRテキストをタップ (距離200px以内)
-                _MAX_HAND_OCR_DIST = 200
-                _ocr_found = False
-                if _hand_dir and ocr:
-                    _dir_items = []
-                    for item in ocr:
-                        _tx, _ty = item["center"]
-                        _dist = abs(_hx - _tx) + abs(_hy - _ty)
-                        if _dist > _MAX_HAND_OCR_DIST:
-                            continue  # 遠すぎるOCRは無視
-                        if _hand_dir == "up" and _ty < _hy:
-                            _dir_items.append((_tx, _ty, _dist, item["text"]))
-                        elif _hand_dir == "down" and _ty > _hy:
-                            _dir_items.append((_tx, _ty, _dist, item["text"]))
-                    if _dir_items:
-                        _dir_items.sort(key=lambda d: d[2])  # 距離順
-                        tap_x, tap_y = _dir_items[0][0], _dir_items[0][1]
-                        _ocr_found = True
-                        logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → OCR '%s'(%d,%d) dist=%d",
-                                    cx, cy, _hand_dir, _dir_items[0][3], tap_x, tap_y, _dir_items[0][2])
+                # 【プライマリ】テンプレートマッチで指近傍のアイコンを検索
+                # OCR で検出できないアイコン（戻るボタン等）を正確にタップするため最優先
+                _tmpl_found = False
+                if analysis_path:
+                    _search_r = 200
+                    _aroi = (max(0, _hx - _search_r), max(0, _hy - _search_r),
+                             _search_r * 2, _search_r * 2)
+                    for _btn_name in ("nav_back", "back_arrow", "gold_frame_small"):
+                        _m = ASSET_MANAGER.match_single(
+                            _btn_name, analysis_path, roi=_aroi)
+                        if _m and _m[2] >= 0.65:
+                            _ax, _ay = _m[0], _m[1]
+                            # 方向フィルタ
+                            if (_hand_dir == "up" and _ay > _hy + 30) or \
+                               (_hand_dir == "down" and _ay < _hy - 30):
+                                continue
+                            tap_x, tap_y = _ax, _ay
+                            _tmpl_found = True
+                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → Asset '%s'(%d,%d) score=%.3f",
+                                        _hx, _hy, _hand_dir, _btn_name, tap_x, tap_y, _m[2])
+                            break
 
-                # 【フォールバック】OCR なし or 距離内に該当なし → 金枠検出
-                if not _ocr_found:
+                # 【セカンダリ】テンプレ未検出 → 指の方向にある最近接OCRテキストをタップ (距離200px以内)
+                if not _tmpl_found:
+                    _MAX_HAND_OCR_DIST = 200
+                    _ocr_found = False
+                    if _hand_dir and ocr:
+                        _dir_items = []
+                        for item in ocr:
+                            _tx, _ty = item["center"]
+                            _dist = abs(_hx - _tx) + abs(_hy - _ty)
+                            if _dist > _MAX_HAND_OCR_DIST:
+                                continue
+                            if _hand_dir == "up" and _ty < _hy:
+                                _dir_items.append((_tx, _ty, _dist, item["text"]))
+                            elif _hand_dir == "down" and _ty > _hy:
+                                _dir_items.append((_tx, _ty, _dist, item["text"]))
+                        if _dir_items:
+                            _dir_items.sort(key=lambda d: d[2])
+                            tap_x, tap_y = _dir_items[0][0], _dir_items[0][1]
+                            _ocr_found = True
+                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → OCR '%s'(%d,%d) dist=%d",
+                                        cx, cy, _hand_dir, _dir_items[0][3], tap_x, tap_y, _dir_items[0][2])
+
+                # 【フォールバック】テンプレもOCRも未検出 → 金枠検出
+                if not _tmpl_found and not _ocr_found:
                     _gold = find_gold_frame_near(analysis_path, _hx, _hy,
                                                  search_radius=200) if analysis_path else None
                     # 方向フィルタ: 指の向きと逆方向の金枠は除外
@@ -382,35 +405,10 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                         logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → 金枠(%d,%d)",
                                     _hx, _hy, _hand_dir, tap_x, tap_y)
                     else:
-                        # 【フォールバック2】金枠ボタンテンプレートで指近傍を検索
-                        _asset_hit = None
-                        if analysis_path:
-                            _search_r = 200
-                            _aroi = (max(0, _hx - _search_r), max(0, _hy - _search_r),
-                                     _search_r * 2, _search_r * 2)
-                            for _btn_name in ("gold_frame_small", "nav_back"):
-                                _m = ASSET_MANAGER.match_single(
-                                    _btn_name, analysis_path, roi=_aroi)
-                                if _m and _m[2] >= 0.65:
-                                    _asset_hit = (_m[0], _m[1], _m[2], _btn_name)
-                                    break
-                        if _asset_hit:
-                            _ax, _ay = _asset_hit[0], _asset_hit[1]
-                            # 方向フィルタ
-                            if (_hand_dir == "up" and _ay > _hy + 30) or \
-                               (_hand_dir == "down" and _ay < _hy - 30):
-                                logger.info(">>> [TAP_HIGHLIGHTED_NAV] Asset '%s'(%d,%d) が指方向(%s)と逆 → 除外",
-                                            _asset_hit[3], _ax, _ay, _hand_dir)
-                                _asset_hit = None
-                        if _asset_hit:
-                            tap_x, tap_y = _asset_hit[0], _asset_hit[1]
-                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → Asset '%s'(%d,%d) score=%.3f",
-                                        _hx, _hy, _hand_dir, _asset_hit[3], tap_x, tap_y, _asset_hit[2])
-                        else:
-                            tap_x, tap_y = smart_tap_button(
-                                analysis_path, _hx, _hy, search_r=160, ocr_items=ocr)
-                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → smart_tap(%d,%d)",
-                                        _hx, _hy, _hand_dir, tap_x, tap_y)
+                        tap_x, tap_y = smart_tap_button(
+                            analysis_path, _hx, _hy, search_r=160, ocr_items=ocr)
+                        logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → smart_tap(%d,%d)",
+                                    _hx, _hy, _hand_dir, tap_x, tap_y)
 
                 tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
                 return "TAP_HIGHLIGHTED_NAV", 1.0
