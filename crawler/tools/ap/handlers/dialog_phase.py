@@ -30,7 +30,7 @@ from tools.ap.image_proc import (
     detect_notice_popup, detect_mini_conversation,
     find_finger_blobs, detect_white_hand_pointer,
     detect_dialog_frame_and_nav, process_paging_dialog,
-    count_page_dots, detect_dialog,
+    count_page_dots, detect_dialog, detect_dialog_nav,
     ASSET_MANAGER, prepare_analysis_image,
     roi_to_device,
 )
@@ -178,9 +178,18 @@ def handle_dialog_screen(
         # ── ダイアログ再確認ガード: 背景ぼかし + ▷/× 存在を二重検証 ──
         # ホーム画面の金色枠装飾をダイアログと誤検出する問題の根本対策
         if analysis_path and not detect_dialog(analysis_path, W, H, require_blur=True):
-            logger.info(
-                "[DIALOG_BLUR_GUARD] 背景ぼかしなし or ▷/× 未検出 → ポップアップではない、PAGING スキップ")
-            return None
+            # 背景ぼかしなしでも、ページドット + ▷/× があればダイアログとして続行
+            _guard_dots = count_page_dots(analysis_path)
+            _guard_nav = detect_dialog_nav(analysis_path, W, H)
+            if _guard_dots >= 2 and _guard_nav is not None:
+                logger.info(
+                    "[DIALOG_BLUR_GUARD] 背景ぼかしなしだがドット=%d+▷/×あり → PAGING 続行",
+                    _guard_dots)
+            else:
+                logger.info(
+                    "[DIALOG_BLUR_GUARD] 背景ぼかしなし+ドット=%d+▷/×=%s → ポップアップではない、PAGING スキップ",
+                    _guard_dots, _guard_nav is not None)
+                return None
         # ページング式ダイアログ: ▷ → … → × を一括処理
         logger.info(
             ">>> 【ダイアログ#0-DIALOG-PAGING】%s(%d,%d) (試行%d回) → process_paging_dialog",
