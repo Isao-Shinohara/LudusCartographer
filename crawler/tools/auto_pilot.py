@@ -556,6 +556,9 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     毎フレーム OCR のコストが許容範囲になったため、毎ループ通常判定フローを通す。
     これによりシーン遷移 (MOVIE→BATTLE 等) の検出遅延がゼロになる。
 
+    NOTE: img_path は呼び出し元で prepare_analysis_image() 済みの 1520x720 画像。
+    テンプレートマッチの ROI・スケールが ANALYSIS_W/H と一致する。
+
     Returns: "MOVIE" | "BATTLE" | "ADV" | "UNKNOWN"
     """
 
@@ -2029,9 +2032,9 @@ def main():
         # BATTLE: GoldSwipe/ADV チェックをスキップ
         # ADV: 指/GoldSwipe/バトル判定をスキップ
         # UNKNOWN: フルOCR → detect_and_act() (既存フロー)
-        _early_scene = detect_scene_early(img_path, state, dist)
+        _early_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
+        _early_scene = detect_scene_early(_early_analysis, state, dist)
         _skip_rapid = False  # True: 早期ハンドラがフォールスルー → インライン RAPID をスキップ
-        _early_analysis = None  # BATTLE 用に先行計算した analysis_path を再利用
         # SCENE_EARLY が UNKNOWN → ポップアップ等で前シーンが無効化された
         # state.current_scene を UNKNOWN にリセットして BATTLE_RAPID を阻止
         if _early_scene == "UNKNOWN" and state.current_scene == "BATTLE":
