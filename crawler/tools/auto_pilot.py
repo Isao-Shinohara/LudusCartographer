@@ -120,7 +120,7 @@ _ensure_state_table()
 # ─── 定数: ap/constants.py から一括 import ───
 from tools.ap.constants import (  # noqa: E402
     _CRAWLER_ROOT, SCREENSHOT_PATH, ANALYSIS_PATH, REMOTE_PATH, EVIDENCE_DIR,
-    MAX_ITERATIONS, POLL_INTERVAL, PHASH_THRESHOLD, FORCE_ANALYZE_AFTER,
+    POLL_INTERVAL, PHASH_THRESHOLD, FORCE_ANALYZE_AFTER,
     STALL_TIMEOUT, BATTLE_WAIT, DOWNLOAD_WAIT, MIN_TAP_INTERVAL, MIN_CAPTURE_INTERVAL,
     WATCHDOG_DEADLOCK_THRESHOLD, WATCHDOG_MAX_SOFT_RECOVERIES,
     WATCHDOG_MAX_TOTAL_RECOVERIES, APP_PACKAGE, APP_ACTIVITY,
@@ -1794,7 +1794,8 @@ def main():
             adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
         time.sleep(2)
 
-    for i in range(MAX_ITERATIONS):
+    i = 0
+    while True:
         state.iteration = i
         _loop_t0 = time.time()  # [PERF] ループ開始時刻
         clear_imread_cache()    # 前イテレーションのキャッシュを破棄
@@ -3022,8 +3023,7 @@ def main():
                     logger.info("[SCRCPY] プロセス消滅を検知 — 自動再起動")
                     _scrcpy_proc = manage_scrcpy()
 
-    logger.warning("最大イテレーション(%d)に到達。手動確認が必要です。", MAX_ITERATIONS)
-    generate_and_copy_report(state, f"最大イテレーション({MAX_ITERATIONS})到達")
+        i += 1
 
     # scrcpy プロセスを終了
     if _scrcpy_proc and _scrcpy_proc.poll() is None:
