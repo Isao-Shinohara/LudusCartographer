@@ -580,18 +580,17 @@ class TestDetectAdvToolbarButtons:
     """detect_adv_toolbar_buttons の5アイコン全マッチ検証。"""
 
     def test_detect_adv_toolbar_buttons_positive(self, tmp_path):
-        """5アイコン全埋め込み → 検出される。"""
+        """AUTO + ADV専用 + ↓ + セリフ → 検出される。"""
         import cv2
         import numpy as np
-        from tools.ap.image_proc import detect_adv_toolbar_buttons, ANALYSIS_W, ANALYSIS_H
+        from tools.ap.image_proc import detect_adv_scene, ANALYSIS_W, ANALYSIS_H
         from tools.ap.constants import _CRAWLER_ROOT
 
+        # AUTO + menu (ADV専用) + adv_next_btn (↓) を埋め込み
         icon_positions = [
-            ("adv_icon_menu", 1116, 45),
-            ("adv_icon_log", 1191, 45),
             ("adv_icon_auto", 1274, 45),
-            ("adv_icon_ff", 1358, 45),
-            ("adv_icon_skip", 1446, 45),
+            ("adv_icon_menu", 1116, 45),
+            ("adv_next_btn", 1305, 642),
         ]
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
         for name, cx, cy in icon_positions:
@@ -603,7 +602,10 @@ class TestDetectAdvToolbarButtons:
         img_path = tmp_path / "adv_scene.png"
         cv2.imwrite(str(img_path), img)
 
-        assert detect_adv_toolbar_buttons(img_path) is True
+        # セリフテキスト付きで判定
+        ocr = [{"text": "これはテストのセリフです", "center": (760, 600), "confidence": 0.95}]
+        result = detect_adv_scene(img_path, ocr_items=ocr)
+        assert result.is_adv is True
 
     def test_detect_adv_toolbar_buttons_negative(self, tmp_path):
         """非ADVシーン (無地画像) で誤検出しない。"""
@@ -735,7 +737,7 @@ class TestAdvScene:
     """detect_adv_scene 統一検出テスト。"""
 
     def test_toolbar_strip_positive(self, tmp_path):
-        """5アイコン全埋め込み → is_adv=True, toolbar_score>=0.65。"""
+        """AUTO + ADV専用 + ↓ + セリフ → is_adv=True。"""
         import cv2
         import numpy as np
         from tools.ap.image_proc import (
@@ -744,11 +746,9 @@ class TestAdvScene:
         from tools.ap.constants import _CRAWLER_ROOT
 
         icon_positions = [
-            ("adv_icon_menu", 1116, 45),
-            ("adv_icon_log", 1191, 45),
             ("adv_icon_auto", 1274, 45),
-            ("adv_icon_ff", 1358, 45),
-            ("adv_icon_skip", 1446, 45),
+            ("adv_icon_menu", 1116, 45),
+            ("adv_next_btn", 1305, 642),
         ]
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
         for name, cx, cy in icon_positions:
@@ -760,10 +760,10 @@ class TestAdvScene:
         img_path = tmp_path / "adv_5icons.png"
         cv2.imwrite(str(img_path), img)
 
-        result = detect_adv_scene(img_path, icon_threshold=0.65)
+        ocr = [{"text": "これはテストのセリフです", "center": (760, 600), "confidence": 0.95}]
+        result = detect_adv_scene(img_path, ocr_items=ocr, icon_threshold=0.65)
         assert isinstance(result, AdvSceneResult)
         assert result.is_adv is True
-        assert result.toolbar_score >= 0.65
 
     def test_next_btn_detected(self, tmp_path):
         """↓ボタン+5アイコン埋め込み → next_btn_pos not None。"""
@@ -796,7 +796,8 @@ class TestAdvScene:
         img_path = tmp_path / "adv_both.png"
         cv2.imwrite(str(img_path), img)
 
-        result = detect_adv_scene(img_path)
+        ocr = [{"text": "これはテストのセリフです", "center": (760, 600), "confidence": 0.95}]
+        result = detect_adv_scene(img_path, ocr_items=ocr)
         assert result.is_adv is True
         assert result.next_btn_pos is not None
         assert result.next_btn_score > 0.0
@@ -860,33 +861,20 @@ class TestAdvScene:
         assert result.has_letterbox is False
 
     def test_backward_compat_wrapper(self, tmp_path):
-        """detect_adv_toolbar_buttons() が bool を返す (後方互換)。"""
+        """detect_adv_toolbar_buttons() — セリフなしでは False。"""
         import cv2
         import numpy as np
         from tools.ap.image_proc import (
             detect_adv_toolbar_buttons, ANALYSIS_W, ANALYSIS_H,
         )
-        from tools.ap.constants import _CRAWLER_ROOT
 
-        icon_positions = [
-            ("adv_icon_menu", 1116, 45),
-            ("adv_icon_log", 1191, 45),
-            ("adv_icon_auto", 1274, 45),
-            ("adv_icon_ff", 1358, 45),
-            ("adv_icon_skip", 1446, 45),
-        ]
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
-        for name, cx, cy in icon_positions:
-            tpl_path = _CRAWLER_ROOT / "assets" / "templates" / f"{name}.png"
-            if not tpl_path.exists():
-                pytest.skip(f"{name}.png が存在しません")
-            _embed_template(img, tpl_path, cx, cy)
         img_path = tmp_path / "adv_compat.png"
         cv2.imwrite(str(img_path), img)
 
         result = detect_adv_toolbar_buttons(img_path)
         assert isinstance(result, bool)
-        assert result is True
+        assert result is False  # セリフなしではADV判定されない
 
     def test_dialogue_text_detection(self, tmp_path):
         """OCR下部にかな文字テキスト → has_dialogue=True。"""
@@ -1019,9 +1007,9 @@ class TestAdvSceneWithAdvanceIcon:
         img_path = tmp_path / "two_icons_advance.png"
         cv2.imwrite(str(img_path), img)
 
-        result = detect_adv_scene(img_path)
+        ocr = [{"text": "これはテストのセリフです", "center": (760, 600), "confidence": 0.95}]
+        result = detect_adv_scene(img_path, ocr_items=ocr)
         assert result.is_adv is True
-        assert result.matched_count == 2
 
     @patch("tools.ap.image_proc.ASSET_MANAGER")
     def test_two_icons_without_advance(self, mock_am, tmp_path):

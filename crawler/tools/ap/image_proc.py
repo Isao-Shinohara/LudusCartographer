@@ -600,29 +600,29 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
     # AUTO アイコン (index=2) スコア取得
     _auto_score = _icon_scores[2] if len(_icon_scores) > 2 else 0.0
     _has_auto = _auto_score >= 0.50
-    # ADV固有アイコン判定: AUTO(2)/FF(3)/SKIP(4) — menu/log は汎用UIで偽陽性多い
-    _has_adv_specific = any(
-        _icon_scores[i] >= icon_threshold
-        for i in (2, 3, 4) if i < len(_icon_scores)
-    )
-    # バトル画面との区別: menu(0)/log(1)/skip(4) はバトルに存在しないADV専用アイコン
-    # AUTO(2)/FF(3) はバトルにも存在するため区別に使えない
+    # ADV専用アイコン: menu(0)/log(1)/skip(4) はバトルに存在しない
     _has_adv_only = any(
         _icon_scores[i] >= 0.40
         for i in (0, 1, 4) if i < len(_icon_scores)
     )
-    # ↓ボタン検出 (AUTO あり or ADV固有アイコン含む2アイコン救済時のみ実行)
+    # ↓ボタン検出
     _has_advance_icon = False
-    if _has_auto or (_matched_count >= 2 and _matched_count < 3 and _has_adv_specific):
-        _adv_btn = ASSET_MANAGER.match_single("adv_next_btn", img_path,
-                    roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75),
-                         int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25)))
-        _has_advance_icon = _adv_btn is not None
-    # 判定: 3アイコン | 2アイコン(ADV固有含む)+↓ | AUTO+↓+ADV専用アイコン
-    # NOTE: AUTO+↓ だけではバトル画面でも成立するため、ADV専用アイコンを要求
-    _all_matched = (_matched_count >= 3
-                    or (_matched_count >= 2 and _has_advance_icon and _has_adv_only)
-                    or (_has_auto and _has_advance_icon and _has_adv_only))
+    _adv_btn = ASSET_MANAGER.match_single("adv_next_btn", img_path,
+                roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75),
+                     int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25)))
+    _has_advance_icon = _adv_btn is not None
+    # セリフテキスト: 下部35%にかな含む4文字以上テキスト
+    _has_dialogue_early = False
+    if ocr_items:
+        for item in ocr_items:
+            _oc = item.get("center", (0, 0))
+            if _oc[1] > ANALYSIS_H * 0.65:
+                txt = item.get("text", "")
+                if len(txt) >= 4 and any(0x3041 <= ord(c) <= 0x309F for c in txt):
+                    _has_dialogue_early = True
+                    break
+    # 判定: AUTO + ↓ボタン + ADV専用アイコン + セリフテキスト
+    _all_matched = (_has_auto and _has_advance_icon and _has_adv_only and _has_dialogue_early)
     result.toolbar_score = min(_icon_scores) if _icon_scores else 0.0
     if _all_matched and _icon_scores:
         # toolbar_pos = AUTO アイコンの位置 (3番目)
