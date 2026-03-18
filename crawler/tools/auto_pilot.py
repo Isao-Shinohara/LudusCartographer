@@ -2101,7 +2101,7 @@ def main():
                 state.adv_confirmed_count = 0
                 state.current_scene = "UNKNOWN"
                 _skip_rapid = True
-            elif handle_adv(img_path, state, dist, cur_phash, actual_w, actual_h):
+            elif handle_adv(_early_analysis, state, dist, cur_phash, actual_w, actual_h):
                 state.adv_early_consecutive += 1
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
