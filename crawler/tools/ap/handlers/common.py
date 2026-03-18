@@ -275,6 +275,25 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
         adb("shell input keyevent 4")
         return "PLAY_GAMES_BACK", 1.0
 
+    # ─── お知らせ一覧画面 → × で閉じる ───
+    # 「お知らせ」「情報」「不具合」のタブヘッダが 2 つ以上あれば一覧画面
+    _notice_list_tabs = ["お知らせ", "情報", "不具合"]
+    _notice_list_hits = sum(1 for kw in _notice_list_tabs if has_text(ocr, kw, min_conf=0.3))
+    if _notice_list_hits >= 2:
+        # × テンプレートで閉じる
+        from tools.ap.image_proc import ASSET_MANAGER as _AM_notice
+        _close_m = _AM_notice.match_single("close_btn_cross", analysis_path)
+        if _close_m and _close_m[2] >= 0.50:
+            tap_device(_close_m[0], _close_m[1], state, "NOTICE_LIST_CLOSE")
+            logger.info(">>> 【お知らせ一覧】 ×テンプレート(%d,%d score=%.2f) で閉じる",
+                        _close_m[0], _close_m[1], _close_m[2])
+            return "NOTICE_LIST_CLOSE", 1.0
+        # テンプレ未検出 → 右上固定座標
+        _nx, _ny = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
+        tap_device(_nx, _ny, state, "NOTICE_LIST_CLOSE_FB")
+        logger.info(">>> 【お知らせ一覧】 × 固定座標(%d,%d) で閉じる", _nx, _ny)
+        return "NOTICE_LIST_CLOSE", 1.0
+
     # ─── 【最優先 #-1】「ご注意」画面 (Google Play 起動時 portrait 注意書き) ───
     # アプリ初回起動時に portrait で表示される法的注意画面。
     # 「同意してゲームを始める」ボタン (右側ゴールドボタン) をOCRで検出してタップ。
