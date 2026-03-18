@@ -664,8 +664,8 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
     # ── ガチャ演出画面: SKIP ボタン + 暗い背景 → タップで進行 ──
     # 光の玉が並ぶ画面。MOVIE ではなくタップで 1 つずつキャラが表示される。
-    # SKIP テンプレート + 暗背景で判定し、UNKNOWN として OCR パスでタップさせる。
-    if img_path:
+    # MOVIE 中はスキップ（動画内のキャラ表示シーンで誤発火防止）
+    if img_path and state.current_scene != "MOVIE":
         _gacha_skip = detect_movie_skip_button(img_path)
         if _gacha_skip:
             _gacha_img = imread_cached(img_path)
