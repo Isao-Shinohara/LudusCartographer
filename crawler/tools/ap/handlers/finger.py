@@ -31,7 +31,7 @@ from tools.ap.image_proc import (
     _run_battle_glow_sm, find_finger_blobs, find_gold_frame_near,
     create_finger_mask_image, detect_tutorial_gold_button_tap,
     detect_tutorial_overlay, roi_to_device, ASSET_MANAGER,
-    detect_adv_scene,
+    detect_adv_scene, prepare_analysis_image,
 )
 from tools.ap.helpers import has_any, has_text, log_milestone
 from tools.ap.device import adb, tap_device, swipe_device, take_screenshot
@@ -464,15 +464,20 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
                     tap_y = f_by + max(1, int(f_bh * _FINGER_TIP_RATIO))
                     logger.info("FINGER_DETECTED (%d,%d) area=%.0f → tip(%d,%d) count=%d",
                                 fx, fy, fa, tap_x, tap_y, state.blob_same_count)
-                # ── タップ直前 MOVIE チェック: 動画遷移中のタップ防止 ──
-                from tools.ap.image_proc import detect_movie_scene, detect_adv_scene
-                _pre_tap_movie = detect_movie_scene(
-                    analysis_path, adv_result=detect_adv_scene(analysis_path, roi=state.game_roi),
-                    phash_dist=dist)
-                if _pre_tap_movie.is_movie:
-                    logger.info("[MOYA_TAP] タップ直前に MOVIE 検出 → タップ中止")
-                    state.current_scene = "MOVIE"
-                    return "MOVIE_WAIT", 0.5
+                # ── タップ直前 phash チェック: シーン遷移中のタップ防止 ──
+                # タップ判断時と現在の画面が変わっていればタップ中止
+                _pre_tap_path, _pre_tap_w, _pre_tap_h, _ = take_screenshot()
+                if _pre_tap_path:
+                    _pre_tap_analysis = prepare_analysis_image(
+                        _pre_tap_path, _pre_tap_w, _pre_tap_h)
+                    _pre_tap_ph = compute_phash(_pre_tap_analysis)
+                    _pre_tap_dist = phash_distance(
+                        state.last_phash, _pre_tap_ph) if state.last_phash and _pre_tap_ph else 0
+                    if _pre_tap_dist >= PHASH_THRESHOLD:
+                        logger.info("[MOYA_TAP] タップ直前に画面変化検出 (phash_dist=%d) → タップ中止",
+                                    _pre_tap_dist)
+                        state.last_phash = _pre_tap_ph
+                        return "WAIT_FOR_CHANGE", 0.5
                 tap_device(tap_x, tap_y, state, f"MOYA_TAP ({tap_x},{tap_y})",
                            finger_box=(f_bx, f_by, f_bw, f_bh),
                            gold_box=_gbox)
