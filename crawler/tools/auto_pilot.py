@@ -943,9 +943,8 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
                             _fb_btn, _fb_m[2], _rapid_tx, _rapid_ty)
                 break
         if not _rapid_action:
-            _rapid_tx, _rapid_ty = roi_to_device(
-                int(ANALYSIS_W * 0.90), int(ANALYSIS_H * 0.88), state.game_roi)
-            _rapid_action = "BATTLE_RAPID_NORMATK_FALLBACK"
+            logger.info("[BATTLE] テンプレ未検出 → 盲タップせず次ループで再判定")
+            return True
         state.normatk_fallback.tick()
     else:
         state.normatk_fallback.reset()
@@ -2355,10 +2354,8 @@ def main():
                     _sc_x, _sc_y = roi_to_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.85), state.game_roi)
                     tap_device(_sc_x, _sc_y, state, "STALL_ADV_TAP")
                 else:
-                    logger.warning(">>> %.0f秒スタック — 右上×ボタン試行", stall_elapsed)
-                    save_evidence(img_path, [], "STALL_CORNER", state)
-                    _sc_x, _sc_y = roi_to_device(int(ANALYSIS_W * 0.97), int(ANALYSIS_H * 0.06), state.game_roi)
-                    tap_device(_sc_x, _sc_y, state, "STALL_CORNER")
+                    logger.warning(">>> %.0f秒スタック — 盲タップせず証拠保存のみ", stall_elapsed)
+                    save_evidence(img_path, [], "STALL_NO_ACTION", state)
                 state.stall_corner_tried = True
                 state.last_phash = ""
                 state.same_phash_count = 0
@@ -2751,14 +2748,11 @@ def main():
                     state.last_phash = _wfc_ph
                     continue
                 logger.warning(
-                    "[WFC_ESCAPE] WAIT_FOR_CHANGE %d 回連続 → 中央タップでエスケープ",
+                    "[WFC_ESCAPE] WAIT_FOR_CHANGE %d 回連続 → 盲タップせず次ループへ",
                     state._wfc_consecutive,
                 )
-                tap_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state,
-                           desc="WFC_CENTER_ESCAPE")
                 state._wfc_consecutive = 0
                 state.last_phash = ""
-                continue
         else:
             state._wfc_consecutive = 0
 
@@ -2836,11 +2830,9 @@ def main():
                             state.pending_candidate_idx = 0
                         else:
                             logger.warning(
-                                "[SCENE_REEVAL_ESCAPE] 再判定でも '%s' → 中央タップでエスケープ",
+                                "[SCENE_REEVAL_ESCAPE] 再判定でも '%s' → 盲タップせず次ループへ",
                                 action,
                             )
-                            tap_device(ANALYSIS_W // 2, ANALYSIS_H // 2, state,
-                                       desc="REEVAL_CENTER_ESCAPE")
                         state.last_action = "REEVAL_CENTER_ESCAPE"
             except Exception as _re_err:
                 logger.debug("[SCENE_REEVAL] 再評価例外: %s", _re_err)

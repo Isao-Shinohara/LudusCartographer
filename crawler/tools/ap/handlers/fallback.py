@@ -47,13 +47,14 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         ok_item = next((item for item in ocr if "OK" in item.get("text", "")), None)
         if ok_item and ok_item["center"][0] > W * 0.5:
             ocr_ok_x, ocr_ok_y = ok_item["center"]
+            ok_x, ok_y = smart_tap_button(analysis_path, ocr_ok_x, ocr_ok_y, ocr_items=ocr)
+            logger.info(">>> 【システムダイアログ】 '%s' → SmartTap OK (%d,%d)",
+                        sys_dlg_match["text"][:15], ok_x, ok_y)
+            tap_device(ok_x, ok_y, state, "SYSTEM_DLG_OK")
+            return "SYSTEM_DLG_OK", 1.0
         else:
-            ocr_ok_x, ocr_ok_y = int(W * 0.65), int(H * 0.88)  # 比率ベースフォールバック
-        ok_x, ok_y = smart_tap_button(analysis_path, ocr_ok_x, ocr_ok_y, ocr_items=ocr)
-        logger.info(">>> 【システムダイアログ】 '%s' → SmartTap OK (%d,%d)",
-                    sys_dlg_match["text"][:15], ok_x, ok_y)
-        tap_device(ok_x, ok_y, state, "SYSTEM_DLG_OK")
-        return "SYSTEM_DLG_OK", 1.0
+            logger.info(">>> 【システムダイアログ】 '%s' → OK 未検出、盲タップせずスキップ",
+                        sys_dlg_match["text"][:15])
 
     # ─── メンテナンス/アップデート検出 ───
     _maint_kws = ["メンテナンス", "Maintenance", "maintenance"]
@@ -85,9 +86,8 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             logger.info(">>> 【利用規約同意】 '%s' (%d,%d) タップ", agree_ocr["text"][:10], cx, cy)
             tap_device(cx, cy, state, "AGREE_TOS")
         else:
-            _tos_x, _tos_y = roi_to_device(int(W * 0.72), int(H * 0.89), state.game_roi)
-            logger.info(">>> 【利用規約同意】 固定座標 (%d,%d) タップ", _tos_x, _tos_y)
-            tap_device(_tos_x, _tos_y, state, "AGREE_TOS")
+            logger.info(">>> 【利用規約同意】 OCR で同意ボタン未検出 → 盲タップせずスキップ")
+            return None
         return "AGREE_TOS", 2.0
 
     # ─── 規約同意 ───

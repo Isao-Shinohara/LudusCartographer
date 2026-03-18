@@ -250,11 +250,7 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
             logger.info(">>> ADV ↓未検出 → SKIP '%s' (%d,%d)", _skip_match["text"], sx, sy)
             tap_device(sx, sy, state, "ADV_SKIP_TAP")
             return "ADV_SKIP_TAP", 1.0
-        # ↓テンプレ不一致でもADVツールバーは確定 → ↓想定位置にフォールバックタップ
-        # NOTE: BUBBLE_TAP は ADV ツールバー誤タップのリスクがあるためここでは使わない
-        _fb_x, _fb_y = roi_to_device(int(W * 0.855), int(H * 0.903), state.game_roi)
-        logger.info(">>> ADV ↓未検出 → フォールバックタップ (%d,%d)", _fb_x, _fb_y)
-        tap_device(_fb_x, _fb_y, state, "ADV_NEXT_FALLBACK")
-        return "ADV_NEXT_FALLBACK", 0.3
+        # ↓テンプレ不一致 + SKIP なし → 盲タップせず None を返して OCR パスへ
+        logger.info(">>> ADV ↓未検出 + SKIP なし → フォールスルー")
 
     return None

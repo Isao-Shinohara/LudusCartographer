@@ -331,12 +331,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                     swipe_device(sx, sy, ex, ey, dur, state=state, desc="SWIPE_UP_ASSET")
                     return "SWIPE_UP", 1.5
                 else:
-                    logger.info(">>> [SWIPE_UP] ダイアログKW検出 → スキップ (#0-DIALOGへ)  ← safety net")
-                    # ここに到達した場合は #0-DIALOG が None を返した異常ケース
-                    # 固定座標でダイアログ ▷ をタップして続行
-                    _dnf_x, _dnf_y = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)
-                    tap_device(_dnf_x, _dnf_y, state, "DIALOG_NEXT_FALLBACK")
-                    return "DIALOG_NEXT_FALLBACK", 1.0
+                    logger.info(">>> [SWIPE_UP] ダイアログKW検出だが #0-DIALOG が None → 盲タップせず次ループへ")
             # チュートリアル指差し: 金色ハイライトされたUI要素を方向非依存で検出→タップ
             if action == "TAP_HIGHLIGHTED_NAV":
                 # 白ハンドポインタ (テンプレートマッチ) で方向を取得
