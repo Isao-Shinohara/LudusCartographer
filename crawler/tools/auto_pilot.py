@@ -548,7 +548,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     NOTE: img_path は呼び出し元で prepare_analysis_image() 済みの 1520x720 画像。
     テンプレートマッチの ROI・スケールが ANALYSIS_W/H と一致する。
 
-    Returns: "MOVIE" | "BATTLE" | "ADV" | "UNKNOWN"
+    Returns: "MOVIE" | "BATTLE" | "ADV" | "GACHA" | "UNKNOWN"
     """
 
     # ── MOVIE 継続: phash が安定するまで即 MOVIE を返す ──
@@ -661,6 +661,20 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         state.phash_moving_count += 1
     else:
         state.phash_moving_count = 0
+
+    # ── ガチャ演出画面: SKIP ボタン + 暗い背景 → タップで進行 ──
+    # 光の玉が並ぶ画面。MOVIE ではなくタップで 1 つずつキャラが表示される。
+    # SKIP テンプレート + 暗背景で判定し、UNKNOWN として OCR パスでタップさせる。
+    if img_path:
+        _gacha_skip = detect_movie_skip_button(img_path)
+        if _gacha_skip:
+            _gacha_img = imread_cached(img_path)
+            if _gacha_img is not None:
+                _gacha_brightness = float(cv2.cvtColor(_gacha_img, cv2.COLOR_BGR2GRAY).mean())
+                if _gacha_brightness < 80:
+                    logger.info("[SCENE_EARLY] ガチャ演出検出 (SKIP+暗背景 brightness=%.0f) → GACHA",
+                                _gacha_brightness)
+                    return "GACHA"
 
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
     # チュートリアル中 + download_active → DL完了ダイアログ優先 (SKIPボタン以外はスキップ)
@@ -2080,6 +2094,18 @@ def main():
                 state.total_loop_ms += _fms
                 logger.info("  [PERF] Loop %.0fms (MOVIE_EARLY)", _fms)
                 continue
+
+        elif _early_scene == "GACHA":
+            # ガチャ演出: 画面中央タップで1つずつキャラ表示
+            state.current_scene = "GACHA"
+            tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "GACHA_TAP")
+            logger.info("[GACHA] 画面タップで演出進行")
+            state.last_phash = ""
+            time.sleep(1.5)
+            _fms = (time.time() - _loop_t0) * 1000
+            state.total_loop_ms += _fms
+            logger.info("  [PERF] Loop %.0fms (GACHA)", _fms)
+            continue
 
         elif _early_scene == "BATTLE":
             state.current_scene = "BATTLE"
