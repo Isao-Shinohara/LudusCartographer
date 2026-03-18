@@ -2162,38 +2162,7 @@ def main():
                     state.last_action = "MINI_CONV_TAP"
                     state.last_phash = ""
                     continue
-                # ── ツールバーなし + ↓なし + 吹き出しなし → アニメーション検査後にSCENE_TAP ──
-                # (MOVIE判定はdetect_scene_earlyで毎ループ実行済み — ここでは不要)
-                time.sleep(0.5)
-                _st_retry_path, _st_retry_w, _st_retry_h, _ = take_screenshot()
-                if _st_retry_path:
-                    _st_retry_img = prepare_analysis_image(_st_retry_path, _st_retry_w, _st_retry_h)
-                    _st_retry_ph = compute_phash(_st_retry_img) if _st_retry_img else ""
-                    _st_retry_dist = phash_distance(cur_phash, _st_retry_ph) if cur_phash and _st_retry_ph else 0
-                    if _st_retry_dist >= PHASH_THRESHOLD:
-                        logger.info("[iter %d] SCENE_TAP前検査: 0.5s後phash_dist=%d → アニメーション中 → 待機",
-                                    i, _st_retry_dist)
-                        state.last_action = "ANIM_WAIT"
-                        state.last_phash = _st_retry_ph
-                        continue
-                # SCENE_TAP 連続上限: 15回連続で画面が進まない → 強制 OCR へ
-                _scene_tap_count = getattr(state, "_scene_tap_count", 0) + 1
-                state._scene_tap_count = _scene_tap_count
-                if _scene_tap_count >= 15:
-                    logger.warning("[iter %d] SCENE_TAP %d回連続 → 強制 OCR へフォールスルー",
-                                   i, _scene_tap_count)
-                    state._scene_tap_count = 0
-                    state.same_phash_count = FORCE_ANALYZE_AFTER
-                    # OCR パスへ落とすため continue しない
-                else:
-                    _st_x = int(ANALYSIS_W * 0.5)
-                    _st_y = int(ANALYSIS_H * 0.5)
-                    logger.info("[iter %d] phash_dist=%d 非動画静止画面 → SCENE_TAP (%d,%d)",
-                                i, dist, _st_x, _st_y)
-                    tap_device(_st_x, _st_y, state, "SCENE_TAP")
-                    state.last_action = "SCENE_TAP"
-                    state.last_phash = cur_phash
-                    continue
+                # ── ツールバーなし + ↓なし + 吹き出しなし → OCR パスへフォールスルー ──
 
         else:
             # 画面変化なし
@@ -2358,27 +2327,7 @@ def main():
                             state.last_action = "MOVIE_WAIT"
                             state.stall_start = 0.0  # ムービー待機中はスタックタイマー抑制
                             continue
-                        # 金色⏭なし → アニメーション検査後にSCENE_TAP
-                        time.sleep(0.5)
-                        _st2_path, _st2_w, _st2_h, _ = take_screenshot()
-                        if _st2_path:
-                            _st2_img = prepare_analysis_image(_st2_path, _st2_w, _st2_h)
-                            _st2_ph = compute_phash(_st2_img) if _st2_img else ""
-                            _st2_dist = phash_distance(cur_phash, _st2_ph) if cur_phash and _st2_ph else 0
-                            if _st2_dist >= PHASH_THRESHOLD:
-                                logger.info("[iter %d] SCENE_TAP前検査: 0.5s後phash_dist=%d → アニメーション中 → 待機",
-                                            i, _st2_dist)
-                                state.last_action = "ANIM_WAIT"
-                                state.stall_start = 0.0
-                                state.last_phash = _st2_ph
-                                continue
-                        _st_x = int(ANALYSIS_W * 0.5)
-                        _st_y = int(ANALYSIS_H * 0.5)
-                        logger.info("[iter %d] 静止画面(非動画) → SCENE_TAP (%d,%d)", i, _st_x, _st_y)
-                        tap_device(_st_x, _st_y, state, "SCENE_TAP")
-                        state.last_action = "SCENE_TAP"
-                        state.last_phash = cur_phash
-                        continue
+                        # 金色⏭なし → OCR パスへフォールスルー
                 state.last_phash = cur_phash
                 time.sleep(_poll)
                 continue
