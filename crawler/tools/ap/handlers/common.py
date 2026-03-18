@@ -49,8 +49,10 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
     analysis_path = ctx.analysis_path
 
     # ── 【#-5】ブラウザ脱出 — WEB SHOP 等の外部リンクを検出したら即 BACK ──
+    # 「今日は表示しない」があればお知らせポップアップ内のテキストなのでスキップ
     _browser_kw = ["WEB SHOP", "好評配信中", "doka-exedra", "magia-exedra"]
-    if any(kw in joined for kw in _browser_kw):
+    _is_notice_ctx = any("今日は表示しない" in t for t in texts)
+    if not _is_notice_ctx and any(kw in joined for kw in _browser_kw):
         logger.warning("[BROWSER_ESCAPE] ブラウザ画面検出 (%s) → BACK キーで脱出",
                        [kw for kw in _browser_kw if kw in joined])
         adb("shell input keyevent KEYCODE_BACK")
