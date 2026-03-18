@@ -17,7 +17,6 @@ from tools.ap.image_proc import (
     ASSET_MANAGER,
     detect_tutorial_gold_button_tap,
     detect_tutorial_overlay,
-    find_finger_blobs,
     find_gold_frame_near,
     roi_to_device,
 )
@@ -92,7 +91,7 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     # ── チュートリアル判定: テンプレートマッチ (tutorial_hand_pointer) を主判定 ──
     # チュートリアル中のホーム画面には指アイコンが常に1つだけ表示される。
     # チュートリアル完了後は指アイコンなし。
-    # find_finger_blobs は偽陽性が多い (装飾で18個検出等) ためテンプレートを優先。
+    # テンプレートマッチで指アイコンを正確に検出する。
     _hand_match = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path) if analysis_path else None
     _has_hand = _hand_match is not None and _hand_match[2] >= 0.70
     _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
