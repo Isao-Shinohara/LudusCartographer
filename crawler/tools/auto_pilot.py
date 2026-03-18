@@ -559,11 +559,6 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     Returns: "MOVIE" | "BATTLE" | "ADV" | "UNKNOWN"
     """
 
-    # ── MOVIE 継続: 動画再生中は絶対にタップしない (CLAUDE.md §0) ──
-    # 動画は再生完了で自動遷移する。脱出は handle_movie のハードリミットに委ねる。
-    if state.current_scene == "MOVIE":
-        return "MOVIE"
-
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     # 10回に1回テンプレートで実在確認 (Result画面等での誤BATTLE継続を防止)
     if state.current_scene == "BATTLE" and dist < 30:
@@ -667,6 +662,11 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         state.phash_moving_count += 1
     else:
         state.phash_moving_count = 0
+
+    # ── MOVIE 継続: ADV/BATTLE が検出されずここに到達 → MOVIE を維持 ──
+    # 一時停止・再開は handle_movie 内で処理する
+    if state.current_scene == "MOVIE":
+        return "MOVIE"
 
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
     # チュートリアル中 + download_active → DL完了ダイアログ優先 (SKIPボタン以外はスキップ)
