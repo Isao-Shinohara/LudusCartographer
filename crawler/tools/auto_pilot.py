@@ -1929,6 +1929,18 @@ def main():
 
         # ── 2) 暗転検出 ──
         if is_dark_screen(img_path):
+            # チュートリアルウォーク（暗い廊下）は暗転ではない → スワイプで進行
+            if state.consecutive_blackouts >= 10 and is_tutorial_walk_scene(img_path):
+                logger.info("[iter %d] 暗転→TutorialWalk検出 → スワイプで進行", i)
+                _walk_sx, _walk_sy = roi_to_device(
+                    int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.99), state.game_roi)
+                _walk_ex, _walk_ey = roi_to_device(
+                    int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.02), state.game_roi)
+                swipe_device(_walk_sx, _walk_sy, _walk_ex, _walk_ey, 10000,
+                             state=state, desc="TutorialWalk_UP")
+                state.consecutive_blackouts = 0
+                state.last_phash = ""
+                continue
             state.total_blackout_skipped += 1
             state.consecutive_blackouts += 1
             if state.total_blackout_skipped % 5 == 1:
