@@ -1933,10 +1933,11 @@ def main():
             # バトル等の暗い画面で誤検出しないようテンプレートで除外
             _is_walk = False
             if state.consecutive_blackouts >= 10 and is_tutorial_walk_scene(img_path):
+                _walk_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
                 _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
                                int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
                 _has_battle = any(
-                    (m := ASSET_MANAGER.match_single(b, _early_analysis, roi=_battle_roi))
+                    (m := ASSET_MANAGER.match_single(b, _walk_analysis, roi=_battle_roi))
                     and m[2] >= 0.50
                     for b in ("battle_normal_attack", "battle_skill", "battle_special")
                 )
