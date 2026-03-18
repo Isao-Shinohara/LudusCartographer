@@ -28,7 +28,7 @@ from tools.ap.device import adb, tap_device, take_screenshot
 from tools.ap.image_proc import (
     _run_battle_glow_sm,
     detect_notice_popup, detect_mini_conversation,
-    find_finger_blobs, detect_white_hand_pointer,
+    detect_white_hand_pointer,
     detect_dialog_frame_and_nav, process_paging_dialog,
     count_page_dots, detect_dialog, detect_dialog_nav,
     ASSET_MANAGER, prepare_analysis_image,
@@ -307,18 +307,19 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     ctx.is_adv_or_movie = _is_adv_or_movie
     _white_hand_pos = None  # (cx, cy, score, direction) or None
     if analysis_path is not None and not _is_result_screen and not _is_notice and not _is_adv_or_movie and not _is_mini_conv:
-        _pdg_blobs = find_finger_blobs(analysis_path, min_area=300, max_area=5000)
-        _pdg_blobs = [b for b in _pdg_blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
-        if _pdg_blobs:
-            # × ボタンが高信頼度で存在する場合は指ガードを抑制
-            _close_match = ASSET_MANAGER.match_single("tutorial_dialog_close", analysis_path)
-            if _close_match and _close_match[2] >= 0.85:
-                logger.info("[PRE_DIALOG_GUARD] 指 %d 個だが ×(%.3f) → ガード抑制",
-                            len(_pdg_blobs), _close_match[2])
-            else:
-                _pre_dialog_finger = True
-                logger.info("[PRE_DIALOG_GUARD] 指ブロブ %d 個検出 → #0-DIALOG スキップ",
-                            len(_pdg_blobs))
+        _pdg_match = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path)
+        if _pdg_match and _pdg_match[2] >= 0.70:
+            _pdg_cx, _pdg_cy = _pdg_match[0], _pdg_match[1]
+            if _pdg_cy > _SPATIAL_MARGIN_TOP and _pdg_cx < W - _CLOSE_BTN_OFFSET:
+                # × ボタンが高信頼度で存在する場合は指ガードを抑制
+                _close_match = ASSET_MANAGER.match_single("tutorial_dialog_close", analysis_path)
+                if _close_match and _close_match[2] >= 0.85:
+                    logger.info("[PRE_DIALOG_GUARD] 指(%.3f)だが ×(%.3f) → ガード抑制",
+                                _pdg_match[2], _close_match[2])
+                else:
+                    _pre_dialog_finger = True
+                    logger.info("[PRE_DIALOG_GUARD] 指テンプレ(%.3f) (%d,%d) → #0-DIALOG スキップ",
+                                _pdg_match[2], _pdg_cx, _pdg_cy)
         if not _pre_dialog_finger:
             _white_hand_pos = detect_white_hand_pointer(analysis_path, threshold=0.90)
             if _white_hand_pos is not None:

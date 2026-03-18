@@ -120,7 +120,9 @@ def main():
 
         h, w = img.shape[:2]
 
-        # 指差しアイコン検出
+        # TODO: battle_loop.py is legacy (not used by auto_pilot.py).
+        # Replace find_finger_blobs with ASSET_MANAGER.match_single("tutorial_hand_pointer", ...)
+        # when this file is modernized. Currently uses local find_finger_blobs on raw numpy array.
         fingers = find_finger_blobs(img, min_area=500)
 
         # 右パネル (x > 1050) の指差し

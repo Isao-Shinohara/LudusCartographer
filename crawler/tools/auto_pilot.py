@@ -186,7 +186,7 @@ _pilot_state_ref: Optional["PilotState"] = None
 from tools.ap.image_proc import (  # noqa: E402
     detect_game_roi, roi_to_device, is_dark_screen, is_tutorial_walk_scene,
     prepare_analysis_image,
-    find_finger_blobs, detect_white_hand_pointer, create_finger_mask_image,
+    detect_white_hand_pointer, create_finger_mask_image,
     detect_guide_glow, _run_battle_glow_sm, detect_active_battle_char,
     find_gold_frame_near, detect_adv_advance_icon,
     detect_movie_skip_button, detect_mini_conversation,
@@ -262,18 +262,7 @@ def collect_secondary_candidates(
                 x=_cx, y=_cy, action="CAND_CONFIRM_OK",
                 priority=30, desc=f"confirm '{confirm_btn['text']}'"))
 
-    # ── 4. 代替指ブロブ (2番目以降) (priority=40) ──
-    if primary_action == "MOYA_TAP" and analysis_path is not None:
-        blobs = find_finger_blobs(analysis_path, min_area=300, max_area=15000)
-        blobs = [b for b in blobs
-                 if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
-        # 1番目は主候補で使用済み → 2番目以降を追加
-        for _bi, blob in enumerate(blobs[1:_MAX_CANDIDATES], start=2):
-            _tip_y = blob[4] + int(blob[6] * _FINGER_TIP_RATIO)
-            _tip_x = blob[3] + blob[5] // 2
-            candidates.append(TapCandidate(
-                x=_tip_x, y=_tip_y, action=f"CAND_FINGER_{_bi}",
-                priority=40, desc=f"finger blob #{_bi}"))
+    # ── 4. (removed) テンプレートマッチは1結果のみ → 代替指ブロブ不要 ──
 
     # ── 5. 閉じるボタン OCR (閉じる/Close) (priority=50) ──
     if not primary_action.startswith("CLOSE"):
@@ -848,10 +837,13 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     _rapid_action = ""
     _rapid_double = False
 
-    # ── 共通: 指ブロブ検出 ──
-    _rapid_blobs = find_finger_blobs(analysis_path, min_area=200, dark_mode=True)
-    _rapid_blobs = [b for b in _rapid_blobs
-                    if b[1] > _SPATIAL_MARGIN_TOP and b[0] < ANALYSIS_W - _CLOSE_BTN_OFFSET]
+    # ── 共通: 指テンプレートマッチ検出 ──
+    _rapid_finger = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path)
+    _rapid_blobs = []
+    if _rapid_finger and _rapid_finger[2] >= 0.70:
+        _rf_cx, _rf_cy = _rapid_finger[0], _rapid_finger[1]
+        if _rf_cy > _SPATIAL_MARGIN_TOP and _rf_cx < ANALYSIS_W - _CLOSE_BTN_OFFSET:
+            _rapid_blobs = [(_rf_cx, _rf_cy, _rapid_finger[2])]
 
     # ── Phase 0: チュートリアル金枠 → 最優先タップ ──
     # 指ブロブ有無に関わらず金枠を常時チェック (~10ms)
@@ -875,26 +867,20 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
             if _is_overlay:
                 logger.info("[BATTLE_RAPID] 暗転オーバーレイ検出 → 全画面金枠探索で (%d,%d) 発見",
                             _rapid_tx, _rapid_ty)
-    # フォールバック: detect_tutorial_gold_button_tap が条件で弾いた場合でも
-    # 大面積ブロブ + find_gold_frame_near で金枠が見つかればそちらを使用
+    # フォールバック: 指テンプレ検出 + find_gold_frame_near で金枠が見つかればそちらを使用
     # バトル: 右半分 (x>W/2) かつ y>35% のみ (左キャラアイコン・上部UI排除)
     # 暗転オーバーレイ中は全画面許可
     if not _rapid_action and _rapid_blobs:
-        for _rb in _rapid_blobs:
-            if _rb[2] >= 15000:  # 大面積ブロブ
-                _gf = find_gold_frame_near(analysis_path, _rb[0], _rb[1], search_radius=200)
-                if _gf is not None:
-                    # バトル中: 右半分・下部のみ有効 (上部UI・左キャラ排除)
-                    # 暗転オーバーレイ中はバイパス
-                    if not _is_overlay and (_gf[0] < ANALYSIS_W * 0.5 or _gf[1] < ANALYSIS_H * 0.35):
-                        logger.debug("[BATTLE_RAPID] 金枠フォールバック排除: gold(%d,%d) 左側/上部",
-                                     _gf[0], _gf[1])
-                        continue
-                    _rapid_tx, _rapid_ty = _gf[0], _gf[1]
-                    _rapid_action = "BATTLE_RAPID_GOLD_FRAME_FALLBACK"
-                    logger.info("[BATTLE_RAPID] 金枠フォールバック: blob(%d,%d) → gold(%d,%d)",
-                                _rb[0], _rb[1], _gf[0], _gf[1])
-                    break
+        _rb = _rapid_blobs[0]
+        _gf = find_gold_frame_near(analysis_path, _rb[0], _rb[1], search_radius=200)
+        if _gf is not None:
+            # バトル中: 右半分・下部のみ有効 (上部UI・左キャラ排除)
+            # 暗転オーバーレイ中はバイパス
+            if _is_overlay or (_gf[0] >= ANALYSIS_W * 0.5 and _gf[1] >= ANALYSIS_H * 0.35):
+                _rapid_tx, _rapid_ty = _gf[0], _gf[1]
+                _rapid_action = "BATTLE_RAPID_GOLD_FRAME_FALLBACK"
+                logger.info("[BATTLE_RAPID] 金枠フォールバック: finger(%d,%d) → gold(%d,%d)",
+                            _rb[0], _rb[1], _gf[0], _gf[1])
 
     # ── Phase A: アクティブキャラ検出 (赤/ピンク発光) ──
     _active_char = detect_active_battle_char(analysis_path, ANALYSIS_W, ANALYSIS_H)
@@ -2478,7 +2464,7 @@ def main():
             state.result_total_taps = 0
 
         # ── 4.3) BATTLE_RAPID: 発光/MOYA 検知即タップ → OCR 完全スキップ ──
-        # detect_guide_glow() + find_finger_blobs() は OpenCV のみ (10-50ms)
+        # detect_guide_glow() + ASSET_MANAGER.match_single() は OpenCV のみ (10-50ms)
         # OCR (6-8s) の 40-50 倍高速
         # ※ 強制 OCR (phash 静止 → ダイアログ可能性) 時は RAPID をスキップして OCR に回す
         #
@@ -2519,10 +2505,13 @@ def main():
             _rapid_action = ""
             _rapid_double = False
 
-            # ── 共通: 指ブロブ検出 (Phase 0 / Phase B で共用) ──
-            _rapid_blobs = find_finger_blobs(analysis_path, min_area=200, dark_mode=True)
-            _rapid_blobs = [b for b in _rapid_blobs
-                            if b[1] > _SPATIAL_MARGIN_TOP and b[0] < ANALYSIS_W - _CLOSE_BTN_OFFSET]
+            # ── 共通: 指テンプレートマッチ検出 (Phase 0 / Phase B で共用) ──
+            _rapid_finger = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path)
+            _rapid_blobs = []
+            if _rapid_finger and _rapid_finger[2] >= 0.70:
+                _rf_cx, _rf_cy = _rapid_finger[0], _rapid_finger[1]
+                if _rf_cy > _SPATIAL_MARGIN_TOP and _rf_cx < ANALYSIS_W - _CLOSE_BTN_OFFSET:
+                    _rapid_blobs = [(_rf_cx, _rf_cy, _rapid_finger[2])]
 
             # ── Phase 0: チュートリアル金枠 → 最優先タップ ──
             # 指ブロブ有無に関わらず金枠を常時チェック (extent<0.55 で通常ボタンと区別)

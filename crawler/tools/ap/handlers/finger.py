@@ -28,7 +28,7 @@ from tools.ap.constants import (
     ANALYSIS_W, ANALYSIS_H, BATTLE_WAIT, PHASH_THRESHOLD,
 )
 from tools.ap.image_proc import (
-    _run_battle_glow_sm, find_finger_blobs, find_gold_frame_near,
+    _run_battle_glow_sm, find_gold_frame_near,
     create_finger_mask_image, detect_tutorial_gold_button_tap,
     detect_tutorial_overlay, roi_to_device, ASSET_MANAGER,
     detect_adv_scene, prepare_analysis_image,
@@ -162,7 +162,8 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
                     return "CHALLENGE_TAP", 1.0
             # ── ホームチュートリアル: 指アイコン+金枠がある場合は優先タップ ──
             # 回数制限なし: 指+金枠が実在する限り何回でもタップ
-            _ht_blobs = find_finger_blobs(analysis_path, home_mode=True) if analysis_path else []
+            _ht_match = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path) if analysis_path else None
+            _ht_blobs = [(_ht_match[0], _ht_match[1], _ht_match[2], _ht_match[0] - 20, _ht_match[1] - 40, 40, 80)] if (_ht_match and _ht_match[2] >= 0.70) else []
             _ht_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
             # 暗転オーバーレイ検出 (チュートリアル中は非ハイライト部分が暗い)
             _ht_dimmed = detect_tutorial_overlay(analysis_path) if analysis_path else False
@@ -226,13 +227,17 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
             blobs = []
         else:
             state.home_tutorial_tap_count = 0  # ホーム以外 → カウンタリセット
-            # バトル中は dark_mode=True + min_area=200 で暗背景の指アイコンも検知
-            _blob_dark = is_battle_screen
-            blobs = find_finger_blobs(analysis_path,
-                                      min_area=200 if _blob_dark else 400,
-                                      dark_mode=_blob_dark)
-            # 画面端の誤検出を除去: 上端/右端最端はシステムUI
-            blobs = [b for b in blobs if b[1] > _SPATIAL_MARGIN_TOP and b[0] < W - _CLOSE_BTN_OFFSET]
+            # テンプレートマッチで指アイコン検出
+            _finger_match = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path)
+            if _finger_match and _finger_match[2] >= 0.70:
+                _fm_cx, _fm_cy = _finger_match[0], _finger_match[1]
+                # 画面端の誤検出を除去: 上端/右端最端はシステムUI
+                if _fm_cy > _SPATIAL_MARGIN_TOP and _fm_cx < W - _CLOSE_BTN_OFFSET:
+                    blobs = [(_fm_cx, _fm_cy, _finger_match[2], _fm_cx - 20, _fm_cy - 40, 40, 80)]
+                else:
+                    blobs = []
+            else:
+                blobs = []
         if blobs:
             # バトル中は中央エリア(バトルフィールド)の肌色は誤検出なので無視
             # 優先順位: 左キャラカード(x<600,y>550) > 右パネル > 下部UI(y>H*0.8)
