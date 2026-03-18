@@ -156,12 +156,12 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
                 if _gf:
                     _tap_target = (_gf[0], _gf[1])
                     logger.info(">>> ホームチュートリアル: 指(%d,%d)→金枠(%d,%d) dimmed=%s [%d回目]",
-                                _bx, _by, _gf[0], _gf[1], _home_dimmed, state.home_tutorial_tap_count + 1)
+                                _bx, _by, _gf[0], _gf[1], False, state.home_tutorial_tap_count + 1)
                 elif _home_gold:
                     _tap_target = _home_gold
                     logger.info(">>> ホームチュートリアル: 指(%d,%d)→GoldBtn(%d,%d) [近傍外] [%d回目]",
                                 _bx, _by, *_home_gold, state.home_tutorial_tap_count + 1)
-                elif _home_dimmed:
+                elif False:
                     _tip_y = _chosen_blob[4] + int(_chosen_blob[6] * 0.1)
                     _tap_target = (_chosen_blob[3] + _chosen_blob[5] // 2, _tip_y)
                     logger.info(">>> ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠なし+暗転あり]",
@@ -178,7 +178,7 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
         elif _home_gold:
             # 指なし+金枠あり: dimmed でも非 dimmed でもチュートリアル金枠の可能性あり
             _tap_target = _home_gold
-            if _home_dimmed:
+            if False:
                 logger.info(">>> ホームチュートリアル: 金ボタン(%d,%d) [暗転あり]", *_home_gold)
             else:
                 logger.info(">>> ホームチュートリアル: 金ボタン(%d,%d) [暗転なし・指なし]", *_home_gold)
