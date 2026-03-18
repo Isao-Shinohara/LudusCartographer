@@ -365,12 +365,14 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                             if _btn_name in ("nav_back", "back_arrow"):
                                 tap_x, tap_y = _ax, _ay
                             else:
-                                # 金枠: 指の方向に120pxオフセット
+                                # 金枠: 指の方向に120pxオフセット（画面内にクリップ）
                                 _offset = 120
                                 if _hand_dir == "up":
-                                    tap_x, tap_y = _hx, _hy - _offset
+                                    tap_x = _hx
+                                    tap_y = max(10, _hy - _offset)
                                 elif _hand_dir == "down":
-                                    tap_x, tap_y = _hx, _hy + _offset
+                                    tap_x = _hx
+                                    tap_y = min(H - 10, _hy + _offset)
                                 else:
                                     tap_x, tap_y = _ax, _ay
                             _tmpl_found = True
