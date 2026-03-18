@@ -1930,7 +1930,19 @@ def main():
         # ── 2) 暗転検出 ──
         if is_dark_screen(img_path):
             # チュートリアルウォーク（暗い廊下）は暗転ではない → スワイプで進行
+            # バトル等の暗い画面で誤検出しないようテンプレートで除外
+            _is_walk = False
             if state.consecutive_blackouts >= 10 and is_tutorial_walk_scene(img_path):
+                _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
+                               int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+                _has_battle = any(
+                    (m := ASSET_MANAGER.match_single(b, _early_analysis, roi=_battle_roi))
+                    and m[2] >= 0.50
+                    for b in ("battle_normal_attack", "battle_skill", "battle_special")
+                )
+                if not _has_battle:
+                    _is_walk = True
+            if _is_walk:
                 logger.info("[iter %d] 暗転→TutorialWalk検出 → スワイプで進行", i)
                 _walk_sx, _walk_sy = roi_to_device(
                     int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.99), state.game_roi)
