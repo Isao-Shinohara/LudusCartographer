@@ -1608,49 +1608,15 @@ def detect_notice_popup(
 ) -> bool:
     """お知らせポップアップを検出する。
 
-    判定条件 (いずれかで確定):
-      1. OCR で「今日は表示しない」を検出 (確定条件)
-      2. 補助条件: × ボタン + ページドット + 背景ぼかし の全組合せ
+    判定条件:
+      OCR で「今日は表示しない」を検出 (確定条件のみ)
+
+    NOTE: 補助条件 (× + ページドット + 背景ぼかし) は ADV セリフ画面等で
+    偽陽性が多発しデッドロックの原因になるため廃止。
     """
-    # ── 条件1: OCR テキスト (確定) ──
     if any("今日は表示しない" in t for t in ocr_texts):
         logger.info("[NOTICE_POPUP] 「今日は表示しない」検出 → お知らせポップアップ確定")
         return True
-
-    # ── 条件2: 視覚的特徴の組合せ ──
-    try:
-        img = imread_cached(img_path)
-        if img is None:
-            return False
-        _H, _W = img.shape[:2]
-
-        # 2a: × ボタン (右上テンプレートマッチ)
-        _has_close = False
-        if _DIALOG_CLOSE_TEMPLATE.exists():
-            _rx1 = int(_W * 0.85)
-            _ry2 = int(_H * 0.15)
-            _roi_x = img[0:_ry2, _rx1:_W]
-            if _roi_x.size > 0:
-                _tpl = imread_cached(_DIALOG_CLOSE_TEMPLATE)
-                if (_roi_x.shape[0] >= _tpl.shape[0]
-                        and _roi_x.shape[1] >= _tpl.shape[1]):
-                    _r = cv2.matchTemplate(_roi_x, _tpl, cv2.TM_CCOEFF_NORMED)
-                    _, _mv, _, _ = cv2.minMaxLoc(_r)
-                    _has_close = _mv >= 0.65
-
-        # 2b: ページドット (画面下部中央の小円群)
-        _has_dots = _detect_page_dots(img, _H, _W)
-
-        # 2c: 背景ぼかし (HSV彩度低下)
-        _has_blur = detect_background_blur(img, _H, _W)
-
-        if _has_close and _has_dots and _has_blur:
-            logger.info("[NOTICE_POPUP] 補助条件成立: ×=%s dots=%s blur=%s",
-                        _has_close, _has_dots, _has_blur)
-            return True
-    except Exception as _e:
-        logger.debug("[NOTICE_POPUP] 検出エラー: %s", _e)
-
     return False
 
 
