@@ -313,9 +313,16 @@ venv/bin/python -u tools/auto_pilot.py
 - 質問形式のメッセージ（「なぜ？」「理由は？」）→ まず説明のみ返す
 - コード修正はユーザーが明示的に指示した場合のみ実行
 
-### HSV 色検出は使わない
+### HSV 色検出は使わない — テンプレートマッチへの移行を推進
 - テンプレートマッチング (ASSET_MANAGER) を第一選択にする
 - ゲーム UI に金色装飾が多すぎるため、HSV 色範囲での検出は必ず偽陽性を生む
+- `find_finger_blobs`（HSV 肌色検出）は廃止済み → `tutorial_hand_pointer` テンプレートに置換
+- **金枠検出の移行課題:** 以下の HSV ベース関数はテンプレートマッチ (`gold_frame_small` 等) への置き換えを検討中。周回時に各関数の偽陽性・検出漏れを監視し、テンプレート化の可否を判断する
+  - `find_gold_frame_near` — 金枠ボタン検出
+  - `detect_tutorial_gold_button_tap` — チュートリアル金枠ボタン
+  - `detect_tutorial_gold_swipe` — スワイプ指（金色+軌跡）
+  - `smart_tap_button` — 金色ボタン枠の中心
+  - `detect_guide_glow` — チュートリアル光エフェクト
 
 ### OCR エンジン互換性維持
 - Vision OCR 向けに修正する際、PaddleOCR で動かなくなる不具合を出さない
