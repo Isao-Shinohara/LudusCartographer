@@ -562,6 +562,21 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     Returns: "MOVIE" | "BATTLE" | "ADV" | "UNKNOWN"
     """
 
+    # ── MOVIE 継続: phash が安定するまで即 MOVIE を返す ──
+    # 動画再生中 (dist >= 3) はフレームが変化するので MOVIE 維持。
+    # phash が安定 (dist < 3 が 3 回以上) したら動画終了とみなし ADV/BATTLE 再判定を許可。
+    _MOVIE_STABLE_THRESHOLD = 3  # dist < 3 がこの回数続いたら安定とみなす
+    if state.current_scene == "MOVIE":
+        if dist >= 3:
+            state._movie_stable_count = 0
+            return "MOVIE"
+        state._movie_stable_count = getattr(state, "_movie_stable_count", 0) + 1
+        if state._movie_stable_count < _MOVIE_STABLE_THRESHOLD:
+            return "MOVIE"
+        # phash 安定 → 動画終了の可能性 → ADV/BATTLE 判定へフォールスルー
+        logger.info("[SCENE_EARLY] MOVIE中phash安定 (stable=%d) → ADV/BATTLE再判定",
+                    state._movie_stable_count)
+
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     # 10回に1回テンプレートで実在確認 (Result画面等での誤BATTLE継続を防止)
     if state.current_scene == "BATTLE" and dist < 30:
@@ -665,11 +680,6 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         state.phash_moving_count += 1
     else:
         state.phash_moving_count = 0
-
-    # ── MOVIE 継続: ADV/BATTLE が検出されずここに到達 → MOVIE を維持 ──
-    # 一時停止・再開は handle_movie 内で処理する
-    if state.current_scene == "MOVIE":
-        return "MOVIE"
 
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
     # チュートリアル中 + download_active → DL完了ダイアログ優先 (SKIPボタン以外はスキップ)
@@ -2088,6 +2098,7 @@ def main():
         if _early_scene != "MOVIE" and state.current_scene == "MOVIE":
             state.movie_wait_consecutive = 0
             state.movie_static_count = 0
+            state._movie_stable_count = 0
 
         if _early_scene == "MOVIE":
             if state.current_scene == "BATTLE":
