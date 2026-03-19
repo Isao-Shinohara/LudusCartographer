@@ -1965,9 +1965,9 @@ def main():
             if _is_walk:
                 logger.info("[iter %d] 暗転→TutorialWalk検出 → スワイプで進行", i)
                 _walk_sx, _walk_sy = roi_to_device(
-                    int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.99), state.game_roi)
+                    int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.89), state.game_roi)
                 _walk_ex, _walk_ey = roi_to_device(
-                    int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.02), state.game_roi)
+                    int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.07), state.game_roi)
                 swipe_device(_walk_sx, _walk_sy, _walk_ex, _walk_ey, 10000,
                              state=state, desc="TutorialWalk_UP")
                 state.consecutive_blackouts = 0
