@@ -842,6 +842,17 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
                         state.battle_rapid_consecutive.count)
             state.battle_rapid_consecutive.reset()
             return False
+        # ダイアログコーナー検出: チュートリアルポップアップが表示されていれば即 OCR へ
+        _corner_tl = ASSET_MANAGER.match_single("dialog_corner_tl", analysis_path)
+        _corner_bl = ASSET_MANAGER.match_single("dialog_corner_bl", analysis_path)
+        if (_corner_tl and _corner_tl[2] >= 0.65) or (_corner_bl and _corner_bl[2] >= 0.65):
+            _corner_score = max(
+                _corner_tl[2] if _corner_tl else 0,
+                _corner_bl[2] if _corner_bl else 0)
+            logger.info("[BATTLE] ダイアログコーナー検出 (score=%.2f, count=%d) → OCR で再評価",
+                        _corner_score, state.battle_rapid_consecutive.count)
+            state.battle_rapid_consecutive.reset()
+            return False
 
     _rapid_tx = _rapid_ty = 0
     _rapid_action = ""
