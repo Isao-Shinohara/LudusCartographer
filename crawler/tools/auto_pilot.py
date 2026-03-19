@@ -1056,6 +1056,26 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
                    rapid=_rapid_double)
         if _rapid_double:
             tap_device(_rapid_tx, _rapid_ty, state, _rapid_action)
+
+        # HSV 金枠タップの空振り検出 → テンプレフォールバック
+        if _rapid_action == "BATTLE_RAPID_GOLD_TUTORIAL":
+            time.sleep(0.3)
+            _verify_path, _vw, _vh, _ = take_screenshot()
+            if _verify_path:
+                _verify_analysis = prepare_analysis_image(_verify_path, _vw, _vh)
+                _verify_hash = compute_phash(_verify_analysis)
+                _verify_dist = phash_distance(state.last_phash, _verify_hash) if state.last_phash else 999
+                if _verify_dist < 3:
+                    # 画面変化なし → HSV 偽陽性。テンプレで再試行
+                    for _fb_btn in ("battle_special", "battle_skill", "battle_normal_attack"):
+                        _fb_m = ASSET_MANAGER.match_single(_fb_btn, _verify_analysis)
+                        if _fb_m and _fb_m[2] >= 0.60:
+                            logger.info("[BATTLE_RAPID] HSV金枠空振り → テンプレ %s (%.2f) tap(%d,%d)",
+                                        _fb_btn, _fb_m[2], _fb_m[0], _fb_m[1])
+                            tap_device(_fb_m[0], _fb_m[1], state,
+                                       f"BATTLE_RAPID_TMPL_{_fb_btn.upper()}")
+                            break
+
         # 状態更新
         if "P1" in _rapid_action:
             state.character_selected = True
