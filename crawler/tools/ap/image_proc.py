@@ -108,8 +108,9 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
     """チュートリアル歩行シーン (白黒市松/階段背景) を検出。
 
     判定:
-      1. 画像全体の平均彩度が非常に低い (< 25) → ほぼモノクロ
-      2. ダイアログ/ポップアップのコーナー装飾が存在しない → 暗背景ポップアップを除外
+      1. 平均彩度が非常に低い (< 25) → ほぼモノクロ
+      2. 明度の標準偏差が高い (>= 60) → 市松模様の高コントラスト
+         (タイトル画面・利用規約・パーティ編成等の暗い画面は std < 56)
     """
     try:
         img = imread_cached(img_path)
@@ -119,18 +120,10 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
         mean_sat = float(hsv[:, :, 1].mean())
         if mean_sat >= 25:
             return False
-        # ダイアログ/ポップアップ除外: コーナー装飾テンプレートが検出される場合は
-        # 暗背景のダイアログであり、チェッカー床ではない
-        for _corner in ("dialog_corner_tl", "dialog_corner_bl"):
-            _cm = ASSET_MANAGER.match_single(_corner, img_path)
-            if _cm and _cm[2] >= 0.65:
-                return False
-        # 指アイコン除外: 指テンプレートが検出される場合はUI画面
-        for _finger in ("tutorial_hand_pointer", "tutorial_finger_down",
-                         "tutorial_finger_up", "tutorial_finger_left", "tutorial_finger_right"):
-            _fm = ASSET_MANAGER.match_single(_finger, img_path)
-            if _fm and _fm[2] >= 0.70:
-                return False
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        val_std = float(gray.std())
+        if val_std < 60:
+            return False
         return True
     except Exception:
         return False
