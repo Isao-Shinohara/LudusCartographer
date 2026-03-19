@@ -656,8 +656,8 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # MOVIE→ADV 誤判定防止: MOVIE直後は ADV ツールバー (AUTO/↓等) の二重確認を行う
     if state.current_scene != "MENU":
         _adv_next_early = ASSET_MANAGER.match_single("adv_next_btn", img_path,
-                    roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75),
-                         int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25)))
+                    roi=(int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.70),
+                         int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.30)))
         if _adv_next_early:
             # MOVIE からの遷移時は ADV ツールバー (AUTO ボタン等) の存在を二重確認
             # 黒背景＋白文字がテンプレートに誤マッチするケースを防止
