@@ -568,10 +568,15 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             if state._movie_recheck_count % 3 == 0:
                 _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
                                int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
-                _MOVIE_BTL_TH = {"battle_normal_attack": 0.60, "battle_skill": 0.60, "battle_special": 0.70}
-                for _btn, _th in _MOVIE_BTL_TH.items():
+                for _btn in ("battle_normal_attack", "battle_skill", "battle_special"):
                     _bm = ASSET_MANAGER.match_single(_btn, img_path, roi=_battle_roi)
-                    if _bm and _bm[2] >= _th:
+                    if _bm and _bm[2] >= 0.60:
+                        # battle_special 単独は誤検出リスクあり → UI二重確認
+                        if _btn == "battle_special":
+                            _ma = ASSET_MANAGER.match_single("adv_icon_auto", img_path)
+                            _mf = ASSET_MANAGER.match_single("adv_icon_ff", img_path)
+                            if not ((_ma and _ma[2] >= 0.60) or (_mf and _mf[2] >= 0.60)):
+                                continue
                         logger.info("[SCENE_EARLY] MOVIE中バトルテンプレ検出 (%s %.2f) → BATTLE",
                                     _btn, _bm[2])
                         state._movie_recheck_count = 0
@@ -613,14 +618,30 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     try:
         _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
                        int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
-        # battle_special は装飾アイコンに誤マッチしやすいため閾値を高めに設定
-        _BATTLE_THRESHOLDS = {"battle_normal_attack": 0.60, "battle_skill": 0.60, "battle_special": 0.70}
-        for _btn_name, _btn_th in _BATTLE_THRESHOLDS.items():
+        _battle_hit = None
+        for _btn_name in ("battle_normal_attack", "battle_skill", "battle_special"):
             _battle_m = _AM_battle.match_single(_btn_name, img_path, roi=_battle_roi)
-            if _battle_m and _battle_m[2] >= _btn_th:
+            if _battle_m and _battle_m[2] >= 0.60:
+                _battle_hit = (_btn_name, _battle_m[2])
+                break
+        if _battle_hit:
+            _hit_name, _hit_score = _battle_hit
+            # battle_normal_attack / battle_skill → 即 BATTLE 確定
+            # battle_special は装飾アイコンに誤マッチするため、
+            # バトルUI (AUTO/FF ボタン) の存在で二重確認
+            if _hit_name != "battle_special":
                 logger.info("[SCENE_EARLY] Battle初回検出 (%s score=%.2f) → BATTLE",
-                            _btn_name, _battle_m[2])
+                            _hit_name, _hit_score)
                 return "BATTLE"
+            _auto_confirm = _AM_battle.match_single("adv_icon_auto", img_path)
+            _ff_confirm = _AM_battle.match_single("adv_icon_ff", img_path)
+            if (_auto_confirm and _auto_confirm[2] >= 0.60) or \
+               (_ff_confirm and _ff_confirm[2] >= 0.60):
+                logger.info("[SCENE_EARLY] Battle初回検出 (%s score=%.2f + UI確認) → BATTLE",
+                            _hit_name, _hit_score)
+                return "BATTLE"
+            logger.info("[SCENE_EARLY] battle_special(%.2f) 検出だがUI未確認 → BATTLE棄却",
+                        _hit_score)
     except Exception:
         pass
     # BATTLE 補助判定: 金枠オーバーレイでテンプレが失敗する場合
