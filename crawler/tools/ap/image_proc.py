@@ -474,48 +474,23 @@ def detect_active_battle_char(
 def find_gold_frame_near(img_path: Path, cx: int, cy: int,
                          search_radius: int = 150) -> Optional[tuple[int, int, int, int]]:
     """
-    指アイコン中心(cx,cy)の近傍150px以内で金枠（装飾ボタン枠）を検索。
-    スワイプポインター（縦長細い）は除外し、ボタン形状の金枠を返す。
+    指アイコン中心(cx,cy)の近傍内で金枠（装飾ボタン枠）を検索。
+    gold_frame_small テンプレートマッチで検出し、ボタン領域を推定して返す。
     Returns: (frame_cx, frame_cy, frame_w, frame_h) or None
     """
     try:
-        img = imread_cached(img_path)
-        if img is None:
-            return None
-        H_img, W_img = img.shape[:2]
-        x1 = max(0, cx - search_radius)
-        y1 = max(0, cy - search_radius)
-        x2 = min(W_img, cx + search_radius)
-        y2 = min(H_img, cy + search_radius)
-        roi = img[y1:y2, x1:x2]
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        lower_gold = np.array([15, 60, 180], dtype=np.uint8)
-        upper_gold = np.array([50, 255, 255], dtype=np.uint8)
-        mask = cv2.inRange(hsv, lower_gold, upper_gold)
-        k5 = np.ones((5, 5), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k5)
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        best = None
-        best_area = 0
-        for c in contours:
-            area = cv2.contourArea(c)
-            if area < 3000:
-                continue
-            x, y, w, h = cv2.boundingRect(c)
-            if w < 60:
-                continue
-            aspect = w / max(h, 1)
-            if not (0.3 < aspect < 5.5):
-                continue
-            # スワイプポインター（縦長細い: h>w*3.5 かつ w<100）は除外
-            if h > w * 3.5 and w < 100:
-                continue
-            if area > best_area:
-                best_area = area
-                frame_cx = x1 + x + w // 2
-                frame_cy = y1 + y + h // 2
-                best = (frame_cx, frame_cy, w, h)
-        return best
+        _roi = (max(0, cx - search_radius), max(0, cy - search_radius),
+                search_radius * 2, search_radius * 2)
+        _gf = ASSET_MANAGER.match_single("gold_frame_small", img_path, roi=_roi)
+        if _gf and _gf[2] >= 0.70:
+            # テンプレートはコーナー部分。ボタン中心は右下方向にずれる
+            # コーナーからボタン中心を推定 (概算: コーナーから +60px 右, +30px 下)
+            _frame_cx = _gf[0] + 60
+            _frame_cy = _gf[1] + 30
+            logger.debug("[find_gold_frame_near] テンプレ gold_frame_small(%.2f) → (%d,%d)",
+                         _gf[2], _frame_cx, _frame_cy)
+            return (_frame_cx, _frame_cy, 120, 60)
+        return None
     except Exception as e:
         logger.debug("find_gold_frame_near error: %s", e)
         return None
@@ -1646,9 +1621,8 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
     """
     チュートリアル移動シーンの金色指アイコン+軌跡を検出しスワイプ方向を返す。
 
-    検出優先順:
-      1. テンプレートマッチ (指アイコン) + 白い縦軌跡の確認
-      2. HSV金色フィルタ (フォールバック)
+    テンプレートマッチ (指アイコン) + 白い縦軌跡の確認のみで判定。
+    HSV フォールバックは廃止 (金色UIとの誤検出防止)。
 
     Returns: (direction, swipe_x, from_y, to_y, duration_ms) or None
     """
@@ -1658,115 +1632,46 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
             return None
         H_img, W_img = img.shape[:2]
 
-        # ── Phase 1: テンプレートマッチ (指アイコン) + 白い縦軌跡 ──
-        if _SWIPE_FINGER_TEMPLATE.exists():
-            _tpl = imread_cached(_SWIPE_FINGER_TEMPLATE)
-            if _tpl is not None and img.shape[0] >= _tpl.shape[0] and img.shape[1] >= _tpl.shape[1]:
-                _r = cv2.matchTemplate(img, _tpl, cv2.TM_CCOEFF_NORMED)
-                _, _mv, _, _ml = cv2.minMaxLoc(_r)
-                if _mv >= 0.75:
-                    _th, _tw = _tpl.shape[:2]
-                    _fx = _ml[0] + _tw // 2  # 指アイコン中心X
-                    _fy = _ml[1] + _th // 2  # 指アイコン中心Y
-                    # 指の下方に白い縦軌跡があるかチェック
-                    _trail_x1 = max(0, _fx - 15)
-                    _trail_x2 = min(W_img, _fx + 15)
-                    _trail_y1 = _ml[1] + _th  # 指の下端から
-                    _trail_y2 = min(H_img, _trail_y1 + 200)  # 200px下まで
-                    _has_trail = False
-                    if _trail_y2 > _trail_y1 + 20:
-                        _trail_roi = img[_trail_y1:_trail_y2, _trail_x1:_trail_x2]
-                        if _trail_roi.size > 0:
-                            _gray_t = cv2.cvtColor(_trail_roi, cv2.COLOR_BGR2GRAY)
-                            _bright = cv2.countNonZero(
-                                cv2.threshold(_gray_t, 160, 255, cv2.THRESH_BINARY)[1])
-                            _has_trail = _bright >= 30
-                    if _has_trail:
-                        # 指が上 + 軌跡が下 → SWIPE_UP
-                        _from_y = min(H_img - 60, _trail_y2 + 50)
-                        _to_y = max(50, _fy - 80)
-                        logger.info(
-                            "[GoldSwipe] テンプレ検出: score=%.2f finger=(%d,%d) trail=%s "
-                            "→ UP swipe_x=%d from=%d to=%d",
-                            _mv, _fx, _fy, _has_trail, _fx, _from_y, _to_y,
-                        )
-                        return "UP", _fx, _from_y, _to_y, 10000
-                    else:
-                        logger.debug(
-                            "[GoldSwipe] テンプレ指検出 score=%.2f (%d,%d) だが軌跡なし → HSVへ",
-                            _mv, _fx, _fy,
-                        )
-
-        # ── Phase 2: HSV金色フィルタ (フォールバック) ──
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        # 金色 (手アイコン+軌跡): H=15-50, S=60-255, V=180-255
-        lower_gold = np.array([15, 60, 180], dtype=np.uint8)
-        upper_gold = np.array([50, 255, 255], dtype=np.uint8)
-        mask = cv2.inRange(hsv, lower_gold, upper_gold)
-
-        # モルフォロジー: 小ノイズ除去 → 拡張で手+軌跡を繋ぐ
-        k3 = np.ones((3, 3), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k3)
-        k7 = np.ones((7, 7), np.uint8)
-        mask = cv2.dilate(mask, k7, iterations=2)
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
+        if not _SWIPE_FINGER_TEMPLATE.exists():
             return None
-
-        # 最大輪郭を選択
-        largest = max(contours, key=cv2.contourArea)
-        area = cv2.contourArea(largest)
-
-        # 面積フィルタ: 2000~100000px (ポインター想定範囲)
-        if area < 2000 or area > 100000:
+        _tpl = imread_cached(_SWIPE_FINGER_TEMPLATE)
+        if _tpl is None or img.shape[0] < _tpl.shape[0] or img.shape[1] < _tpl.shape[1]:
             return None
-
-        x_bb, y_bb, w_bb, h_bb = cv2.boundingRect(largest)
-
-        # アスペクト比チェック: 縦長(h>=w*3.5)のみ有効
-        # 2.0→3.5に引き上げ: キャラカード金装飾(h/w≈2.0-2.5)や金枠ボタン(h/w≈1.0)との誤検出防止
-        # さらに幅制限: w>100px の太いものはボタン/カード → スワイプポインターは細い
-        if h_bb < w_bb * 3.5 or w_bb > 100:
+        _r = cv2.matchTemplate(img, _tpl, cv2.TM_CCOEFF_NORMED)
+        _, _mv, _, _ml = cv2.minMaxLoc(_r)
+        if _mv < 0.75:
             return None
-
-        cx_bb = x_bb + w_bb // 2
-
-        # ── デバッグ画像保存 (--verbose 時のみ) ──
-        if _DEBUG_SAVE_IMAGES:
-            debug_dir = _CRAWLER_ROOT / "templates" / "debug"
-            debug_dir.mkdir(parents=True, exist_ok=True)
-            ts = datetime.now().strftime("%H%M%S")
-            vis = img.copy()
-            cv2.rectangle(vis, (x_bb, y_bb), (x_bb + w_bb, y_bb + h_bb), (0, 0, 255), 3)
-            cv2.putText(vis, f"GoldSwipe area={int(area)} h/w={h_bb/max(w_bb,1):.1f}",
-                        (x_bb, max(0, y_bb - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-            cv2.imwrite(str(debug_dir / f"gold_detect_{ts}.png"), vis)
-
-        # ── 方向判定: 上半分 vs 下半分のゴールドピクセル面積で判断 ──
-        # 手アイコン(幅広・濃い)が多い方が「手」の端 → その逆方向へスワイプ
-        mask_roi = mask[y_bb:y_bb + h_bb, x_bb:x_bb + w_bb]
-        mid_y = h_bb // 2
-        upper_area = int(np.sum(mask_roi[:mid_y] > 0))
-        lower_area = int(np.sum(mask_roi[mid_y:] > 0))
-
-        # 上半分が大きい → 手が上 → SWIPE_UP
-        if upper_area >= lower_area:
-            direction = "UP"
-            from_y = min(H_img - 60, y_bb + h_bb + 100)
-            to_y   = max(50, y_bb - 80)
-        else:
-            direction = "DOWN"
-            from_y = max(50, y_bb - 80)
-            to_y   = min(H_img - 60, y_bb + h_bb + 100)
-
+        _th, _tw = _tpl.shape[:2]
+        _fx = _ml[0] + _tw // 2  # 指アイコン中心X
+        _fy = _ml[1] + _th // 2  # 指アイコン中心Y
+        # 指の下方に白い縦軌跡があるかチェック
+        _trail_x1 = max(0, _fx - 15)
+        _trail_x2 = min(W_img, _fx + 15)
+        _trail_y1 = _ml[1] + _th  # 指の下端から
+        _trail_y2 = min(H_img, _trail_y1 + 200)  # 200px下まで
+        _has_trail = False
+        if _trail_y2 > _trail_y1 + 20:
+            _trail_roi = img[_trail_y1:_trail_y2, _trail_x1:_trail_x2]
+            if _trail_roi.size > 0:
+                _gray_t = cv2.cvtColor(_trail_roi, cv2.COLOR_BGR2GRAY)
+                _bright = cv2.countNonZero(
+                    cv2.threshold(_gray_t, 160, 255, cv2.THRESH_BINARY)[1])
+                _has_trail = _bright >= 30
+        if not _has_trail:
+            logger.debug(
+                "[GoldSwipe] テンプレ指検出 score=%.2f (%d,%d) だが軌跡なし → スキップ",
+                _mv, _fx, _fy,
+            )
+            return None
+        # 指が上 + 軌跡が下 → SWIPE_UP
+        _from_y = min(H_img - 60, _trail_y2 + 50)
+        _to_y = max(50, _fy - 80)
         logger.info(
-            "[GoldSwipe] 検出OK: area=%d bbox=(%d,%d,%d,%d) h/w=%.1f "
-            "upper=%d lower=%d → %s  swipe_x=%d from_y=%d to_y=%d",
-            area, x_bb, y_bb, w_bb, h_bb, h_bb / max(w_bb, 1),
-            upper_area, lower_area, direction, cx_bb, from_y, to_y,
+            "[GoldSwipe] テンプレ検出: score=%.2f finger=(%d,%d) trail=%s "
+            "→ UP swipe_x=%d from=%d to=%d",
+            _mv, _fx, _fy, _has_trail, _fx, _from_y, _to_y,
         )
-        return direction, cx_bb, from_y, to_y, 10000
+        return "UP", _fx, _from_y, _to_y, 10000
 
     except ImportError:
         return None
@@ -1918,64 +1823,26 @@ def smart_tap_button(
     search_r: int = 120,
     ocr_items: list[dict] | None = None,
 ) -> tuple[int, int]:
-    """Text-Core 対応 SmartTap: 金色ボタン枠を検出し、テキスト中心優先でタップ座標を返す。
+    """Text-Core 対応 SmartTap: 金枠テンプレートマッチでボタンを検出し、テキスト中心優先でタップ座標を返す。
 
-    1. OCR 中心周辺から HSV で金色ボタン枠 (B) を検出
-    2. B が見つかったら text_core_center() でテキスト中心優先の座標を返す
-    3. B が見つからない場合は OCR 座標をそのまま返す
+    1. OCR 中心周辺から gold_frame_small テンプレートでボタン枠を検出
+    2. 見つかったらテンプレート位置からボタン領域を推定し text_core_center() で座標を返す
+    3. 見つからない場合は OCR 座標をそのまま返す
 
     返値: (tap_x, tap_y)
     """
     try:
-        img_bgr = imread_cached(img_path)
-        if img_bgr is None:
-            raise ValueError("imread failed")
-        h_img, w_img = img_bgr.shape[:2]
-
-        # 探索エリア: OCR 中心から search_r px の矩形
-        x1 = max(0, ocr_cx - search_r)
-        y1 = max(0, ocr_cy - search_r)
-        x2 = min(w_img, ocr_cx + search_r)
-        y2 = min(h_img, ocr_cy + search_r)
-
-        roi = img_bgr[y1:y2, x1:x2]
-        roi_hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-
-        # 金色ボタン枠の HSV レンジ
-        lower_gold = np.array([15, 50, 120], dtype=np.uint8)
-        upper_gold = np.array([42, 190, 235], dtype=np.uint8)
-        mask = cv2.inRange(roi_hsv, lower_gold, upper_gold)
-
-        # モルフォロジー: ノイズ除去 + 枠の繋ぎ合わせ
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        mask = cv2.dilate(mask, kernel, iterations=2)
-        mask = cv2.erode(mask, kernel, iterations=1)
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        best_rect = None
-        best_area = 0
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < 2000:
-                continue
-            rx, ry, rw, rh = cv2.boundingRect(cnt)
-            if rw < 80 or rh < 20:
-                continue
-            aspect = rw / max(rh, 1)
-            if aspect < 2.0 or aspect > 15.0:
-                continue
-            if area > best_area:
-                best_area = area
-                best_rect = (rx + x1, ry + y1, rw, rh)
-
-        if best_rect:
-            # Text-Core: ボタン枠 (B) 内のテキスト中心を優先
-            return text_core_center(
-                best_rect,
-                ocr_items or [],
-                label="SmartTap",
-            )
+        # gold_frame_small テンプレートで OCR 中心周辺を検索
+        _roi = (max(0, ocr_cx - search_r), max(0, ocr_cy - search_r),
+                search_r * 2, search_r * 2)
+        _gf = ASSET_MANAGER.match_single("gold_frame_small", img_path, roi=_roi)
+        if _gf and _gf[2] >= 0.70:
+            # テンプレートはコーナーなので、ボタン領域をコーナーから推定
+            # コーナーの右下方向にボタン本体がある → OCR テキストを含む領域を探索
+            _btn_rect = (_gf[0] - 10, _gf[1] - 10, search_r, search_r // 2)
+            _tc = text_core_center(_btn_rect, ocr_items or [], label="SmartTap")
+            logger.debug("[SmartTap] gold_frame_small(%.2f) → TextCore(%d,%d)", _gf[2], _tc[0], _tc[1])
+            return _tc
 
     except Exception as e:
         logger.debug("  [SmartTap] エラー: %s", e)
