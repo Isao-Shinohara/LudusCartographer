@@ -483,22 +483,69 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
                          search_radius: int = 150) -> Optional[tuple[int, int, int, int]]:
     """
     指アイコン中心(cx,cy)の近傍内で金枠（装飾ボタン枠）を検索。
-    gold_frame_small テンプレートマッチで検出し、ボタン領域を推定して返す。
+    gold_frame_small テンプレートの複数コーナーを検出し、その中心を返す。
     Returns: (frame_cx, frame_cy, frame_w, frame_h) or None
     """
     try:
-        _roi = (max(0, cx - search_radius), max(0, cy - search_radius),
-                search_radius * 2, search_radius * 2)
-        _gf = ASSET_MANAGER.match_single("gold_frame_small", img_path, roi=_roi)
-        if _gf and _gf[2] >= 0.70:
-            # テンプレートはコーナー部分。ボタン中心は右下方向にずれる
-            # コーナーからボタン中心を推定 (概算: コーナーから +60px 右, +30px 下)
-            _frame_cx = _gf[0] + 60
-            _frame_cy = _gf[1] + 30
-            logger.debug("[find_gold_frame_near] テンプレ gold_frame_small(%.2f) → (%d,%d)",
-                         _gf[2], _frame_cx, _frame_cy)
-            return (_frame_cx, _frame_cy, 120, 60)
-        return None
+        _tpl_data = ASSET_MANAGER._templates.get("gold_frame_small")
+        if not _tpl_data:
+            return None
+        _tpl = _tpl_data["img"]
+        _th, _tw = _tpl.shape[:2]
+
+        _img = imread_cached(img_path)
+        if _img is None:
+            return None
+        _gray = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY) if len(_img.shape) == 3 else _img
+
+        # 探索 ROI: 指の近傍
+        _x1 = max(0, cx - search_radius)
+        _y1 = max(0, cy - search_radius)
+        _x2 = min(_gray.shape[1], cx + search_radius)
+        _y2 = min(_gray.shape[0], cy + search_radius)
+        _roi = _gray[_y1:_y2, _x1:_x2]
+        if _roi.shape[0] < _th or _roi.shape[1] < _tw:
+            return None
+
+        _result = cv2.matchTemplate(_roi, _tpl, cv2.TM_CCOEFF_NORMED)
+        _THRESHOLD = 0.72
+        _locs = np.where(_result >= _THRESHOLD)
+        if len(_locs[0]) == 0:
+            return None
+
+        # NMS: 30px 以内の点をクラスタリングし、各クラスタの最高スコア点を採用
+        _points = sorted(zip(_locs[1].tolist(), _locs[0].tolist(),
+                             [float(_result[y, x]) for y, x in zip(_locs[0], _locs[1])]),
+                         key=lambda p: -p[2])
+        _clusters = []
+        _used = set()
+        for i, (px, py, ps) in enumerate(_points):
+            if i in _used:
+                continue
+            _used.add(i)
+            for j, (qx, qy, _) in enumerate(_points):
+                if j not in _used and abs(px - qx) < 30 and abs(py - qy) < 30:
+                    _used.add(j)
+            _clusters.append((_x1 + px + _tw // 2, _y1 + py + _th // 2, ps))
+
+        if not _clusters:
+            return None
+
+        # 複数コーナーの中心を計算
+        _xs = [c[0] for c in _clusters]
+        _ys = [c[1] for c in _clusters]
+        _frame_cx = (min(_xs) + max(_xs)) // 2
+        _frame_cy = (min(_ys) + max(_ys)) // 2
+        _frame_w = max(_xs) - min(_xs) + _tw
+        _frame_h = max(_ys) - min(_ys) + _th
+        if _frame_w < 30:
+            _frame_w = 120  # コーナー1つだけの場合のデフォルト幅
+        if _frame_h < 30:
+            _frame_h = 60
+
+        logger.debug("[find_gold_frame_near] %d corners → center(%d,%d) %dx%d",
+                     len(_clusters), _frame_cx, _frame_cy, _frame_w, _frame_h)
+        return (_frame_cx, _frame_cy, _frame_w, _frame_h)
     except Exception as e:
         logger.debug("find_gold_frame_near error: %s", e)
         return None
