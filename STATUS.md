@@ -1,10 +1,37 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-03-18 (Auto Pilot 安定化 & ドキュメント整備)
+最終更新: 2026-03-19 (HSV→テンプレートマッチ移行 & 堅牢化)
 
 ---
 
-## 現在のフェーズ: ホームチュートリアル突破 → お知らせポップアップ対応
+## 現在のフェーズ: HSV→テンプレートマッチ移行 & 解像度非依存化
+
+### 2026-03-19 HSV→テンプレートマッチ移行 & 堅牢化 (36コミット)
+
+#### テンプレートマッチ移行結果
+- `detect_tutorial_gold_swipe()`: HSV Phase 2 削除 → テンプレのみ
+- `smart_tap_button()`: HSV → gold_frame_small テンプレ
+- `find_gold_frame_near()`: HSV → 複数コーナー中心推定 + direction パラメータ
+- `detect_tutorial_gold_button_tap()`: **HSV 維持が妥当** (テンプレは偽陽性過多)
+
+#### scrcpy / 解像度非依存化
+- scrcpy max-size: 720 → 1520 (テンプレマッチ精度向上、ウィンドウは720維持)
+- 真っ黒キャプチャ検出 → ADB フォールバック
+- prepare_analysis_image: 画像実サイズで判定 (デバイス解像度非依存)
+
+#### detect_scene_early 判定改善
+- TUTORIAL_WALK → BATTLE → ADV → MOVIE の優先順序を整理
+- MOVIE 中 dist 3-15 でバトル/ガチャ/ADV テンプレチェック
+- MOVIE 長期滞留脱出 (15回で UNKNOWN)
+- battle_special 単独 BATTLE 判定に UI 二重確認
+
+#### 未解決課題
+- ADV ↓ボタン検出漏れ: キャプチャタイミングで↓が見えない瞬間がある
+- scrcpy Quartz キャプチャの不安定さ (ADB フォールバックで対処)
+
+---
+
+## 過去のフェーズ: ホームチュートリアル突破 → お知らせポップアップ対応
 
 ### 2026-03-18 Auto Pilot 安定化 & ドキュメント整備
 
