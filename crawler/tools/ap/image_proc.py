@@ -125,6 +125,13 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
             _cm = ASSET_MANAGER.match_single(_corner, img_path)
             if _cm and _cm[2] >= 0.65:
                 return False
+        # 指アイコン除外: 指テンプレートが検出される場合はUI画面
+        # チェッカー床には指アイコンが表示されない（または別途検出される）
+        for _finger in ("tutorial_hand_pointer", "tutorial_finger_down",
+                         "tutorial_finger_up", "tutorial_finger_left", "tutorial_finger_right"):
+            _fm = ASSET_MANAGER.match_single(_finger, img_path)
+            if _fm and _fm[2] >= 0.70:
+                return False
         return True
     except Exception:
         return False
