@@ -257,7 +257,7 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
     ※ device_w/h は実機解像度 (wm size) を返す (scrcpy ウィンドウサイズではない)
     """
     global _LAST_SCRCPY_BGR
-    if not _HAS_QUARTZ:
+    if not _HAS_QUARTZ or os.environ.get("SCRCPY_DISABLED"):
         return None
     wid = _SCRCPY_WINDOW_ID or _find_scrcpy_window_id()
     if not wid:

@@ -140,6 +140,14 @@ def is_dark_screen(img_path: Path) -> bool:
 
 
 def prepare_analysis_image(img_path: Path, actual_w: int, actual_h: int) -> Path:
+    # actual_w/h (デバイス解像度) ではなく画像ファイルの実サイズで判定する。
+    # scrcpy キャプチャは --max-size でリサイズされるためデバイス解像度と異なる。
+    try:
+        from PIL import Image
+        with Image.open(img_path) as _probe:
+            actual_w, actual_h = _probe.size
+    except Exception:
+        pass  # 読めない場合は引数値をフォールバック
     needs_transform = (actual_w < actual_h) or \
         ((actual_w, actual_h) != (ANALYSIS_W, ANALYSIS_H) and
          (actual_h, actual_w) != (ANALYSIS_W, ANALYSIS_H))
