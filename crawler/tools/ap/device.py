@@ -269,7 +269,7 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
         _LAST_SCRCPY_BGR = None
         return None
     # 真っ黒チェック: Quartz が映像を取得できていない場合 (別デスクトップ等)
-    if float(bgr.mean()) < 1.0:
+    if float(bgr.mean()) < 0.5:
         logger.warning("[SCRCPY] キャプチャが真っ黒 (mean=%.1f) → ADB フォールバック", float(bgr.mean()))
         _LAST_SCRCPY_BGR = None
         return None
