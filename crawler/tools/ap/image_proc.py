@@ -480,10 +480,14 @@ def detect_active_battle_char(
 
 
 def find_gold_frame_near(img_path: Path, cx: int, cy: int,
-                         search_radius: int = 150) -> Optional[tuple[int, int, int, int]]:
+                         search_radius: int = 150,
+                         direction: str = "") -> Optional[tuple[int, int, int, int]]:
     """
     指アイコン中心(cx,cy)の近傍内で金枠（装飾ボタン枠）を検索。
     gold_frame_small テンプレートの複数コーナーを検出し、その中心を返す。
+
+    direction: "up"/"down"/"left"/"right" を指定すると、指の向き方向の
+               コーナーのみでフィルタして中心を計算する。空文字は全方向。
     Returns: (frame_cx, frame_cy, frame_w, frame_h) or None
     """
     try:
@@ -530,6 +534,22 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
 
         if not _clusters:
             return None
+
+        # 方向フィルタ: 指の向き方向のコーナーのみに絞る
+        if direction:
+            _filtered = []
+            for _c in _clusters:
+                _ccx, _ccy = _c[0], _c[1]
+                if direction == "down" and _ccy >= cy:
+                    _filtered.append(_c)
+                elif direction == "up" and _ccy <= cy:
+                    _filtered.append(_c)
+                elif direction == "right" and _ccx >= cx:
+                    _filtered.append(_c)
+                elif direction == "left" and _ccx <= cx:
+                    _filtered.append(_c)
+            if _filtered:
+                _clusters = _filtered
 
         # 複数コーナーの中心を計算
         _xs = [c[0] for c in _clusters]
