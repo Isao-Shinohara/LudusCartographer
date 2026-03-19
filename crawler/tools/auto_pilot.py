@@ -581,6 +581,16 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                                     _btn, _bm[2])
                         state._movie_recheck_count = 0
                         return "BATTLE"
+                # ガチャ演出チェック: SKIP ボタン + 暗い背景
+                _gacha_skip = detect_movie_skip_button(img_path)
+                if _gacha_skip:
+                    _gi = imread_cached(img_path)
+                    if _gi is not None:
+                        _gb = float(cv2.cvtColor(_gi, cv2.COLOR_BGR2GRAY).mean())
+                        if _gb < 80:
+                            logger.info("[SCENE_EARLY] MOVIE中ガチャ演出検出 (SKIP+暗背景 brightness=%.0f) → GACHA", _gb)
+                            state._movie_recheck_count = 0
+                            return "GACHA"
             return "MOVIE"
         state._movie_stable_count = getattr(state, "_movie_stable_count", 0) + 1
         if state._movie_stable_count < _MOVIE_STABLE_THRESHOLD:
