@@ -1951,7 +1951,10 @@ def main():
             # チュートリアルウォーク（暗い廊下）は暗転ではない → スワイプで進行
             # バトル等の暗い画面で誤検出しないようテンプレートで除外
             _is_walk = False
-            if state.consecutive_blackouts >= 10 and is_tutorial_walk_scene(img_path):
+            # post_download 後はお知らせポップアップ等の暗背景を TutorialWalk と誤検出するため除外
+            if (state.consecutive_blackouts >= 10
+                    and not state.post_download
+                    and is_tutorial_walk_scene(img_path)):
                 _walk_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
                 _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
                                int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
