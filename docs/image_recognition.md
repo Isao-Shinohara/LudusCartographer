@@ -78,13 +78,13 @@ ROI (探索範囲) を限定して高速化・偽陽性削減。
 
 ### 2c. 金枠近傍検出 (`find_gold_frame_near`)
 
-**手法**: 指ブロブ近傍 (search_radius px) を HSV 金色フィルタで探索
+**手法**: `gold_frame_small` テンプレートマッチ (ROI 指定)
 **対象**: 指ポインタが指し示す先の金色ボタン枠
-**手法選択理由**: 指ブロブの位置を起点として近傍を限定探索するため、偽陽性を抑制しつつ高速に処理可能。
+**手法選択理由**: HSV では明度変動で偽陰性、装飾UIで偽陽性が発生するため、テンプレートマッチに移行 (2026-03-19)。
 
-- **ファイル**: `image_proc.py:557`
-- **HSV レンジ**: `H:15-55, S:40-255, V:140-255`
-- **出力**: `(cx, cy, area)` or None
+- **ファイル**: `image_proc.py`
+- **テンプレート**: `gold_frame_small` (threshold 0.70)
+- **出力**: `(frame_cx, frame_cy, frame_w, frame_h)` or None
 
 ### 2d. ガイド発光検出 (`detect_guide_glow`)
 
