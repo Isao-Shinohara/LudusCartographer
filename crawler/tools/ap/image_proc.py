@@ -107,8 +107,9 @@ def roi_to_device(ax: int, ay: int, roi: tuple) -> tuple[int, int]:
 def is_tutorial_walk_scene(img_path: Path) -> bool:
     """チュートリアル歩行シーン (白黒市松/階段背景) を検出。
 
-    判定: 画像全体の平均彩度が非常に低い (< 25) → ほぼモノクロ。
-    このパターンはチュートリアル冒頭の歩行シーンに固有。
+    判定:
+      1. 画像全体の平均彩度が非常に低い (< 25) → ほぼモノクロ
+      2. ダイアログ/ポップアップのコーナー装飾が存在しない → 暗背景ポップアップを除外
     """
     try:
         img = imread_cached(img_path)
@@ -116,7 +117,15 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
             return False
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         mean_sat = float(hsv[:, :, 1].mean())
-        return mean_sat < 25
+        if mean_sat >= 25:
+            return False
+        # ダイアログ/ポップアップ除外: コーナー装飾テンプレートが検出される場合は
+        # 暗背景のダイアログであり、チェッカー床ではない
+        for _corner in ("dialog_corner_tl", "dialog_corner_bl"):
+            _cm = ASSET_MANAGER.match_single(_corner, img_path)
+            if _cm and _cm[2] >= 0.65:
+                return False
+        return True
     except Exception:
         return False
 
