@@ -963,7 +963,9 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
                             _fb_btn, _fb_m[2], _rapid_tx, _rapid_ty)
                 break
         if not _rapid_action:
-            logger.info("[BATTLE] テンプレ未検出 → 盲タップせず次ループで再判定")
+            state.normatk_fallback.tick()
+            logger.info("[BATTLE] テンプレ未検出 (stall %d/%d) → 盲タップせず次ループで再判定",
+                        state.normatk_fallback.count, state.normatk_fallback.threshold)
             return True
         state.normatk_fallback.tick()
     else:

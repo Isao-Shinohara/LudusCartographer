@@ -301,6 +301,10 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             if _home_kw_hits >= 2:
                 logger.info("[Asset] FINGER_TEMPLATE をホーム画面で抑制 (home_kw=%d)", _home_kw_hits)
                 asset_hit = None
+            # プレゼントボックス画面では専用ハンドラに委譲 (指座標がボタンを外す問題の回避)
+            elif any("プレゼント" in t or "一括受取" in t for t in texts):
+                logger.info("[Asset] FINGER_TEMPLATE をプレゼントボックスで抑制 → 専用ハンドラへ")
+                asset_hit = None
         if asset_hit:
             cx, cy, action, _asset_region = asset_hit
             # Text-Core: テンプレートマッチ領域 + OCR でテキスト中心優先座標を取得
