@@ -139,12 +139,20 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     _BUBBLE_EXCLUDE_SUBSTR_2 = ("Max", "Lv", "Lx", "Rank", "LV", "MadoDora",
                                 "AUTO", "UTO", "UT0", "AUT")
     _BUBBLE_NUM_RE_2 = re.compile(r'^[\d,./:%+\-・\s]+$')
+    # AUTO ボタン位置を検出 → その近傍 50px 以内のテキストも除外
+    _auto_pos = None
+    if analysis_path:
+        _auto_m = ASSET_MANAGER.match_single("adv_icon_auto", analysis_path)
+        if _auto_m and _auto_m[2] >= 0.60:
+            _auto_pos = (_auto_m[0], _auto_m[1])
     _bubble_region = [r for r in ocr
                       if r["center"][0] > W * 0.55 and r["center"][1] < H * 0.35
                       and r["text"] not in _BUBBLE_EXCLUDE_EXACT_2
                       and not any(s in r["text"] for s in _BUBBLE_EXCLUDE_SUBSTR_2)
                       and not _BUBBLE_NUM_RE_2.match(r["text"])
-                      and len(r["text"]) > 2]
+                      and len(r["text"]) > 2
+                      and not (_auto_pos and abs(r["center"][0] - _auto_pos[0]) < 50
+                               and abs(r["center"][1] - _auto_pos[1]) < 50)]
     if _bubble_region and len(ocr) <= 20:
         _bubble = _bubble_region[0]
         _bx, _by = _bubble["center"]

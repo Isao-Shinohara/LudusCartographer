@@ -227,13 +227,21 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
                               "AUTO", "UTO", "UT0", "AUT")
     _BUBBLE_NUM_RE = re.compile(r'^[\d,./:%+\-・\s]+$')
     _BUBBLE_ALPHANUM_NOISE_RE = re.compile(r'^[A-Za-z0-9.,\-+×★☆\s]{1,5}$')
+    # AUTO ボタン位置を検出 → その近傍 50px 以内のテキストも除外
+    _auto_pos_h = None
+    if analysis_path:
+        _auto_mh = ASSET_MANAGER.match_single("adv_icon_auto", analysis_path)
+        if _auto_mh and _auto_mh[2] >= 0.60:
+            _auto_pos_h = (_auto_mh[0], _auto_mh[1])
     _bubble_texts = [r for r in ocr
                      if r["center"][0] > W * 0.55 and r["center"][1] < H * 0.35
                      and r["text"] not in _BUBBLE_EXCLUDE_EXACT
                      and not any(s in r["text"] for s in _BUBBLE_EXCLUDE_SUBSTR)
                      and not _BUBBLE_NUM_RE.match(r["text"])
                      and not _BUBBLE_ALPHANUM_NOISE_RE.match(r["text"])
-                     and len(r["text"]) > 2]
+                     and len(r["text"]) > 2
+                     and not (_auto_pos_h and abs(r["center"][0] - _auto_pos_h[0]) < 50
+                              and abs(r["center"][1] - _auto_pos_h[1]) < 50)]
     if _bubble_texts:
         _bt = _bubble_texts[0]
         _btx, _bty = _bt["center"]
