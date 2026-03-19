@@ -556,8 +556,25 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # phash が安定 (dist < 3 が 3 回以上) したら動画終了とみなし ADV/BATTLE 再判定を許可。
     _MOVIE_STABLE_THRESHOLD = 3  # dist < 3 がこの回数続いたら安定とみなす
     if state.current_scene == "MOVIE":
-        if dist >= 3:
+        if dist >= 16:
+            # 大きなフレーム変化 → 本物の動画再生、即 MOVIE 維持
             state._movie_stable_count = 0
+            return "MOVIE"
+        if dist >= 3:
+            # 小さなフレーム変化 → バトル演出/ADV微動の可能性
+            # 定期的にバトル/ADVテンプレートをチェック (3回に1回)
+            state._movie_stable_count = 0
+            state._movie_recheck_count = getattr(state, "_movie_recheck_count", 0) + 1
+            if state._movie_recheck_count % 3 == 0:
+                _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
+                               int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+                for _btn in ("battle_normal_attack", "battle_skill", "battle_special"):
+                    _bm = ASSET_MANAGER.match_single(_btn, img_path, roi=_battle_roi)
+                    if _bm and _bm[2] >= 0.60:
+                        logger.info("[SCENE_EARLY] MOVIE中バトルテンプレ検出 (%s %.2f) → BATTLE",
+                                    _btn, _bm[2])
+                        state._movie_recheck_count = 0
+                        return "BATTLE"
             return "MOVIE"
         state._movie_stable_count = getattr(state, "_movie_stable_count", 0) + 1
         if state._movie_stable_count < _MOVIE_STABLE_THRESHOLD:
