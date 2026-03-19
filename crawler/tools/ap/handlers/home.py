@@ -17,7 +17,6 @@ from tools.ap.image_proc import (
     ASSET_MANAGER,
     detect_tutorial_gold_button_tap,
     detect_tutorial_overlay,
-    detect_white_hand_pointer,
     find_gold_frame_near,
     roi_to_device,
 )
@@ -101,12 +100,14 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     ]
     _hand_match = None
     _has_hand = False
+    _ft_name_found = ""
     if analysis_path:
         for _ft_name in _FINGER_TEMPLATES:
             _ft_m = ASSET_MANAGER.match_single(_ft_name, analysis_path)
             if _ft_m and _ft_m[2] >= 0.70:
                 _hand_match = _ft_m
                 _has_hand = True
+                _ft_name_found = _ft_name
                 logger.info(">>> ホーム: %s(%.2f) (%d,%d) 検出 → チュートリアル中",
                             _ft_name, _ft_m[2], _ft_m[0], _ft_m[1])
                 break
@@ -173,11 +174,17 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
                 if _gf and _gf[1] > H * 0.85:
                     logger.info(">>> ホーム: 金枠(%d,%d) がフッターナビ領域 → 除外", _gf[0], _gf[1])
                     _gf = None
-                # 方向フィルタ: 指の向きと逆方向の金枠は除外
-                if _gf and _has_hand and _hand_match:
-                    _hand_dir_h = detect_white_hand_pointer(analysis_path)
-                    if _hand_dir_h:
-                        _hdir = _hand_dir_h[2]
+                # 方向フィルタ: 指テンプレート名から方向を取得し、逆方向の金枠を除外
+                if _gf and _has_hand:
+                    # _ft_name (検出済みテンプレート名) から方向を推定
+                    _hdir = None
+                    for _dn, _dd in [("finger_down", "down"), ("finger_up", "up"),
+                                     ("finger_left", "left"), ("finger_right", "right"),
+                                     ("hand_pointer", "up")]:
+                        if _dn in _ft_name_found:
+                            _hdir = _dd
+                            break
+                    if _hdir:
                         if (_hdir == "down" and _gf[1] < _by - 20) or \
                            (_hdir == "up" and _gf[1] > _by + 20):
                             logger.info(">>> ホーム: 金枠(%d,%d) が指方向(%s)と逆 → 除外", _gf[0], _gf[1], _hdir)
