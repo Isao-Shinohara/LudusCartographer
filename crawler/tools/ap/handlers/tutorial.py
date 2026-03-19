@@ -613,7 +613,10 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
         tap_device(close_x, close_y, state, "CAROUSEL_CLOSE")
         return "CLOSE_POPUP", 1.0
     # ─── プレゼントボックス画面: 「一括受取」タップ or BACK で戻る ───
-    _present_box = has_text(ocr, "プレゼントボックス", min_conf=0.3) or has_text(ocr, "プレゼントボックス", min_conf=0.2)
+    # OCR が「プレセントポックス」等に誤読するケースも拾う
+    _present_box = (has_text(ocr, "プレゼントボックス", min_conf=0.2)
+                    or (has_any(ocr, ["プレセント", "プレゼント"], min_conf=0.2)
+                        and has_any(ocr, ["ボックス", "ポックス", "ボック"], min_conf=0.2)))
     if _present_box:
         _bulk_receive = has_text(ocr, "一括受取", min_conf=0.3)
         if _bulk_receive:

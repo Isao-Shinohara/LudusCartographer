@@ -173,10 +173,11 @@ def handle_dialog_screen(
             # 背景ぼかしなしでも、ページドット + ▷/× があればダイアログとして続行
             _guard_dots = count_page_dots(analysis_path)
             _guard_nav = detect_dialog_nav(analysis_path, W, H)
-            if _guard_dots >= 2 and _guard_nav is not None:
+            if _guard_dots >= 2:
+                # ドットの存在自体がダイアログの確実な証拠
                 logger.info(
-                    "[DIALOG_BLUR_GUARD] 背景ぼかしなしだがドット=%d+▷/×あり → PAGING 続行",
-                    _guard_dots)
+                    "[DIALOG_BLUR_GUARD] 背景ぼかしなしだがドット=%d → PAGING 続行 (▷/×=%s)",
+                    _guard_dots, _guard_nav is not None)
             else:
                 logger.info(
                     "[DIALOG_BLUR_GUARD] 背景ぼかしなし+ドット=%d+▷/×=%s → ポップアップではない、PAGING スキップ",
