@@ -554,7 +554,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # ── MOVIE 継続: phash が安定するまで即 MOVIE を返す ──
     # 動画再生中 (dist >= 3) はフレームが変化するので MOVIE 維持。
     # phash が安定 (dist < 3 が 3 回以上) したら動画終了とみなし ADV/BATTLE 再判定を許可。
-    _MOVIE_STABLE_THRESHOLD = 3  # dist < 3 がこの回数続いたら安定とみなす
+    _MOVIE_STABLE_THRESHOLD = 15  # dist < 3 がこの回数続いたら安定とみなす (約9秒)
     if state.current_scene == "MOVIE":
         if dist >= 3:
             state._movie_stable_count = 0
@@ -647,11 +647,19 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # ADV: ↓ボタンテンプレートで直接判定
     # ↓ボタン (adv_next_btn) は ADV シーン固有。バトル/MOVIE には存在しない。
     # detect_adv_scene は OCR 必須のため detect_scene_early では使えない。
+    # MOVIE→ADV 誤判定防止: MOVIE直後は ADV ツールバー (AUTO/↓等) の二重確認を行う
     if state.current_scene != "MENU":
         _adv_next_early = ASSET_MANAGER.match_single("adv_next_btn", img_path,
                     roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75),
                          int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25)))
         if _adv_next_early:
+            # MOVIE からの遷移時は ADV ツールバー (AUTO ボタン等) の存在を二重確認
+            # 黒背景＋白文字がテンプレートに誤マッチするケースを防止
+            if state.current_scene == "MOVIE":
+                _adv_auto = ASSET_MANAGER.match_single("adv_icon_auto", img_path)
+                if not _adv_auto or _adv_auto[2] < 0.60:
+                    logger.info("[SCENE_EARLY] MOVIE中ADV↓誤検出を棄却 (AUTO未検出)")
+                    return "MOVIE"
             return "ADV"
 
     # NOTE: ポップアップ検出 (ドット+背景ぼかし) は廃止。

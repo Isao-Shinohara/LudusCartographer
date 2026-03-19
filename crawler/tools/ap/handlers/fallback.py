@@ -87,7 +87,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             tap_device(cx, cy, state, "AGREE_TOS")
         else:
             logger.info(">>> 【利用規約同意】 OCR で同意ボタン未検出 → 盲タップせずスキップ")
-            return None
+            return "TOS_NO_BUTTON", 1.0
         return "AGREE_TOS", 2.0
 
     # ─── 規約同意 ───
