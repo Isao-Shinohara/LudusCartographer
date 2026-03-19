@@ -1133,8 +1133,8 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
 
     # ── ↓ボタンテンプレートマッチ → タップ ──
     _adv_next = ASSET_MANAGER.match_single("adv_next_btn", img_path,
-                roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75),
-                     int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25)))
+                roi=(int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.70),
+                     int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.30)))
     if _adv_next:
         logger.info("[ADV] ↓検出 (score=%.2f) → タップ (%d,%d)", _adv_next[2], _adv_tap_x, _adv_tap_y)
         tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
@@ -2333,7 +2333,7 @@ def main():
                 _adv_tap_x = int(ANALYSIS_W * 0.93)
                 _adv_tap_y = int(ANALYSIS_H * 0.91)
                 if _rapid_adv.is_adv:
-                    if ASSET_MANAGER.match_single("adv_next_btn", _early_analysis, roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75), int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25))):
+                    if ASSET_MANAGER.match_single("adv_next_btn", _early_analysis, roi=(int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.70), int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.30))):
                         logger.info("[ADV_RAPID][iter %d] ↓検出 → タップ (%d,%d)",
                                     i, _adv_tap_x, _adv_tap_y)
                         tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
@@ -2476,7 +2476,7 @@ def main():
                 # ── ADV送り待ちアイコン検知: phash 安定中でも1回タップ ──
                 _adv_tap_x = int(ANALYSIS_W * 0.93)
                 _adv_tap_y = int(ANALYSIS_H * 0.91)
-                if ASSET_MANAGER.match_single("adv_next_btn", _early_analysis, roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75), int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25))):
+                if ASSET_MANAGER.match_single("adv_next_btn", _early_analysis, roi=(int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.70), int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.30))):
                     logger.info("[ADV][iter %d] ↓検出 → タップ (%d,%d)", i, _adv_tap_x, _adv_tap_y)
                     tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
                     state.last_action = "ADV_RAPID_TAP"
