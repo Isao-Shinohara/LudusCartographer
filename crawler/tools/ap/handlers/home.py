@@ -110,8 +110,9 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
                             _ft_name, _ft_m[2], _ft_m[0], _ft_m[1])
                 break
 
-    # 金枠検出
+    # 金枠検出 — テンプレートマッチのみ (HSV は装飾UIで偽陽性が多い)
     _home_gold_tmpl = ASSET_MANAGER.match_single("gold_frame_small", analysis_path) if analysis_path else None
+    # HSV 金枠はチュートリアル証拠判定には使わない (タップ候補としてのみ後で使う)
     _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
 
     if _has_hand:
@@ -120,7 +121,9 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     else:
         _home_blobs = []
 
-    _has_tutorial_evidence = _has_hand or (_home_gold is not None) or (_home_gold_tmpl is not None)
+    # チュートリアル証拠: 指テンプレ or gold_frame_small テンプレのみ
+    # HSV 金枠 (_home_gold) はホーム画面の装飾金色UIで偽陽性が出るため除外
+    _has_tutorial_evidence = _has_hand or (_home_gold_tmpl is not None)
 
     if not _has_tutorial_evidence:
         # 指アイコンなし + 金枠なし = チュートリアル完了
