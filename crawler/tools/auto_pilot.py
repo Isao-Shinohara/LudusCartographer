@@ -581,6 +581,12 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 return "UNKNOWN"
         return "BATTLE"
 
+    # チュートリアル歩行シーン (チェッカー床): BATTLE/MOVIE 判定より先に検出
+    # 低彩度+アイドルアニメで MOVIE 誤判定されるのを防止
+    if img_path and not state.post_download and is_tutorial_walk_scene(img_path):
+        logger.info("[SCENE_EARLY] TutorialWalk検出 (チェッカー床) → 即スワイプ")
+        return "TUTORIAL_WALK"
+
     # BATTLE 初回/再検出: 右下の「通常攻撃」or「戦闘スキル」ボタンアイコンで判定
     # ADV ツールバーの AUTO/FF がバトル画面にも存在するため、ADV 判定より先に実行
     # NOTE: ADV 継続チェックより先に実行 — 一度 ADV と誤分類されても
@@ -591,7 +597,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                        int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
         for _btn_name in ("battle_normal_attack", "battle_skill", "battle_special"):
             _battle_m = _AM_battle.match_single(_btn_name, img_path, roi=_battle_roi)
-            if _battle_m and _battle_m[2] >= 0.65:
+            if _battle_m and _battle_m[2] >= 0.60:
                 logger.info("[SCENE_EARLY] Battle初回検出 (%s score=%.2f) → BATTLE",
                             _btn_name, _battle_m[2])
                 return "BATTLE"
@@ -698,12 +704,6 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             return "MOVIE"
         logger.info("[SCENE_EARLY] download_active=True (チュートリアル) → MOVIE判定スキップ (DL完了ダイアログ優先)")
         return "UNKNOWN"
-    # チュートリアル歩行シーン (チェッカー床): MOVIE 判定より先に検出
-    # 低彩度+アイドルアニメで MOVIE 誤判定されるのを防止
-    if img_path and not state.post_download and is_tutorial_walk_scene(img_path):
-        logger.info("[SCENE_EARLY] TutorialWalk検出 (チェッカー床) → 即スワイプ")
-        return "TUTORIAL_WALK"
-
     _adv = detect_adv_scene(img_path, roi=state.game_roi)
     _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist,
                                 phash_moving_count=state.phash_moving_count)
