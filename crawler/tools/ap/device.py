@@ -60,18 +60,18 @@ def _build_scrcpy_args(device_serial: str) -> list:
     """
     scrcpy 起動引数を動的に構築する。
 
-    短辺を 720px に固定し、--max-size のみで制御。
-    --window-width/height は指定しない (回転時に scrcpy が自動リサイズ)。
-    - 縦画面: 720 x 1440  (短辺=720)
-    - 横画面: 1440 x 720   (そのまま縦横スワップ)
+    映像品質: 解析基準 (ANALYSIS_W=1520) に合わせて --max-size を設定。
+    ウィンドウ表示: --window-width=720 で Mac 上のウィンドウサイズを小さく保つ。
+    これにより拡大リサイズによるテンプレートマッチ精度低下を防止。
     """
     dev_w, dev_h = get_device_resolution()
     land_w = max(dev_w, dev_h)
     land_h = min(dev_w, dev_h)
-    # 横幅 max 720px、縦はアスペクト比固定
-    MAX_WIDTH = 720
-    logger.info("[SCRCPY] 実機解像度 %dx%d → landscape %dx%d → max-size %d",
-                dev_w, dev_h, land_w, land_h, MAX_WIDTH)
+    # 映像エンコード解像度: 解析基準幅 (1520) 以上を確保
+    _MAX_SIZE = max(land_w, ANALYSIS_W)
+    _WINDOW_WIDTH = 720  # Mac 上の表示サイズ
+    logger.info("[SCRCPY] 実機解像度 %dx%d → landscape %dx%d → max-size %d, window-width %d",
+                dev_w, dev_h, land_w, land_h, _MAX_SIZE, _WINDOW_WIDTH)
     # scrcpy バイナリ: PATH 検索で絶対パスを解決 (子プロセスの PATH 差異を回避)
     _scrcpy_bin = shutil.which("scrcpy") or "scrcpy"
     return [
@@ -79,7 +79,8 @@ def _build_scrcpy_args(device_serial: str) -> list:
         "-s", device_serial,
         "--turn-screen-off",
         "--stay-awake",
-        "--max-size", str(MAX_WIDTH),
+        "--max-size", str(_MAX_SIZE),
+        "--window-width", str(_WINDOW_WIDTH),
     ]
 
 
