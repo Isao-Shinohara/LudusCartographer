@@ -268,6 +268,11 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
         _find_scrcpy_window_id()
         _LAST_SCRCPY_BGR = None
         return None
+    # 真っ黒チェック: Quartz が映像を取得できていない場合 (別デスクトップ等)
+    if float(bgr.mean()) < 1.0:
+        logger.warning("[SCRCPY] キャプチャが真っ黒 (mean=%.1f) → ADB フォールバック", float(bgr.mean()))
+        _LAST_SCRCPY_BGR = None
+        return None
     _LAST_SCRCPY_BGR = bgr  # cv2.imread 不要にするキャッシュ
     # 実機解像度を返す (scrcpy ウィンドウはリサイズ済みで実機と異なる)
     dev_w, dev_h = _get_cached_device_resolution()
