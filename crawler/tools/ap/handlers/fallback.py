@@ -15,7 +15,7 @@ from typing import Optional
 from tools.ap.context import DetectContext
 from tools.ap.device import tap_device, swipe_device
 from tools.ap.helpers import has_any, has_text
-from tools.ap.image_proc import smart_tap_button, roi_to_device
+from tools.ap.image_proc import smart_tap_button, roi_to_device, ASSET_MANAGER
 from tools.ap.state import PilotState
 
 logger = logging.getLogger("auto_pilot")
