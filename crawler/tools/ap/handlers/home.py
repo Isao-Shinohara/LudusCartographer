@@ -223,7 +223,8 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
             return "HOME_NAV_WAIT", 2.0
     # ── 右上吹き出しセリフチェック: まだチュートリアルガイダンス中 ──
     _BUBBLE_EXCLUDE_EXACT = {"AUTO", ">>", ">|", "D1", "×", "+", "■", "畄", "目", "SKIP"}
-    _BUBBLE_EXCLUDE_SUBSTR = ("Max", "Lv", "Lx", "Rank", "LV", "MadoDora", "M.8", "M8X")
+    _BUBBLE_EXCLUDE_SUBSTR = ("Max", "Lv", "Lx", "Rank", "LV", "MadoDora", "M.8", "M8X",
+                              "AUTO", "UTO", "UT0", "AUT")
     _BUBBLE_NUM_RE = re.compile(r'^[\d,./:%+\-・\s]+$')
     _BUBBLE_ALPHANUM_NOISE_RE = re.compile(r'^[A-Za-z0-9.,\-+×★☆\s]{1,5}$')
     _bubble_texts = [r for r in ocr

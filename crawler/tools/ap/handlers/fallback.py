@@ -136,7 +136,8 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     # 右上エリア (x>55%, y<35%) にテキストがあり、AUTO/>> ボタン等のUI要素と共存
     # → セリフが止まっている (前回と同一テキスト or phash安定) ならタップで送る
     _BUBBLE_EXCLUDE_EXACT_2 = {"AUTO", ">>", ">|", "D1", "×", "+", "■", "畄", "目", "SKIP"}
-    _BUBBLE_EXCLUDE_SUBSTR_2 = ("Max", "Lv", "Lx", "Rank", "LV", "MadoDora")
+    _BUBBLE_EXCLUDE_SUBSTR_2 = ("Max", "Lv", "Lx", "Rank", "LV", "MadoDora",
+                                "AUTO", "UTO", "UT0", "AUT")
     _BUBBLE_NUM_RE_2 = re.compile(r'^[\d,./:%+\-・\s]+$')
     _bubble_region = [r for r in ocr
                       if r["center"][0] > W * 0.55 and r["center"][1] < H * 0.35
