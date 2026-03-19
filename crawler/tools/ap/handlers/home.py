@@ -17,6 +17,7 @@ from tools.ap.image_proc import (
     ASSET_MANAGER,
     detect_tutorial_gold_button_tap,
     detect_tutorial_overlay,
+    detect_white_hand_pointer,
     find_gold_frame_near,
     roi_to_device,
 )
@@ -172,6 +173,15 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
                 if _gf and _gf[1] > H * 0.85:
                     logger.info(">>> ホーム: 金枠(%d,%d) がフッターナビ領域 → 除外", _gf[0], _gf[1])
                     _gf = None
+                # 方向フィルタ: 指の向きと逆方向の金枠は除外
+                if _gf and _has_hand and _hand_match:
+                    _hand_dir_h = detect_white_hand_pointer(analysis_path)
+                    if _hand_dir_h:
+                        _hdir = _hand_dir_h[2]
+                        if (_hdir == "down" and _gf[1] < _by - 20) or \
+                           (_hdir == "up" and _gf[1] > _by + 20):
+                            logger.info(">>> ホーム: 金枠(%d,%d) が指方向(%s)と逆 → 除外", _gf[0], _gf[1], _hdir)
+                            _gf = None
                 if _gf:
                     _tap_target = (_gf[0], _gf[1])
                     logger.info(">>> ホームチュートリアル: 指(%d,%d)→金枠(%d,%d) dimmed=%s [%d回目]",
