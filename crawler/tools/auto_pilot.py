@@ -591,6 +591,15 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                             logger.info("[SCENE_EARLY] MOVIE中ガチャ演出検出 (SKIP+暗背景 brightness=%.0f) → GACHA", _gb)
                             state._movie_recheck_count = 0
                             return "GACHA"
+                # ADV チェック: AUTO ボタンが検出される → ADV シーン
+                # ↓ボタンが暗背景で検出できないケース (チュートリアル最終ADV等) に対応
+                _adv_auto_m = ASSET_MANAGER.match_single("adv_icon_auto", img_path)
+                if _adv_auto_m and _adv_auto_m[2] >= 0.65:
+                    logger.info("[SCENE_EARLY] MOVIE中ADV検出 (AUTO score=%.2f) → UNKNOWN (OCRへ)",
+                                _adv_auto_m[2])
+                    state._movie_recheck_count = 0
+                    state.current_scene = "UNKNOWN"
+                    return "UNKNOWN"
             return "MOVIE"
         state._movie_stable_count = getattr(state, "_movie_stable_count", 0) + 1
         if state._movie_stable_count < _MOVIE_STABLE_THRESHOLD:
