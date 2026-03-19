@@ -307,6 +307,13 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             if _home_kw_hits >= 2:
                 logger.info("[Asset] FINGER_TEMPLATE をホーム画面で抑制 (home_kw=%d)", _home_kw_hits)
                 asset_hit = None
+            # プレゼントボックス画面: 指テンプレ座標ではなく一括受取ボタンの固定座標をタップ
+            elif any("プレゼント" in t or "プレセント" in t for t in texts):
+                _bulk_x = int(W * 0.89)
+                _bulk_y = int(H * 0.92)
+                logger.info("[Asset] FINGER_TEMPLATE をプレゼントボックスで補正 → 一括受取 (%d,%d)", _bulk_x, _bulk_y)
+                tap_device(_bulk_x, _bulk_y, state, "PRESENT_BULK_RECEIVE")
+                return "PRESENT_BULK_RECEIVE", 2.0
         if asset_hit:
             cx, cy, action, _asset_region = asset_hit
             # Text-Core: テンプレートマッチ領域 + OCR でテキスト中心優先座標を取得
