@@ -69,18 +69,18 @@ def _build_scrcpy_args(device_serial: str) -> list:
     land_h = min(dev_w, dev_h)
     # 映像エンコード解像度: 解析基準幅 (1520) 以上を確保
     _MAX_SIZE = max(land_w, ANALYSIS_W)
-    _WINDOW_WIDTH = 720  # Mac 上の表示サイズ
-    logger.info("[SCRCPY] 実機解像度 %dx%d → landscape %dx%d → max-size %d, window-width %d",
-                dev_w, dev_h, land_w, land_h, _MAX_SIZE, _WINDOW_WIDTH)
+    logger.info("[SCRCPY] 実機解像度 %dx%d → landscape %dx%d → max-size %d",
+                dev_w, dev_h, land_w, land_h, _MAX_SIZE)
     # scrcpy バイナリ: PATH 検索で絶対パスを解決 (子プロセスの PATH 差異を回避)
     _scrcpy_bin = shutil.which("scrcpy") or "scrcpy"
+    # NOTE: --window-width は指定しない。Quartz キャプチャはウィンドウ表示サイズに
+    # 依存するため、ウィンドウを小さくするとキャプチャ品質が低下する。
     return [
         _scrcpy_bin,
         "-s", device_serial,
         "--turn-screen-off",
         "--stay-awake",
         "--max-size", str(_MAX_SIZE),
-        "--window-width", str(_WINDOW_WIDTH),
     ]
 
 
