@@ -293,6 +293,12 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             if any("矢印を" in t for t in texts):
                 logger.info(">>> [Asset Match] DIALOG_NEXT を抑制 (矢印をタップ画面 → #2-a に委譲)")
                 asset_hit = None
+        # タイトル画面では MOVIE_SKIP_TEXT が右上サポートボタンに誤マッチ → 抑制
+        elif asset_hit and asset_hit[2] == "MOVIE_SKIP_TEXT":
+            _title_kws = ["MAGIA", "EXEDRA", "TAP", "START", "サポート"]
+            if any(kw in joined for kw in _title_kws):
+                logger.info("[Asset] MOVIE_SKIP_TEXT をタイトル画面で抑制")
+                asset_hit = None
         # ホーム画面では FINGER_TEMPLATE 偽陽性を抑制 → ホーム検出ハンドラに委譲
         elif asset_hit and asset_hit[2] == "FINGER_TEMPLATE":
             _home_kws_check = ["光の間", "ショップ", "ガチャ", "ガシャ", "マップ", "レイヤ"]
