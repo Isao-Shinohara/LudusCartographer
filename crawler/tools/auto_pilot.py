@@ -559,6 +559,14 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         if dist >= 16:
             # 大きなフレーム変化 → 本物の動画再生、即 MOVIE 維持
             state._movie_stable_count = 0
+            # 長期滞留カウンタは全 dist レンジでインクリメント
+            state._movie_recheck_count = getattr(state, "_movie_recheck_count", 0) + 1
+            if state._movie_recheck_count >= 15:
+                logger.info("[SCENE_EARLY] MOVIE長期滞留 (%d回, dist=%d) → UNKNOWN (OCRへ)",
+                            state._movie_recheck_count, dist)
+                state._movie_recheck_count = 0
+                state.current_scene = "UNKNOWN"
+                return "UNKNOWN"
             return "MOVIE"
         if dist >= 3:
             # 小さなフレーム変化 → バトル演出/ADV微動の可能性
