@@ -698,6 +698,12 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             return "MOVIE"
         logger.info("[SCENE_EARLY] download_active=True (チュートリアル) → MOVIE判定スキップ (DL完了ダイアログ優先)")
         return "UNKNOWN"
+    # チュートリアル歩行シーン (チェッカー床): MOVIE 判定より先に検出
+    # 低彩度+アイドルアニメで MOVIE 誤判定されるのを防止
+    if img_path and not state.post_download and is_tutorial_walk_scene(img_path):
+        logger.info("[SCENE_EARLY] TutorialWalk検出 (チェッカー床) → 即スワイプ")
+        return "TUTORIAL_WALK"
+
     _adv = detect_adv_scene(img_path, roi=state.game_roi)
     _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist,
                                 phash_moving_count=state.phash_moving_count)
@@ -2111,6 +2117,20 @@ def main():
             state.movie_wait_consecutive = 0
             state.movie_static_count = 0
             state._movie_stable_count = 0
+
+        if _early_scene == "TUTORIAL_WALK":
+            # チェッカー床シーン: OCR不要、即スワイプ
+            state.current_scene = "UNKNOWN"
+            _walk_sx = int(ANALYSIS_W * 0.5)
+            _walk_fy = int(ANALYSIS_H * 0.89)
+            _walk_ty = int(ANALYSIS_H * 0.07)
+            swipe_device(_walk_sx, _walk_fy, _walk_sx, _walk_ty, 10000,
+                         state=state, desc="TutorialWalk_UP")
+            state.last_phash = ""
+            _fms = (time.time() - _loop_t0) * 1000
+            state.total_loop_ms += _fms
+            logger.info("  [PERF] Loop %.0fms (TUTORIAL_WALK_EARLY)", _fms)
+            continue
 
         if _early_scene == "MOVIE":
             if state.current_scene == "BATTLE":

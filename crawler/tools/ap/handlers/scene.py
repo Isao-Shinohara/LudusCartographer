@@ -35,6 +35,21 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
     _dl_jp = has_any(ocr, ["ダウンロード", "追加データ"])
     _dl_progress = any("MB" in t or "GB" in t for t in texts)
     if _dl_jp and _dl_progress:
+        # ダウンロード確認ダイアログ（「開始しますか？」）はOKタップが先
+        if any("開始しますか" in t for t in texts):
+            # ConfirmDialog と同じロジッックで OK/キャンセルを探す
+            _ok_btn = has_any(ocr, ["OK"])
+            if not _ok_btn:
+                # OCR が OK を ●K 等に誤読するケースに対応 → 右側のボタン位置を固定推定
+                _ok_x = int(W * 0.69)
+                _ok_y = int(H * 0.82)
+                logger.info(">>> [DOWNLOAD_CONFIRM] ダウンロード確認 → OK 固定位置 (%d,%d) タップ", _ok_x, _ok_y)
+                tap_device(_ok_x, _ok_y, state, "DOWNLOAD_CONFIRM_OK")
+            else:
+                logger.info(">>> [DOWNLOAD_CONFIRM] ダウンロード確認 → OK (%d,%d) タップ",
+                            _ok_btn["center"][0], _ok_btn["center"][1])
+                tap_device(_ok_btn["center"][0], _ok_btn["center"][1], state, "DOWNLOAD_CONFIRM_OK")
+            return "DOWNLOAD_CONFIRM_OK", 2.0
         logger.info(">>> [DOWNLOAD_STRICT_JP] %s + 進捗あり — 待機", _dl_jp["text"])
         state.download_active = True
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
