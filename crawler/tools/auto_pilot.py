@@ -568,9 +568,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             if state._movie_recheck_count % 3 == 0:
                 _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
                                int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
-                for _btn in ("battle_normal_attack", "battle_skill", "battle_special"):
+                _MOVIE_BTL_TH = {"battle_normal_attack": 0.60, "battle_skill": 0.60, "battle_special": 0.70}
+                for _btn, _th in _MOVIE_BTL_TH.items():
                     _bm = ASSET_MANAGER.match_single(_btn, img_path, roi=_battle_roi)
-                    if _bm and _bm[2] >= 0.60:
+                    if _bm and _bm[2] >= _th:
                         logger.info("[SCENE_EARLY] MOVIE中バトルテンプレ検出 (%s %.2f) → BATTLE",
                                     _btn, _bm[2])
                         state._movie_recheck_count = 0
@@ -612,9 +613,11 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     try:
         _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
                        int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
-        for _btn_name in ("battle_normal_attack", "battle_skill", "battle_special"):
+        # battle_special は装飾アイコンに誤マッチしやすいため閾値を高めに設定
+        _BATTLE_THRESHOLDS = {"battle_normal_attack": 0.60, "battle_skill": 0.60, "battle_special": 0.70}
+        for _btn_name, _btn_th in _BATTLE_THRESHOLDS.items():
             _battle_m = _AM_battle.match_single(_btn_name, img_path, roi=_battle_roi)
-            if _battle_m and _battle_m[2] >= 0.60:
+            if _battle_m and _battle_m[2] >= _btn_th:
                 logger.info("[SCENE_EARLY] Battle初回検出 (%s score=%.2f) → BATTLE",
                             _btn_name, _battle_m[2])
                 return "BATTLE"
