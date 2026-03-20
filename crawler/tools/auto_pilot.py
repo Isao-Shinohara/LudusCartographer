@@ -2916,6 +2916,13 @@ def main():
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         action, wait_sec = detect_and_act(ocr_results, state, analysis_path)
         state.last_action = action
+        # ── ホーム画面到達 → 自動操縦停止 ──
+        if action == "GOAL_HOME_REACHED" and not state.grind_mode:
+            logger.info("=" * 60)
+            logger.info("  ホーム画面到達 — 自動操縦を停止します")
+            logger.info("=" * 60)
+            generate_and_copy_report(state, "ホーム画面到達")
+            break
         # 副作用アクション以外なら代替候補を収集
         if action not in _IMMEDIATE_ACTIONS:
             state.pending_candidates = collect_secondary_candidates(
