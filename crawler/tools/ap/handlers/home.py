@@ -125,6 +125,15 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
 
     # チュートリアル証拠: 指テンプレ or gold_frame_small テンプレのみ
     # HSV 金枠 (_home_gold) はホーム画面の装飾金色UIで偽陽性が出るため除外
+    # 追加ガード: 指テンプレが検出されても暗転+金枠がなければ偽陽性
+    # (チュートリアル中は対象以外が暗くなり、対象に金枠が出る。完了後は両方ない)
+    if _has_hand and analysis_path:
+        _has_overlay = detect_tutorial_overlay(analysis_path)
+        _has_gold_evidence = (_home_gold_tmpl is not None) or (_home_gold is not None)
+        if not _has_overlay and not _has_gold_evidence:
+            logger.info(">>> ホーム: 指テンプレ検出だが暗転なし+金枠なし → チュートリアル完了済み (偽陽性)")
+            _has_hand = False
+            _home_blobs = []
     _has_tutorial_evidence = _has_hand or (_home_gold_tmpl is not None)
 
     if not _has_tutorial_evidence:
