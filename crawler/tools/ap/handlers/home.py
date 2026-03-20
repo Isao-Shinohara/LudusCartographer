@@ -139,9 +139,16 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     _has_tutorial_evidence = _has_hand or (_home_gold_tmpl is not None)
 
     if not _has_tutorial_evidence:
-        # 指アイコンなし + 金枠なし = チュートリアル完了
+        # 指アイコンなし + 金枠なし = チュートリアル完了候補
+        # 1フレームの遷移瞬間で誤判定しないよう、3回連続で確認
+        _no_evidence_count = getattr(state, "_home_no_evidence_count", 0) + 1
+        state._home_no_evidence_count = _no_evidence_count
+        if not state.tutorial_cleared and _no_evidence_count < 3:
+            logger.info(">>> ホーム画面 チュートリアル証拠なし (%d/3) → 次フレームで再確認",
+                        _no_evidence_count)
+            return "HOME_TUTORIAL_RECHECK", 0.5
         if not state.tutorial_cleared:
-            logger.info(">>> ホーム画面 指テンプレなし+金枠なし → チュートリアル完了")
+            logger.info(">>> ホーム画面 指テンプレなし+金枠なし (3回連続) → チュートリアル完了")
             state.tutorial_cleared = True
             log_milestone(state, "HOME_REACHED")
         logger.info(">>> ホーム画面検出 (%d個) — チュートリアル完了済み", home_count)
@@ -150,6 +157,8 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
         return "GOAL_HOME_REACHED", 0
 
     # ── チュートリアル中: 指/金枠を検出してタップ ──
+    # チュートリアル証拠ありなので連続確認カウンタをリセット
+    state._home_no_evidence_count = 0
     logger.info(">>> ホーム画面 チュートリアル中 (指=%s 金枠=%s)",
                 _has_hand, _home_gold is not None)
     if _home_blobs or _home_gold:

@@ -1878,7 +1878,9 @@ def detect_tutorial_overlay(img_path: Path, brightness_threshold: int = 90) -> b
     """チュートリアル中の暗転オーバーレイを検出する。
 
     チュートリアル時は指アイコン+金枠のハイライト以外が半透明の暗いオーバーレイで覆われる。
-    画面全体の中央値輝度が低い (< brightness_threshold) なら暗転中と判定。
+    2段階判定:
+      方式1: 画面全体の中央値輝度が低い (< brightness_threshold)
+      方式2: 四隅のうち2つ以上が暗い (mean < 80) — ハイライト部分の輝度に影響されない
 
     Returns: True = 暗転オーバーレイあり（チュートリアル中の可能性が高い）
     """
@@ -1887,10 +1889,29 @@ def detect_tutorial_overlay(img_path: Path, brightness_threshold: int = 90) -> b
         if img is None:
             return False
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        H, W = gray.shape[:2]
         median_brightness = int(np.median(gray))
-        logger.debug("[TutOverlay] median_brightness=%d threshold=%d",
-                     median_brightness, brightness_threshold)
-        return median_brightness < brightness_threshold
+        # 方式1: 中央値輝度
+        if median_brightness < brightness_threshold:
+            logger.debug("[TutOverlay] 暗転検出 (median=%d < %d)",
+                         median_brightness, brightness_threshold)
+            return True
+        # 方式2: 四隅の暗さ (ハイライト対象が明るくても隅は暗い)
+        sz = 40
+        corners = [
+            gray[0:sz, 0:sz],           # TL
+            gray[0:sz, W - sz:W],       # TR
+            gray[H - sz:H, 0:sz],       # BL
+            gray[H - sz:H, W - sz:W],   # BR
+        ]
+        dark_count = sum(1 for c in corners if c.mean() < 80)
+        if dark_count >= 2:
+            logger.debug("[TutOverlay] 暗転検出 (dark_corners=%d/4, median=%d)",
+                         dark_count, median_brightness)
+            return True
+        logger.debug("[TutOverlay] 暗転なし (median=%d, dark_corners=%d/4)",
+                     median_brightness, dark_count)
+        return False
     except Exception as e:
         logger.debug("detect_tutorial_overlay error: %s", e)
         return False
