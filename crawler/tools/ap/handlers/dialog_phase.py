@@ -288,10 +288,17 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
         # メニューボタン誤タップ → トースト表示中。DIALOG_CLOSE を完全スキップして2秒待機
         logger.info("[#0-PRE] 「メニューが使用できません」トースト検出 → DIALOG_CLOSE スキップ (2s wait)")
         return "BATTLE_MENU_TOAST_WAIT", 2.0
-    if _is_battle_early and analysis_path is not None:
+    # チュートリアルポップアップが表示されている場合は発光 SM をスキップ
+    # (ポップアップを閉じないとバトルが進行しないため)
+    _tutorial_popup_kws = ["ロールについて", "種類あります", "探索ポイント", "移動ポイント",
+                           "バトルポイント", "遊び方", "操作方法", "編成について"]
+    _has_tutorial_popup = any(kw in joined for kw in _tutorial_popup_kws)
+    if _is_battle_early and analysis_path is not None and not _has_tutorial_popup:
         _pre_result = _run_battle_glow_sm(analysis_path, W, H, state, ocr, tag="#0-PRE")
         if _pre_result is not None:
             return _pre_result
+    if _has_tutorial_popup:
+        logger.info("[#0-PRE] チュートリアルポップアップ検出 → 発光SM スキップ (ダイアログ処理優先)")
 
     # ── 【お知らせポップアップ検出】PRE_DIALOG_GUARD バイパス ──────────
     _is_notice = False
