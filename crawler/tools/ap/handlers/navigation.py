@@ -55,14 +55,16 @@ def handle_navigation(ctx: DetectContext, state: PilotState) -> Optional[tuple[s
             return "MAP_ARROW_TAP", 1.0
 
     # ─── 【最優先 #2】ハイライト指示テキスト ───
-    tutorial_kws = ["ここをタップ", "タップしてください", "タップして下さい", "タップして"]
-    for kw in tutorial_kws:
-        match = has_text(ocr, kw, min_conf=0.3)
-        if match:
-            cx, cy = match["center"]
-            logger.info(">>> 【ハイライト指示】 '%s' (%d,%d)", kw, cx, cy)
-            tap_device(cx, cy, state, f"HIGHLIGHT '{kw}'")
-            return "HIGHLIGHT_TAP", 0.5
+    # ホーム画面到達後は「プレイヤーID：タップして表示」等に誤マッチするため抑制
+    if not state.home_reached:
+        tutorial_kws = ["ここをタップ", "タップしてください", "タップして下さい", "タップして"]
+        for kw in tutorial_kws:
+            match = has_text(ocr, kw, min_conf=0.3)
+            if match:
+                cx, cy = match["center"]
+                logger.info(">>> 【ハイライト指示】 '%s' (%d,%d)", kw, cx, cy)
+                tap_device(cx, cy, state, f"HIGHLIGHT '{kw}'")
+                return "HIGHLIGHT_TAP", 0.5
 
     # ─── ストーリーセリフ進行 (バトル外でセリフが出ている) ───
     # 「画面をタップ」系の指示 or バトルでもホームでもない日本語テキストが複数ある
