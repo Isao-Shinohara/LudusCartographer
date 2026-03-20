@@ -269,6 +269,9 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             if ctx.pre_dialog_finger:
                 logger.info("[Asset] DIALOG_NAV_RIGHT を指ブロブ検出中のため抑制 → 指+金枠ハンドラへ")
                 asset_hit = None
+            elif ctx.is_battle_early or state.current_scene == "BATTLE":
+                logger.info("[Asset] DIALOG_NAV_RIGHT をバトル中のため抑制 (BATTLE_GUARD)")
+                asset_hit = None
             else:
                 # BLUR_GUARD: ダイアログ ▷ は必ず背景ぼかしを伴う
                 # バトル画面等の非ダイアログ画面での誤検出を排除

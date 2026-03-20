@@ -215,6 +215,17 @@ def handle_dialog_screen(
             tap_device(_dp_x, _dp_y, state, f"DIALOG_CONFIRM_OK '{_dlg_pos['text']}'")
             state.pre_popup_tap_count = 0
             return "DIALOG_CONFIRM_OK", 1.0
+        # ── OK のみダイアログ (キャンセルなし) → 2回で OK 直タップ ──
+        if state.pre_popup_tap_count >= 2 and _dlg_pos and not _dlg_neg:
+            _dp_x, _dp_y = _dlg_pos["center"]
+            _dp_y_adj = max(0, _dp_y - 6)
+            logger.info(
+                "[Dialog#0] OK のみダイアログ (× 失敗%d回) → OK直タップ '%s'(%d,%d)",
+                state.pre_popup_tap_count, _dlg_pos["text"], _dp_x, _dp_y_adj,
+            )
+            tap_device(_dp_x, _dp_y_adj, state, f"DIALOG_OK_ONLY '{_dlg_pos['text']}'")
+            state.pre_popup_tap_count = 0
+            return "DIALOG_OK_ONLY", 1.0
         # ── 4回連続失敗 → OK/確認ボタンを探してフォールバック ──
         if state.pre_popup_tap_count >= 4:
             _ok_ocr = has_any(ocr, ["OK", "確認", "決定", "おまかせ"])

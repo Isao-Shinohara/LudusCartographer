@@ -2347,15 +2347,17 @@ def main():
                     state.last_phash = ""
                     continue
                 # ── ミニ会話タップ (1回) ──
-                _mc = detect_mini_conversation(img_path)
-                if _mc is not None:
-                    _mc_cx, _mc_cy, _mc_side = _mc
-                    logger.info("[MINI_CONV][iter %d] 吹き出し(%s) → タップ (%d,%d)",
-                                i, _mc_side, _mc_cx, _mc_cy)
-                    tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
-                    state.last_action = "MINI_CONV_TAP"
-                    state.last_phash = ""
-                    continue
+                # ホーム画面 (MENU) では通知バナーを吹き出しと誤認するため抑制
+                if state.current_scene != "MENU":
+                    _mc = detect_mini_conversation(img_path)
+                    if _mc is not None:
+                        _mc_cx, _mc_cy, _mc_side = _mc
+                        logger.info("[MINI_CONV][iter %d] 吹き出し(%s) → タップ (%d,%d)",
+                                    i, _mc_side, _mc_cx, _mc_cy)
+                        tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
+                        state.last_action = "MINI_CONV_TAP"
+                        state.last_phash = ""
+                        continue
                 # ── ツールバーなし + ↓なし + 吹き出しなし → OCR パスへフォールスルー ──
 
         else:
@@ -2485,17 +2487,19 @@ def main():
                     state.stall_start = 0.0
                     continue
                 # ── ミニ会話タップ (phash安定時, 1回) ──
-                _mc = detect_mini_conversation(img_path)
-                if _mc is not None:
-                    _mc_cx, _mc_cy, _mc_side = _mc
-                    logger.info("[MINI_CONV][iter %d] 吹き出し(%s) → タップ (%d,%d)",
-                                i, _mc_side, _mc_cx, _mc_cy)
-                    tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
-                    state.last_action = "MINI_CONV_TAP"
-                    state.last_phash = ""
-                    state.same_phash_count = 0
-                    state.stall_start = 0.0
-                    continue
+                # ホーム画面 (MENU) では通知バナーを吹き出しと誤認するため抑制
+                if state.current_scene != "MENU":
+                    _mc = detect_mini_conversation(img_path)
+                    if _mc is not None:
+                        _mc_cx, _mc_cy, _mc_side = _mc
+                        logger.info("[MINI_CONV][iter %d] 吹き出し(%s) → タップ (%d,%d)",
+                                    i, _mc_side, _mc_cx, _mc_cy)
+                        tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
+                        state.last_action = "MINI_CONV_TAP"
+                        state.last_phash = ""
+                        state.same_phash_count = 0
+                        state.stall_start = 0.0
+                        continue
                 # 動画シーンでは ADV ツールバーが無いためタップ抑制
                 if state.current_scene in ("STORY", "ADV", "UNKNOWN"):
                     _aa_adv = detect_adv_scene(img_path, roi=state.game_roi)
