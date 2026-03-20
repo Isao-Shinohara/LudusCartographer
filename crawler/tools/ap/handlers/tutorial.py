@@ -303,6 +303,25 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                                 _close[2], _close[0], _close[1])
                     tap_device(_close[0], _close[1], state, "DIALOG_NEXT_CLOSE")
                     return "DIALOG_NEXT_CLOSE", 1.0
+                # スタック検出: 同じダイアログが繰り返し表示される場合
+                _ocr_key = joined[:60] if joined else ""
+                _prev = getattr(state, "_dialog_next_prev_ocr", "")
+                _cnt = getattr(state, "_dialog_next_stall_count", 0)
+                if _ocr_key and _ocr_key == _prev:
+                    _cnt += 1
+                else:
+                    _cnt = 1
+                state._dialog_next_prev_ocr = _ocr_key
+                state._dialog_next_stall_count = _cnt
+                if _cnt >= 3:
+                    # ▷ が反応しないダイアログ → 上端右の × エリアをタップして閉じる
+                    _close_x = int(W * 0.94)  # 右端付近
+                    _close_y = int(H * 0.13)  # 上端付近
+                    logger.warning("[DIALOG_NEXT] %d 回連続同一画面 → 上端×エリア (%d,%d) タップ",
+                                   _cnt, _close_x, _close_y)
+                    tap_device(_close_x, _close_y, state, "DIALOG_NEXT_CORNER_CLOSE")
+                    state._dialog_next_stall_count = 0
+                    return "DIALOG_NEXT_CORNER_CLOSE", 1.5
         # タイトル画面では MOVIE_SKIP_TEXT が右上サポートボタンに誤マッチ → 抑制
         elif asset_hit and asset_hit[2] == "MOVIE_SKIP_TEXT":
             _title_kws = ["MAGIA", "EXEDRA", "TAP", "START", "サポート"]
