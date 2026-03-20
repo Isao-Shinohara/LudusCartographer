@@ -1897,6 +1897,8 @@ def detect_tutorial_overlay(img_path: Path, brightness_threshold: int = 90) -> b
                          median_brightness, brightness_threshold)
             return True
         # 方式2: 四隅の暗さ (ハイライト対象が明るくても隅は暗い)
+        # 閾値30: チュートリアル暗転時は隅が < 10 レベル。通常ホーム画面の
+        # フッターナビ背景 (38-57) を誤検出しないよう設定
         sz = 40
         corners = [
             gray[0:sz, 0:sz],           # TL
@@ -1904,7 +1906,7 @@ def detect_tutorial_overlay(img_path: Path, brightness_threshold: int = 90) -> b
             gray[H - sz:H, 0:sz],       # BL
             gray[H - sz:H, W - sz:W],   # BR
         ]
-        dark_count = sum(1 for c in corners if c.mean() < 80)
+        dark_count = sum(1 for c in corners if c.mean() < 30)
         if dark_count >= 2:
             logger.debug("[TutOverlay] 暗転検出 (dark_corners=%d/4, median=%d)",
                          dark_count, median_brightness)

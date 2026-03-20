@@ -114,6 +114,12 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
 
     # 金枠検出 — テンプレートマッチのみ (HSV は装飾UIで偽陽性が多い)
     _home_gold_tmpl = ASSET_MANAGER.match_single("gold_frame_small", analysis_path) if analysis_path else None
+    # 位置ガード: 左上端やフッターナビ領域の偽陽性を除外
+    if _home_gold_tmpl:
+        _gx, _gy = _home_gold_tmpl[0], _home_gold_tmpl[1]
+        if _gx < 60 and _gy < 60:
+            logger.debug(">>> ホーム: gold_frame_small (%d,%d) を左上端のため除外", _gx, _gy)
+            _home_gold_tmpl = None
     # HSV 金枠はチュートリアル証拠判定には使わない (タップ候補としてのみ後で使う)
     _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
 
