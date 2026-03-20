@@ -3001,12 +3001,26 @@ def main():
                     "ASSET_TUTORIAL_DIALOG_NEXT", "GOLD_BTN_TAP",
                     "FINGER_GOLD_TAP",
                 ):
-                    # DIALOG_NEXT スタック → BACK キーで閉じる
+                    # DIALOG_NEXT スタック → × ボタン検索 → BACK キーで閉じる
                     # GOLD_BTN/MOYA は ADV 中の装飾誤検出が多いため中央タップ
                     if action == "ASSET_TUTORIAL_DIALOG_NEXT":
-                        logger.warning(
-                            "[SCENE_REEVAL_ESCAPE] '%s' スタック → BACK キーで脱出", action)
-                        adb("shell input keyevent KEYCODE_BACK")
+                        # × ボタンを探してタップ (BACK キーより確実)
+                        _esc_close = None
+                        if state.analysis_path:
+                            for _tpl in ("tutorial_dialog_close", "close_btn", "close_btn_cross"):
+                                _cm = ASSET_MANAGER.match_single(_tpl, state.analysis_path)
+                                if _cm and _cm[2] >= 0.55:
+                                    _esc_close = _cm
+                                    break
+                        if _esc_close:
+                            logger.warning(
+                                "[SCENE_REEVAL_ESCAPE] '%s' スタック → × ボタン (%d,%d, %.2f) で脱出",
+                                action, _esc_close[0], _esc_close[1], _esc_close[2])
+                            tap_device(_esc_close[0], _esc_close[1], state, "REEVAL_CLOSE_ESCAPE")
+                        else:
+                            logger.warning(
+                                "[SCENE_REEVAL_ESCAPE] '%s' スタック → × 未検出、BACK キーで脱出", action)
+                            adb("shell input keyevent KEYCODE_BACK")
                         state.last_action = "REEVAL_BACK_ESCAPE"
                     else:
                         # 代替候補があれば最優先で試行 (金枠の空振り脱出)

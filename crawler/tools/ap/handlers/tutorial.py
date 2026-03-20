@@ -293,6 +293,16 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             if any("矢印を" in t for t in texts):
                 logger.info(">>> [Asset Match] DIALOG_NEXT を抑制 (矢印をタップ画面 → #2-a に委譲)")
                 asset_hit = None
+            if asset_hit:
+                # × ボタンが見える場合は最終ページ → × をタップして閉じる (▷ ループ防止)
+                _nav_close = ASSET_MANAGER.match_single("close_btn", analysis_path)
+                _tdc = ASSET_MANAGER.match_single("tutorial_dialog_close", analysis_path)
+                _close = _tdc if (_tdc and _tdc[2] >= 0.60) else (_nav_close if (_nav_close and _nav_close[2] >= 0.60) else None)
+                if _close:
+                    logger.info("[DIALOG_NEXT] × ボタン検出 (%.2f) → 最終ページ、× タップ (%d,%d)",
+                                _close[2], _close[0], _close[1])
+                    tap_device(_close[0], _close[1], state, "DIALOG_NEXT_CLOSE")
+                    return "DIALOG_NEXT_CLOSE", 1.0
         # タイトル画面では MOVIE_SKIP_TEXT が右上サポートボタンに誤マッチ → 抑制
         elif asset_hit and asset_hit[2] == "MOVIE_SKIP_TEXT":
             _title_kws = ["MAGIA", "EXEDRA", "TAP", "START", "サポート"]
