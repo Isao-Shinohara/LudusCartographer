@@ -303,15 +303,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                                 _close[2], _close[0], _close[1])
                     tap_device(_close[0], _close[1], state, "DIALOG_NEXT_CLOSE")
                     return "DIALOG_NEXT_CLOSE", 1.0
-                # スタック検出: 同じダイアログが繰り返し表示される場合
-                _ocr_key = joined[:60] if joined else ""
-                _prev = getattr(state, "_dialog_next_prev_ocr", "")
-                _cnt = getattr(state, "_dialog_next_stall_count", 0)
-                if _ocr_key and _ocr_key == _prev:
-                    _cnt += 1
-                else:
-                    _cnt = 1
-                state._dialog_next_prev_ocr = _ocr_key
+                # スタック検出: DIALOG_NEXT 発火回数をカウント (アクション種別に依存しない)
+                _cnt = getattr(state, "_dialog_next_stall_count", 0) + 1
                 state._dialog_next_stall_count = _cnt
                 if _cnt >= 3:
                     # ▷ が反応しないダイアログ → 上端右の × エリアをタップして閉じる
@@ -344,6 +337,9 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                 tap_device(_bulk_x, _bulk_y, state, "PRESENT_BULK_RECEIVE")
                 return "PRESENT_BULK_RECEIVE", 2.0
         if asset_hit:
+            # DIALOG_NEXT 以外のアセットが検出された場合、スタックカウンタリセット
+            if asset_hit[2] != "ASSET_TUTORIAL_DIALOG_NEXT":
+                state._dialog_next_stall_count = 0
             cx, cy, action, _asset_region = asset_hit
             # Text-Core: テンプレートマッチ領域 + OCR でテキスト中心優先座標を取得
             _tc_x, _tc_y = text_core_center(_asset_region, ocr, label=f"Asset:{action}")
