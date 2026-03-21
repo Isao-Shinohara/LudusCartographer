@@ -276,8 +276,31 @@ export ANDROID_SERIAL=f6b8cef7
 
 ## 12. まどドラ起動ルール
 
-まどドラの自律操縦を起動する際は **必ず `tools/auto_pilot.py` を直接実行** すること。
-`main.py` (DFS クロールモード) は使用しない。
+### ユーザーが起動する場合
+
+ランチャースクリプト `tools/run_autopilot.sh` を使用する。
+macOS 26 の Vision framework が Terminal フォアグラウンドプロセスで
+SIGBUS クラッシュするため、スクリプト内部で `nohup` バックグラウンド実行する。
+
+```bash
+# 途中再開
+cd ~/Desktop/LudusCartographer/crawler
+./tools/run_autopilot.sh
+
+# 新規アカウント
+./tools/run_autopilot.sh --fresh-install
+
+# 停止
+pkill -f auto_pilot.py
+
+# ログ監視 (起動時に自動で tail -f が始まる。Ctrl+C で監視終了、プロセスは継続)
+tail -f /tmp/auto_pilot.log
+```
+
+### Claude Code が起動する場合
+
+Claude Code の Bash ツールは sandbox 環境で実行されるため `nohup` 不要。
+`auto_pilot.py` を直接実行する。
 
 ```bash
 cd ~/Desktop/LudusCartographer/crawler
@@ -288,9 +311,9 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 venv/bin/python -u tools/auto_pilot.py
 ```
 
-- `main.py --android` は内部で `auto_pilot.main()` を呼ぶが、直接実行の方が確実
+### 共通ルール
 - `--fresh-install` は **ユーザーが明示的に指示した場合のみ** 付与（§11 参照）
-- ログは stdout のみ出力。起動時は `2>&1 | tee /tmp/auto_pilot.log` を付け、`tail` で監視する
+- ログは `/tmp/auto_pilot.log` に出力される
 
 ---
 
