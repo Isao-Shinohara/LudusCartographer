@@ -78,4 +78,25 @@ def handle_navigation(ctx: DetectContext, state: PilotState) -> Optional[tuple[s
         tap_device(cx, cy, state, "STORY_TAP_HINT")
         return "STORY_TAP", 0.3
 
+    # ─── ガチャ/交換所等のサブ画面からの脱出 ───
+    # 左上に「↩ 画面名」が表示されるサブ画面を OCR で検出し、左上の戻るボタンをタップ
+    # (チュートリアル中は誤動作するため home_reached 後のみ)
+    if state.home_reached and not is_battle_now:
+        _sub_screen_names = ["ガチャ", "交換所", "ショップ", "パーティ", "編成",
+                             "ミッション", "メニュー", "設定", "フレンド", "プレゼント",
+                             "クエスト", "育成", "タワー"]
+        for item in ocr:
+            _t = item.get("text", "")
+            _c = item.get("center", (0, 0))
+            # 左上 (x < 20%, y < 15%) に画面名テキストがあるか
+            if _c[0] < W * 0.20 and _c[1] < H * 0.15:
+                if any(kw in _t for kw in _sub_screen_names):
+                    # 画面名の左にある戻るボタン (↩) をタップ
+                    _back_x = max(int(_c[0] - W * 0.05), int(W * 0.02))
+                    _back_y = _c[1]
+                    logger.info(">>> 【サブ画面脱出】 左上に '%s' 検出 → 戻る (%d,%d)",
+                                _t, _back_x, _back_y)
+                    tap_device(_back_x, _back_y, state, "SUB_SCREEN_BACK")
+                    return "SUB_SCREEN_BACK", 1.5
+
     return None
