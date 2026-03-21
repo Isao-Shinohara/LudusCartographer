@@ -985,7 +985,8 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
             logger.info("[BATTLE] 指テンプレ左側検出 (%s, x=%d) → 金枠全画面探索", _ft, _fm[0])
             break
     _gold_tap = detect_tutorial_gold_button_tap(
-        analysis_path, right_half_only=_battle_rho, overlay_mode=False)
+        analysis_path, right_half_only=_battle_rho, overlay_mode=False,
+        skip_upper_filter=True)
     if _gold_tap:
         _rapid_tx, _rapid_ty = _gold_tap
         _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
@@ -2689,7 +2690,8 @@ def main():
             _gold_rho2 = state.current_scene == "BATTLE"
             _is_overlay2 = False if _gold_rho2 else detect_tutorial_overlay(analysis_path)
             _gold_tap = detect_tutorial_gold_button_tap(
-                analysis_path, right_half_only=_gold_rho2, overlay_mode=_is_overlay2)
+                analysis_path, right_half_only=_gold_rho2, overlay_mode=_is_overlay2,
+                skip_upper_filter=_gold_rho2)
             if _gold_tap:
                 _rapid_tx, _rapid_ty = _gold_tap
                 _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"

@@ -1767,6 +1767,7 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
 def detect_tutorial_gold_button_tap(img_path: Path,
                                     right_half_only: bool = True,
                                     overlay_mode: bool = False,
+                                    skip_upper_filter: bool = False,
                                     ) -> Optional[tuple[int, int]]:
     """
     チュートリアルバトルで指アイコンが指し示す「金枠ハイライトボタン」を検出し
@@ -1831,8 +1832,8 @@ def detect_tutorial_gold_button_tap(img_path: Path,
                 # 指ポインタの金色が bbox 上端を押し上げるため、中心では上にずれる
                 cy = y + int(h * 0.6)
                 # 画面上部 (y<35%) は除外 — ホーム画面装飾の誤検出防止
-                # overlay_mode (チュートリアル暗転確定) 時はバイパス
-                if not overlay_mode and cy < H_img * 0.35:
+                # overlay_mode / skip_upper_filter 時はバイパス
+                if not overlay_mode and not skip_upper_filter and cy < H_img * 0.35:
                     logger.debug("[GoldBtn] 上部除外: bbox=(%d,%d,%d,%d) cy=%d", x, y, w, h, cy)
                     continue
                 # 右半分のみフィルタ (overlay_mode 時はバイパス)
