@@ -32,9 +32,16 @@ def _is_result_screen(ocr: list, texts: list[str]) -> tuple[bool, str]:
     # 除外: パーティ編成画面
     if any(kw in t for kw in _FORMATION_KWS for t in texts):
         return False, ""
-    # ガチャ結果: NEW×3 以上
+    # ガチャ結果: NEW×3 以上 (10連結果一覧)
     new_count = sum(1 for t in texts if t == "NEW")
     if new_count >= 3:
+        return True, "GACHA"
+    # ガチャ結果: 1枚表示 (キャラ紹介画面)
+    # SKIP が右上にある + ★ が左下にある + バトルKWなし
+    _has_skip = any("SKIP" in t for t in texts)
+    _has_star = any("★" in t for t in texts)
+    _has_battle = any(kw in t for kw in ("通常攻撃", "BREAK", "WAVE", "Turn", "AUTO") for t in texts)
+    if _has_skip and _has_star and not _has_battle:
         return True, "GACHA"
     # バトルResult: Result / EXP / Lv.1 / リザルト
     if (has_text(ocr, "Result") or has_text(ocr, "EXP")
