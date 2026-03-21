@@ -599,15 +599,27 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                             logger.info("[SCENE_EARLY] MOVIE中ガチャ演出検出 (SKIP+暗背景 brightness=%.0f) → GACHA", _gb)
                             state._movie_recheck_count = 0
                             return "GACHA"
-                # ADV チェック: AUTO ボタンが検出される → ADV シーン
-                # ↓ボタンが暗背景で検出できないケース (チュートリアル最終ADV等) に対応
-                _adv_auto_m = ASSET_MANAGER.match_single("adv_icon_auto", img_path)
+                # ADV チェック: 上部ツールバー領域でのみ AUTO を検出
+                # ADV/動画のツールバーは画面上部 (y < 15%) にある
+                # 字幕 (画面下部) への偽陽性マッチを防止
+                _adv_toolbar_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+                _adv_auto_m = ASSET_MANAGER.match_single("adv_icon_auto", img_path, roi=_adv_toolbar_roi)
                 if _adv_auto_m and _adv_auto_m[2] >= 0.65:
-                    logger.info("[SCENE_EARLY] MOVIE中ADV検出 (AUTO score=%.2f) → UNKNOWN (OCRへ)",
-                                _adv_auto_m[2])
-                    state._movie_recheck_count = 0
-                    state.current_scene = "UNKNOWN"
-                    return "UNKNOWN"
+                    # さらに ADV 固有アイコン (↓/LOG/MENU/FF) が上部に1つ以上あることを確認
+                    _adv_evidence = 0
+                    for _adv_icon in ("adv_next_btn", "adv_icon_log", "adv_icon_menu", "adv_icon_ff"):
+                        _am = ASSET_MANAGER.match_single(_adv_icon, img_path, roi=_adv_toolbar_roi)
+                        if _am and _am[2] >= 0.55:
+                            _adv_evidence += 1
+                    if _adv_evidence >= 1:
+                        logger.info("[SCENE_EARLY] MOVIE中ADV検出 (AUTO score=%.2f, 補助証拠=%d) → UNKNOWN (OCRへ)",
+                                    _adv_auto_m[2], _adv_evidence)
+                        state._movie_recheck_count = 0
+                        state.current_scene = "UNKNOWN"
+                        return "UNKNOWN"
+                    else:
+                        logger.info("[SCENE_EARLY] MOVIE中AUTO検出 (score=%.2f) だが補助証拠なし → MOVIE継続",
+                                    _adv_auto_m[2])
             # MOVIE 長期滞留脱出: recheck が 15 回 (約45秒) 超えたら MOVIE 誤判定の可能性
             # → UNKNOWN に遷移して OCR で正確なシーン判定を行う
             if state._movie_recheck_count >= 15:
