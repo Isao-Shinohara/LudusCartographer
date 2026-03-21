@@ -291,7 +291,8 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     # チュートリアルポップアップが表示されている場合は発光 SM をスキップ
     # (ポップアップを閉じないとバトルが進行しないため)
     _tutorial_popup_kws = ["ロールについて", "種類あります", "探索ポイント", "移動ポイント",
-                           "バトルポイント", "遊び方", "操作方法", "編成について"]
+                           "バトルポイント", "遊び方", "操作方法", "編成について",
+                           "SPを消費", "戦闘スキル", "使ってみましょう", "タップしてみましょう"]
     _has_tutorial_popup = any(kw in joined for kw in _tutorial_popup_kws)
     if _is_battle_early and analysis_path is not None and not _has_tutorial_popup:
         _pre_result = _run_battle_glow_sm(analysis_path, W, H, state, ocr, tag="#0-PRE")
