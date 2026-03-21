@@ -974,12 +974,18 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     # NOTE: character_selected でもスキップしない — 金枠検出の extent<0.55 フィルタで
     # 通常のボタン発光と区別可能。ガードすると戦闘スキル等のチュートリアル金枠を見逃す。
     # BATTLE: 右半分のみ (左側キャラアイコンの菱形装飾を金枠と誤検出するため)
-    # handle_battle() はバトル専用関数なので常に right_half_only=True
-    # バトル画面は元々暗い背景のため detect_tutorial_overlay() が常に True になる
-    # → overlay_mode は False 固定 (バトル中は全画面探索しない)
-    _is_overlay = False
+    # ただしチュートリアル指テンプレが左側で検出された場合は全画面探索を許可
+    # (必殺技チュートリアル等で左側キャラカードをタップさせるケース)
+    _battle_rho = True  # right_half_only default
+    for _ft in ("tutorial_hand_pointer", "tutorial_finger_down", "tutorial_finger_up",
+                "tutorial_finger_left", "tutorial_finger_right"):
+        _fm = ASSET_MANAGER.match_single(_ft, analysis_path)
+        if _fm and _fm[2] >= 0.70 and _fm[0] < ANALYSIS_W * 0.5:
+            _battle_rho = False
+            logger.info("[BATTLE] 指テンプレ左側検出 (%s, x=%d) → 金枠全画面探索", _ft, _fm[0])
+            break
     _gold_tap = detect_tutorial_gold_button_tap(
-        analysis_path, right_half_only=True, overlay_mode=False)
+        analysis_path, right_half_only=_battle_rho, overlay_mode=False)
     if _gold_tap:
         _rapid_tx, _rapid_ty = _gold_tap
         # overlay_mode で見つけた金枠がキャラカード領域 (左下) なら偽検出 → スキップ
