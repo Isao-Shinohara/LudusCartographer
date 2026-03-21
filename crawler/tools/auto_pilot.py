@@ -975,10 +975,11 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     # 通常のボタン発光と区別可能。ガードすると戦闘スキル等のチュートリアル金枠を見逃す。
     # BATTLE: 右半分のみ (左側キャラアイコンの菱形装飾を金枠と誤検出するため)
     # handle_battle() はバトル専用関数なので常に right_half_only=True
-    # ── ただしチュートリアル暗転中は全画面探索 (速度ボタン等の左上UIも検出) ──
-    _is_overlay = detect_tutorial_overlay(analysis_path)
+    # バトル画面は元々暗い背景のため detect_tutorial_overlay() が常に True になる
+    # → overlay_mode は False 固定 (バトル中は全画面探索しない)
+    _is_overlay = False
     _gold_tap = detect_tutorial_gold_button_tap(
-        analysis_path, right_half_only=True, overlay_mode=_is_overlay)
+        analysis_path, right_half_only=True, overlay_mode=False)
     if _gold_tap:
         _rapid_tx, _rapid_ty = _gold_tap
         # overlay_mode で見つけた金枠がキャラカード領域 (左下) なら偽検出 → スキップ
@@ -2685,9 +2686,10 @@ def main():
 
             # ── Phase 0: チュートリアル金枠 → 最優先タップ ──
             # 指ブロブ有無に関わらず金枠を常時チェック (extent<0.55 で通常ボタンと区別)
-            # チュートリアル暗転中は空間フィルタをバイパスして全画面探索
-            _gold_rho2 = True if state.current_scene == "BATTLE" else False
-            _is_overlay2 = detect_tutorial_overlay(analysis_path)
+            # バトル中: 右半分のみ + overlay_mode=False (暗い背景で誤判定するため)
+            # 非バトル: 全画面 + overlay 判定あり
+            _gold_rho2 = state.current_scene == "BATTLE"
+            _is_overlay2 = False if _gold_rho2 else detect_tutorial_overlay(analysis_path)
             _gold_tap = detect_tutorial_gold_button_tap(
                 analysis_path, right_half_only=_gold_rho2, overlay_mode=_is_overlay2)
             if _gold_tap:
