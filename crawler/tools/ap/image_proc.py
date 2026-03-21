@@ -1827,7 +1827,9 @@ def detect_tutorial_gold_button_tap(img_path: Path,
             aspect = h / max(w, 1)
             if 0.5 <= aspect <= 2.0:
                 cx = x + w // 2
-                cy = y + h // 2
+                # bbox 中心ではなく下寄り (60%) を使用
+                # 指ポインタの金色が bbox 上端を押し上げるため、中心では上にずれる
+                cy = y + int(h * 0.6)
                 # 画面上部 (y<35%) は除外 — ホーム画面装飾の誤検出防止
                 # overlay_mode (チュートリアル暗転確定) 時はバイパス
                 if not overlay_mode and cy < H_img * 0.35:
