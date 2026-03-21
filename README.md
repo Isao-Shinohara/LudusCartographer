@@ -76,11 +76,13 @@ cp config/.env.example config/.env
 ### 4. Auto Pilot の起動
 
 ```bash
-PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
-ANDROID_HOME=~/Library/Android/sdk \
-ANDROID_SDK_ROOT=~/Library/Android/sdk \
-PATH="/opt/homebrew/bin:$PATH" \
-venv/bin/python -u tools/auto_pilot.py 2>&1 | tee /tmp/auto_pilot.log
+cd ~/Desktop/LudusCartographer/crawler
+
+# 開始
+./tools/run_autopilot.sh
+
+# 新規アカウントで開始
+./tools/run_autopilot.sh --fresh-install
 ```
 
 起動すると自動で:
@@ -88,10 +90,18 @@ venv/bin/python -u tools/auto_pilot.py 2>&1 | tee /tmp/auto_pilot.log
 2. scrcpy で画面キャプチャ開始
 3. ゲームアプリを起動
 4. チュートリアルの自律操縦を開始
+5. ホーム画面到達で自動停止
 
-別ターミナルでログを監視:
+起動後は自動で `tail -f` が始まります。
+**Ctrl+C** でログ監視だけ終了できます（プロセスは動き続けます）。
+
+### 停止・ログ監視
 
 ```bash
+# 停止
+pkill -f auto_pilot.py
+
+# ログ監視（別ターミナルで）
 tail -f /tmp/auto_pilot.log
 ```
 
