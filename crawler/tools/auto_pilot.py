@@ -988,15 +988,7 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
         analysis_path, right_half_only=_battle_rho, overlay_mode=False)
     if _gold_tap:
         _rapid_tx, _rapid_ty = _gold_tap
-        # overlay_mode で見つけた金枠がキャラカード領域 (左下) なら偽検出 → スキップ
-        if _is_overlay and _rapid_tx < ANALYSIS_W * 0.5 and _rapid_ty > ANALYSIS_H * 0.55:
-            logger.info("[BATTLE_RAPID] overlay金枠 (%d,%d) はキャラカード領域 → スキップ",
-                        _rapid_tx, _rapid_ty)
-        else:
-            _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
-            if _is_overlay:
-                logger.info("[BATTLE_RAPID] 暗転オーバーレイ検出 → 全画面金枠探索で (%d,%d) 発見",
-                            _rapid_tx, _rapid_ty)
+        _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
     # フォールバック: 指テンプレ検出 + find_gold_frame_near で金枠が見つかればそちらを使用
     # バトル: 右半分 (x>W/2) かつ y>35% のみ (左キャラアイコン・上部UI排除)
     # 暗転オーバーレイ中は全画面許可
@@ -1005,8 +997,8 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
         _gf = find_gold_frame_near(analysis_path, _rb[0], _rb[1], search_radius=200)
         if _gf is not None:
             # バトル中: 右半分・下部のみ有効 (上部UI・左キャラ排除)
-            # 暗転オーバーレイ中はバイパス
-            if _is_overlay or (_gf[0] >= ANALYSIS_W * 0.5 and _gf[1] >= ANALYSIS_H * 0.35):
+            # 左側指テンプレ検出時 (_battle_rho=False) はバイパス
+            if not _battle_rho or (_gf[0] >= ANALYSIS_W * 0.5 and _gf[1] >= ANALYSIS_H * 0.35):
                 _rapid_tx, _rapid_ty = _gf[0], _gf[1]
                 _rapid_action = "BATTLE_RAPID_GOLD_FRAME_FALLBACK"
                 logger.info("[BATTLE_RAPID] 金枠フォールバック: finger(%d,%d) → gold(%d,%d)",
