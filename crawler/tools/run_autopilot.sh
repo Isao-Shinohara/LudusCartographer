@@ -4,14 +4,13 @@
 # SIGBUS クラッシュするため、nohup でバックグラウンド実行する。
 #
 # 使い方:
-#   ./tools/run_autopilot.sh                  # 途中再開
+#   ./tools/run_autopilot.sh                  # 開始
 #   ./tools/run_autopilot.sh --fresh-install  # 新規アカウント
 #   ./tools/run_autopilot.sh --help           # ヘルプ表示
 #
-# 停止方法:
-#   pkill -f auto_pilot.py
+# Ctrl+C で自動操縦も停止します。
 #
-# ログ監視:
+# ログ監視のみ (別ターミナル):
 #   tail -f /tmp/auto_pilot.log
 
 set -euo pipefail
@@ -39,23 +38,47 @@ cd "$CRAWLER_DIR"
 nohup venv/bin/python -u tools/auto_pilot.py "$@" > "$LOG_FILE" 2>&1 &
 PID=$!
 
+# Ctrl+C / ターミナル終了時にバックグラウンドプロセスも停止
+cleanup() {
+    echo ""
+    echo "🛑 自動操縦を停止します (PID: $PID)..."
+    kill "$PID" 2>/dev/null
+    wait "$PID" 2>/dev/null
+    echo "   停止完了"
+    exit 0
+}
+trap cleanup INT TERM EXIT
+
 echo "🚀 auto_pilot 起動 (PID: $PID)"
 echo "   引数: $*"
 echo "   ログ: $LOG_FILE"
 echo ""
-echo "📋 コマンド:"
-echo "   監視: tail -f $LOG_FILE"
-echo "   停止: pkill -f auto_pilot.py"
+echo "   Ctrl+C で自動操縦を停止します"
 echo ""
 
 # 起動確認 (3秒待って生存チェック)
 sleep 3
 if kill -0 "$PID" 2>/dev/null; then
     echo "✅ 起動成功。ログ監視を開始します..."
-    echo "   (Ctrl+C でログ監視を終了。プロセスは動き続けます)"
     echo ""
-    tail -f "$LOG_FILE"
+    tail -f "$LOG_FILE" &
+    TAIL_PID=$!
+    # auto_pilot の終了を待つ (正常停止 or クラッシュ)
+    wait "$PID" 2>/dev/null
+    EXIT_CODE=$?
+    kill "$TAIL_PID" 2>/dev/null
+    # trap の cleanup が二重実行されないよう解除
+    trap - INT TERM EXIT
+    if [ "$EXIT_CODE" -eq 0 ]; then
+        echo ""
+        echo "✅ 自動操縦が正常終了しました (exit code: $EXIT_CODE)"
+    else
+        echo ""
+        echo "⚠️  自動操縦が終了しました (exit code: $EXIT_CODE)"
+    fi
 else
+    # trap 解除してから終了
+    trap - INT TERM EXIT
     echo "❌ 起動失敗。ログを確認してください:"
     cat "$LOG_FILE"
     exit 1
