@@ -2972,14 +2972,26 @@ def main():
                     state.last_action = "MOVIE_WAIT"
                     state.last_phash = _wfc_ph
                     continue
-                logger.warning(
-                    "[WFC_ESCAPE] WAIT_FOR_CHANGE %d 回連続 → 盲タップせず次ループへ",
-                    state._wfc_consecutive,
-                )
+                # 長時間スタック (15回以上) → 動画一時停止の可能性 → 中央タップで復帰
+                _wfc_total = getattr(state, "_wfc_total_count", 0) + 1
+                state._wfc_total_count = _wfc_total
+                if _wfc_total >= 5:
+                    logger.warning(
+                        "[WFC_ESCAPE] WAIT_FOR_CHANGE 累計%d回 → 動画一時停止疑い → 中央タップ",
+                        _wfc_total)
+                    tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5),
+                               state, "WFC_PAUSE_RESUME")
+                    state._wfc_total_count = 0
+                else:
+                    logger.warning(
+                        "[WFC_ESCAPE] WAIT_FOR_CHANGE %d 回連続 → 盲タップせず次ループへ",
+                        state._wfc_consecutive,
+                    )
                 state._wfc_consecutive = 0
                 state.last_phash = ""
         else:
             state._wfc_consecutive = 0
+            state._wfc_total_count = 0
 
         # ── シーン再評価: 同一アクション連続時にシーン認識を疑う ──
         if action == state.last_action and action not in (
