@@ -27,6 +27,8 @@ if platform.system() == "Darwin":
         pass
 
 # ─── PaddleOCR (汎用) ──────────────────────────────────────
+# PaddleOCR のモデルソースチェック警告を抑制
+logging.getLogger("paddlex").setLevel(logging.ERROR)
 try:
     from paddleocr import PaddleOCR as _PaddleOCR
     _HAS_PADDLE = True
