@@ -28,7 +28,6 @@ export PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH"
 # 既存プロセスチェック
 if pgrep -f "auto_pilot.py" > /dev/null 2>&1; then
     echo "⚠️  auto_pilot.py は既に実行中です (PID: $(pgrep -f auto_pilot.py | head -1))"
-    echo "   停止: pkill -f auto_pilot.py"
     echo "   ログ: tail -f $LOG_FILE"
     exit 1
 fi
