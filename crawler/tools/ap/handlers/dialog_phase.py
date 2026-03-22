@@ -118,7 +118,7 @@ def handle_dialog_screen(
 
     # ── [SPATIAL GATE 撤廃] ──────────────────────────────────
     # handle_dialog_screen 内部での指ブロブ・金枠によるダイアログスキップは廃止。
-    # チュートリアルポップアップの▷/×処理をブロックする誤検出が多発するため。
+    # チュートリアルダイアログの▷/×処理をブロックする誤検出が多発するため。
     # ※ 指ガードは handle_dialog_phase → ctx.pre_dialog_finger 経由で
     #   tutorial.py の Asset Match (DIALOG_NAV_RIGHT) に対してのみ有効。
 
@@ -170,17 +170,29 @@ def handle_dialog_screen(
         # ── ダイアログ再確認ガード: 背景ぼかし + ▷/× 存在を二重検証 ──
         # ホーム画面の金色枠装飾をダイアログと誤検出する問題の根本対策
         if analysis_path and not detect_dialog(analysis_path, W, H, require_blur=True):
-            # 背景ぼかしなしでも、ページドット + ▷/× があればダイアログとして続行
+            # 背景ぼかしなし → ドット/四隅テンプレで本物のダイアログか判定
             _guard_dots = count_page_dots(analysis_path)
             _guard_nav = detect_dialog_nav(analysis_path, W, H)
             if _guard_dots >= 2:
-                # ドットの存在自体がダイアログの確実な証拠
-                logger.info(
-                    "[DIALOG_BLUR_GUARD] 背景ぼかしなしだがドット=%d → PAGING 続行 (▷/×=%s)",
-                    _guard_dots, _guard_nav is not None)
+                # バトル中はドットだけでは不十分 (UIアイコンの誤検出)
+                # → 四隅テンプレ (dialog_corner) で本物のダイアログか確認
+                if _is_battle_early:
+                    _has_corner = detect_dialog(analysis_path, W, H, require_blur=False)
+                    if not _has_corner:
+                        logger.info(
+                            "[DIALOG_BLUR_GUARD] バトル中ドット=%d だが四隅テンプレなし → PAGING スキップ",
+                            _guard_dots)
+                        return None
+                    logger.info(
+                        "[DIALOG_BLUR_GUARD] バトル中ドット=%d + 四隅テンプレあり → チュートリアルダイアログ、PAGING 続行",
+                        _guard_dots)
+                else:
+                    logger.info(
+                        "[DIALOG_BLUR_GUARD] 背景ぼかしなしだがドット=%d → PAGING 続行 (▷/×=%s)",
+                        _guard_dots, _guard_nav is not None)
             else:
                 logger.info(
-                    "[DIALOG_BLUR_GUARD] 背景ぼかしなし+ドット=%d+▷/×=%s → ポップアップではない、PAGING スキップ",
+                    "[DIALOG_BLUR_GUARD] 背景ぼかしなし+ドット=%d+▷/×=%s → ダイアログではない、PAGING スキップ",
                     _guard_dots, _guard_nav is not None)
                 return None
         # ページング式ダイアログ: ▷ → … → × を一括処理
@@ -288,7 +300,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
         # メニューボタン誤タップ → トースト表示中。DIALOG_CLOSE を完全スキップして2秒待機
         logger.info("[#0-PRE] 「メニューが使用できません」トースト検出 → DIALOG_CLOSE スキップ (2s wait)")
         return "BATTLE_MENU_TOAST_WAIT", 2.0
-    # チュートリアルポップアップが表示されている場合は発光 SM をスキップ
+    # チュートリアルダイアログが表示されている場合は発光 SM をスキップ
     # (ポップアップを閉じないとバトルが進行しないため)
     _tutorial_popup_kws = ["ロールについて", "種類あります", "探索ポイント", "移動ポイント",
                            "バトルポイント", "遊び方", "操作方法", "編成について",
@@ -299,7 +311,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
         if _pre_result is not None:
             return _pre_result
     if _has_tutorial_popup:
-        logger.info("[#0-PRE] チュートリアルポップアップ検出 → 発光SM スキップ (ダイアログ処理優先)")
+        logger.info("[#0-PRE] チュートリアルダイアログ検出 → 発光SM スキップ (ダイアログ処理優先)")
 
     # ── 【お知らせポップアップ検出】PRE_DIALOG_GUARD バイパス ──────────
     _is_notice = False
