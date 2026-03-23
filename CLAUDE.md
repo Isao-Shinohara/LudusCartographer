@@ -347,6 +347,12 @@ venv/bin/python -u tools/auto_pilot.py
   - `smart_tap_button` — 金色ボタン枠の中心
   - `detect_guide_glow` — チュートリアル光エフェクト
 
+### 動画シーンのタップ禁止ルール
+- **⏭ スキップボタンがない動画もある** — ⏭ の有無に関わらず MOVIE 判定すること
+- 動画字幕の黒帯を「背景ぼかし（ポップアップ）」と誤判定しない — `blur` 単独での MOVIE 棄却禁止、`dots + blur` の組み合わせのみ
+- MOVIE 判定されていない動画で UNKNOWN のままテンプレートマッチ（battle_skill, dialog_nav_right 等）が誤マッチしてタップ → 一時停止の原因になる
+- ROI 定数は `constants.py` の `ADV_NEXT_BTN_ROI`, `ADV_TOOLBAR_ROI`, `BATTLE_BTN_ROI` を使い、ハードコードしない
+
 ### OCR エンジン互換性維持
 - Vision OCR 向けに修正する際、PaddleOCR で動かなくなる不具合を出さない
 - 両エンジンの出力形式 (box, center, confidence) が同一であることを確認する

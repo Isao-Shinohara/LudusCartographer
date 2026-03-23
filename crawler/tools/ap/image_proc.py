@@ -877,14 +877,15 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     #   1. ↓送りボタン (右下) — セリフ送り可能時に表示
     #   2. ADV ツールバー (右上5アイコン: menu,log,AUTO,>>,>|)
     #   3. 上部 AUTO ボタン単独 — ADV 確定
+    from tools.ap.constants import ADV_NEXT_BTN_ROI
     _adv_btn_movie = ASSET_MANAGER.match_single("adv_next_btn", img_path,
-                    roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75),
-                         int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25))) if img_path else None
+                    roi=ADV_NEXT_BTN_ROI) if img_path else None
     _has_adv_advance = _adv_btn_movie is not None
     _has_auto_icon = False
     if img_path:
         try:
-            _auto_roi_chk = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+            from tools.ap.constants import ADV_TOOLBAR_ROI
+            _auto_roi_chk = ADV_TOOLBAR_ROI
             _auto_chk = ASSET_MANAGER.match_single(
                 "adv_icon_auto", img_path, roi=_auto_roi_chk)
             _has_auto_icon = _auto_chk is not None and _auto_chk[2] >= 0.70
@@ -916,8 +917,8 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
             return MovieSceneResult()
 
         # 即棄却: バトルテンプレート (通常攻撃/スキル/必殺)
-        _battle_roi_chk = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
-                           int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+        from tools.ap.constants import BATTLE_BTN_ROI
+        _battle_roi_chk = BATTLE_BTN_ROI
         for _b_name in ("battle_normal_attack", "battle_skill", "battle_special"):
             _b_m = ASSET_MANAGER.match_single(_b_name, img_path, roi=_battle_roi_chk)
             if _b_m and _b_m[2] >= 0.50:
@@ -948,9 +949,8 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
             if _popup_dots and _popup_blur:
                 logger.debug("[MOVIE_SCENE] ドット+背景ぼかし → MOVIE棄却 (ポップアップ)")
                 return MovieSceneResult()
-            if _popup_blur:
-                logger.debug("[MOVIE_SCENE] 背景ぼかし検出 → MOVIE棄却 (ポップアップ)")
-                return MovieSceneResult()
+            # NOTE: blur 単独での棄却は廃止。動画字幕の黒帯が blur と誤判定される。
+            # ポップアップ判定は dots + blur の組み合わせのみで行う。
 
     score = 0.0
     # ⏭ スキップボタン (既に上で検出済み)
