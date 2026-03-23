@@ -871,16 +871,9 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     # ── 待機カウンタ ──
     state.movie_wait_consecutive += 1
 
-    # ── MOVIE 初回遷移: 直前タップによる一時停止を即時解除 ──
-    # MOVIE 検出直後 (consecutive <= 3) で dist=0 → 直前のタップが動画開始と
-    # 重なって一時停止された可能性が高い。17回待たずに即座に再開する。
-    if state.movie_wait_consecutive <= 3 and dist == 0 and state.movie_static_count == 0:
-        logger.warning("[MOVIE] 初回遷移直後に dist=0 → 直前タップによる一時停止 → 即時再開")
-        tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "MOVIE_RESUME_IMMEDIATE")
-        state.movie_static_count = 0
-        state.last_phash = ""
-        time.sleep(1.0)
-        return True
+    # NOTE: MOVIE_RESUME_IMMEDIATE は廃止。MOVIE→他シーン→MOVIE の再遷移で
+    # consecutive がリセットされ、毎回即タップ→一時停止のループを引き起こしていた。
+    # 一時停止の検出は movie_static_count に一本化する。
 
     # ── 静止フレームカウント ──
     # dist==0 (phash完全一致) = 一時停止。dist>0 なら再生中 (字幕シーンでも微差あり)。
@@ -889,8 +882,8 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     else:
         state.movie_static_count = 0
 
-    # ── 一時停止検出: dist==0 が10秒 (~17回) 続いたら中央タップで再開 ──
-    _PAUSE_THRESHOLD = 17  # ~10秒 (ループ間隔 ~0.6秒)
+    # ── 一時停止検出: dist==0 が5秒 (~8回) 続いたら中央タップで再開 ──
+    _PAUSE_THRESHOLD = 8  # ~5秒 (ループ間隔 ~0.6秒)
     if state.movie_static_count >= _PAUSE_THRESHOLD:
         logger.warning("[MOVIE] 一時停止検出 (dist=0 が %d 回連続) → 中央タップで再開",
                        state.movie_static_count)
