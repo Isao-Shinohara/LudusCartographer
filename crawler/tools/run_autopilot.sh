@@ -32,9 +32,9 @@ if pgrep -f "auto_pilot.py" > /dev/null 2>&1; then
     exit 1
 fi
 
-# nohup でバックグラウンド起動
+# バックグラウンド起動 (nohup 不要 — trap で SIGHUP を処理)
 cd "$CRAWLER_DIR"
-nohup venv/bin/python -u tools/auto_pilot.py "$@" >"$LOG_FILE" 2>&1 </dev/null &
+venv/bin/python -u tools/auto_pilot.py "$@" >"$LOG_FILE" 2>&1 </dev/null &
 PID=$!
 
 # Ctrl+C / ターミナル終了時にバックグラウンドプロセスも停止
