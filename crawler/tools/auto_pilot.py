@@ -294,7 +294,8 @@ def collect_secondary_candidates(
 
 # ─── 画面判定・アクション ──────────────────────────
 def detect_and_act(ocr: list, state: PilotState,
-                   analysis_path: Optional[Path] = None) -> tuple[str, float]:
+                   analysis_path: Optional[Path] = None,
+                   adv_result: Optional[AdvSceneResult] = None) -> tuple[str, float]:
     """
     OCR + 指差しブロブを分析し、アクションを決定する。
     analysis_path が渡された場合は finger blob 検出も実行。
@@ -319,7 +320,7 @@ def detect_and_act(ocr: list, state: PilotState,
         joined=joined,
         W=W, H=H,
         analysis_path=analysis_path,
-        adv_result=AdvSceneResult(),
+        adv_result=adv_result or AdvSceneResult(),
         confirm_pos=_confirm_pos,
         confirm_neg=_confirm_neg,
         is_battle_early=_is_battle_early,
@@ -760,6 +761,25 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                     logger.info("[SCENE_EARLY] MOVIE中ADV↓誤検出を棄却 (AUTO未検出)")
                     return "MOVIE"
             return "ADV"
+
+    # ADV: AUTO + ADV固有アイコン (↓が検出できなかった場合のフォールバック)
+    # BATTLE にも AUTO はあるが、adv_icon_menu/adv_icon_log/adv_icon_skip は
+    # ADV 固有のため、AUTO + これらの組み合わせで ADV と確定できる
+    if state.current_scene not in ("MENU", "BATTLE", "MOVIE"):
+        _adv_auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+        _adv_auto_init = ASSET_MANAGER.match_single("adv_icon_auto", img_path,
+                                                     roi=_adv_auto_roi)
+        if _adv_auto_init and _adv_auto_init[2] >= 0.50:
+            _adv_only_evidence = 0
+            for _adv_only_icon in ("adv_icon_menu", "adv_icon_log", "adv_icon_skip"):
+                _am = ASSET_MANAGER.match_single(_adv_only_icon, img_path,
+                                                  roi=_adv_auto_roi)
+                if _am and _am[2] >= 0.40:
+                    _adv_only_evidence += 1
+            if _adv_only_evidence >= 1:
+                logger.info("[SCENE_EARLY] ADV初回検出 (AUTO=%.2f + ADV固有アイコン=%d) → ADV",
+                            _adv_auto_init[2], _adv_only_evidence)
+                return "ADV"
 
     # NOTE: ポップアップ検出 (ドット+背景ぼかし) は廃止。
     # ADV セリフ画面で偽陽性が多発し UNKNOWN に落としてスタックする問題の根本原因だった。
@@ -2935,7 +2955,8 @@ def main():
             continue
 
         # ── 6) 判定 & アクション (finger blob も渡す) ──
-        action, wait_sec = detect_and_act(ocr_results, state, analysis_path)
+        action, wait_sec = detect_and_act(ocr_results, state, analysis_path,
+                                              adv_result=_adv_result)
         state.last_action = action
         # ── ホーム画面到達 → 自動操縦停止 ──
         if action == "GOAL_HOME_REACHED" and not state.grind_mode:
@@ -3034,7 +3055,8 @@ def main():
                     )
                     state.current_scene = _re_scene
                 # レターボックスガードは廃止 (2:1デバイスで常時誤検出するため)
-                action, wait_sec = detect_and_act(_re_ocr, state, _re_analysis)
+                action, wait_sec = detect_and_act(_re_ocr, state, _re_analysis,
+                                                      adv_result=_re_adv)
                 state.last_action = action
                 state.action_repeat_count = 0
                 logger.info("[SCENE_REEVAL] 再判定結果: %s", action)
