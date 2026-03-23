@@ -34,7 +34,8 @@ fi
 
 # nohup でバックグラウンド起動
 cd "$CRAWLER_DIR"
-nohup venv/bin/python -u tools/auto_pilot.py "$@" > "$LOG_FILE" 2>&1 &
+nohup venv/bin/python -u tools/auto_pilot.py "$@" >"$LOG_FILE" 2>&1 </dev/null &
+disown
 PID=$!
 
 # Ctrl+C / ターミナル終了時にバックグラウンドプロセスも停止
