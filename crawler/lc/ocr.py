@@ -28,12 +28,24 @@ if platform.system() == "Darwin":
 
 # ─── PaddleOCR (汎用) ──────────────────────────────────────
 # PaddleOCR のモデルソースチェック警告を抑制
-logging.getLogger("paddlex").setLevel(logging.ERROR)
+# paddlex は独自ロガー (名前="paddlex") 経由で warning を出すが、
+# import 中にロガーが初期化されるため import 前の setLevel は無効。
+# → import 中だけフィルターで抑制し、import 後にレベルを固定する。
+class _PaddlexFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK" not in record.getMessage()
+
+_pdx_logger = logging.getLogger("paddlex")
+_pdx_filter = _PaddlexFilter()
+_pdx_logger.addFilter(_pdx_filter)
 try:
     from paddleocr import PaddleOCR as _PaddleOCR
     _HAS_PADDLE = True
 except ImportError:
     _HAS_PADDLE = False
+finally:
+    _pdx_logger.removeFilter(_pdx_filter)
+    _pdx_logger.setLevel(logging.ERROR)
 
 # シングルトン: lang ごとにインスタンスをキャッシュ（モデル再読み込みを防ぐ）
 _ocr_instances: dict[str, "_PaddleOCR"] = {}
