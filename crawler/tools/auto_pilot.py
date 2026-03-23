@@ -2130,9 +2130,13 @@ def main():
                     if check_foreground_app():
                         logger.info("[BLACKOUT_RECOVER] 別アプリ前面 → ゲーム復帰")
                     else:
-                        logger.info("[BLACKOUT_RECOVER] 連続暗転 %d 回 → WAKEUP + 画面中央タップ",
+                        logger.info("[BLACKOUT_RECOVER] 連続暗転 %d 回 → WAKEUP + ロック解除 + 画面中央タップ",
                                     state.consecutive_blackouts)
                         adb("shell input keyevent KEYCODE_WAKEUP")
+                        time.sleep(0.5)
+                        adb("shell input keyevent 82")  # KEYCODE_MENU = ロック解除
+                        time.sleep(0.5)
+                        adb("shell input swipe 540 1800 540 500 300")  # スワイプ解除
                         time.sleep(0.5)
                         tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "BLACKOUT_RECOVER")
                 else:
