@@ -572,6 +572,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                             state._movie_recheck_count, dist)
                 state._movie_recheck_count = 0
                 state.current_scene = "UNKNOWN"
+                state._from_movie = True  # MOVIE→UNKNOWN 遷移フラグ
                 return "UNKNOWN"
             return "MOVIE"
         if dist >= 3:
@@ -637,6 +638,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                             state._movie_recheck_count)
                 state._movie_recheck_count = 0
                 state.current_scene = "UNKNOWN"
+                state._from_movie = True  # MOVIE→UNKNOWN 遷移フラグ
                 return "UNKNOWN"
             return "MOVIE"
         state._movie_stable_count = getattr(state, "_movie_stable_count", 0) + 1
@@ -2954,8 +2956,23 @@ def main():
             continue
 
         # ── 6) 判定 & アクション (finger blob も渡す) ──
-        action, wait_sec = detect_and_act(ocr_results, state, analysis_path,
-                                              adv_result=_adv_result)
+        # MOVIE→UNKNOWN 遷移直後: テンプレ誤マッチによるタップを抑制
+        # (動画クレジット等で DIALOG_NAV_RIGHT, MINI_CONV が誤発火して一時停止する)
+        _from_movie = getattr(state, "_from_movie", False)
+        if _from_movie:
+            state._from_movie = False
+            # MOVIE スキップボタンがあれば SKIPタップ、なければ待機
+            _skip_btn = detect_movie_skip_button(analysis_path) if analysis_path else None
+            if _skip_btn:
+                logger.info("[MOVIE→UNKNOWN] SKIPボタン検出 → タップ (%d,%d)", _skip_btn[0], _skip_btn[1])
+                tap_device(_skip_btn[0], _skip_btn[1], state, "MOVIE_SKIP")
+                action, wait_sec = "MOVIE_SKIP", 2.0
+            else:
+                logger.info("[MOVIE→UNKNOWN] テンプレタップ抑制 → MOVIE再判定待ち")
+                action, wait_sec = "MOVIE_WAIT", 1.0
+        else:
+            action, wait_sec = detect_and_act(ocr_results, state, analysis_path,
+                                                  adv_result=_adv_result)
         state.last_action = action
         # ── ホーム画面到達 → 自動操縦停止 ──
         if action == "GOAL_HOME_REACHED" and not state.grind_mode:
