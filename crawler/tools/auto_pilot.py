@@ -765,27 +765,17 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # ADV: AUTO + ↓ボタン or FF (↓単独が検出できなかった場合のフォールバック)
     # adv_next_btn の ROI 外検出 + AUTO の存在で ADV を確定する
     # BATTLE にも AUTO/FF はあるが、↓ボタン (adv_next_btn) は ADV 固有
+    # ADV: AUTO + ↓ボタン (↓ボタンの ROI 外リカバリ)
+    # ↓ボタンは ADV 固有のため、AUTO + ↓で ADV 確定。
+    # ↓なしでの ADV 固有アイコン判定は探索パート等で誤検出するため廃止。
     if state.current_scene not in ("MENU", "BATTLE", "MOVIE"):
-        _adv_auto_roi = ADV_TOOLBAR_ROI
         _adv_auto_init = ASSET_MANAGER.match_single("adv_icon_auto", img_path,
-                                                     roi=_adv_auto_roi)
+                                                     roi=ADV_TOOLBAR_ROI)
         if _adv_auto_init and _adv_auto_init[2] >= 0.50:
-            # ↓ボタンを画面全体で探す (ROI 外だった場合のリカバリ)
             _adv_next_full = ASSET_MANAGER.match_single("adv_next_btn", img_path)
             if _adv_next_full and _adv_next_full[2] >= 0.70:
                 logger.info("[SCENE_EARLY] ADV初回検出 (AUTO=%.2f + ↓=%.2f) → ADV",
                             _adv_auto_init[2], _adv_next_full[2])
-                return "ADV"
-            # ADV 固有アイコンチェック (menu/log/skip)
-            _adv_only_evidence = 0
-            for _adv_only_icon in ("adv_icon_menu", "adv_icon_log", "adv_icon_skip"):
-                _am = ASSET_MANAGER.match_single(_adv_only_icon, img_path,
-                                                  roi=_adv_auto_roi)
-                if _am and _am[2] >= 0.40:
-                    _adv_only_evidence += 1
-            if _adv_only_evidence >= 1:
-                logger.info("[SCENE_EARLY] ADV初回検出 (AUTO=%.2f + ADV固有アイコン=%d) → ADV",
-                            _adv_auto_init[2], _adv_only_evidence)
                 return "ADV"
 
     # NOTE: ポップアップ検出 (ドット+背景ぼかし) は廃止。
