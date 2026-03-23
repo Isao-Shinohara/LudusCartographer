@@ -883,8 +883,10 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
         state.movie_static_count = 0
 
     # ── 一時停止検出: dist==0 が5秒 (~8回) 続いたら中央タップで再開 ──
+    # 遷移直後 (consecutive <= 5) は直前タップの影響で暗転/静止するため、
+    # カウントはするが再開処理はスキップする。
     _PAUSE_THRESHOLD = 8  # ~5秒 (ループ間隔 ~0.6秒)
-    if state.movie_static_count >= _PAUSE_THRESHOLD:
+    if state.movie_static_count >= _PAUSE_THRESHOLD and state.movie_wait_consecutive > 5:
         logger.warning("[MOVIE] 一時停止検出 (dist=0 が %d 回連続) → 中央タップで再開",
                        state.movie_static_count)
         tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "MOVIE_RESUME")
