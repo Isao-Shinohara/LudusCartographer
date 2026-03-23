@@ -12,6 +12,10 @@ WAIT_FOR_CHANGE 後の閾値引き上げを廃止し、デッドロックを根�
 """
 from __future__ import annotations
 
+import warnings
+warnings.filterwarnings("ignore", message=".*urllib3.*OpenSSL.*")
+warnings.filterwarnings("ignore", message=".*NotOpenSSLWarning.*")
+
 import argparse
 import gc
 import logging
