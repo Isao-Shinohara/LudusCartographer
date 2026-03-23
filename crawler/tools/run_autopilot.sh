@@ -25,6 +25,9 @@ export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}"
 export PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH"
 
+# 残留 tail プロセスを掃除 (前回の cleanup が不完全だった場合)
+pkill -f "tail -f $LOG_FILE" 2>/dev/null || true
+
 # 既存プロセスチェック
 if pgrep -f "auto_pilot.py" > /dev/null 2>&1; then
     echo "⚠️  auto_pilot.py は既に実行中です (PID: $(pgrep -f auto_pilot.py | head -1))"
@@ -42,6 +45,7 @@ cleanup() {
     echo ""
     echo "🛑 自動操縦を停止します (PID: $PID)..."
     kill "$PID" 2>/dev/null
+    [ -n "${TAIL_PID:-}" ] && kill "$TAIL_PID" 2>/dev/null
     wait "$PID" 2>/dev/null
     echo "   停止完了"
     exit 0
