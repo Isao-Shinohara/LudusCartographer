@@ -567,7 +567,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             state._movie_stable_count = 0
             # 長期滞留カウンタは全 dist レンジでインクリメント
             state._movie_recheck_count = getattr(state, "_movie_recheck_count", 0) + 1
-            if state._movie_recheck_count >= 15:
+            if state._movie_recheck_count >= 8:
                 logger.info("[SCENE_EARLY] MOVIE長期滞留 (%d回, dist=%d) → UNKNOWN (OCRへ)",
                             state._movie_recheck_count, dist)
                 state._movie_recheck_count = 0
@@ -630,9 +630,9 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                         else:
                             logger.info("[SCENE_EARLY] MOVIE中AUTO検出 (score=%.2f) だが補助証拠不足(%d<2) → MOVIE継続",
                                         _adv_auto_m[2], _adv_evidence)
-            # MOVIE 長期滞留脱出: recheck が 15 回 (約45秒) 超えたら MOVIE 誤判定の可能性
+            # MOVIE 長期滞留脱出: recheck が 8 回 (約5秒) 超えたら MOVIE 誤判定の可能性
             # → UNKNOWN に遷移して OCR で正確なシーン判定を行う
-            if state._movie_recheck_count >= 15:
+            if state._movie_recheck_count >= 8:
                 logger.info("[SCENE_EARLY] MOVIE長期滞留 (%d回) → UNKNOWN (OCRへ)",
                             state._movie_recheck_count)
                 state._movie_recheck_count = 0
