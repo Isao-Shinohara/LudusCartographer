@@ -182,48 +182,47 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
                     break
             # ── 優先1: OCR テキスト中心 (指の近傍) ──
             # 指が下向きの場合、ナビバーボタンを指している可能性があるため
-            # ナビバーキーワード除外を無効化して最も近いテキストをタップ
-            _ocr_target = None
-            _HOME_NAV_KWS = {"光の間", "ショップ", "ガチャ", "ガシャ", "マップ", "レイヤ",
-                             "マッチ", "ユニオン", "クエスト", "クエス", "パーティ", "育成",
-                             "ころの器", "こころの器"}
-            _skip_nav_filter = (_finger_dir == "down")
-            for _oe in ocr:
-                _ot = _oe.get("text", "")
-                _oc = _oe.get("center", (0, 0))
-                if len(_ot) < 2:
-                    continue
-                # 指が下向き以外の場合のみナビバーキーワードを除外
-                if not _skip_nav_filter and any(kw in _ot for kw in _HOME_NAV_KWS):
-                    continue
-                _odx = abs(_oc[0] - _bx)
-                _ody = abs(_oc[1] - _by)
-                # 指の方向に合致するテキストのみ
-                _dir_ok = True
-                if _finger_dir == "down" and _oc[1] < _by:
-                    _dir_ok = False
-                elif _finger_dir == "up" and _oc[1] > _by:
-                    _dir_ok = False
-                if _dir_ok and _odx < 250 and _ody < 250:
-                    _ocr_target = (_oc[0], _oc[1])
-                    logger.info(">>> ホームチュートリアル: 指(%d,%d,dir=%s)→OCRテキスト '%s'(%d,%d) [%d回目]",
-                                _bx, _by, _finger_dir, _ot, _oc[0], _oc[1],
-                                state.home_tutorial_tap_count + 1)
-                    break
-            if _ocr_target:
-                _tap_target = _ocr_target
+            # ── 優先1: 金枠検出 (方向付きテンプレートマッチ) ──
+            # OCR でテキストが取れなくても金枠中央をタップすれば正しく動作する
+            _gf = find_gold_frame_near(
+                analysis_path, _bx, _by, search_radius=250,
+                direction=_finger_dir) if analysis_path else None
+            if _gf and _gf[1] > H * 0.85:
+                logger.info(">>> ホーム: 金枠(%d,%d) がフッターナビ領域 → 除外", _gf[0], _gf[1])
+                _gf = None
+            if _gf:
+                _tap_target = (_gf[0], _gf[1])
+                logger.info(">>> ホームチュートリアル: 指(%d,%d,dir=%s)→金枠(%d,%d) [%d回目]",
+                            _bx, _by, _finger_dir, _gf[0], _gf[1], state.home_tutorial_tap_count + 1)
             else:
-                # ── 優先2: 金枠検出 (方向付きテンプレートマッチ) ──
-                _gf = find_gold_frame_near(
-                    analysis_path, _bx, _by, search_radius=250,
-                    direction=_finger_dir) if analysis_path else None
-                if _gf and _gf[1] > H * 0.85:
-                    logger.info(">>> ホーム: 金枠(%d,%d) がフッターナビ領域 → 除外", _gf[0], _gf[1])
-                    _gf = None
-                if _gf:
-                    _tap_target = (_gf[0], _gf[1])
-                    logger.info(">>> ホームチュートリアル: 指(%d,%d,dir=%s)→金枠(%d,%d) [%d回目]",
-                                _bx, _by, _finger_dir, _gf[0], _gf[1], state.home_tutorial_tap_count + 1)
+                # ── 優先2: OCR テキスト (金枠が検出できない場合のフォールバック) ──
+                _ocr_target = None
+                _HOME_NAV_KWS = {"光の間", "ショップ", "ガチャ", "ガシャ", "マップ", "レイヤ",
+                                 "マッチ", "ユニオン", "クエスト", "クエス", "パーティ", "育成",
+                                 "ころの器", "こころの器"}
+                _skip_nav_filter = (_finger_dir == "down")
+                for _oe in ocr:
+                    _ot = _oe.get("text", "")
+                    _oc = _oe.get("center", (0, 0))
+                    if len(_ot) < 2:
+                        continue
+                    if not _skip_nav_filter and any(kw in _ot for kw in _HOME_NAV_KWS):
+                        continue
+                    _odx = abs(_oc[0] - _bx)
+                    _ody = abs(_oc[1] - _by)
+                    _dir_ok = True
+                    if _finger_dir == "down" and _oc[1] < _by:
+                        _dir_ok = False
+                    elif _finger_dir == "up" and _oc[1] > _by:
+                        _dir_ok = False
+                    if _dir_ok and _odx < 250 and _ody < 250:
+                        _ocr_target = (_oc[0], _oc[1])
+                        logger.info(">>> ホームチュートリアル: 指(%d,%d,dir=%s)→OCRテキスト '%s'(%d,%d) [%d回目]",
+                                    _bx, _by, _finger_dir, _ot, _oc[0], _oc[1],
+                                    state.home_tutorial_tap_count + 1)
+                        break
+                if _ocr_target:
+                    _tap_target = _ocr_target
                 elif _home_gold:
                     _tap_target = _home_gold
                     logger.info(">>> ホームチュートリアル: 指(%d,%d)→GoldBtn(%d,%d) [近傍外] [%d回目]",
