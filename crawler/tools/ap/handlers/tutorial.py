@@ -318,11 +318,18 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                     tap_device(_close_x, _close_y, state, "DIALOG_NEXT_CORNER_CLOSE")
                     state._dialog_next_stall_count = 0
                     return "DIALOG_NEXT_CORNER_CLOSE", 1.5
-        # タイトル画面では MOVIE_SKIP_TEXT が右上サポートボタンに誤マッチ → 抑制
+        # タイトル画面・メニュー画面では MOVIE_SKIP_TEXT が UIに誤マッチ → 抑制
+        # ガチャ画面の「交換所」タブに誤マッチしてガチャ↔交換所ループの原因になる
         elif asset_hit and asset_hit[2] == "MOVIE_SKIP_TEXT":
             _title_kws = ["MAGIA", "EXEDRA", "TAP", "START", "サポート"]
+            _menu_kws = ["光の間", "ショップ", "ガチャ", "ガシャ", "交換所",
+                         "パーティ", "クエスト", "クエス", "マップ", "レイヤ"]
+            _menu_hits = sum(1 for kw in _menu_kws if any(kw in t for t in texts))
             if any(kw in joined for kw in _title_kws):
                 logger.info("[Asset] MOVIE_SKIP_TEXT をタイトル画面で抑制")
+                asset_hit = None
+            elif _menu_hits >= 2:
+                logger.info("[Asset] MOVIE_SKIP_TEXT をメニュー画面で抑制 (menu_kw=%d)", _menu_hits)
                 asset_hit = None
         # ホーム画面では FINGER_TEMPLATE 偽陽性を抑制 → ホーム検出ハンドラに委譲
         elif asset_hit and asset_hit[2] == "FINGER_TEMPLATE":
