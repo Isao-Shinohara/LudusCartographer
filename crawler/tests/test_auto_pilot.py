@@ -446,6 +446,57 @@ class TestHandleDialogScreen:
         assert result[1] == 2.0
         mock_adb.assert_called_once_with("shell input keyevent KEYCODE_BACK")
 
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog_nav", return_value=None)
+    @patch("tools.ap.handlers.dialog_phase.count_page_dots", return_value=3)
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog")
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav", return_value=("next", 800, 400))
+    def test_battle_blur_guard_no_corner_skips_paging(
+        self, mock_frame_nav, mock_detect_dialog, mock_dots, mock_nav,
+        state, tmp_path,
+    ):
+        """バトル中 + 背景ぼかしなし + ドット>=2 + 四隅テンプレなし → PAGING スキップ。
+
+        is_battle_early=True のコードパスで NameError が出ないことを検証。
+        """
+        from tools.auto_pilot import handle_dialog_screen
+
+        # detect_dialog: 1回目 require_blur=True → False, 2回目 require_blur=False → False
+        mock_detect_dialog.return_value = False
+
+        analysis = tmp_path / "test.png"
+        analysis.touch()
+        result = handle_dialog_screen(state, analysis, [], [], True)
+        # 四隅テンプレなし → None (PAGING スキップ)
+        assert result is None
+        # detect_dialog が2回呼ばれる: require_blur=True, require_blur=False
+        assert mock_detect_dialog.call_count == 2
+
+    @patch("tools.ap.handlers.dialog_phase.process_paging_dialog", return_value="DIALOG_CLOSED")
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog_nav", return_value=None)
+    @patch("tools.ap.handlers.dialog_phase.count_page_dots", return_value=3)
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog")
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav", return_value=("next", 800, 400))
+    def test_battle_blur_guard_with_corner_continues_paging(
+        self, mock_frame_nav, mock_detect_dialog, mock_dots, mock_nav,
+        mock_paging, state, tmp_path,
+    ):
+        """バトル中 + 背景ぼかしなし + ドット>=2 + 四隅テンプレあり → PAGING 続行。
+
+        is_battle_early=True で四隅テンプレが検出された場合は正常にページング処理へ進む。
+        """
+        from tools.auto_pilot import handle_dialog_screen
+
+        # detect_dialog: 1回目 require_blur=True → False, 2回目 require_blur=False → True
+        mock_detect_dialog.side_effect = [False, True]
+
+        analysis = tmp_path / "test.png"
+        analysis.touch()
+        result = handle_dialog_screen(state, analysis, [], [], True)
+        assert result is not None
+        assert result[0] == "DIALOG_CLOSED"
+        assert result[1] == 1.0
+        mock_paging.assert_called_once()
+
 
 # ─── roi_to_device テスト ──────────────────────────────────────
 
