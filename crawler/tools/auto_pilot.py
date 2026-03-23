@@ -1183,8 +1183,8 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
     # ↓ボタンは画面右下 (y > 80%) にある。右上の ⏭ ボタン (動画スキップ) に
     # 誤マッチしないよう y > 80% に限定
     _adv_next = ASSET_MANAGER.match_single("adv_next_btn", img_path,
-                roi=(int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.80),
-                     int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.20)))
+                roi=(int(ANALYSIS_W * 0.70), int(ANALYSIS_H * 0.75),
+                     int(ANALYSIS_W * 0.30), int(ANALYSIS_H * 0.25)))
     if _adv_next:
         logger.info("[ADV] ↓検出 (score=%.2f) → タップ (%d,%d)", _adv_next[2], _adv_tap_x, _adv_tap_y)
         tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
