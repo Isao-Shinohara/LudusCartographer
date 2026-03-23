@@ -750,8 +750,8 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # MOVIE→ADV 誤判定防止: MOVIE直後は ADV ツールバー (AUTO/↓等) の二重確認を行う
     if state.current_scene != "MENU":
         _adv_next_early = ASSET_MANAGER.match_single("adv_next_btn", img_path,
-                    roi=(int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.80),
-                         int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.20)))
+                    roi=(int(ANALYSIS_W * 0.70), int(ANALYSIS_H * 0.75),
+                         int(ANALYSIS_W * 0.30), int(ANALYSIS_H * 0.25)))
         if _adv_next_early:
             # MOVIE からの遷移時は ADV ツールバー (AUTO ボタン等) の存在を二重確認
             # 黒背景＋白文字がテンプレートに誤マッチするケースを防止
@@ -762,14 +762,21 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                     return "MOVIE"
             return "ADV"
 
-    # ADV: AUTO + ADV固有アイコン (↓が検出できなかった場合のフォールバック)
-    # BATTLE にも AUTO はあるが、adv_icon_menu/adv_icon_log/adv_icon_skip は
-    # ADV 固有のため、AUTO + これらの組み合わせで ADV と確定できる
+    # ADV: AUTO + ↓ボタン or FF (↓単独が検出できなかった場合のフォールバック)
+    # adv_next_btn の ROI 外検出 + AUTO の存在で ADV を確定する
+    # BATTLE にも AUTO/FF はあるが、↓ボタン (adv_next_btn) は ADV 固有
     if state.current_scene not in ("MENU", "BATTLE", "MOVIE"):
-        _adv_auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+        _adv_auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.20))
         _adv_auto_init = ASSET_MANAGER.match_single("adv_icon_auto", img_path,
                                                      roi=_adv_auto_roi)
         if _adv_auto_init and _adv_auto_init[2] >= 0.50:
+            # ↓ボタンを画面全体で探す (ROI 外だった場合のリカバリ)
+            _adv_next_full = ASSET_MANAGER.match_single("adv_next_btn", img_path)
+            if _adv_next_full and _adv_next_full[2] >= 0.70:
+                logger.info("[SCENE_EARLY] ADV初回検出 (AUTO=%.2f + ↓=%.2f) → ADV",
+                            _adv_auto_init[2], _adv_next_full[2])
+                return "ADV"
+            # ADV 固有アイコンチェック (menu/log/skip)
             _adv_only_evidence = 0
             for _adv_only_icon in ("adv_icon_menu", "adv_icon_log", "adv_icon_skip"):
                 _am = ASSET_MANAGER.match_single(_adv_only_icon, img_path,

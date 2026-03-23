@@ -124,18 +124,23 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     _STORY_TAP_EXCLUDE = {"Rank", "Pank", "Runk", "AUTO", "SKIP", ">>", ">|"}
     lower_texts = [r for r in ocr if r["center"][1] > H * 0.6
                    and r["text"] not in _STORY_TAP_EXCLUDE]
-    # 防御的 ADV 検出: adv_result が空でも AUTO + ADV固有アイコンで判定
+    # 防御的 ADV 検出: adv_result が空でも AUTO + ↓ボタン or ADV固有アイコンで判定
     _has_auto_template = False
     if not ctx.adv_result.is_adv and not ctx.is_mini_conv and analysis_path:
         from tools.ap.constants import ANALYSIS_W, ANALYSIS_H
-        _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+        _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.20))
         _ft_auto = ASSET_MANAGER.match_single("adv_icon_auto", analysis_path, roi=_auto_roi)
         if _ft_auto and _ft_auto[2] >= 0.50:
-            for _ft_icon in ("adv_icon_menu", "adv_icon_log", "adv_icon_skip"):
-                _ft_m = ASSET_MANAGER.match_single(_ft_icon, analysis_path, roi=_auto_roi)
-                if _ft_m and _ft_m[2] >= 0.40:
-                    _has_auto_template = True
-                    break
+            # ↓ボタン (ADV固有) を画面全体で探す
+            _ft_next = ASSET_MANAGER.match_single("adv_next_btn", analysis_path)
+            if _ft_next and _ft_next[2] >= 0.70:
+                _has_auto_template = True
+            else:
+                for _ft_icon in ("adv_icon_menu", "adv_icon_log", "adv_icon_skip"):
+                    _ft_m = ASSET_MANAGER.match_single(_ft_icon, analysis_path, roi=_auto_roi)
+                    if _ft_m and _ft_m[2] >= 0.40:
+                        _has_auto_template = True
+                        break
     _has_adv_evidence = ctx.adv_result.is_adv or ctx.is_mini_conv or _has_auto_template
     if lower_texts and len(ocr) <= 15 and not state.download_active and _has_adv_evidence:
         target = lower_texts[-1]
