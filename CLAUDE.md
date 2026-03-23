@@ -353,6 +353,13 @@ venv/bin/python -u tools/auto_pilot.py
 - MOVIE 判定されていない動画で UNKNOWN のままテンプレートマッチ（battle_skill, dialog_nav_right 等）が誤マッチしてタップ → 一時停止の原因になる
 - ROI 定数は `constants.py` の `ADV_NEXT_BTN_ROI`, `ADV_TOOLBAR_ROI`, `BATTLE_BTN_ROI` を使い、ハードコードしない
 
+### バトル初回検出の二重確認ルール（厳格）
+- バトルテンプレート（battle_normal_attack / battle_skill / battle_special）単独で BATTLE 確定にしない
+- 必ず以下の二重確認を行う:
+  1. **右上 AUTO ボタン**: `adv_icon_auto` を右上 ROI (x>80%, y<20%) で検出
+  2. **左下キャラアイコン**: 左下領域 (x<40%, y>80%) の平均明度 > 40
+- 利用規約等の金枠装飾が battle_skill に誤マッチして無限ループする問題の根本防止策
+
 ### OCR エンジン互換性維持
 - Vision OCR 向けに修正する際、PaddleOCR で動かなくなる不具合を出さない
 - 両エンジンの出力形式 (box, center, confidence) が同一であることを確認する
