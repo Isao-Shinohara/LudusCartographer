@@ -683,32 +683,20 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 break
         if _battle_hit:
             _hit_name, _hit_score = _battle_hit
-            # 【バトル初回検出ルール】右上AUTO + 左下キャラアイコンで二重確認
-            # 利用規約等の金枠装飾が battle_skill に誤マッチする問題を防止
-            # 条件1: 右上 AUTO ボタン (x>80%, y<20% の狭いROI)
-            _auto_roi_tr = (int(ANALYSIS_W * 0.80), 0,
-                            int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.20))
-            _auto_confirm = _AM_battle.match_single("adv_icon_auto", img_path,
-                                                     roi=_auto_roi_tr)
-            _has_auto = _auto_confirm is not None and _auto_confirm[2] >= 0.50
-            # 条件2: 左下キャラアイコン (x<40%, y>80% の明度で判定)
-            _has_char_icon = False
+            # ダイアログ四隅テンプレで利用規約等の金枠装飾による誤マッチを棄却
+            _has_dialog = False
             try:
-                _bi = imread_cached(img_path)
-                if _bi is not None:
-                    _bh, _bw = _bi.shape[:2]
-                    _char_area = cv2.cvtColor(
-                        _bi[int(_bh * 0.80):_bh, 0:int(_bw * 0.40)],
-                        cv2.COLOR_BGR2GRAY)
-                    _has_char_icon = float(_char_area.mean()) > 40
+                _dlg_check = detect_dialog_frame_and_nav(img_path)
+                _has_dialog = _dlg_check is not None
             except Exception:
                 pass
-            if _has_auto and _has_char_icon:
-                logger.info("[SCENE_EARLY] Battle初回検出 (%s score=%.2f + AUTO右上 + キャラ左下) → BATTLE",
+            if _has_dialog:
+                logger.info("[SCENE_EARLY] %s(%.2f) 検出だがダイアログ四隅あり → BATTLE棄却",
+                            _hit_name, _hit_score)
+            else:
+                logger.info("[SCENE_EARLY] Battle初回検出 (%s score=%.2f) → BATTLE",
                             _hit_name, _hit_score)
                 return "BATTLE"
-            logger.info("[SCENE_EARLY] %s(%.2f) 検出だが二重確認失敗 (AUTO=%s, char=%s) → BATTLE棄却",
-                        _hit_name, _hit_score, _has_auto, _has_char_icon)
     except Exception:
         pass
     # BATTLE 補助判定: 金枠オーバーレイでテンプレが失敗する場合
