@@ -129,6 +129,7 @@ from tools.ap.constants import (  # noqa: E402
     WATCHDOG_DEADLOCK_THRESHOLD, WATCHDOG_MAX_SOFT_RECOVERIES,
     WATCHDOG_MAX_TOTAL_RECOVERIES, APP_PACKAGE, APP_ACTIVITY,
     WATCHDOG_EXEMPT_ACTIONS, ADV_RAPID_PHASH_MAX, BLACKOUT_BRIGHTNESS,
+    ADV_NEXT_BTN_ROI, ADV_TOOLBAR_ROI, BATTLE_BTN_ROI,
     _DEBUG_SAVE_IMAGES, _GOLD_UI_ACTIONS, _SCENE_REEVAL_THRESHOLD,
     _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS, _CURRENCY_SPEND_KWS,
     _UI_TEXT_KWS, _SINGLE_ONLY,
@@ -579,8 +580,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             state._movie_stable_count = 0
             state._movie_recheck_count = getattr(state, "_movie_recheck_count", 0) + 1
             if state._movie_recheck_count % 3 == 0:
-                _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
-                               int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+                _battle_roi = BATTLE_BTN_ROI
                 for _btn in ("battle_normal_attack", "battle_skill", "battle_special"):
                     _bm = ASSET_MANAGER.match_single(_btn, img_path, roi=_battle_roi)
                     if _bm and _bm[2] >= 0.60:
@@ -612,7 +612,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 #   → AUTO 閾値 0.80, 補助証拠 2 個以上, phash 安定後のみチェック
                 _movie_stable = getattr(state, "_movie_stable_count", 0)
                 if _movie_stable >= 2:
-                    _adv_toolbar_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+                    _adv_toolbar_roi = ADV_TOOLBAR_ROI
                     _adv_auto_m = ASSET_MANAGER.match_single("adv_icon_auto", img_path, roi=_adv_toolbar_roi)
                     if _adv_auto_m and _adv_auto_m[2] >= 0.80:
                         # さらに ADV 固有アイコン (↓/LOG/MENU/FF) が上部に2つ以上あることを確認
@@ -651,8 +651,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     if state.current_scene == "BATTLE" and dist < 30:
         if state.battle_rapid_consecutive.count > 0 and state.battle_rapid_consecutive.count % 3 == 0:
             from tools.ap.image_proc import ASSET_MANAGER as _AM_verify
-            _verify_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
-                           int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+            _verify_roi = BATTLE_BTN_ROI
             _v_atk = _AM_verify.match_single("battle_normal_attack", img_path, roi=_verify_roi)
             _v_skl = _AM_verify.match_single("battle_skill", img_path, roi=_verify_roi)
             _v_best = max((_v_atk[2] if _v_atk else 0), (_v_skl[2] if _v_skl else 0))
@@ -673,8 +672,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # バトルテンプレが見つかれば即 BATTLE に復帰する
     from tools.ap.image_proc import ASSET_MANAGER as _AM_battle
     try:
-        _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
-                       int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+        _battle_roi = BATTLE_BTN_ROI
         _battle_hit = None
         for _btn_name in ("battle_normal_attack", "battle_skill", "battle_special"):
             _battle_m = _AM_battle.match_single(_btn_name, img_path, roi=_battle_roi)
@@ -726,7 +724,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     if state.current_scene == "ADV" and dist < 20:
         from tools.ap.image_proc import ASSET_MANAGER as _AM_adv
         try:
-            _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.15))
+            _auto_roi = ADV_TOOLBAR_ROI
             _auto_m = _AM_adv.match_single("adv_icon_auto", img_path, roi=_auto_roi)
             if _auto_m and _auto_m[2] >= 0.50:
                 # AUTO あり → ADV ツールバーも確認 (バトル画面の AUTO 誤一致を排除)
@@ -734,8 +732,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 if _adv_check.is_adv:
                     return "ADV"
                 # ツールバーなし + AUTO あり → BATTLE テンプレートで確認
-                _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
-                               int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+                _battle_roi = BATTLE_BTN_ROI
                 _b_atk = _AM_adv.match_single("battle_normal_attack", img_path, roi=_battle_roi)
                 _b_skl = _AM_adv.match_single("battle_skill", img_path, roi=_battle_roi)
                 _b_best = max((_b_atk[2] if _b_atk else 0), (_b_skl[2] if _b_skl else 0))
@@ -754,8 +751,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # MOVIE→ADV 誤判定防止: MOVIE直後は ADV ツールバー (AUTO/↓等) の二重確認を行う
     if state.current_scene != "MENU":
         _adv_next_early = ASSET_MANAGER.match_single("adv_next_btn", img_path,
-                    roi=(int(ANALYSIS_W * 0.70), int(ANALYSIS_H * 0.75),
-                         int(ANALYSIS_W * 0.30), int(ANALYSIS_H * 0.25)))
+                    roi=ADV_NEXT_BTN_ROI)
         if _adv_next_early:
             # MOVIE からの遷移時は ADV ツールバー (AUTO ボタン等) の存在を二重確認
             # 黒背景＋白文字がテンプレートに誤マッチするケースを防止
@@ -770,7 +766,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # adv_next_btn の ROI 外検出 + AUTO の存在で ADV を確定する
     # BATTLE にも AUTO/FF はあるが、↓ボタン (adv_next_btn) は ADV 固有
     if state.current_scene not in ("MENU", "BATTLE", "MOVIE"):
-        _adv_auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.20))
+        _adv_auto_roi = ADV_TOOLBAR_ROI
         _adv_auto_init = ASSET_MANAGER.match_single("adv_icon_auto", img_path,
                                                      roi=_adv_auto_roi)
         if _adv_auto_init and _adv_auto_init[2] >= 0.50:
@@ -1183,8 +1179,7 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
     # ↓ボタンは画面右下 (y > 80%) にある。右上の ⏭ ボタン (動画スキップ) に
     # 誤マッチしないよう y > 80% に限定
     _adv_next = ASSET_MANAGER.match_single("adv_next_btn", img_path,
-                roi=(int(ANALYSIS_W * 0.70), int(ANALYSIS_H * 0.75),
-                     int(ANALYSIS_W * 0.30), int(ANALYSIS_H * 0.25)))
+                roi=ADV_NEXT_BTN_ROI)
     if _adv_next:
         logger.info("[ADV] ↓検出 (score=%.2f) → タップ (%d,%d)", _adv_next[2], _adv_tap_x, _adv_tap_y)
         tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
@@ -2108,8 +2103,7 @@ def main():
                     and not state.post_download
                     and is_tutorial_walk_scene(img_path)):
                 _walk_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
-                _battle_roi = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
-                               int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+                _battle_roi = BATTLE_BTN_ROI
                 _has_battle = any(
                     (m := ASSET_MANAGER.match_single(b, _walk_analysis, roi=_battle_roi))
                     and m[2] >= 0.50
@@ -2387,7 +2381,7 @@ def main():
                 _adv_tap_x = int(ANALYSIS_W * 0.93)
                 _adv_tap_y = int(ANALYSIS_H * 0.91)
                 if _rapid_adv.is_adv:
-                    if ASSET_MANAGER.match_single("adv_next_btn", _early_analysis, roi=(int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.20))):
+                    if ASSET_MANAGER.match_single("adv_next_btn", _early_analysis, roi=ADV_NEXT_BTN_ROI):
                         logger.info("[ADV_RAPID][iter %d] ↓検出 → タップ (%d,%d)",
                                     i, _adv_tap_x, _adv_tap_y)
                         tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
@@ -2532,7 +2526,7 @@ def main():
                 # ── ADV送り待ちアイコン検知: phash 安定中でも1回タップ ──
                 _adv_tap_x = int(ANALYSIS_W * 0.93)
                 _adv_tap_y = int(ANALYSIS_H * 0.91)
-                if ASSET_MANAGER.match_single("adv_next_btn", _early_analysis, roi=(int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.20))):
+                if ASSET_MANAGER.match_single("adv_next_btn", _early_analysis, roi=ADV_NEXT_BTN_ROI):
                     logger.info("[ADV][iter %d] ↓検出 → タップ (%d,%d)", i, _adv_tap_x, _adv_tap_y)
                     tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
                     state.last_action = "ADV_RAPID_TAP"

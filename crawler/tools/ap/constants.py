@@ -113,6 +113,16 @@ _BATTLE_UI_KWS: frozenset = frozenset([
 ANALYSIS_W = 1520
 ANALYSIS_H = 720
 
+# ─── ADV シーン検出 ROI (共通定数) ───
+# adv_next_btn (↓ボタン): 右下領域
+ADV_NEXT_BTN_ROI = (int(ANALYSIS_W * 0.70), int(ANALYSIS_H * 0.75),
+                    int(ANALYSIS_W * 0.30), int(ANALYSIS_H * 0.25))
+# ADV ツールバー (AUTO/FF/MENU/LOG 等): 上部領域
+ADV_TOOLBAR_ROI = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.20))
+# バトルボタン (通常攻撃/スキル/必殺技): 右下領域
+BATTLE_BTN_ROI = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
+                  int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
+
 # ─── 座標補正定数 ───
 # Vision framework は bbox が正確なので補正不要、PaddleOCR は下部パディングあり
 try:

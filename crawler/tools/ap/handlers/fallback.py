@@ -127,8 +127,8 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     # 防御的 ADV 検出: adv_result が空でも AUTO + ↓ボタン or ADV固有アイコンで判定
     _has_auto_template = False
     if not ctx.adv_result.is_adv and not ctx.is_mini_conv and analysis_path:
-        from tools.ap.constants import ANALYSIS_W, ANALYSIS_H
-        _auto_roi = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.20))
+        from tools.ap.constants import ADV_TOOLBAR_ROI
+        _auto_roi = ADV_TOOLBAR_ROI
         _ft_auto = ASSET_MANAGER.match_single("adv_icon_auto", analysis_path, roi=_auto_roi)
         if _ft_auto and _ft_auto[2] >= 0.50:
             # ↓ボタン (ADV固有) を画面全体で探す
