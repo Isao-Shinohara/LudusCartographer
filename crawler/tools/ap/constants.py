@@ -101,6 +101,7 @@ _DIALOG_FIRST_KWS: frozenset = frozenset([
 _BATTLE_CORE_KWS: frozenset = frozenset([
     "通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃",
     "必殺技", "BREAK", "WAVE", "Turn",
+    "TOTAL DAMAGE", "ATTACKER", "DEFENDER", "BUFFER", "BREAKER", "HEALER",
 ])
 
 # BATTLE 高速パス: OCR 前テンプレートマッチングで使用。
