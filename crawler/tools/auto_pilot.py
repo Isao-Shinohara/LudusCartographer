@@ -601,10 +601,16 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                             _mf = ASSET_MANAGER.match_single("adv_icon_ff", img_path)
                             if not ((_ma and _ma[2] >= 0.60) or (_mf and _mf[2] >= 0.60)):
                                 continue
-                        logger.info("[SCENE_EARLY] MOVIE中バトルテンプレ検出 (%s %.2f) → BATTLE",
+                        # 二重確認: 左下キャラアイコンで本物のバトルか検証
+                        _char_icon_roi = (0, int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))
+                        _ci = ASSET_MANAGER.match_single("battle_char_icon", img_path, roi=_char_icon_roi)
+                        if _ci and _ci[2] >= 0.75:
+                            logger.info("[SCENE_EARLY] MOVIE中バトルテンプレ検出 (%s %.2f + char_icon %.2f) → BATTLE",
+                                        _btn, _bm[2], _ci[2])
+                            state._movie_recheck_count = 0
+                            return "BATTLE"
+                        logger.info("[SCENE_EARLY] MOVIE中 %s(%.2f) だがchar_icon未検出 → BATTLE棄却",
                                     _btn, _bm[2])
-                        state._movie_recheck_count = 0
-                        return "BATTLE"
                 # ガチャ演出チェック: SKIP ボタン + 暗い背景
                 _gacha_skip = detect_movie_skip_button(img_path)
                 if _gacha_skip:
