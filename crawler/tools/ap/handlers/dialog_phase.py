@@ -66,6 +66,10 @@ def handle_dialog_screen(
     if analysis_path is None:
         return None
 
+    # 名前入力画面: ダイアログとして処理せず tutorial ハンドラに委譲
+    if any("名前" in t or "プレイヤー名" in t for t in texts):
+        return None
+
     W, H = ANALYSIS_W, ANALYSIS_H
 
     _dlg = detect_dialog_frame_and_nav(
