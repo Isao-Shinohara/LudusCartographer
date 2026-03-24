@@ -843,26 +843,28 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                     _has_finger = True
                     break
             if _has_finger:
-                # ダイアログ画面では金枠装飾が多すぎて正確なターゲット特定が困難
-                # → ダイアログ四隅検出時は UNKNOWN にフォールバック (OCRパスで OK を検出)
+                # ダイアログ画面では OCR パスに委譲 (OK ボタン等を正確に検出)
                 from tools.ap.image_proc import detect_dialog_corners as _ddc_tt
                 if _ddc_tt(img_path):
                     logger.info("[SCENE_EARLY] 金枠+指テンプレ+ダイアログ四隅 → OCRに委譲")
                     return "UNKNOWN"
-                # 指の方向にある金枠を探索
-                _finger_dir = _ft.replace("tutorial_finger_", "").replace("tutorial_hand_pointer", "")
-                from tools.ap.image_proc import find_gold_frame_near as _fgfn
-                _gf_target = _fgfn(img_path, _fm[0], _fm[1],
-                                   search_radius=400, direction=_finger_dir)
-                if _gf_target:
-                    state._tutorial_tap_target = (_gf_target[0], _gf_target[1])
-                    logger.info("[SCENE_EARLY] 金枠(%.2f)+指テンプレ → TUTORIAL_TAP (%d,%d)",
-                                _gf_m[2], _gf_target[0], _gf_target[1])
-                    return "TUTORIAL_TAP"
-                # 金枠方向探索失敗 → UNKNOWN (OCRパスに委譲)
-                logger.info("[SCENE_EARLY] 金枠(%.2f)+指テンプレだが方向探索失敗 → UNKNOWN",
-                            _gf_m[2])
-                return "UNKNOWN"
+                # 指先位置を直接タップ (find_gold_frame_near は装飾誤マッチが多いため不使用)
+                # 指テンプレ中心から指す方向にオフセット = 指先 ≒ ターゲット
+                _FINGER_TIP_OFFSET = 30  # テンプレ半幅 (解析座標)
+                _tip_x, _tip_y = _fm[0], _fm[1]
+                if _ft == "tutorial_finger_up":
+                    _tip_y -= _FINGER_TIP_OFFSET
+                elif _ft == "tutorial_finger_down":
+                    _tip_y += _FINGER_TIP_OFFSET
+                elif _ft == "tutorial_finger_left":
+                    _tip_x -= _FINGER_TIP_OFFSET
+                elif _ft == "tutorial_finger_right":
+                    _tip_x += _FINGER_TIP_OFFSET
+                # hand_pointer: 方向不定 → オフセットなし (テンプレ中心をそのままタップ)
+                state._tutorial_tap_target = (_tip_x, _tip_y)
+                logger.info("[SCENE_EARLY] 金枠+指テンプレ(%s) → TUTORIAL_TAP 指先(%d,%d)",
+                            _ft.replace("tutorial_", ""), _tip_x, _tip_y)
+                return "TUTORIAL_TAP"
 
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
     # チュートリアル中 + download_active → DL完了ダイアログ優先 (SKIPボタン以外はスキップ)
