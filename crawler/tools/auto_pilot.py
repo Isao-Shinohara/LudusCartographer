@@ -1104,9 +1104,11 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
         _rapid_tx, _rapid_ty = _gold_tap
         _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
     # 指テンプレ検出済み + gold_button未検出 → 指テンプレ位置から金枠を探索
+    # 指テンプレ名から方向を取得し、指の指す先の金枠のみ採用
     if not _rapid_action and not _battle_rho and _fm is not None:
+        _finger_dir = _ft.replace("tutorial_finger_", "").replace("tutorial_hand_pointer", "")
         _gf_from_finger = find_gold_frame_near(
-            analysis_path, _fm[0], _fm[1], search_radius=400)
+            analysis_path, _fm[0], _fm[1], search_radius=400, direction=_finger_dir)
         if _gf_from_finger is not None:
             _rapid_tx, _rapid_ty = _gf_from_finger[0], _gf_from_finger[1]
             _rapid_action = "BATTLE_RAPID_GOLD_FINGER_FB"
