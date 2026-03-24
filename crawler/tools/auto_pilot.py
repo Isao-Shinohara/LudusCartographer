@@ -835,9 +835,11 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                     _has_finger = True
                     break
             if _has_finger:
-                logger.info("[SCENE_EARLY] 金枠(%.2f)+指テンプレ → MOVIE判定スキップ → UNKNOWN",
-                            _gf_m[2])
-                return "UNKNOWN"
+                # 金枠の中心座標を state に保存 (メインループで即タップ用)
+                state._tutorial_tap_target = (_gf_m[0], _gf_m[1])
+                logger.info("[SCENE_EARLY] 金枠(%.2f)+指テンプレ → TUTORIAL_TAP (%d,%d)",
+                            _gf_m[2], _gf_m[0], _gf_m[1])
+                return "TUTORIAL_TAP"
 
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
     # チュートリアル中 + download_active → DL完了ダイアログ優先 (SKIPボタン以外はスキップ)
@@ -2374,6 +2376,19 @@ def main():
             _fms = (time.time() - _loop_t0) * 1000
             state.total_loop_ms += _fms
             logger.info("  [PERF] Loop %.0fms (TUTORIAL_WALK_EARLY)", _fms)
+            continue
+
+        if _early_scene == "TUTORIAL_TAP":
+            # 指+金枠シーン: OCR不要、金枠ターゲットを即タップ
+            state.current_scene = "UNKNOWN"  # ガード更新不要にするため UNKNOWN
+            _tt = getattr(state, "_tutorial_tap_target", None)
+            if _tt:
+                tap_device(_tt[0], _tt[1], state, "TUTORIAL_TAP_EARLY")
+                logger.info("[TUTORIAL_TAP] 金枠 (%d,%d) 即タップ", _tt[0], _tt[1])
+            state.last_phash = ""
+            _fms = (time.time() - _loop_t0) * 1000
+            state.total_loop_ms += _fms
+            logger.info("  [PERF] Loop %.0fms (TUTORIAL_TAP_EARLY)", _fms)
             continue
 
         if _early_scene == "MOVIE":
