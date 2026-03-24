@@ -90,8 +90,14 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             tap_device(_ni_cx, _ni_cy, state, "NAME_INPUT_OK")
             return "NAME_INPUT_OK", 2.0
         elif _ni_ok:
-            # OCR「プレイヤー名を入力」テキスト位置をフォーカス座標に使用 (解像度非依存)
-            _nf_ocr_x, _nf_ocr_y = _name_input_item["center"]
+            # テキストフィールドのプレースホルダー「プレイヤー名を入力」を探す
+            # 説明文「〜してください」ではなく、短い方(フィールド内)の座標を使用
+            _field_item = next(
+                (item for item in ocr
+                 if item.get("text", "").strip() == "プレイヤー名を入力"),
+                _name_input_item  # フォールバック: 最初のマッチ
+            )
+            _nf_ocr_x, _nf_ocr_y = _field_item["center"]
             _nf_x, _nf_y = roi_to_device(_nf_ocr_x, _nf_ocr_y, state.game_roi)
             logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d) [OCR座標]", _nf_x, _nf_y)
             tap_device(_nf_x, _nf_y, state, "NAME_INPUT_FOCUS")
@@ -617,9 +623,13 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             tap_device(cx, cy, state, "NAME_INPUT_OK")
             return "NAME_INPUT_OK", 2.0
         elif ok_item:
-            # 名前未入力 → テキストフィールドをタップして "MadoDora" 入力 → Enter → OK
-            # OCR「プレイヤー名を入力」テキスト位置をフォーカス座標に使用 (解像度非依存)
-            _nf_ocr_x, _nf_ocr_y = name_input["center"]
+            # テキストフィールドのプレースホルダー「プレイヤー名を入力」を探す
+            _field_item = next(
+                (item for item in ocr
+                 if item.get("text", "").strip() == "プレイヤー名を入力"),
+                name_input
+            )
+            _nf_ocr_x, _nf_ocr_y = _field_item["center"]
             _nf_x, _nf_y = roi_to_device(_nf_ocr_x, _nf_ocr_y, state.game_roi)
             logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d) [OCR座標]", _nf_x, _nf_y)
             tap_device(_nf_x, _nf_y, state, "NAME_INPUT_FOCUS")
