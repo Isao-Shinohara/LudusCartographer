@@ -538,6 +538,13 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     _in_battle_ctx = state.current_scene == "BATTLE" or getattr(state, "_from_battle", False)
     pre_popup = None if _in_battle_ctx else has_any(ocr, list(_DIALOG_FIRST_KWS))
     if pre_popup:
+        # 四隅テンプレで本物のダイアログか確認 (ホーム画面等の誤検出防止)
+        from tools.ap.image_proc import detect_dialog_corners as _ddc_popup
+        if analysis_path and not _ddc_popup(analysis_path):
+            logger.info("[PRE_POPUP] 四隅テンプレなし → ダイアログではない、スキップ (kw='%s')",
+                        pre_popup["text"][:10])
+            pre_popup = None
+    if pre_popup:
         state.pre_popup_tap_count += 1
         # ── ページドット検出: ドット≥2 → ページングが必要 (× 即タップではなく全ページ走査) ──
         _popup_dots = count_page_dots(analysis_path) if analysis_path else 0
