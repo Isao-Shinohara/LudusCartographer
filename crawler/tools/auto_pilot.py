@@ -2558,7 +2558,9 @@ def main():
                     continue
                 # ── ミニ会話タップ (phash安定時, 1回) ──
                 # MENU: 通知バナーを吹き出しと誤認 / MOVIE: 動画中タップで一時停止
-                if state.current_scene not in ("MENU", "MOVIE"):
+                # _from_movie_ttl: MOVIE→UNKNOWN遷移直後のタップ抑制
+                if (state.current_scene not in ("MENU", "MOVIE")
+                        and getattr(state, "_from_movie_ttl", 0) <= 0):
                     _mc = detect_mini_conversation(img_path)
                     if _mc is not None:
                         _mc_cx, _mc_cy, _mc_side = _mc
