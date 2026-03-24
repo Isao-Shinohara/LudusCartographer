@@ -833,7 +833,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # チュートリアル指+金枠画面が MOVIE と誤判定されるのを防止
     # 金枠単独だと動画装飾で偽陽性 → 指テンプレとの共検出を必須化
     # ただしガチャ演出 (SKIP + 暗背景) は金枠装飾があっても GACHA として通す
-    if img_path and not state.download_active and state.current_scene != "GACHA":
+    if img_path and not state.download_active:
         _gf_m = ASSET_MANAGER.match_single("gold_frame_small", img_path)
         if _gf_m and _gf_m[2] >= 0.70:
             # ガチャ演出チェック: SKIP ボタン + 暗背景 → GACHA (金枠スキップしない)
@@ -878,9 +878,13 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 _finger_dir = _ft.replace("tutorial_finger_", "").replace("tutorial_hand_pointer", "")
                 state._tutorial_tap_target = (_tip_x, _tip_y)
                 state._tutorial_tap_dir = _finger_dir
-                # 新しい指検出 → カウンタリセット (前回と異なる位置なら再試行)
+                # 新しい指検出 → カウンタリセット (前回と大きく異なる位置なら再試行)
+                # ±10px 以内は同一位置とみなす (指アイコンのアニメーション揺れ対策)
                 _prev_tt = getattr(state, "_prev_tutorial_tap_target", None)
-                if _prev_tt != (_tip_x, _tip_y):
+                _same_pos = (_prev_tt is not None
+                             and abs(_prev_tt[0] - _tip_x) <= 10
+                             and abs(_prev_tt[1] - _tip_y) <= 10)
+                if not _same_pos:
                     state._tutorial_tap_attempt = 0
                 state._prev_tutorial_tap_target = (_tip_x, _tip_y)
                 logger.info("[SCENE_EARLY] 金枠+指テンプレ(%s) → TUTORIAL_TAP 指先(%d,%d)",
