@@ -370,9 +370,10 @@ class TestHandleDialogScreen:
     @patch("tools.ap.handlers.dialog_phase.tap_device")
     @patch("tools.ap.handlers.dialog_phase.process_paging_dialog", return_value="DIALOG_CLOSED")
     @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav", return_value=("next", 800, 400))
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog_corners", return_value=True)
     @patch("tools.ap.handlers.dialog_phase.detect_dialog", return_value=("next", 800, 400))
-    def test_paging_dialog_returns_action(self, mock_detect_dialog, mock_dlg, mock_paging, mock_tap,
-                                           mock_white, state, tmp_path):
+    def test_paging_dialog_returns_action(self, mock_detect_dialog, mock_detect_corners, mock_dlg,
+                                           mock_paging, mock_tap, mock_white, state, tmp_path):
         from tools.auto_pilot import handle_dialog_screen
         analysis = tmp_path / "test.png"
         analysis.touch()
@@ -468,16 +469,17 @@ class TestHandleDialogScreen:
         result = handle_dialog_screen(state, analysis, [], [], True)
         # 四隅テンプレなし → None (PAGING スキップ)
         assert result is None
-        # detect_dialog: 四隅チェック (require_blur=False) 1回で即 return
-        assert mock_detect_dialog.call_count == 1
+        # detect_dialog_corners=False → 即 return None (detect_dialog は呼ばれない)
+        assert mock_detect_dialog.call_count == 0
 
     @patch("tools.ap.handlers.dialog_phase.process_paging_dialog", return_value="DIALOG_CLOSED")
     @patch("tools.ap.handlers.dialog_phase.detect_dialog_nav", return_value=None)
     @patch("tools.ap.handlers.dialog_phase.count_page_dots", return_value=3)
     @patch("tools.ap.handlers.dialog_phase.detect_dialog")
+    @patch("tools.ap.handlers.dialog_phase.detect_dialog_corners", return_value=True)
     @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav", return_value=("next", 800, 400))
     def test_battle_blur_guard_with_corner_continues_paging(
-        self, mock_frame_nav, mock_detect_dialog, mock_dots, mock_nav,
+        self, mock_frame_nav, mock_detect_corners, mock_detect_dialog, mock_dots, mock_nav,
         mock_paging, state, tmp_path,
     ):
         """バトル中 + 背景ぼかしなし + ドット>=2 + 四隅テンプレあり → PAGING 続行。
@@ -486,9 +488,9 @@ class TestHandleDialogScreen:
         """
         from tools.auto_pilot import handle_dialog_screen
 
-        # detect_dialog: 1回目 require_blur=False(四隅ガード) → True,
-        # 2回目 require_blur=True(ぼかし) → False, 3回目 require_blur=False(ドット分岐) → True
-        mock_detect_dialog.side_effect = [True, False, True]
+        # detect_dialog_corners=True (四隅ガードOK)
+        # detect_dialog: 1回目 require_blur=True(ぼかし) → False, 2回目 require_blur=False(ドット分岐) → True
+        mock_detect_dialog.side_effect = [False, True]
 
         analysis = tmp_path / "test.png"
         analysis.touch()

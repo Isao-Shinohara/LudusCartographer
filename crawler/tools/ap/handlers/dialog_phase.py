@@ -30,7 +30,7 @@ from tools.ap.image_proc import (
     detect_notice_popup, detect_mini_conversation,
     detect_white_hand_pointer,
     detect_dialog_frame_and_nav, process_paging_dialog,
-    count_page_dots, detect_dialog, detect_dialog_nav,
+    count_page_dots, detect_dialog, detect_dialog_nav, detect_dialog_corners,
     ASSET_MANAGER, prepare_analysis_image,
     roi_to_device,
 )
@@ -181,9 +181,9 @@ def handle_dialog_screen(
             state.pre_popup_tap_count = 0
             return "DIALOG_OK_DIRECT", 1.0
         # ── ダイアログ再確認ガード: 四隅テンプレ必須 ──
-        # 背景ぼかし検出は 3D 探索フィールドの被写界深度で偽陽性が出るため、
-        # ぼかし有無に関わらず四隅テンプレ (dialog_corner) を必須とする。
-        _has_dialog_frame = detect_dialog(analysis_path, W, H, require_blur=False) if analysis_path else False
+        # detect_dialog_frame_and_nav が▷/×を検出済みなので、
+        # 四隅テンプレ (TL+BL+X座標) のみ追加確認する。
+        _has_dialog_frame = detect_dialog_corners(analysis_path) if analysis_path else False
         if not _has_dialog_frame:
             # 四隅テンプレなし → ダイアログではない可能性が高い
             logger.info("[DIALOG_FRAME_GUARD] 四隅テンプレなし → PAGING スキップ (dlg_type=%s)", _dlg_type)
