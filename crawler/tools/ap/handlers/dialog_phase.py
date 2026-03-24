@@ -178,20 +178,18 @@ def handle_dialog_screen(
                 # → 四隅テンプレ (dialog_corner) で本物のダイアログか確認
                 # OCR にバトルKW が無くても current_scene が BATTLE なら同様にガード
                 _in_battle = is_battle_early or state.current_scene == "BATTLE" or getattr(state, "_from_battle", False)
-                if _in_battle:
-                    _has_corner = detect_dialog(analysis_path, W, H, require_blur=False)
-                    if not _has_corner:
-                        logger.info(
-                            "[DIALOG_BLUR_GUARD] バトル中ドット=%d だが四隅テンプレなし → PAGING スキップ",
-                            _guard_dots)
-                        return None
+                # 背景ぼかしなし + ドット検出: 常にダイアログ四隅テンプレで確認。
+                # バトルUIアイコンがドットに見えるケースが多いため、
+                # _in_battle に関わらず四隅テンプレが無ければスキップする。
+                _has_corner = detect_dialog(analysis_path, W, H, require_blur=False)
+                if not _has_corner:
                     logger.info(
-                        "[DIALOG_BLUR_GUARD] バトル中ドット=%d + 四隅テンプレあり → チュートリアルダイアログ、PAGING 続行",
-                        _guard_dots)
-                else:
-                    logger.info(
-                        "[DIALOG_BLUR_GUARD] 背景ぼかしなしだがドット=%d → PAGING 続行 (▷/×=%s)",
-                        _guard_dots, _guard_nav is not None)
+                        "[DIALOG_BLUR_GUARD] ドット=%d だが四隅テンプレなし → PAGING スキップ (battle=%s)",
+                        _guard_dots, _in_battle)
+                    return None
+                logger.info(
+                    "[DIALOG_BLUR_GUARD] ドット=%d + 四隅テンプレあり → PAGING 続行 (battle=%s)",
+                    _guard_dots, _in_battle)
             else:
                 logger.info(
                     "[DIALOG_BLUR_GUARD] 背景ぼかしなし+ドット=%d+▷/×=%s → ダイアログではない、PAGING スキップ",
