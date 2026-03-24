@@ -1063,6 +1063,15 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     if _gold_tap:
         _rapid_tx, _rapid_ty = _gold_tap
         _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
+    # 指テンプレ検出済み + gold_button未検出 → 指テンプレ位置から金枠を探索
+    if not _rapid_action and not _battle_rho and _fm is not None:
+        _gf_from_finger = find_gold_frame_near(
+            analysis_path, _fm[0], _fm[1], search_radius=400)
+        if _gf_from_finger is not None:
+            _rapid_tx, _rapid_ty = _gf_from_finger[0], _gf_from_finger[1]
+            _rapid_action = "BATTLE_RAPID_GOLD_FINGER_FB"
+            logger.info("[BATTLE] 指テンプレ(%d,%d) → find_gold_frame_near → 金枠(%d,%d)",
+                        _fm[0], _fm[1], _rapid_tx, _rapid_ty)
     # フォールバック: 指テンプレ検出 + find_gold_frame_near で金枠が見つかればそちらを使用
     # バトル: 右半分 (x>W/2) かつ y>35% のみ (左キャラアイコン・上部UI排除)
     # 暗転オーバーレイ中は全画面許可
