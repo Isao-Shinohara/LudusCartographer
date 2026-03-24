@@ -936,6 +936,9 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
                 if state.post_download:
                     state.post_download = False
                     logger.info("[MOVIE_ESCAPE] post_download クリア (非MOVIEシーン確定)")
+                # MOVIE再検出を抑制: phash_moving_count をリセット
+                state.phash_moving_count = 0
+                state._movie_stable_count = 0
                 return False  # MOVIE ハンドラ脱出 → フルOCRへ
         state._movie_low_dist_count = 0  # チェック実行後リセット (毎フレームチェックしない)
 
