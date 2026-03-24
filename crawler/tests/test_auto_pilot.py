@@ -1313,7 +1313,7 @@ class TestMovieSceneDetection:
     def test_movie_with_skip_no_toolbar(self, mock_skip, mock_blur, black_image):
         """⏭ + ツールバーなし → is_movie=True。"""
         from tools.ap.image_proc import detect_movie_scene, AdvSceneResult
-        mock_skip.return_value = (1400, 50)  # ⏭ ボタン座標
+        mock_skip.return_value = (1400, 50, "movie_text")  # 動画SKIP座標
         adv = AdvSceneResult(is_adv=False)
         result = detect_movie_scene(black_image, adv_result=adv, ocr_texts=[])
         assert result.is_movie is True
@@ -1324,7 +1324,7 @@ class TestMovieSceneDetection:
     def test_movie_with_subtitles(self, mock_skip, mock_blur, black_image):
         """⏭ + ツールバーなし + OCR 3件 (字幕) → is_movie=True。"""
         from tools.ap.image_proc import detect_movie_scene, AdvSceneResult
-        mock_skip.return_value = (1400, 50)
+        mock_skip.return_value = (1400, 50, "movie_text")
         adv = AdvSceneResult(is_adv=False)
         result = detect_movie_scene(
             black_image, adv_result=adv,

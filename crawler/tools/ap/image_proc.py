@@ -760,7 +760,9 @@ def detect_adv_toolbar_buttons(img_path: Path, threshold: float = 0.65) -> bool:
 def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
     """
     動画シーンの⏭スキップボタン（右上の金色円形アイコン）を検出。
-    返り値: (cx, cy) or None
+    返り値: (cx, cy, source) or None
+      source: "adv_icon" = ADVツールバーの⏭アイコン
+              "movie_text" = 動画固有のSKIPテキスト
     """
     try:
         _img = imread_cached(img_path)
@@ -773,16 +775,16 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
         if _y2 < 5 or _W - _x1 < 5:
             return None
         _roi = _img[0:_y2, _x1:_W]
+        _skip_roi = (int(ANALYSIS_W * 0.85), 0,
+                     int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.15))
         # ── プライマリ: テンプレートマッチング (adv_icon_skip) ──
         # HSV はリサイズ後のアイコンサイズに依存するがテンプレートは安定
         try:
-            _skip_roi = (int(ANALYSIS_W * 0.85), 0,
-                         int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.15))
             _skip_m = ASSET_MANAGER.match_single("adv_icon_skip", img_path, roi=_skip_roi)
             if _skip_m and _skip_m[2] >= 0.70:
                 logger.debug("[MOVIE_SKIP_BTN] テンプレート検出 (%d,%d) score=%.2f",
                              _skip_m[0], _skip_m[1], _skip_m[2])
-                return (_skip_m[0], _skip_m[1])
+                return (_skip_m[0], _skip_m[1], "adv_icon")
         except Exception:
             pass
 
@@ -794,7 +796,7 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
             if _skip_text_m and _skip_text_m[2] >= 0.70:
                 logger.debug("[MOVIE_SKIP_BTN] SKIPテキスト検出 (%d,%d) score=%.2f",
                              _skip_text_m[0], _skip_text_m[1], _skip_text_m[2])
-                return (_skip_text_m[0], _skip_text_m[1])
+                return (_skip_text_m[0], _skip_text_m[1], "movie_text")
         except Exception:
             pass
 
@@ -871,12 +873,15 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     # ── ⏭ スキップボタン検出 ──
     skip_btn = detect_movie_skip_button(img_path) if img_path else None
     has_skip = skip_btn is not None
+    # adv_icon_skip がマッチ → ADV ツールバーの存在を示す直接証拠
+    # movie_skip_text がマッチ → 動画固有の SKIP ボタン
+    _skip_source = skip_btn[2] if skip_btn else None
 
     # ── ADV 証拠チェック (⏭有無に関わらず共通) ──
     # ADV の構造的特徴 (MOVIE にはどれもない):
     #   1. ↓送りボタン (右下) — セリフ送り可能時に表示
     #   2. ADV ツールバー (右上5アイコン: menu,log,AUTO,>>,>|)
-    #   3. 上部 AUTO ボタン単独 — ADV 確定
+    #   3. adv_icon_skip マッチ — ADV ツールバーのアイコンそのもの
     from tools.ap.constants import ADV_NEXT_BTN_ROI
     _adv_btn_movie = ASSET_MANAGER.match_single("adv_next_btn", img_path,
                     roi=ADV_NEXT_BTN_ROI) if img_path else None
@@ -895,25 +900,24 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     # ADV 証拠の評価
     # ↓ボタン: 最も確実 (MOVIE には絶対にない)
     # ADVツールバー: 確実 (5アイコン検出、MOVIE には存在しない)
-    # AUTOボタン単独: ⏭なし時のみ信頼 (⏭あり時は動画シーンで偽陽性 score~0.77)
-    _adv_evidence_strong = None  # ⏭あり時でも信頼できる証拠
+    # adv_icon_skip: ADV ツールバーのアイコンがマッチ → ADV 確定
+    _adv_evidence_strong = None
     if _has_adv_advance:
         _adv_evidence_strong = "↓ボタン"
     elif adv_result is not None and adv_result.is_adv:
         _adv_evidence_strong = "ADVツールバー"
+    elif _skip_source == "adv_icon":
+        # adv_icon_skip テンプレートは ADV ツールバー固有のアイコン。
+        # 動画の SKIP ボタンとは別物なので、マッチすれば ADV 確定。
+        _adv_evidence_strong = "ADV⏭アイコン"
 
     # ── ADV 証拠による即棄却 ──
     if _adv_evidence_strong:
         logger.info("[MOVIE_SCENE] %s → ADV確定, MOVIE棄却", _adv_evidence_strong)
         return MovieSceneResult()
     if has_skip:
-        # ⏭あり時でも AUTO が高スコア (≥0.80) なら ADV として棄却。
-        # 動画シーンの AUTO 偽陽性は ~0.77 なので 0.80 で切り分け可能。
-        if _has_auto_icon and _auto_chk is not None and _auto_chk[2] >= 0.80:
-            logger.info("[MOVIE_SCENE] ⏭検出だが AUTO高スコア(%.2f) → ADV確定, MOVIE棄却",
-                        _auto_chk[2])
-            return MovieSceneResult()
-        logger.info("[MOVIE_SCENE] ⏭検出 + ADV証拠なし → MOVIE確定")
+        # ここに来るのは movie_skip_text マッチのみ (adv_icon は上で棄却済み)
+        logger.info("[MOVIE_SCENE] SKIP テキスト検出 + ADV証拠なし → MOVIE確定")
     else:
         # ⏭ なし: phash 連続変化があれば動画の可能性を残す
         # AUTO 単独でも ADV 判定 OK (⏭なし時)
