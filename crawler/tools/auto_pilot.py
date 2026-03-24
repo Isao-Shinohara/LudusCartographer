@@ -2492,7 +2492,7 @@ def main():
             # phash が安定（アニメーション終了）したら中央タップで進行
             state.current_scene = "GACHA"
             _gacha_static = getattr(state, "_gacha_static_count", 0)
-            if dist <= 3:
+            if dist <= 8:  # キラキラエフェクトの微小変化(dist=4-8)を許容
                 _gacha_static += 1
             else:
                 _gacha_static = 0
