@@ -405,7 +405,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                     swipe_device(sx, sy, ex, ey, dur, state=state, desc="SWIPE_UP_ASSET")
                     return "SWIPE_UP", 1.5
                 else:
-                    logger.info(">>> [SWIPE_UP] ダイアログKW検出だが #0-DIALOG が None → 盲タップせず次ループへ")
+                    logger.info(">>> [SWIPE_UP] ポップアップ上の誤検出 → アセットマッチ破棄")
+                    return None  # handle_tutorial を抜けて次ハンドラに委譲
             # チュートリアル指差し: 金色ハイライトされたUI要素を方向非依存で検出→タップ
             if action == "TAP_HIGHLIGHTED_NAV":
                 # 白ハンドポインタ (テンプレートマッチ) で方向を取得
