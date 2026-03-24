@@ -2443,7 +2443,7 @@ def main():
             state.current_scene = "UNKNOWN"
             _tt = getattr(state, "_tutorial_tap_target", None)
             _tt_attempt = getattr(state, "_tutorial_tap_attempt", 0)
-            _TT_OFFSETS = [0, 30, 60]  # 追加オフセット (指先からさらに先)
+            _TT_OFFSETS = [0, 30, 60, 90, 120, 150]  # 追加オフセット (指先からさらに先)
             if _tt and _tt_attempt < len(_TT_OFFSETS):
                 _extra = _TT_OFFSETS[_tt_attempt]
                 _tap_x, _tap_y = _tt[0], _tt[1]
@@ -2458,8 +2458,8 @@ def main():
                 elif _tt_dir == "right":
                     _tap_x += _extra
                 tap_device(_tap_x, _tap_y, state, "TUTORIAL_TAP_EARLY")
-                logger.info("[TUTORIAL_TAP] 指先(%d,%d) +%dpx タップ (試行%d/3)",
-                            _tap_x, _tap_y, _extra, _tt_attempt + 1)
+                logger.info("[TUTORIAL_TAP] 指先(%d,%d) +%dpx タップ (試行%d/%d)",
+                            _tap_x, _tap_y, _extra, _tt_attempt + 1, len(_TT_OFFSETS))
                 state._tutorial_tap_attempt = _tt_attempt + 1
             else:
                 # 全候補失敗 → OCR フォールバック
