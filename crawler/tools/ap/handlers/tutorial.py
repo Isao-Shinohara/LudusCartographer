@@ -402,8 +402,22 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                     ex = int(W * _sw_tx_r)
                     ey = int(H * _sw_ty_r)
                     dur = tmpl_meta.get("swipe_duration_ms", 10000)
-                    logger.info(">>> [SWIPE_UP] (%d,%d)→(%d,%d) %dms", sx, sy, ex, ey, dur)
-                    swipe_device(sx, sy, ex, ey, dur, state=state, desc="SWIPE_UP_ASSET")
+                    # チェッカー柄シーンが終わるまで繰り返しスワイプ
+                    _max_repeat = tmpl_meta.get("max_repeat", 10)
+                    for _sw_i in range(_max_repeat):
+                        logger.info(">>> [SWIPE_UP] (%d,%d)→(%d,%d) %dms (repeat %d/%d)",
+                                    sx, sy, ex, ey, dur, _sw_i + 1, _max_repeat)
+                        swipe_device(sx, sy, ex, ey, dur, state=state, desc="SWIPE_UP_ASSET")
+                        # スワイプ後にシーン変化を確認
+                        _sw_img, _sw_w, _sw_h, _ = take_screenshot()
+                        if _sw_img:
+                            _sw_analysis = prepare_analysis_image(_sw_img, _sw_w, _sw_h)
+                            # スワイプ指テンプレが消えた or チェッカー床でなくなった → 終了
+                            _sw_finger = ASSET_MANAGER.match_single("tutorial_swipe_finger", _sw_analysis)
+                            _sw_walk = is_tutorial_walk_scene(_sw_analysis)
+                            if (not _sw_finger or _sw_finger[2] < 0.70) and not _sw_walk:
+                                logger.info("[SWIPE_UP] シーン変化検出 → スワイプ終了")
+                                break
                     return "SWIPE_UP", 1.5
                 else:
                     logger.info(">>> [SWIPE_UP] ポップアップ上の誤検出 → アセットマッチ破棄")
