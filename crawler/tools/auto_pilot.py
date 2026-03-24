@@ -2237,6 +2237,7 @@ def main():
             logger.info("[SCENE_EARLY] BATTLE→UNKNOWN 遷移 → BATTLE_RAPID 中断, OCR へ")
             state.current_scene = "UNKNOWN"
             state.battle_rapid_consecutive.reset()
+            state._from_battle = True  # ダイアログ誤検出ガード用
         # ADV 連続検出カウンタ (phash 動的拡大用)
         if _early_scene == "ADV":
             state.adv_confirmed_count += 1
@@ -2290,6 +2291,7 @@ def main():
 
         elif _early_scene == "BATTLE":
             state.current_scene = "BATTLE"
+            state._from_battle = False  # BATTLE復帰でフラグクリア
             _early_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
             if handle_battle(_early_analysis, state, dist):
                 _fms = (time.time() - _loop_t0) * 1000
