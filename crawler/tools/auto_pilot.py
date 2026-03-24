@@ -907,9 +907,10 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     else:
         _low_dist_count = 0
     state._movie_low_dist_count = _low_dist_count
+    _MOVIE_ESCAPE_INTERVAL = 16  # ~10秒ごとにテンプレチェック
     _should_escape_check = (_low_dist_count >= 3 or
-                            (state.movie_wait_consecutive >= 30 and
-                             state.movie_wait_consecutive % 30 == 0))
+                            (state.movie_wait_consecutive >= _MOVIE_ESCAPE_INTERVAL and
+                             state.movie_wait_consecutive % _MOVIE_ESCAPE_INTERVAL == 0))
     if _should_escape_check and img_path:
         from tools.ap.image_proc import ASSET_MANAGER as _AM_movie_esc
         from tools.ap.constants import BATTLE_BTN_ROI, ADV_NEXT_BTN_ROI
@@ -2281,8 +2282,9 @@ def main():
             state.adv_confirmed_count = 0
             state.adv_early_consecutive = 0  # ADV 以外のシーン → カウンタリセット
 
-        # MOVIE→別シーン遷移時にカウンタリセット
-        if _early_scene != "MOVIE" and state.current_scene == "MOVIE":
+        # MOVIE→確定シーン遷移時にカウンタリセット
+        # UNKNOWN はMOVIE長期滞留のフォールバックで毎回発生するためリセットしない
+        if _early_scene not in ("MOVIE", "UNKNOWN") and state.current_scene == "MOVIE":
             state.movie_wait_consecutive = 0
             state.movie_static_count = 0
             state._movie_stable_count = 0
