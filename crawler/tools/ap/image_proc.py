@@ -1543,6 +1543,24 @@ def detect_notice_popup(
     return False
 
 
+def _find_close_by_asset(analysis_path: Path) -> Optional[tuple]:
+    """ASSET_MANAGER テンプレートで × ボタンを検出する (枠検出不要)。
+
+    detect_dialog_frame_and_nav は枠(コーナー装飾)必須で棄却されるケースがある。
+    このヘルパーはテンプレート単独で右上の × を探す。
+    Returns: (cx, cy) or None
+    """
+    _close_roi = (int(ANALYSIS_W * 0.85), 0,
+                  int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.15))
+    for _tpl_name in ("tutorial_dialog_close", "close_btn_cross", "close_btn"):
+        _m = ASSET_MANAGER.match_single(_tpl_name, analysis_path, roi=_close_roi)
+        if _m and _m[2] >= 0.65:
+            logger.debug("[PAGING_CLOSE_ASSET] %s 検出 (%d,%d) score=%.2f",
+                         _tpl_name, _m[0], _m[1], _m[2])
+            return (_m[0], _m[1])
+    return None
+
+
 # ─── ページング式ダイアログ完全処理 ────────────────────────────────────────
 def process_paging_dialog(
     analysis_path: Path, W: int, H: int,
@@ -1629,6 +1647,14 @@ def process_paging_dialog(
                         logger.info("[PAGING] ×フォールバッククローズ成功")
                         state.dialog_detections += 1
                         return "DIALOG_CLOSED"
+                    # ASSET_MANAGER テンプレートで × を直接探す (枠検出不要)
+                    _close_asset = _find_close_by_asset(analysis_path)
+                    if _close_asset:
+                        tap_device(_close_asset[0], _close_asset[1], state, "PAGING_CLOSE_ASSET")
+                        logger.info("[PAGING] ×アセットテンプレクローズ成功 (%d,%d)",
+                                    _close_asset[0], _close_asset[1])
+                        state.dialog_detections += 1
+                        return "DIALOG_CLOSED"
                     # × がまだ出ていない → もう少し▷を叩く (アニメーション遅延など)
                     if _phash_fail_count < _phash_tolerance + 3:
                         logger.info("[PAGING] ×未検出 → ▷追加試行 (%d/%d)",
@@ -1650,6 +1676,14 @@ def process_paging_dialog(
     if _final_dlg and _final_dlg[0] == "close":
         tap_device(_final_dlg[1], _final_dlg[2], state, "PAGING_CLOSE_MAXPAGE")
         logger.info("[PAGING] max超過後 ×クローズ成功")
+        state.dialog_detections += 1
+        return "DIALOG_CLOSED"
+    # ASSET_MANAGER テンプレートで × を直接探す (枠検出不要)
+    _close_asset = _find_close_by_asset(analysis_path)
+    if _close_asset:
+        tap_device(_close_asset[0], _close_asset[1], state, "PAGING_CLOSE_ASSET_MAX")
+        logger.info("[PAGING] max超過後 ×アセットテンプレクローズ成功 (%d,%d)",
+                    _close_asset[0], _close_asset[1])
         state.dialog_detections += 1
         return "DIALOG_CLOSED"
     return "DIALOG_PAGING_TIMEOUT"
