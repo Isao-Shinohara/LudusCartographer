@@ -167,6 +167,17 @@ def handle_dialog_screen(
         return "DIALOG_BACK_ESCALATION", 2.0
 
     if _dlg_type in ("next", "bottom"):
+        # ── OK のみダイアログ優先: ▷/bottom 検出でも OK ボタンがあれば OK タップ ──
+        # 「魔法少女解放」等の通知ダイアログは ▷ ではなく OK で閉じる
+        _ok_btn = has_any(ocr, _CONFIRM_POS_KWS)
+        _cancel_btn = has_any(ocr, _CONFIRM_NEG_KWS)
+        if _ok_btn and not _cancel_btn:
+            _ok_x, _ok_y = _ok_btn["center"]
+            logger.info("[Dialog#0] OK のみダイアログ検出 → OK '%s'(%d,%d) タップ (PAGING 回避)",
+                        _ok_btn["text"], _ok_x, _ok_y)
+            tap_device(_ok_x, _ok_y, state, f"DIALOG_OK_DIRECT '{_ok_btn['text']}'")
+            state.pre_popup_tap_count = 0
+            return "DIALOG_OK_DIRECT", 1.0
         # ── ダイアログ再確認ガード: 四隅テンプレ必須 ──
         # 背景ぼかし検出は 3D 探索フィールドの被写界深度で偽陽性が出るため、
         # ぼかし有無に関わらず四隅テンプレ (dialog_corner) を必須とする。
