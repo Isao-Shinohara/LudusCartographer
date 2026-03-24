@@ -987,7 +987,10 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
             ("adv_next_btn", ADV_NEXT_BTN_ROI),
             ("dialog_corner_tl", None),
             ("tutorial_hand_pointer", None),
-            ("gold_frame_small", None),
+            ("tutorial_finger_up", None),
+            ("tutorial_finger_down", None),
+            ("tutorial_finger_left", None),
+            ("tutorial_finger_right", None),
         ]
         for _tpl_name, _roi in _esc_checks:
             _m = _AM_movie_esc.match_single(_tpl_name, img_path, roi=_roi)
