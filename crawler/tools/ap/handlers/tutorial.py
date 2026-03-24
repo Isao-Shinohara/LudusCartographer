@@ -90,8 +90,10 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             tap_device(_ni_cx, _ni_cy, state, "NAME_INPUT_OK")
             return "NAME_INPUT_OK", 2.0
         elif _ni_ok:
-            _nf_x, _nf_y = roi_to_device(int(W * 0.46), int(H * 0.58), state.game_roi)
-            logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d)", _nf_x, _nf_y)
+            # OCR「プレイヤー名を入力」テキスト位置をフォーカス座標に使用 (解像度非依存)
+            _nf_ocr_x, _nf_ocr_y = _name_input_item["center"]
+            _nf_x, _nf_y = roi_to_device(_nf_ocr_x, _nf_ocr_y, state.game_roi)
+            logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d) [OCR座標]", _nf_x, _nf_y)
             tap_device(_nf_x, _nf_y, state, "NAME_INPUT_FOCUS")
             adb("shell input text MadoDora")
             time.sleep(0.2)
@@ -611,8 +613,10 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             return "NAME_INPUT_OK", 2.0
         elif ok_item:
             # 名前未入力 → テキストフィールドをタップして "MadoDora" 入力 → Enter → OK
-            _nf_x, _nf_y = roi_to_device(int(W * 0.46), int(H * 0.58), state.game_roi)
-            logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d)", _nf_x, _nf_y)
+            # OCR「プレイヤー名を入力」テキスト位置をフォーカス座標に使用 (解像度非依存)
+            _nf_ocr_x, _nf_ocr_y = name_input["center"]
+            _nf_x, _nf_y = roi_to_device(_nf_ocr_x, _nf_ocr_y, state.game_roi)
+            logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d) [OCR座標]", _nf_x, _nf_y)
             tap_device(_nf_x, _nf_y, state, "NAME_INPUT_FOCUS")
             adb("shell input text MadoDora")
             time.sleep(0.2)
