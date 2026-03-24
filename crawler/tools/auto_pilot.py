@@ -572,7 +572,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                             state._movie_recheck_count, dist)
                 state._movie_recheck_count = 0
                 state.current_scene = "UNKNOWN"
-                state._from_movie = True  # MOVIE→UNKNOWN 遷移フラグ
+                state._from_movie_ttl = 8  # MOVIE→UNKNOWN 遷移: 8フレーム(~5秒)タップ抑制
                 return "UNKNOWN"
             return "MOVIE"
         if dist >= 3:
@@ -638,7 +638,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                             state._movie_recheck_count)
                 state._movie_recheck_count = 0
                 state.current_scene = "UNKNOWN"
-                state._from_movie = True  # MOVIE→UNKNOWN 遷移フラグ
+                state._from_movie_ttl = 8  # MOVIE→UNKNOWN 遷移: 8フレーム(~5秒)タップ抑制
                 return "UNKNOWN"
             return "MOVIE"
         state._movie_stable_count = getattr(state, "_movie_stable_count", 0) + 1
@@ -2988,9 +2988,9 @@ def main():
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         # MOVIE→UNKNOWN 遷移直後: テンプレ誤マッチによるタップを抑制
         # (動画クレジット等で DIALOG_NAV_RIGHT, MINI_CONV が誤発火して一時停止する)
-        _from_movie = getattr(state, "_from_movie", False)
-        if _from_movie:
-            state._from_movie = False
+        _from_movie_ttl = getattr(state, "_from_movie_ttl", 0)
+        if _from_movie_ttl > 0:
+            state._from_movie_ttl = _from_movie_ttl - 1
             # MOVIE スキップボタンがあれば SKIPタップ、なければ待機
             # adv_icon_skip はADVツールバーのアイコンなのでタップしない (movie_textのみ)
             _skip_btn = detect_movie_skip_button(analysis_path) if analysis_path else None
