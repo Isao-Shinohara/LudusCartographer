@@ -559,7 +559,8 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
     # ── チェッカー柄歩行モード: 一度入ったら抜けるまで最優先 ──
     # MOVIE 判定より先にチェックし、不要な MOVIE 待機を回避する
-    if getattr(state, "_in_checker_walk", False):
+    # post_download 中は動画チェッカー柄の可能性があるため無視
+    if getattr(state, "_in_checker_walk", False) and not state.post_download:
         if img_path and is_tutorial_walk_scene(img_path):
             return "TUTORIAL_WALK"
         # チェッカー柄が検出されなくなった → モード解除
