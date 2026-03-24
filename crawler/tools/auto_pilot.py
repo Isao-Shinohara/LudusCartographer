@@ -536,6 +536,23 @@ def _battle_fast_check(analysis_path: Path,
     return "", 0.0
 
 
+def _check_battle_templates(img_path: Path, asset_mgr) -> Optional[tuple]:
+    """バトルテンプレ + char_icon 二重確認の共通ロジック。
+
+    Returns: (btn_name, btn_score, char_icon_score) or None
+    """
+    _battle_roi = BATTLE_BTN_ROI
+    _char_icon_roi = (0, int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))
+    for _btn in ("battle_normal_attack", "battle_skill", "battle_special"):
+        _bm = asset_mgr.match_single(_btn, img_path, roi=_battle_roi)
+        if _bm and _bm[2] >= 0.60:
+            _ci = asset_mgr.match_single("battle_char_icon", img_path, roi=_char_icon_roi)
+            if _ci and _ci[2] >= 0.75:
+                return (_btn, _bm[2], _ci[2])
+            logger.info("[BATTLE_CHECK] %s(%.2f) だがchar_icon未検出 → 棄却", _btn, _bm[2])
+    return None
+
+
 # ─── 早期シーン判定 ─────────────────────────────────
 def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     """OCR 前にシーンを判定する。
@@ -591,26 +608,21 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             state._movie_stable_count = 0
             state._movie_recheck_count = getattr(state, "_movie_recheck_count", 0) + 1
             if state._movie_recheck_count % 3 == 0:
-                _battle_roi = BATTLE_BTN_ROI
-                for _btn in ("battle_normal_attack", "battle_skill", "battle_special"):
-                    _bm = ASSET_MANAGER.match_single(_btn, img_path, roi=_battle_roi)
-                    if _bm and _bm[2] >= 0.60:
-                        # battle_special 単独は誤検出リスクあり → UI二重確認
-                        if _btn == "battle_special":
-                            _ma = ASSET_MANAGER.match_single("adv_icon_auto", img_path)
-                            _mf = ASSET_MANAGER.match_single("adv_icon_ff", img_path)
-                            if not ((_ma and _ma[2] >= 0.60) or (_mf and _mf[2] >= 0.60)):
-                                continue
-                        # 二重確認: 左下キャラアイコンで本物のバトルか検証
-                        _char_icon_roi = (0, int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))
-                        _ci = ASSET_MANAGER.match_single("battle_char_icon", img_path, roi=_char_icon_roi)
-                        if _ci and _ci[2] >= 0.75:
-                            logger.info("[SCENE_EARLY] MOVIE中バトルテンプレ検出 (%s %.2f + char_icon %.2f) → BATTLE",
-                                        _btn, _bm[2], _ci[2])
-                            state._movie_recheck_count = 0
-                            return "BATTLE"
-                        logger.info("[SCENE_EARLY] MOVIE中 %s(%.2f) だがchar_icon未検出 → BATTLE棄却",
-                                    _btn, _bm[2])
+                _battle_result = _check_battle_templates(img_path, ASSET_MANAGER)
+                if _battle_result:
+                    _btn, _bs, _cs = _battle_result
+                    # battle_special 単独は誤検出リスクあり → AUTO/FF 二重確認
+                    if _btn == "battle_special":
+                        _ma = ASSET_MANAGER.match_single("adv_icon_auto", img_path)
+                        _mf = ASSET_MANAGER.match_single("adv_icon_ff", img_path)
+                        if not ((_ma and _ma[2] >= 0.60) or (_mf and _mf[2] >= 0.60)):
+                            _battle_result = None
+                if _battle_result:
+                    _btn, _bs, _cs = _battle_result
+                    logger.info("[SCENE_EARLY] MOVIE中バトル検出 (%s %.2f + char_icon %.2f) → BATTLE",
+                                _btn, _bs, _cs)
+                    state._movie_recheck_count = 0
+                    return "BATTLE"
                 # ガチャ演出チェック: SKIP ボタン + 暗い背景
                 _gacha_skip = detect_movie_skip_button(img_path)
                 if _gacha_skip:
@@ -693,18 +705,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # バトルテンプレが見つかれば即 BATTLE に復帰する
     from tools.ap.image_proc import ASSET_MANAGER as _AM_battle
     try:
-        _battle_roi = BATTLE_BTN_ROI
-        _battle_hit = None
-        for _btn_name in ("battle_normal_attack", "battle_skill", "battle_special"):
-            _battle_m = _AM_battle.match_single(_btn_name, img_path, roi=_battle_roi)
-            if _battle_m and _battle_m[2] >= 0.60:
-                _battle_hit = (_btn_name, _battle_m[2])
-                break
-        if _battle_hit:
-            _hit_name, _hit_score = _battle_hit
+        _battle_result = _check_battle_templates(img_path, _AM_battle)
+        if _battle_result:
+            _hit_name, _hit_score, _ci_score = _battle_result
             # ダイアログ四隅テンプレで利用規約等の金枠装飾による誤マッチを棄却
-            # detect_dialog_corners を直接使用 (detect_dialog_frame_and_nav は▷/×検出も
-            # 含むため、ポップアップの▷が見つからないと False になり棄却が効かない)
             _has_dialog = False
             try:
                 from tools.ap.image_proc import detect_dialog_corners as _ddc
@@ -715,15 +719,9 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 logger.info("[SCENE_EARLY] %s(%.2f) 検出だがダイアログ四隅あり → BATTLE棄却",
                             _hit_name, _hit_score)
             else:
-                # 二重確認: 左下キャラアイコン (battle_char_icon) で本物のバトルか検証
-                _char_icon_roi = (0, int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))
-                _char_icon = _AM_battle.match_single("battle_char_icon", img_path, roi=_char_icon_roi)
-                if _char_icon and _char_icon[2] >= 0.75:
-                    logger.info("[SCENE_EARLY] Battle初回検出 (%s %.2f + char_icon %.2f) → BATTLE",
-                                _hit_name, _hit_score, _char_icon[2])
-                    return "BATTLE"
-                logger.info("[SCENE_EARLY] %s(%.2f) 検出だがchar_icon未検出 → BATTLE棄却",
-                            _hit_name, _hit_score)
+                logger.info("[SCENE_EARLY] Battle初回検出 (%s %.2f + char_icon %.2f) → BATTLE",
+                            _hit_name, _hit_score, _ci_score)
+                return "BATTLE"
     except Exception:
         pass
     # BATTLE 補助判定: 金枠オーバーレイでテンプレが失敗する場合
