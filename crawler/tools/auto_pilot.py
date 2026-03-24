@@ -1275,6 +1275,10 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
         state.last_phash = ""
         return True
 
+    # ── チェッカー床検出: MINI_CONV より優先してスワイプ ──
+    if img_path and is_tutorial_walk_scene(img_path):
+        logger.info("[ADV] チェッカー床検出 → スワイプ (handle_adv)")
+        return False  # handle_adv 脱出 → detect_scene_early で TutorialWalk 処理
     # ── ミニ会話タップ ──
     _mc = detect_mini_conversation(img_path)
     if _mc is not None:
