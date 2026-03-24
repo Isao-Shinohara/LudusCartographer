@@ -176,7 +176,9 @@ def handle_dialog_screen(
             if _guard_dots >= 2:
                 # バトル中はドットだけでは不十分 (UIアイコンの誤検出)
                 # → 四隅テンプレ (dialog_corner) で本物のダイアログか確認
-                if is_battle_early:
+                # OCR にバトルKW が無くても current_scene が BATTLE なら同様にガード
+                _in_battle = is_battle_early or state.current_scene == "BATTLE"
+                if _in_battle:
                     _has_corner = detect_dialog(analysis_path, W, H, require_blur=False)
                     if not _has_corner:
                         logger.info(
