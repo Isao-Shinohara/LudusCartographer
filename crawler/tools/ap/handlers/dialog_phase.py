@@ -208,12 +208,13 @@ def handle_dialog_screen(
             ocr_texts=texts,
         )
         if _pg_result == "DIALOG_PAGING_TIMEOUT":
-            # PAGING TIMEOUT → 画面中央タップでカード取得画面等を閉じるフォールバック
-            _center_x, _center_y = roi_to_device(int(W * 0.5), int(H * 0.5), state.game_roi)
+            # PAGING TIMEOUT → 右上隅の×固定位置タップでクローズ試行
+            # ダイアログの×は常に右上(~97%, ~5%)にあるが、テンプレ不一致で検出失敗する場合がある
+            _close_x, _close_y = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
             logger.warning(
-                "[PAGING_TIMEOUT_FALLBACK] ×未検出 → 中央タップ(%d,%d)でクローズ試行",
-                _center_x, _center_y)
-            tap_device(_center_x, _center_y, state, "PAGING_TIMEOUT_CENTER_TAP")
+                "[PAGING_TIMEOUT_FALLBACK] ×未検出 → 右上固定タップ(%d,%d)でクローズ試行",
+                _close_x, _close_y)
+            tap_device(_close_x, _close_y, state, "PAGING_TIMEOUT_CLOSE_TAP")
         return _pg_result, 1.0
     else:
         # "close": × ボタンを即タップ
