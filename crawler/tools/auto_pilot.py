@@ -861,7 +861,14 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 elif _ft == "tutorial_finger_right":
                     _tip_x += _FINGER_TIP_OFFSET
                 # hand_pointer: 方向不定 → オフセットなし (テンプレ中心をそのままタップ)
+                _finger_dir = _ft.replace("tutorial_finger_", "").replace("tutorial_hand_pointer", "")
                 state._tutorial_tap_target = (_tip_x, _tip_y)
+                state._tutorial_tap_dir = _finger_dir
+                # 新しい指検出 → カウンタリセット (前回と異なる位置なら再試行)
+                _prev_tt = getattr(state, "_prev_tutorial_tap_target", None)
+                if _prev_tt != (_tip_x, _tip_y):
+                    state._tutorial_tap_attempt = 0
+                state._prev_tutorial_tap_target = (_tip_x, _tip_y)
                 logger.info("[SCENE_EARLY] 金枠+指テンプレ(%s) → TUTORIAL_TAP 指先(%d,%d)",
                             _ft.replace("tutorial_", ""), _tip_x, _tip_y)
                 return "TUTORIAL_TAP"
@@ -2408,17 +2415,46 @@ def main():
             continue
 
         if _early_scene == "TUTORIAL_TAP":
-            # 指+金枠シーン: OCR不要、金枠ターゲットを即タップ
-            state.current_scene = "UNKNOWN"  # ガード更新不要にするため UNKNOWN
+            # 指+金枠シーン: 指先位置を段階的にタップ (30→60→90px)
+            # 画面変化なし → 次の候補にエスカレーション → 全失敗で OCR フォールバック
+            state.current_scene = "UNKNOWN"
             _tt = getattr(state, "_tutorial_tap_target", None)
-            if _tt:
-                tap_device(_tt[0], _tt[1], state, "TUTORIAL_TAP_EARLY")
-                logger.info("[TUTORIAL_TAP] 金枠 (%d,%d) 即タップ", _tt[0], _tt[1])
-            state.last_phash = ""
-            _fms = (time.time() - _loop_t0) * 1000
-            state.total_loop_ms += _fms
-            logger.info("  [PERF] Loop %.0fms (TUTORIAL_TAP_EARLY)", _fms)
-            continue
+            _tt_attempt = getattr(state, "_tutorial_tap_attempt", 0)
+            _TT_OFFSETS = [0, 30, 60]  # 追加オフセット (指先からさらに先)
+            if _tt and _tt_attempt < len(_TT_OFFSETS):
+                _extra = _TT_OFFSETS[_tt_attempt]
+                _tap_x, _tap_y = _tt[0], _tt[1]
+                # 指の方向に追加オフセット
+                _tt_dir = getattr(state, "_tutorial_tap_dir", "")
+                if _tt_dir == "up":
+                    _tap_y -= _extra
+                elif _tt_dir == "down":
+                    _tap_y += _extra
+                elif _tt_dir == "left":
+                    _tap_x -= _extra
+                elif _tt_dir == "right":
+                    _tap_x += _extra
+                tap_device(_tap_x, _tap_y, state, "TUTORIAL_TAP_EARLY")
+                logger.info("[TUTORIAL_TAP] 指先(%d,%d) +%dpx タップ (試行%d/3)",
+                            _tap_x, _tap_y, _extra, _tt_attempt + 1)
+                state._tutorial_tap_attempt = _tt_attempt + 1
+            else:
+                # 全候補失敗 → OCR フォールバック
+                logger.info("[TUTORIAL_TAP] 3候補全失敗 → OCR フォールバック")
+                state._tutorial_tap_attempt = 0
+                # UNKNOWN のまま OCR パスに落ちる (continue しない)
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                logger.info("  [PERF] Loop %.0fms (TUTORIAL_TAP_FALLBACK)", _fms)
+                screen_changed = True  # OCR パスに進む
+                # continue しない → OCR パスにフォールスルー
+                pass
+            if _tt and _tt_attempt < len(_TT_OFFSETS):
+                state.last_phash = ""
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                logger.info("  [PERF] Loop %.0fms (TUTORIAL_TAP_EARLY)", _fms)
+                continue
 
         if _early_scene == "MOVIE":
             if state.current_scene == "BATTLE":
