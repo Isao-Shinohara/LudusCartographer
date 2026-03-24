@@ -647,6 +647,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         # phash 安定 → 動画終了の可能性 → ADV/BATTLE 判定へフォールスルー
         logger.info("[SCENE_EARLY] MOVIE中phash安定 (stable=%d) → ADV/BATTLE再判定",
                     state._movie_stable_count)
+        state._from_movie = True  # ADV/BATTLE 未検出時のテンプレタップ抑制
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     # 10回に1回テンプレートで実在確認 (Result画面等での誤BATTLE継続を防止)
@@ -2520,8 +2521,8 @@ def main():
                     state.stall_start = 0.0
                     continue
                 # ── ミニ会話タップ (phash安定時, 1回) ──
-                # ホーム画面 (MENU) では通知バナーを吹き出しと誤認するため抑制
-                if state.current_scene != "MENU":
+                # MENU: 通知バナーを吹き出しと誤認 / MOVIE: 動画中タップで一時停止
+                if state.current_scene not in ("MENU", "MOVIE"):
                     _mc = detect_mini_conversation(img_path)
                     if _mc is not None:
                         _mc_cx, _mc_cy, _mc_side = _mc

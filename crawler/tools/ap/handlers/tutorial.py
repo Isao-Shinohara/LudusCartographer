@@ -142,6 +142,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     # ADV検出ガードより先に評価する (ADV誤検出でブロックされるのを防ぐ)。
     if (analysis_path is not None
             and len(texts) <= 2
+            and state.current_scene != "MOVIE"
             and is_tutorial_walk_scene(analysis_path)):
         _sx = int(ANALYSIS_W * 0.5)
         _fy = ANALYSIS_H - 80   # ナビゲーションバー回避マージン
