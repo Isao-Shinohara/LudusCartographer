@@ -834,8 +834,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                         return "GACHA"
             # 指テンプレ共検出: 金枠だけでは動画装飾の偽陽性があるため
             _has_finger = False
-            for _ft in ("tutorial_hand_pointer", "tutorial_finger_up",
-                        "tutorial_finger_down", "tutorial_finger_left", "tutorial_finger_right"):
+            # 方向付き指テンプレを優先 (hand_pointer は方向不定のため最後)
+            for _ft in ("tutorial_finger_up", "tutorial_finger_down",
+                        "tutorial_finger_left", "tutorial_finger_right",
+                        "tutorial_hand_pointer"):
                 _fm = ASSET_MANAGER.match_single(_ft, img_path)
                 if _fm and _fm[2] >= 0.70:
                     _has_finger = True
@@ -1111,8 +1113,10 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     # ただしチュートリアル指テンプレが左側で検出された場合は全画面探索を許可
     # (必殺技チュートリアル等で左側キャラカードをタップさせるケース)
     _battle_rho = True  # right_half_only default
-    for _ft in ("tutorial_hand_pointer", "tutorial_finger_down", "tutorial_finger_up",
-                "tutorial_finger_left", "tutorial_finger_right"):
+    # 方向付き指テンプレを優先 (hand_pointer は方向不定のため最後)
+    for _ft in ("tutorial_finger_down", "tutorial_finger_up",
+                "tutorial_finger_left", "tutorial_finger_right",
+                "tutorial_hand_pointer"):
         _fm = ASSET_MANAGER.match_single(_ft, analysis_path)
         if _fm and _fm[2] >= 0.70 and _fm[0] < ANALYSIS_W * 0.5:
             _battle_rho = False
