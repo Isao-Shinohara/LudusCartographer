@@ -972,6 +972,21 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
                 state.phash_moving_count = 0
                 state._movie_stable_count = 0
                 return False  # MOVIE ハンドラ脱出 → フルOCRへ
+        # TutorialWalk チェック: post_download 中でもチェッカー床なら即スワイプで脱出
+        if is_tutorial_walk_scene(img_path):
+            logger.info("[MOVIE_ESCAPE] チェッカー床検出 → TutorialWalk スワイプで脱出")
+            _walk_sx = int(ANALYSIS_W * 0.5)
+            _walk_fy = int(ANALYSIS_H * 0.89)
+            _walk_ty = int(ANALYSIS_H * 0.07)
+            from tools.ap.device import swipe_device
+            swipe_device(_walk_sx, _walk_fy, _walk_sx, _walk_ty, 10000,
+                         state=state, desc="MOVIE_ESCAPE_Walk_UP")
+            state.movie_static_count = 0
+            state.movie_wait_consecutive = 0
+            state._movie_low_dist_count = 0
+            state.current_scene = "UNKNOWN"
+            state.last_phash = ""
+            return False
         state._movie_low_dist_count = 0  # チェック実行後リセット (毎フレームチェックしない)
 
     # ── 長時間待機: ハードリミット (探索画面等の誤MOVIE判定を脱出) ──
