@@ -3136,6 +3136,8 @@ def main():
                         "[SCENE_REEVAL] シーン不一致: %s → %s → 切替+再判定",
                         state.current_scene, _re_scene,
                     )
+                    if state.current_scene == "BATTLE" and _re_scene != "BATTLE":
+                        state._from_battle = True
                     state.current_scene = _re_scene
                 # レターボックスガードは廃止 (2:1デバイスで常時誤検出するため)
                 action, wait_sec = detect_and_act(_re_ocr, state, _re_analysis,
