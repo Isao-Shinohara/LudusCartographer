@@ -841,11 +841,20 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                     _has_finger = True
                     break
             if _has_finger:
-                # 金枠の中心座標を state に保存 (メインループで即タップ用)
-                state._tutorial_tap_target = (_gf_m[0], _gf_m[1])
-                logger.info("[SCENE_EARLY] 金枠(%.2f)+指テンプレ → TUTORIAL_TAP (%d,%d)",
-                            _gf_m[2], _gf_m[0], _gf_m[1])
-                return "TUTORIAL_TAP"
+                # 指の方向にある金枠を探索 (gold_frame_smallの位置はダイアログ装飾等に誤マッチしうる)
+                _finger_dir = _ft.replace("tutorial_finger_", "").replace("tutorial_hand_pointer", "")
+                from tools.ap.image_proc import find_gold_frame_near as _fgfn
+                _gf_target = _fgfn(img_path, _fm[0], _fm[1],
+                                                   search_radius=400, direction=_finger_dir)
+                if _gf_target:
+                    state._tutorial_tap_target = (_gf_target[0], _gf_target[1])
+                    logger.info("[SCENE_EARLY] 金枠(%.2f)+指テンプレ → TUTORIAL_TAP (%d,%d)",
+                                _gf_m[2], _gf_target[0], _gf_target[1])
+                    return "TUTORIAL_TAP"
+                # 金枠方向探索失敗 → UNKNOWN (OCRパスに委譲)
+                logger.info("[SCENE_EARLY] 金枠(%.2f)+指テンプレだが方向探索失敗 → UNKNOWN",
+                            _gf_m[2])
+                return "UNKNOWN"
 
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
     # チュートリアル中 + download_active → DL完了ダイアログ優先 (SKIPボタン以外はスキップ)
