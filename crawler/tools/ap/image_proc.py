@@ -907,7 +907,12 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
         logger.info("[MOVIE_SCENE] %s → ADV確定, MOVIE棄却", _adv_evidence_strong)
         return MovieSceneResult()
     if has_skip:
-        # ⏭あり + 強い証拠なし → MOVIE (AUTO単独は信頼しない)
+        # ⏭あり時でも AUTO が高スコア (≥0.80) なら ADV として棄却。
+        # 動画シーンの AUTO 偽陽性は ~0.77 なので 0.80 で切り分け可能。
+        if _has_auto_icon and _auto_chk is not None and _auto_chk[2] >= 0.80:
+            logger.info("[MOVIE_SCENE] ⏭検出だが AUTO高スコア(%.2f) → ADV確定, MOVIE棄却",
+                        _auto_chk[2])
+            return MovieSceneResult()
         logger.info("[MOVIE_SCENE] ⏭検出 + ADV証拠なし → MOVIE確定")
     else:
         # ⏭ なし: phash 連続変化があれば動画の可能性を残す
