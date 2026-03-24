@@ -362,8 +362,15 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             cx, cy = _tc_x, _tc_y
             # スワイプ系アクションの処理
             if action == "SWIPE_UP":
-                # 安全ネット: ダイアログKWが見えるときはポップアップ上のスワイプ誤発火を防止
+                # 安全ネット: ダイアログKWまたは背景ぼかしがあればポップアップ上のスワイプ誤発火を防止
                 _swipe_skip = any(kw in joined for kw in _DIALOG_FIRST_KWS)
+                if not _swipe_skip and analysis_path is not None:
+                    _blur_img = imread_cached(analysis_path)
+                    if _blur_img is not None:
+                        _bH, _bW = _blur_img.shape[:2]
+                        if detect_background_blur(_blur_img, _bH, _bW):
+                            _swipe_skip = True
+                            logger.info("[SWIPE_UP] 背景ぼかし検出 → ポップアップ上のスワイプを回避")
                 if not _swipe_skip:
                     tmpl_meta = ASSET_MANAGER._templates.get("tutorial_swipe_pointer", {})
                     # ratio ベース座標 (解像度非依存)
