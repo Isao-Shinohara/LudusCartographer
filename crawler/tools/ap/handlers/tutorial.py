@@ -705,6 +705,10 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             return "PRESENT_BOX_BACK", 1.0
 
     close_popup = has_any(ocr, close_popup_kws)
+    if close_popup and analysis_path and not _ddc_popup(analysis_path):
+        logger.info("[CLOSE_POPUP] 四隅テンプレなし → ダイアログではない、スキップ (kw='%s')",
+                    close_popup["text"][:10])
+        close_popup = None
     if close_popup:
         # CLOSE_POPUP スタック脱出: 8回以上累計失敗 → BACK キーで閉じる
         if state.pre_popup_tap_count >= 8:

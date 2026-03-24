@@ -13,7 +13,7 @@ from tools.ap.constants import ANALYSIS_W, ANALYSIS_H, BATTLE_WAIT, DOWNLOAD_WAI
 from tools.ap.context import DetectContext
 from tools.ap.device import tap_device
 from tools.ap.helpers import has_any, has_text
-from tools.ap.image_proc import detect_dialog, roi_to_device
+from tools.ap.image_proc import detect_dialog, detect_dialog_corners, roi_to_device
 from tools.ap.state import PilotState
 
 logger = logging.getLogger("auto_pilot")
@@ -155,6 +155,10 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
             logger.info(">>> 速度ツールチップ → 速度ボタン (%d,%d) タップ", _sp_x, _sp_y)
             tap_device(_sp_x, _sp_y, state, "SPEED_BUTTON_TAP")
             return "BATTLE_TUTORIAL", 0.5
+        if tutorial_popup:
+            # 四隅テンプレで本物のダイアログか確認
+            if analysis_path and not detect_dialog_corners(analysis_path):
+                tutorial_popup = None
         if tutorial_popup:
             # ── テンプレートマッチングで ▷/× を優先検出 ──
             _btl_nav = detect_dialog(analysis_path, W, H) if analysis_path else None
