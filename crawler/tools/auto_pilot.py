@@ -898,6 +898,38 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
         time.sleep(1.0)
         return True
 
+    # ── phash安定時の早期脱出: 非MOVIE シーンの可能性をテンプレで確認 ──
+    # dist < 5 が3回続いたらテンプレチェック (動画再生中は dist > 5 が普通)
+    _low_dist_count = getattr(state, "_movie_low_dist_count", 0)
+    if dist < 5:
+        _low_dist_count += 1
+    else:
+        _low_dist_count = 0
+    state._movie_low_dist_count = _low_dist_count
+    if _low_dist_count >= 3 and img_path:
+        from tools.ap.image_proc import ASSET_MANAGER as _AM_movie_esc
+        from tools.ap.constants import BATTLE_BTN_ROI, ADV_NEXT_BTN_ROI
+        # バトルボタン / ADV↓ / ダイアログ四隅 のいずれかがあれば MOVIE ではない
+        _esc_checks = [
+            ("battle_normal_attack", BATTLE_BTN_ROI),
+            ("battle_skill", BATTLE_BTN_ROI),
+            ("adv_next_btn", ADV_NEXT_BTN_ROI),
+            ("dialog_corner_tl", None),
+            ("tutorial_hand_pointer", None),
+        ]
+        for _tpl_name, _roi in _esc_checks:
+            _m = _AM_movie_esc.match_single(_tpl_name, img_path, roi=_roi)
+            if _m and _m[2] >= 0.65:
+                logger.info("[MOVIE_ESCAPE] phash安定+テンプレ %s(%.2f) → MOVIE脱出",
+                            _tpl_name, _m[2])
+                state.movie_static_count = 0
+                state.movie_wait_consecutive = 0
+                state._movie_low_dist_count = 0
+                state.current_scene = "UNKNOWN"
+                state.last_phash = ""
+                return False  # MOVIE ハンドラ脱出 → フルOCRへ
+        state._movie_low_dist_count = 0  # チェック実行後リセット (毎フレームチェックしない)
+
     # ── 長時間待機: ハードリミット (探索画面等の誤MOVIE判定を脱出) ──
     _MOVIE_HARD_LIMIT = 300  # ~3分: これ以上は動画ではない
     if state.movie_wait_consecutive >= _MOVIE_HARD_LIMIT:
