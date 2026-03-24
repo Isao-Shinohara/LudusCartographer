@@ -167,10 +167,16 @@ def handle_dialog_screen(
         return "DIALOG_BACK_ESCALATION", 2.0
 
     if _dlg_type in ("next", "bottom"):
-        # ── ダイアログ再確認ガード: 背景ぼかし + ▷/× 存在を二重検証 ──
-        # ホーム画面の金色枠装飾をダイアログと誤検出する問題の根本対策
+        # ── ダイアログ再確認ガード: 四隅テンプレ必須 ──
+        # 背景ぼかし検出は 3D 探索フィールドの被写界深度で偽陽性が出るため、
+        # ぼかし有無に関わらず四隅テンプレ (dialog_corner) を必須とする。
+        _has_dialog_frame = detect_dialog(analysis_path, W, H, require_blur=False) if analysis_path else False
+        if not _has_dialog_frame:
+            # 四隅テンプレなし → ダイアログではない可能性が高い
+            logger.info("[DIALOG_FRAME_GUARD] 四隅テンプレなし → PAGING スキップ (dlg_type=%s)", _dlg_type)
+            return None
         if analysis_path and not detect_dialog(analysis_path, W, H, require_blur=True):
-            # 背景ぼかしなし → ドット/四隅テンプレで本物のダイアログか判定
+            # 四隅テンプレあり + 背景ぼかしなし → ドット数で追加確認
             _guard_dots = count_page_dots(analysis_path)
             _guard_nav = detect_dialog_nav(analysis_path, W, H)
             if _guard_dots >= 2:

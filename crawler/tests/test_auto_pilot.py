@@ -468,8 +468,8 @@ class TestHandleDialogScreen:
         result = handle_dialog_screen(state, analysis, [], [], True)
         # 四隅テンプレなし → None (PAGING スキップ)
         assert result is None
-        # detect_dialog が2回呼ばれる: require_blur=True, require_blur=False
-        assert mock_detect_dialog.call_count == 2
+        # detect_dialog: 四隅チェック (require_blur=False) 1回で即 return
+        assert mock_detect_dialog.call_count == 1
 
     @patch("tools.ap.handlers.dialog_phase.process_paging_dialog", return_value="DIALOG_CLOSED")
     @patch("tools.ap.handlers.dialog_phase.detect_dialog_nav", return_value=None)
@@ -486,8 +486,9 @@ class TestHandleDialogScreen:
         """
         from tools.auto_pilot import handle_dialog_screen
 
-        # detect_dialog: 1回目 require_blur=True → False, 2回目 require_blur=False → True
-        mock_detect_dialog.side_effect = [False, True]
+        # detect_dialog: 1回目 require_blur=False(四隅ガード) → True,
+        # 2回目 require_blur=True(ぼかし) → False, 3回目 require_blur=False(ドット分岐) → True
+        mock_detect_dialog.side_effect = [True, False, True]
 
         analysis = tmp_path / "test.png"
         analysis.touch()
