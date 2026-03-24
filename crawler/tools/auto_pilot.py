@@ -2488,12 +2488,22 @@ def main():
                 continue
 
         elif _early_scene == "GACHA":
-            # ガチャ演出: 画面中央タップで1つずつキャラ表示
+            # ガチャ演出: アニメーション中はタップせず待機
+            # phash が安定（アニメーション終了）したら中央タップで進行
             state.current_scene = "GACHA"
-            tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "GACHA_TAP")
-            logger.info("[GACHA] 画面タップで演出進行")
-            state.last_phash = ""
-            time.sleep(1.5)
+            _gacha_static = getattr(state, "_gacha_static_count", 0)
+            if dist <= 3:
+                _gacha_static += 1
+            else:
+                _gacha_static = 0
+            state._gacha_static_count = _gacha_static
+            if _gacha_static >= 5:  # ~3秒安定 → アニメーション終了
+                tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "GACHA_TAP")
+                logger.info("[GACHA] アニメーション終了 (static=%d) → タップで進行", _gacha_static)
+                state._gacha_static_count = 0
+                state.last_phash = ""
+            else:
+                logger.info("[GACHA] アニメーション待機 (dist=%d static=%d/5)", dist, _gacha_static)
             _fms = (time.time() - _loop_t0) * 1000
             state.total_loop_ms += _fms
             logger.info("  [PERF] Loop %.0fms (GACHA)", _fms)
