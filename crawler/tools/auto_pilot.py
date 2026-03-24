@@ -647,7 +647,9 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         # phash 安定 → 動画終了の可能性 → ADV/BATTLE 判定へフォールスルー
         logger.info("[SCENE_EARLY] MOVIE中phash安定 (stable=%d) → ADV/BATTLE再判定",
                     state._movie_stable_count)
-        state._from_movie = True  # ADV/BATTLE 未検出時のテンプレタップ抑制
+        # NOTE: _from_movie は設定しない。ADV_EARLY パスで消費されず残留し、
+        # 後続 OCR パスで ADV の SKIP ボタンを movie_skip_button と誤検出する。
+        # MINI_CONV/TutorialWalk は state.current_scene=="MOVIE" ガードで防止済み。
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     # 10回に1回テンプレートで実在確認 (Result画面等での誤BATTLE継続を防止)
