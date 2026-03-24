@@ -133,7 +133,7 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
     # ── DL失敗ダイアログ: OCR がボタンテキスト検出できない場合の安全網 ──
     if _dl_is_failure and _has_download_text:
         state.download_active = False
-        _ok_x, _ok_y = int(ANALYSIS_W * 0.62), int(ANALYSIS_H * 0.82)
+        _ok_x, _ok_y = roi_to_device(int(ANALYSIS_W * 0.62), int(ANALYSIS_H * 0.82), state.game_roi)
         logger.info("[DL_FAIL_RETRY] 失敗ダイアログ検出 → OK推定位置 (%d,%d) タップ", _ok_x, _ok_y)
         tap_device(_ok_x, _ok_y, state, "DL_FAIL_RETRY_OK")
         return "DL_FAIL_RETRY", 2.0

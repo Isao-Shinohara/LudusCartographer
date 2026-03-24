@@ -315,8 +315,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                 state._dialog_next_stall_count = _cnt
                 if _cnt >= 3:
                     # ▷ が反応しないダイアログ → 上端右の × エリアをタップして閉じる
-                    _close_x = int(W * 0.94)  # 右端付近
-                    _close_y = int(H * 0.13)  # 上端付近
+                    _close_x, _close_y = roi_to_device(int(W * 0.94), int(H * 0.13), state.game_roi)
                     logger.warning("[DIALOG_NEXT] %d 回連続同一画面 → 上端×エリア (%d,%d) タップ",
                                    _cnt, _close_x, _close_y)
                     tap_device(_close_x, _close_y, state, "DIALOG_NEXT_CORNER_CLOSE")
@@ -345,8 +344,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                 asset_hit = None
             # プレゼントボックス画面: 指テンプレ座標ではなく一括受取ボタンの固定座標をタップ
             elif any("プレゼント" in t or "プレセント" in t for t in texts):
-                _bulk_x = int(W * 0.89)
-                _bulk_y = int(H * 0.92)
+                _bulk_x, _bulk_y = roi_to_device(int(W * 0.89), int(H * 0.92), state.game_roi)
                 logger.info("[Asset] FINGER_TEMPLATE をプレゼントボックスで補正 → 一括受取 (%d,%d)", _bulk_x, _bulk_y)
                 tap_device(_bulk_x, _bulk_y, state, "PRESENT_BULK_RECEIVE")
                 return "PRESENT_BULK_RECEIVE", 2.0
@@ -557,7 +555,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                 # ページあり + × 検出 → ▷ は固定座標で走査後 × で閉じ
                 logger.info(">>> 【チュートリアルポップアップ→PAGING】 '%s' dots=%d, × 検出→先にページ走査",
                             pre_popup["text"][:10], _popup_dots)
-                _arr_x, _arr_y = int(W * 0.91), int(H * 0.49)
+                _arr_x, _arr_y = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)
                 _pg_result = process_paging_dialog(
                     analysis_path, W, H, state,
                     initial_dlg=("next", _arr_x, _arr_y),

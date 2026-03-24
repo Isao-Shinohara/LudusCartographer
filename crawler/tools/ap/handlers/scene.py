@@ -41,8 +41,7 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
             _ok_btn = has_any(ocr, ["OK"])
             if not _ok_btn:
                 # OCR が OK を ●K 等に誤読するケースに対応 → 右側のボタン位置を固定推定
-                _ok_x = int(W * 0.69)
-                _ok_y = int(H * 0.82)
+                _ok_x, _ok_y = roi_to_device(int(W * 0.69), int(H * 0.82), state.game_roi)
                 logger.info(">>> [DOWNLOAD_CONFIRM] ダウンロード確認 → OK 固定位置 (%d,%d) タップ", _ok_x, _ok_y)
                 tap_device(_ok_x, _ok_y, state, "DOWNLOAD_CONFIRM_OK")
             else:
