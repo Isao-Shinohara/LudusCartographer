@@ -557,6 +557,15 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     Returns: "MOVIE" | "BATTLE" | "ADV" | "GACHA" | "UNKNOWN"
     """
 
+    # ── チェッカー柄歩行モード: 一度入ったら抜けるまで最優先 ──
+    # MOVIE 判定より先にチェックし、不要な MOVIE 待機を回避する
+    if getattr(state, "_in_checker_walk", False):
+        if img_path and is_tutorial_walk_scene(img_path):
+            return "TUTORIAL_WALK"
+        # チェッカー柄が検出されなくなった → モード解除
+        state._in_checker_walk = False
+        logger.info("[SCENE_EARLY] チェッカー柄歩行モード解除 (床検出なし)")
+
     # ── MOVIE 継続: phash が安定するまで即 MOVIE を返す ──
     # 動画再生中 (dist >= 3) はフレームが変化するので MOVIE 維持。
     # phash が安定 (dist < 3 が 3 回以上) したら動画終了とみなし ADV/BATTLE 再判定を許可。
@@ -2407,6 +2416,7 @@ def main():
         if _early_scene == "TUTORIAL_WALK":
             # チェッカー床シーン: OCR不要、即スワイプ
             state.current_scene = "UNKNOWN"
+            state._in_checker_walk = True  # 次ループも最優先でチェッカー柄チェック
             _walk_sx = int(ANALYSIS_W * 0.5)
             _walk_fy = int(ANALYSIS_H * 0.89)
             _walk_ty = int(ANALYSIS_H * 0.07)

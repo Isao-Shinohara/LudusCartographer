@@ -403,6 +403,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                     ey = int(H * _sw_ty_r)
                     dur = tmpl_meta.get("swipe_duration_ms", 10000)
                     # チェッカー柄シーンが終わるまで繰り返しスワイプ
+                    state._in_checker_walk = True
                     _max_repeat = tmpl_meta.get("max_repeat", 10)
                     for _sw_i in range(_max_repeat):
                         logger.info(">>> [SWIPE_UP] (%d,%d)→(%d,%d) %dms (repeat %d/%d)",
