@@ -142,12 +142,14 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         tap_device(cx, cy, state, "STORY_TAP")
         return "STORY_TAP", 0.3
 
-    # ─── 右上吹き出しセリフ (メニュー画面上のキャラガイダンス) ───
-    # 右上エリア (x>55%, y<35%) にテキストがあり、AUTO/>> ボタン等のUI要素と共存
+    # ─── 吹き出しセリフ (上部エリアのキャラガイダンス) ───
+    # 上部エリア (y<35%) にテキストがあり、AUTO/>> ボタン等のUI要素と共存
+    # 左上・右上どちらの吹き出しも対象
     # → セリフが止まっている (前回と同一テキスト or phash安定) ならタップで送る
     _BUBBLE_EXCLUDE_EXACT_2 = {"AUTO", ">>", ">|", "D1", "×", "+", "■", "畄", "目", "SKIP"}
     _BUBBLE_EXCLUDE_SUBSTR_2 = ("Max", "Lv", "Lx", "Rank", "LV", "MadoDora",
-                                "AUTO", "UTO", "UT0", "AUT")
+                                "AUTO", "UTO", "UT0", "AUT",
+                                "光の間", "ショップ", "ガチャ", "パーティ", "クエスト")
     _BUBBLE_NUM_RE_2 = re.compile(r'^[\d,./:%+\-・\s]+$')
     # AUTO ボタン位置を検出 → その近傍 50px 以内のテキストも除外
     _auto_pos = None
@@ -156,7 +158,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         if _auto_m and _auto_m[2] >= 0.60:
             _auto_pos = (_auto_m[0], _auto_m[1])
     _bubble_region = [r for r in ocr
-                      if r["center"][0] > W * 0.55 and r["center"][1] < H * 0.35
+                      if r["center"][1] < H * 0.35
                       and r["text"] not in _BUBBLE_EXCLUDE_EXACT_2
                       and not any(s in r["text"] for s in _BUBBLE_EXCLUDE_SUBSTR_2)
                       and not _BUBBLE_NUM_RE_2.match(r["text"])

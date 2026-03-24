@@ -1001,9 +1001,10 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
 
 def detect_mini_conversation(img_path: Path, ocr_items=None,
                              min_bubble_area: int = 3000,
-                             upper_ratio: float = 0.45):
+                             upper_ratio: float = 0.35):
     """
     ミニ会話シーン（上部の白い吹き出し）を検出しアクティブ話者の中心座標を返す。
+    ROI: 画面上部35% (左上・右上の吹き出し固定位置)。
 
     Returns: (cx, cy, "left"|"right") or None
     """
