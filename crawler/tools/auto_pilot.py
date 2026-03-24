@@ -3092,10 +3092,13 @@ def main():
         # MOVIE→UNKNOWN 遷移直後: テンプレ誤マッチによるタップを抑制
         # (動画クレジット等で DIALOG_NAV_RIGHT, MINI_CONV が誤発火して一時停止する)
         _from_movie_ttl = getattr(state, "_from_movie_ttl", 0)
-        # タイトル画面はTTL抑制の例外 (「Ver.」+「プレイヤーID」で判定)
+        # タイトル画面・ホーム画面はTTL抑制の例外
         _is_title = any("Ver." in t or "Ver.2" in t for t in texts) and any("プレイヤーID" in t for t in texts)
-        if _is_title and _from_movie_ttl > 0:
-            logger.info("[MOVIE→UNKNOWN] タイトル画面検出 → TTL抑制解除")
+        _home_nav_kws = ["光の間", "ショップ", "ガチャ", "ガシャ", "パーティ", "クエスト"]
+        _is_home = sum(1 for kw in _home_nav_kws if any(kw in t for t in texts)) >= 3
+        if (_is_title or _is_home) and _from_movie_ttl > 0:
+            logger.info("[MOVIE→UNKNOWN] %s検出 → TTL抑制解除",
+                        "タイトル画面" if _is_title else "ホーム画面")
             _from_movie_ttl = 0
             state._from_movie_ttl = 0
         if _from_movie_ttl > 0:
