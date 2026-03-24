@@ -1165,13 +1165,63 @@ def detect_dialog_nav(img_path: Path,
         return None
 
 
+def detect_dialog_corners(img_path: Path) -> bool:
+    """ダイアログ四隅テンプレ (TL+BL) の両方検出 + X座標一致で判定。
+
+    全てのダイアログ判定で共通利用する。
+    """
+    try:
+        img = imread_cached(img_path)
+        if img is None:
+            return False
+        _H, _W = img.shape[:2]
+        _CORNER_THRESHOLD = 0.65
+        _X_TOLERANCE = int(_W * 0.15)
+        _corners = {}
+        for _tpl_path in (_DIALOG_CORNER_TL, _DIALOG_CORNER_BL):
+            if not _tpl_path.exists():
+                continue
+            _tpl = imread_cached(_tpl_path)
+            if _tpl is None:
+                continue
+            _key = "tl" if _tpl_path == _DIALOG_CORNER_TL else "bl"
+            if _key == "tl":
+                _roi = img[: _H // 2, : _W // 2]
+                _oy = 0
+            else:
+                _roi = img[_H // 2 :, : _W // 2]
+                _oy = _H // 2
+            if (_roi.shape[0] < _tpl.shape[0]
+                    or _roi.shape[1] < _tpl.shape[1]):
+                continue
+            _r = cv2.matchTemplate(_roi, _tpl, cv2.TM_CCOEFF_NORMED)
+            _, _mv, _, _ml = cv2.minMaxLoc(_r)
+            if _mv >= _CORNER_THRESHOLD:
+                _corners[_key] = (_ml[0], _oy + _ml[1], _mv)
+        if "tl" in _corners and "bl" in _corners:
+            _dx = abs(_corners["tl"][0] - _corners["bl"][0])
+            if _dx <= _X_TOLERANCE:
+                return True
+            logger.debug("[DialogCorners] TL(%d,%d) BL(%d,%d) X差=%d > %d → 棄却",
+                         _corners["tl"][0], _corners["tl"][1],
+                         _corners["bl"][0], _corners["bl"][1],
+                         _dx, _X_TOLERANCE)
+        return False
+    except Exception:
+        return False
+
+
 def detect_dialog(img_path: Path, W: int = 1520, H: int = 720,
                   require_blur: bool = True) -> Optional[tuple[str, int, int]]:
-    """背景ぼかし確認 + ▷/× ボタン検出を一括で行う。
+    """ダイアログ検出 (四隅テンプレ + ぼかし + ▷/× ボタン)。
 
-    require_blur=True (default): 背景ぼかしがない場合は None を返す。
+    require_blur=False: 四隅テンプレのみで判定 (ぼかしなしでも検出)
+    require_blur=True: 四隅テンプレ + 背景ぼかし必須
     Returns: ("next", cx, cy) | ("close", cx, cy) | None
     """
+    # 四隅テンプレ: 全モードで必須
+    if not detect_dialog_corners(img_path):
+        return None
     if require_blur:
         img = imread_cached(img_path)
         if img is not None:
@@ -1274,45 +1324,7 @@ def detect_dialog_frame_and_nav(
         # STEP 1: ダイアログボックス検出 (コーナー装飾テンプレートマッチ)
         #   ダイアログ共通のコーナー装飾パターンで中央ダイアログ存在を判定。
         # ──────────────────────────────────────────────────────────────
-        def _detect_dialog_box(img_bgr, _H, _W):
-            """コーナー装飾テンプレートでダイアログボックスの存在を判定する。
-            TL(左上) と BL(左下) の両方が検出され、X座標が近い場合のみ True。
-            """
-            _CORNER_THRESHOLD = 0.65
-            _X_TOLERANCE = int(_W * 0.15)  # X座標の許容差
-            _corners = {}  # "tl" or "bl" → (x, y, score)
-            for _tpl_path in (_DIALOG_CORNER_TL, _DIALOG_CORNER_BL):
-                if not _tpl_path.exists():
-                    continue
-                _tpl = imread_cached(_tpl_path)
-                if _tpl is None:
-                    continue
-                _key = "tl" if _tpl_path == _DIALOG_CORNER_TL else "bl"
-                if _key == "tl":
-                    _roi = img_bgr[: _H // 2, : _W // 2]
-                    _oy = 0
-                else:
-                    _roi = img_bgr[_H // 2 :, : _W // 2]
-                    _oy = _H // 2
-                if (_roi.shape[0] < _tpl.shape[0]
-                        or _roi.shape[1] < _tpl.shape[1]):
-                    continue
-                _r = cv2.matchTemplate(_roi, _tpl, cv2.TM_CCOEFF_NORMED)
-                _, _mv, _, _ml = cv2.minMaxLoc(_r)
-                if _mv >= _CORNER_THRESHOLD:
-                    _corners[_key] = (_ml[0], _oy + _ml[1], _mv)
-            # 両方検出 + X座標が近い → ダイアログ確定
-            if "tl" in _corners and "bl" in _corners:
-                _dx = abs(_corners["tl"][0] - _corners["bl"][0])
-                if _dx <= _X_TOLERANCE:
-                    return True
-                logger.debug("[DialogBox] TL(%d,%d) BL(%d,%d) X差=%d > %d → 棄却",
-                             _corners["tl"][0], _corners["tl"][1],
-                             _corners["bl"][0], _corners["bl"][1],
-                             _dx, _X_TOLERANCE)
-            return False
-
-        _frame_detected = _detect_dialog_box(img, _H, _W)
+        _frame_detected = detect_dialog_corners(img_path)
 
         # ──────────────────────────────────────────────────────────────
         # STEP 0: × ボタン先行検出
