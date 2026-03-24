@@ -807,6 +807,15 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                                 _gacha_brightness)
                     return "GACHA"
 
+    # ── 金枠ボタン検出: MOVIE 判定より先にチェック ──
+    # チュートリアル指+金枠画面が MOVIE と誤判定されるのを防止
+    if img_path and not state.download_active:
+        _gf_m = ASSET_MANAGER.match_single("gold_frame_small", img_path)
+        if _gf_m and _gf_m[2] >= 0.70:
+            logger.info("[SCENE_EARLY] 金枠検出 (%.2f) → MOVIE判定スキップ → UNKNOWN",
+                        _gf_m[2])
+            return "UNKNOWN"
+
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
     # チュートリアル中 + download_active → DL完了ダイアログ優先 (SKIPボタン以外はスキップ)
     if state.download_active and not state.home_reached:
