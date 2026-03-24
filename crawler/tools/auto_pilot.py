@@ -2485,6 +2485,16 @@ def main():
                         state.last_action = "ADV_RAPID_TAP"
                     state.last_phash = ""
                     continue
+                # ── チェッカー床検出: MINI_CONV より優先してスワイプ ──
+                if img_path and is_tutorial_walk_scene(img_path):
+                    _walk_sx = int(ANALYSIS_W * 0.5)
+                    _walk_fy = int(ANALYSIS_H * 0.89)
+                    _walk_ty = int(ANALYSIS_H * 0.07)
+                    logger.info("[ADV_RAPID] チェッカー床検出 → スワイプ")
+                    swipe_device(_walk_sx, _walk_fy, _walk_sx, _walk_ty, 10000,
+                                 state=state, desc="TutorialWalk_ADV_RAPID_UP")
+                    state.last_phash = ""
+                    continue
                 # ── ミニ会話タップ (1回) ──
                 # ホーム画面 (MENU) では通知バナーを吹き出しと誤認するため抑制
                 if state.current_scene != "MENU":
