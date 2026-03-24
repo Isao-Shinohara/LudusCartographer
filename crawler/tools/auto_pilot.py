@@ -841,11 +841,17 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                     _has_finger = True
                     break
             if _has_finger:
-                # 指の方向にある金枠を探索 (gold_frame_smallの位置はダイアログ装飾等に誤マッチしうる)
+                # ダイアログ画面では金枠装飾が多すぎて正確なターゲット特定が困難
+                # → ダイアログ四隅検出時は UNKNOWN にフォールバック (OCRパスで OK を検出)
+                from tools.ap.image_proc import detect_dialog_corners as _ddc_tt
+                if _ddc_tt(img_path):
+                    logger.info("[SCENE_EARLY] 金枠+指テンプレ+ダイアログ四隅 → OCRに委譲")
+                    return "UNKNOWN"
+                # 指の方向にある金枠を探索
                 _finger_dir = _ft.replace("tutorial_finger_", "").replace("tutorial_hand_pointer", "")
                 from tools.ap.image_proc import find_gold_frame_near as _fgfn
                 _gf_target = _fgfn(img_path, _fm[0], _fm[1],
-                                                   search_radius=400, direction=_finger_dir)
+                                   search_radius=400, direction=_finger_dir)
                 if _gf_target:
                     state._tutorial_tap_target = (_gf_target[0], _gf_target[1])
                     logger.info("[SCENE_EARLY] 金枠(%.2f)+指テンプレ → TUTORIAL_TAP (%d,%d)",
