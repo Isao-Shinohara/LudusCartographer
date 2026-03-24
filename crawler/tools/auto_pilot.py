@@ -687,10 +687,12 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         if _battle_hit:
             _hit_name, _hit_score = _battle_hit
             # ダイアログ四隅テンプレで利用規約等の金枠装飾による誤マッチを棄却
+            # detect_dialog_corners を直接使用 (detect_dialog_frame_and_nav は▷/×検出も
+            # 含むため、ポップアップの▷が見つからないと False になり棄却が効かない)
             _has_dialog = False
             try:
-                _dlg_check = detect_dialog_frame_and_nav(img_path)
-                _has_dialog = _dlg_check is not None
+                from tools.ap.image_proc import detect_dialog_corners as _ddc
+                _has_dialog = _ddc(img_path)
             except Exception:
                 pass
             if _has_dialog:
