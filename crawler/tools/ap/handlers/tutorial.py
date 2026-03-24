@@ -353,6 +353,17 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             if asset_hit[2] != "ASSET_TUTORIAL_DIALOG_NEXT":
                 state._dialog_next_stall_count = 0
             cx, cy, action, _asset_region = asset_hit
+            # FINGER_TEMPLATE: 指アイコン自体ではなく、指が指す金枠ボタンをタップ
+            # (CLAUDE.md §0: ガイドが指す対象の座標を叩く)
+            if action == "FINGER_TEMPLATE" and analysis_path is not None:
+                _gold_target = find_gold_frame_near(analysis_path, cx, cy, search_radius=300)
+                if _gold_target:
+                    _gx, _gy, _gw, _gh = _gold_target
+                    logger.info("[Asset] FINGER_TEMPLATE(%d,%d) → 金枠ボタン(%d,%d %dx%d) に補正",
+                                cx, cy, _gx, _gy, _gw, _gh)
+                    cx, cy = _gx, _gy
+                    tap_device(cx, cy, state, "FINGER_GOLD_TARGET")
+                    return "FINGER_GOLD_TARGET", 1.0
             # Text-Core: テンプレートマッチ領域 + OCR でテキスト中心優先座標を取得
             _tc_x, _tc_y = text_core_center(_asset_region, ocr, label=f"Asset:{action}")
             if (_tc_x, _tc_y) != (cx, cy):
