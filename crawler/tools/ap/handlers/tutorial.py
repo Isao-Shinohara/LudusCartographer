@@ -143,6 +143,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     if (analysis_path is not None
             and len(texts) <= 2
             and state.current_scene != "MOVIE"
+            and not state.post_download
             and is_tutorial_walk_scene(analysis_path)):
         _sx = int(ANALYSIS_W * 0.5)
         _fy = ANALYSIS_H - 80   # ナビゲーションバー回避マージン
@@ -160,7 +161,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     _home_swipe_guard_kws = ["光の間", "ショップ", "ガチャ", "ガシャ", "パーティ",
                              "クエスト", "ユニオン", "プレイヤーマッチ"]
     _is_home_screen = sum(1 for h in _home_swipe_guard_kws if h in joined) >= 3
-    if analysis_path is not None and not _is_battle_ui and not ctx.adv_result.is_adv and not _has_dialog_kw and not _is_home_screen:
+    if analysis_path is not None and not _is_battle_ui and not ctx.adv_result.is_adv and not _has_dialog_kw and not _is_home_screen and not state.post_download:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:
             _dir, _sx, _fy, _ty, _dur = _gold
