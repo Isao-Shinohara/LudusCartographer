@@ -1606,6 +1606,12 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
 
     # --- Step 1: アンインストール ---
     uninstall_app(serial, package)
+    # ランチャーキャッシュクリア: 再インストールでアイコンが重複するのを防止
+    try:
+        adb("shell pm clear com.sonymobile.launcher")
+        logger.info("[FRESH_INSTALL] ランチャーキャッシュクリア完了")
+    except Exception:
+        pass  # Xperia 以外のランチャーでは失敗しても問題ない
     time.sleep(2)
 
     # --- Step 2: Play Store を開く ---
