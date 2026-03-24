@@ -898,15 +898,19 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
         time.sleep(1.0)
         return True
 
-    # ── phash安定時の早期脱出: 非MOVIE シーンの可能性をテンプレで確認 ──
-    # dist < 5 が3回続いたらテンプレチェック (動画再生中は dist > 5 が普通)
+    # ── 非MOVIEシーン早期脱出: テンプレで確認 ──
+    # 条件1: dist < 5 が3回続く (phash安定)
+    # 条件2: 連続待機30回(~18秒)超過時は毎30回ごとにチェック (微動画面の誤MOVIE対策)
     _low_dist_count = getattr(state, "_movie_low_dist_count", 0)
     if dist < 5:
         _low_dist_count += 1
     else:
         _low_dist_count = 0
     state._movie_low_dist_count = _low_dist_count
-    if _low_dist_count >= 3 and img_path:
+    _should_escape_check = (_low_dist_count >= 3 or
+                            (state.movie_wait_consecutive >= 30 and
+                             state.movie_wait_consecutive % 30 == 0))
+    if _should_escape_check and img_path:
         from tools.ap.image_proc import ASSET_MANAGER as _AM_movie_esc
         from tools.ap.constants import BATTLE_BTN_ROI, ADV_NEXT_BTN_ROI
         # バトルボタン / ADV↓ / ダイアログ四隅 のいずれかがあれば MOVIE ではない
