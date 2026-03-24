@@ -535,7 +535,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     # #0-DIALOG (形状ベース) が失敗した場合の OCR キーワードによるバックアップ。
     # キーワードリストは _DIALOG_FIRST_KWS (定数) と共有して管理。
     # BATTLE シーンではロール名 (DEFENDER 等) が常時表示されるため誤検出を防止
-    pre_popup = None if state.current_scene == "BATTLE" else has_any(ocr, list(_DIALOG_FIRST_KWS))
+    _in_battle_ctx = state.current_scene == "BATTLE" or getattr(state, "_from_battle", False)
+    pre_popup = None if _in_battle_ctx else has_any(ocr, list(_DIALOG_FIRST_KWS))
     if pre_popup:
         state.pre_popup_tap_count += 1
         # ── ページドット検出: ドット≥2 → ページングが必要 (× 即タップではなく全ページ走査) ──
