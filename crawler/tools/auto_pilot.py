@@ -807,8 +807,9 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                                 _gacha_brightness)
                     return "GACHA"
 
-    # ── 金枠ボタン検出: MOVIE 判定より先にチェック ──
+    # ── 金枠+指テンプレ共検出: MOVIE 判定より先にチェック ──
     # チュートリアル指+金枠画面が MOVIE と誤判定されるのを防止
+    # 金枠単独だと動画装飾で偽陽性 → 指テンプレとの共検出を必須化
     # ただしガチャ演出 (SKIP + 暗背景) は金枠装飾があっても GACHA として通す
     if img_path and not state.download_active:
         _gf_m = ASSET_MANAGER.match_single("gold_frame_small", img_path)
@@ -823,9 +824,18 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                         logger.info("[SCENE_EARLY] 金枠+SKIP+暗背景(%.0f) → ガチャ演出 → GACHA",
                                     _gf_bright)
                         return "GACHA"
-            logger.info("[SCENE_EARLY] 金枠検出 (%.2f) → MOVIE判定スキップ → UNKNOWN",
-                        _gf_m[2])
-            return "UNKNOWN"
+            # 指テンプレ共検出: 金枠だけでは動画装飾の偽陽性があるため
+            _has_finger = False
+            for _ft in ("tutorial_hand_pointer", "tutorial_finger_up",
+                        "tutorial_finger_down", "tutorial_finger_left", "tutorial_finger_right"):
+                _fm = ASSET_MANAGER.match_single(_ft, img_path)
+                if _fm and _fm[2] >= 0.70:
+                    _has_finger = True
+                    break
+            if _has_finger:
+                logger.info("[SCENE_EARLY] 金枠(%.2f)+指テンプレ → MOVIE判定スキップ → UNKNOWN",
+                            _gf_m[2])
+                return "UNKNOWN"
 
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
     # チュートリアル中 + download_active → DL完了ダイアログ優先 (SKIPボタン以外はスキップ)
