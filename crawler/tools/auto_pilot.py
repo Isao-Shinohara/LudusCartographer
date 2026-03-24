@@ -809,9 +809,20 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
     # ── 金枠ボタン検出: MOVIE 判定より先にチェック ──
     # チュートリアル指+金枠画面が MOVIE と誤判定されるのを防止
+    # ただしガチャ演出 (SKIP + 暗背景) は金枠装飾があっても GACHA として通す
     if img_path and not state.download_active:
         _gf_m = ASSET_MANAGER.match_single("gold_frame_small", img_path)
         if _gf_m and _gf_m[2] >= 0.70:
+            # ガチャ演出チェック: SKIP ボタン + 暗背景 → GACHA (金枠スキップしない)
+            _gf_skip = detect_movie_skip_button(img_path)
+            if _gf_skip:
+                _gf_img = imread_cached(img_path)
+                if _gf_img is not None:
+                    _gf_bright = float(cv2.cvtColor(_gf_img, cv2.COLOR_BGR2GRAY).mean())
+                    if _gf_bright < 80:
+                        logger.info("[SCENE_EARLY] 金枠+SKIP+暗背景(%.0f) → ガチャ演出 → GACHA",
+                                    _gf_bright)
+                        return "GACHA"
             logger.info("[SCENE_EARLY] 金枠検出 (%.2f) → MOVIE判定スキップ → UNKNOWN",
                         _gf_m[2])
             return "UNKNOWN"
@@ -2589,8 +2600,9 @@ def main():
                     continue
                 # ── ミニ会話タップ (phash安定時, 1回) ──
                 # MENU: 通知バナーを吹き出しと誤認 / MOVIE: 動画中タップで一時停止
+                # GACHA: ガチャ演出の光エフェクトを吹き出しと誤認
                 # _from_movie_ttl: MOVIE→UNKNOWN遷移直後のタップ抑制
-                if (state.current_scene not in ("MENU", "MOVIE")
+                if (state.current_scene not in ("MENU", "MOVIE", "GACHA")
                         and getattr(state, "_from_movie_ttl", 0) <= 0):
                     _mc = detect_mini_conversation(img_path)
                     if _mc is not None:
