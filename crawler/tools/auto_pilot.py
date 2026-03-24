@@ -1312,7 +1312,8 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
 
 
 def handle_adv(img_path: Path, state: PilotState, dist: int,
-               cur_phash: str, actual_w: int, actual_h: int) -> bool:
+               cur_phash: str, actual_w: int, actual_h: int,
+               ocr_items: Optional[list] = None) -> bool:
     """ADV シーン専用ハンドラ。↓ボタン / ミニ会話。
 
     detect_scene_early で ADV 判定済みのため、ここでは detect_adv_scene を
@@ -1340,7 +1341,7 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
         logger.info("[ADV] チェッカー床検出 → スワイプ (handle_adv)")
         return False  # handle_adv 脱出 → detect_scene_early で TutorialWalk 処理
     # ── ミニ会話タップ ──
-    _mc = detect_mini_conversation(img_path)
+    _mc = detect_mini_conversation(img_path, ocr_items=ocr_items)
     if _mc is not None:
         _mc_cx, _mc_cy, _mc_side = _mc
         logger.info("[ADV] 吹き出し(%s) → タップ (%d,%d)", _mc_side, _mc_cx, _mc_cy)

@@ -1067,19 +1067,21 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
         best = max(candidates, key=lambda c: c["mean_v"])
 
         # OCR 検証: 吹き出し BBox 内にテキストが存在するか
-        # ocr_items が None の場合も棄却 (チェッカー柄等の白領域偽陽性防止)
-        if ocr_items is None:
-            logger.debug("[MINI_CONV] ocr_items=None → 検証不能、棄却")
-            return None
-        bx1, by1 = best["x"], best["y"]
-        bx2, by2 = bx1 + best["w"], by1 + best["h"]
-        has_text_inside = any(
-            bx1 <= r["center"][0] <= bx2 and by1 <= r["center"][1] <= by2
-            for r in ocr_items
-            if r["text"] not in ("AUTO", ">>", ">|", "D1", "×")
-        )
-        if not has_text_inside:
-            return None
+        if ocr_items is not None:
+            bx1, by1 = best["x"], best["y"]
+            bx2, by2 = bx1 + best["w"], by1 + best["h"]
+            has_text_inside = any(
+                bx1 <= r["center"][0] <= bx2 and by1 <= r["center"][1] <= by2
+                for r in ocr_items
+                if r["text"] not in ("AUTO", ">>", ">|", "D1", "×")
+            )
+            if not has_text_inside:
+                return None
+        else:
+            # ocr_items=None: チェッカー柄の白領域偽陽性を防止
+            if is_tutorial_walk_scene(img_path):
+                logger.debug("[MINI_CONV] ocr_items=None + チェッカー柄 → 棄却")
+                return None
 
         logger.debug("[MINI_CONV] bubble (%d,%d) side=%s area=%d mean_v=%.1f",
                      best["cx"], best["cy"], best["side"], best["area"],
