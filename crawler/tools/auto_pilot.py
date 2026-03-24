@@ -699,9 +699,15 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 logger.info("[SCENE_EARLY] %s(%.2f) 検出だがダイアログ四隅あり → BATTLE棄却",
                             _hit_name, _hit_score)
             else:
-                logger.info("[SCENE_EARLY] Battle初回検出 (%s score=%.2f) → BATTLE",
+                # 二重確認: 左下キャラアイコン (battle_char_icon) で本物のバトルか検証
+                _char_icon_roi = (0, int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))
+                _char_icon = _AM_battle.match_single("battle_char_icon", img_path, roi=_char_icon_roi)
+                if _char_icon and _char_icon[2] >= 0.75:
+                    logger.info("[SCENE_EARLY] Battle初回検出 (%s %.2f + char_icon %.2f) → BATTLE",
+                                _hit_name, _hit_score, _char_icon[2])
+                    return "BATTLE"
+                logger.info("[SCENE_EARLY] %s(%.2f) 検出だがchar_icon未検出 → BATTLE棄却",
                             _hit_name, _hit_score)
-                return "BATTLE"
     except Exception:
         pass
     # BATTLE 補助判定: 金枠オーバーレイでテンプレが失敗する場合
