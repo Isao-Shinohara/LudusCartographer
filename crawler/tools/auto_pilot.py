@@ -833,7 +833,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # チュートリアル指+金枠画面が MOVIE と誤判定されるのを防止
     # 金枠単独だと動画装飾で偽陽性 → 指テンプレとの共検出を必須化
     # ただしガチャ演出 (SKIP + 暗背景) は金枠装飾があっても GACHA として通す
-    if img_path and not state.download_active:
+    if img_path and not state.download_active and state.current_scene != "GACHA":
         _gf_m = ASSET_MANAGER.match_single("gold_frame_small", img_path)
         if _gf_m and _gf_m[2] >= 0.70:
             # ガチャ演出チェック: SKIP ボタン + 暗背景 → GACHA (金枠スキップしない)
