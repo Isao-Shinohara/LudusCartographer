@@ -85,6 +85,7 @@ def _build_scrcpy_args(device_serial: str) -> list:
         "--stay-awake",
         "--max-size", str(_MAX_SIZE),
         "--window-width", str(_MAX_SIZE),
+        "--lock-video-orientation=1",  # landscape固定 (ポートレート時のウィンドウ縮小防止)
     ]
 
 
