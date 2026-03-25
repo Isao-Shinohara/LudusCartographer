@@ -75,14 +75,16 @@ def _build_scrcpy_args(device_serial: str) -> list:
                 dev_w, dev_h, land_w, land_h, _MAX_SIZE)
     # scrcpy バイナリ: PATH 検索で絶対パスを解決 (子プロセスの PATH 差異を回避)
     _scrcpy_bin = shutil.which("scrcpy") or "scrcpy"
-    # NOTE: --window-width は指定しない。Quartz キャプチャはウィンドウ表示サイズに
-    # 依存するため、ウィンドウを小さくするとキャプチャ品質が低下する。
+    # --window-width を max-size と同じ値に固定。
+    # Quartz キャプチャはウィンドウ表示サイズに依存するため、
+    # ウィンドウが小さいとテンプレマッチ精度が劣化する。
     return [
         _scrcpy_bin,
         "-s", device_serial,
         "--turn-screen-off",
         "--stay-awake",
         "--max-size", str(_MAX_SIZE),
+        "--window-width", str(_MAX_SIZE),
     ]
 
 
