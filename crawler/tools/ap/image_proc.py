@@ -1560,19 +1560,36 @@ def detect_background_blur(img, H: int, W: int) -> bool:
 
 
 def detect_notice_popup(
-    img_path: Path, ocr_texts: list[str], W: int = 1520, H: int = 720,
+    img_path: Path, ocr_texts: list[str], W: int = ANALYSIS_W, H: int = ANALYSIS_H,
 ) -> bool:
     """お知らせポップアップを検出する。
 
-    判定条件:
-      OCR で「今日は表示しない」を検出 (確定条件のみ)
+    判定条件 (ビジュアルパターン):
+      1. 四隅テンプレ (dialog_corner_tl + bl) — ダイアログ枠の存在
+      2. ページドット ≥ 2 — 複数ページのお知らせ
+      3. 背景ぼかし — ポップアップの背景
+      全条件を満たした場合のみ True。
 
-    NOTE: 補助条件 (× + ページドット + 背景ぼかし) は ADV セリフ画面等で
-    偽陽性が多発しデッドロックの原因になるため廃止。
+    補助条件 (OCR):
+      「今日は表示し」テキストがあれば即確定 (ビジュアル判定のフォールバック)
     """
+    # OCR フォールバック: 「今日は表示しない」検出
     if any("今日は表示し" in t for t in ocr_texts):
         logger.info("[NOTICE_POPUP] 「今日は表示しない」検出 → お知らせポップアップ確定")
         return True
+    # ビジュアルパターン: 四隅 + ドット≥2 + 背景ぼかし
+    if img_path:
+        _has_corners = detect_dialog_corners(img_path)
+        if _has_corners:
+            _dots = count_page_dots(img_path)
+            if _dots >= 2:
+                _img = imread_cached(img_path)
+                if _img is not None:
+                    _bH, _bW = _img.shape[:2]
+                    if detect_background_blur(_img, _bH, _bW):
+                        logger.info("[NOTICE_POPUP] 四隅+ドット=%d+背景ぼかし → お知らせポップアップ確定",
+                                    _dots)
+                        return True
     return False
 
 
