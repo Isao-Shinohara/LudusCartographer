@@ -2115,15 +2115,11 @@ def main():
             # → scrcpy を強制kill→再起動でウィンドウサイズを1440に復帰
             # manage_scrcpy() は規定プロセスを「継続」するのでkillしない
             try:
-                _ps = subprocess.run(["/bin/ps", "aux"], capture_output=True, text=True, timeout=5)
-                for _line in _ps.stdout.splitlines():
-                    if "scrcpy" in _line and SCRCPY_DEVICE in _line and "/bin/ps" not in _line:
-                        _pid = int(_line.split()[1])
-                        os.kill(_pid, signal.SIGTERM)
-                        logger.info("[STARTUP] scrcpy kill PID=%d", _pid)
+                subprocess.run(["pkill", "-f", "scrcpy"], timeout=5)
+                logger.info("[STARTUP] scrcpy pkill 実行")
             except Exception as _e:
-                logger.debug("[STARTUP] scrcpy kill error: %s", _e)
-            time.sleep(1)
+                logger.debug("[STARTUP] scrcpy pkill error: %s", _e)
+            time.sleep(2)
             manage_scrcpy()
             logger.info("[STARTUP] scrcpy 再起動 (ウィンドウサイズ復帰)")
             time.sleep(3)
