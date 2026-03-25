@@ -1582,7 +1582,7 @@ def detect_notice_popup(
         _has_corners = detect_dialog_corners(img_path)
         if _has_corners:
             _dots = count_page_dots(img_path)
-            if _dots >= 2:
+            if _dots >= 1:
                 _img = imread_cached(img_path)
                 if _img is not None:
                     _bH, _bW = _img.shape[:2]
