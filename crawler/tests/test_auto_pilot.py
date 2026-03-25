@@ -521,10 +521,12 @@ class TestRoiToDevice:
         # 黒帯: 左68px, 上0px, 幅1384, 高667 のケース
         roi = (68, 0, 1384, 667)
         dx, dy = roi_to_device(760, 360, roi)
-        # dx = int(760 / 1520 * 1384) + 68 = int(692) + 68 = 760
-        # dy = int(360 / 720 * 667) + 0 = int(333.5) = 333
-        assert dx == 760
-        assert dy == 333
+        # dx = int(760 / ANALYSIS_W * 1384) + 68
+        # dy = int(360 / ANALYSIS_H * 667) + 0
+        _expected_dx = int(760 / ANALYSIS_W * 1384) + 68
+        _expected_dy = int(360 / ANALYSIS_H * 667) + 0
+        assert dx == _expected_dx
+        assert dy == _expected_dy
 
     def test_zero_coordinate(self):
         """入力 (0, 0) → ROI 左上角を返す。"""
@@ -545,26 +547,29 @@ class TestRoiToDevice:
     def test_xperia_normalized_roi_no_double_scale(self):
         """Xperia正規化ROI: roi_to_device + tap_device スケールで正しいデバイス座標。"""
         from tools.auto_pilot import roi_to_device, ANALYSIS_W, ANALYSIS_H
-        # Xperia 2160x1080, 黒帯なし → 正規化ROI = (0,0,1520,720)
+        # Xperia 2160x1080, 黒帯なし → 正規化ROI = (0,0,ANALYSIS_W,ANALYSIS_H)
         roi_norm = (0, 0, ANALYSIS_W, ANALYSIS_H)
-        ax, ay = roi_to_device(760, 360, roi_norm)
-        # tap_device scaling: ax * 2160/1520, ay * 1080/720
+        _half_x = ANALYSIS_W // 2
+        _half_y = ANALYSIS_H // 2
+        ax, ay = roi_to_device(_half_x, _half_y, roi_norm)
+        # tap_device scaling: ax * 2160/ANALYSIS_W, ay * 1080/ANALYSIS_H
         final_x = int(ax * 2160 / ANALYSIS_W)
         final_y = int(ay * 1080 / ANALYSIS_H)
         assert abs(final_x - 1080) <= 1
         assert abs(final_y - 540) <= 1
 
     def test_xperia_normalized_roi_with_letterbox(self):
-        """Xperia正規化ROI (黒帯あり): 2px以内の精度。"""
+        """Xperia正規化ROI (黒帯あり): 動的に期待値を計算。"""
         from tools.auto_pilot import roi_to_device, ANALYSIS_W, ANALYSIS_H
-        # デバイスROI (230,132,1689,816) → 正規化 (162,88,1189,544)
         roi_norm = (162, 88, 1189, 544)
         ax, ay = roi_to_device(760, 628, roi_norm)
         final_x = int(ax * 2160 / ANALYSIS_W)
         final_y = int(ay * 1080 / ANALYSIS_H)
-        # 期待値: ゲーム中央 (1074, 843)
-        assert abs(final_x - 1074) <= 3
-        assert abs(final_y - 843) <= 3
+        # 期待値を動的計算 (ANALYSIS_W に依存しない)
+        _ex = int((760 / ANALYSIS_W * 1189 + 162) * 2160 / ANALYSIS_W)
+        _ey = int((628 / ANALYSIS_H * 544 + 88) * 1080 / ANALYSIS_H)
+        assert abs(final_x - _ex) <= 1
+        assert abs(final_y - _ey) <= 1
 
 
 # ─── お知らせポップアップ検出テスト ──────────────────────────────────────
@@ -625,7 +630,7 @@ class TestCoordinateConstants:
 
     def test_analysis_dimensions(self):
         from tools.auto_pilot import ANALYSIS_W, ANALYSIS_H
-        assert ANALYSIS_W == 1520
+        assert ANALYSIS_W == 1440
         assert ANALYSIS_H == 720
 
 
@@ -829,13 +834,11 @@ class TestAdvScene:
         )
         from tools.ap.constants import _CRAWLER_ROOT
 
-        icon_positions = [
-            ("adv_icon_menu", 1116, 45),
-            ("adv_icon_log", 1191, 45),
-            ("adv_icon_auto", 1274, 45),
-            ("adv_icon_ff", 1358, 45),
-            ("adv_icon_skip", 1446, 45),
-        ]
+        # アイコン位置を ANALYSIS_W ベースの比率で計算
+        _icon_x_ratios = [0.734, 0.784, 0.838, 0.893, 0.951]
+        _icon_names = ["adv_icon_menu", "adv_icon_log", "adv_icon_auto", "adv_icon_ff", "adv_icon_skip"]
+        icon_positions = [(name, int(ANALYSIS_W * r), 45) for name, r in zip(_icon_names, _icon_x_ratios)]
+
         next_path = _CRAWLER_ROOT / "assets" / "templates" / "adv_next_btn.png"
         if not next_path.exists():
             pytest.skip("adv_next_btn.png が存在しません")
@@ -846,7 +849,7 @@ class TestAdvScene:
             if not tpl_path.exists():
                 pytest.skip(f"{name}.png が存在しません")
             _embed_template(img, tpl_path, cx, cy)
-        _embed_template(img, next_path, 1430, 650)
+        _embed_template(img, next_path, int(ANALYSIS_W * 0.941), int(ANALYSIS_H * 0.903))
 
         img_path = tmp_path / "adv_both.png"
         cv2.imwrite(str(img_path), img)

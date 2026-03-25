@@ -67,9 +67,9 @@ def _build_scrcpy_args(device_serial: str) -> list:
     dev_w, dev_h = get_device_resolution()
     land_w = max(dev_w, dev_h)
     land_h = min(dev_w, dev_h)
-    # 映像エンコード解像度: 解析基準幅 (1520) に固定。
+    # 映像エンコード解像度: 解析基準幅 (1440) に固定。
     # フル解像度 (2160) だとUSB帯域を圧迫し scrcpy のコマ落ちが発生する。
-    # 1520 なら解析リサイズが不要で精度劣化なし。
+    # 1440 なら解析リサイズが不要で精度劣化なし。720の2倍で一般的な解像度。
     _MAX_SIZE = ANALYSIS_W
     logger.info("[SCRCPY] 実機解像度 %dx%d → landscape %dx%d → max-size %d",
                 dev_w, dev_h, land_w, land_h, _MAX_SIZE)
@@ -278,12 +278,19 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
         logger.warning("[SCRCPY] キャプチャが真っ黒 (mean=%.1f) → ADB フォールバック", float(bgr.mean()))
         _LAST_SCRCPY_BGR = None
         return None
+    # 最低サイズチェック: ウィンドウリサイズで解像度不足 → scrcpy 再起動
+    _MIN_CAPTURE_W = 720  # 最低キャプチャ幅 (ANALYSIS_W の 50%)
+    _h, _w = bgr.shape[:2]
+    if _w < _MIN_CAPTURE_W:
+        logger.warning("[SCRCPY] キャプチャ解像度不足 (%dx%d < min %d) → scrcpy 再起動",
+                       _w, _h, _MIN_CAPTURE_W)
+        _LAST_SCRCPY_BGR = None
+        manage_scrcpy()
+        return None
     _LAST_SCRCPY_BGR = bgr  # cv2.imread 不要にするキャッシュ
-    # 実機解像度を返す (scrcpy ウィンドウはリサイズ済みで実機と異なる)
+    # 実機解像度を返す (adb input tap はデバイス物理座標を使用)
     dev_w, dev_h = _get_cached_device_resolution()
     if dev_w <= 0 or dev_h <= 0:
-        # キャッシュ未設定なら画像サイズをフォールバック
-        _h, _w = bgr.shape[:2]
         dev_w, dev_h = _w, _h
     return path, dev_w, dev_h
 

@@ -110,7 +110,7 @@ _BATTLE_UI_KWS: frozenset = frozenset([
 ])
 
 # ─── 解析基準解像度 ───
-ANALYSIS_W = 1520
+ANALYSIS_W = 1440
 ANALYSIS_H = 720
 
 # ─── ADV シーン検出 ROI (共通定数) ───
