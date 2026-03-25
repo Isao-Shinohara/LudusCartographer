@@ -2114,7 +2114,6 @@ def main():
             # ポートレート→ランドスケープ遷移でscrcpyウィンドウが縮小された可能性
             # → scrcpy を強制kill→再起動でウィンドウサイズを1440に復帰
             # manage_scrcpy() は規定プロセスを「継続」するのでkillしない
-            import subprocess, signal
             try:
                 _ps = subprocess.run(["/bin/ps", "aux"], capture_output=True, text=True, timeout=5)
                 for _line in _ps.stdout.splitlines():
