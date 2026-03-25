@@ -278,10 +278,10 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
         return "PLAY_GAMES_BACK", 1.0
 
     # ─── お知らせ一覧画面 → × で閉じる ───
-    # 「お知らせ」「情報」「不具合」のタブヘッダが 2 つ以上あれば一覧画面
+    # 「お知らせ」「情報」「不具合」のタブヘッダが 3 つ全てあれば一覧画面
     _notice_list_tabs = ["お知らせ", "情報", "不具合"]
     _notice_list_hits = sum(1 for kw in _notice_list_tabs if has_text(ocr, kw, min_conf=0.3))
-    if _notice_list_hits >= 2:
+    if _notice_list_hits >= 3:
         # × テンプレートで閉じる
         from tools.ap.image_proc import ASSET_MANAGER as _AM_notice
         _close_m = _AM_notice.match_single("close_btn_cross", analysis_path)

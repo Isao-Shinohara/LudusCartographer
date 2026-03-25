@@ -172,10 +172,10 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         tap_device(_bx, _by, state, "BUBBLE_TAP")
         return "BUBBLE_TAP", 0.3
 
-    # ─── お知らせ一覧画面 (タブ: お知らせ/情報/不具合) → ×ボタンで閉じる ───
+    # ─── お知らせ一覧画面 (タブ: お知らせ/情報/不具合 の3つ全て) → ×ボタンで閉じる ───
     _notice_tabs = sum(1 for kw in ["お知らせ", "情報", "不具合"]
                        if has_text(ocr, kw, min_conf=0.3))
-    if _notice_tabs >= 2:
+    if _notice_tabs >= 3:
         # ×ボタン: 右上固定位置
         _nx, _ny = int(W * 0.97), int(H * 0.05)
         logger.info(">>> 【お知らせ一覧】 タブ%d個検出 → ×クローズ (%d,%d)", _notice_tabs, _nx, _ny)
