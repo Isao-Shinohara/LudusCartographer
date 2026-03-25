@@ -1647,6 +1647,22 @@ def process_paging_dialog(
             logger.info("[PAGING] ×タップ (page=%d) → クローズ完了", _page + 1)
             state.dialog_detections += 1
             return "DIALOG_CLOSED"
+        # ドット数到達: 最終ページのはず → × を強制探索
+        if _total_dots >= 2 and _page >= _total_dots - 1:
+            _close_asset = _find_close_by_asset(analysis_path)
+            if _close_asset:
+                tap_device(_close_asset[0], _close_asset[1], state, "PAGING_CLOSE_DOTS_END")
+                logger.info("[PAGING] ドット%d到達 → ×アセット(%d,%d) クローズ",
+                            _total_dots, _close_asset[0], _close_asset[1])
+                state.dialog_detections += 1
+                return "DIALOG_CLOSED"
+            # アセットでも見つからない → 右上固定×
+            _fx = int(W * 0.975)
+            _fy = int(H * 0.055)
+            tap_device(_fx, _fy, state, "PAGING_CLOSE_DOTS_FIXED")
+            logger.info("[PAGING] ドット%d到達 → 右上固定×(%d,%d) クローズ", _total_dots, _fx, _fy)
+            state.dialog_detections += 1
+            return "DIALOG_CLOSED"
         # "next" or "bottom" → ▷ タップして次ページ
         tap_device(_dx, _dy, state, "PAGING_NEXT")
         logger.info("[PAGING] ▷タップ (page=%d/%d, dots=%d)", _page + 1, _max_iter, _total_dots)
