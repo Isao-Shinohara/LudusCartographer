@@ -939,7 +939,7 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
             return MovieSceneResult()
 
         # 即棄却: お知らせポップアップ
-        if "今日は表示しない" in joined:
+        if "今日は表示し" in joined:
             logger.info("[MOVIE_SCENE] 「今日は表示しない」→ MOVIE棄却 (お知らせ)")
             return MovieSceneResult()
 
@@ -1570,7 +1570,7 @@ def detect_notice_popup(
     NOTE: 補助条件 (× + ページドット + 背景ぼかし) は ADV セリフ画面等で
     偽陽性が多発しデッドロックの原因になるため廃止。
     """
-    if any("今日は表示しない" in t for t in ocr_texts):
+    if any("今日は表示し" in t for t in ocr_texts):
         logger.info("[NOTICE_POPUP] 「今日は表示しない」検出 → お知らせポップアップ確定")
         return True
     return False

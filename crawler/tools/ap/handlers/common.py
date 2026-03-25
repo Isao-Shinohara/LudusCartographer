@@ -51,7 +51,7 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
     # ── 【#-5】ブラウザ脱出 — WEB SHOP 等の外部リンクを検出したら即 BACK ──
     # 「今日は表示しない」があればお知らせポップアップ内のテキストなのでスキップ
     _browser_kw = ["WEB SHOP", "好評配信中", "doka-exedra", "magia-exedra"]
-    _is_notice_ctx = any("今日は表示しない" in t for t in texts)
+    _is_notice_ctx = any("今日は表示し" in t for t in texts)
     if not _is_notice_ctx and any(kw in joined for kw in _browser_kw):
         logger.warning("[BROWSER_ESCAPE] ブラウザ画面検出 (%s) → BACK キーで脱出",
                        [kw for kw in _browser_kw if kw in joined])
@@ -300,7 +300,7 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
     # アプリ初回起動時に portrait で表示される法的注意画面。
     # 「同意してゲームを始める」ボタン (右側ゴールドボタン) をOCRで検出してタップ。
     # 「今日は表示しない」があればお知らせポップアップなのでスキップ (誤発火防止)
-    _is_notice_text = any("今日は表示しない" in t for t in texts)
+    _is_notice_text = any("今日は表示し" in t for t in texts)
     if not _is_notice_text and (
         has_text(ocr, "ご注意", min_conf=0.3) or (
             has_text(ocr, "基本無料", min_conf=0.3) and has_text(ocr, "未成年", min_conf=0.3)
