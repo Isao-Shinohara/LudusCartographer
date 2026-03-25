@@ -818,7 +818,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # ── ガチャ演出画面: SKIP ボタン + 暗い背景 → タップで進行 ──
     # 光の玉が並ぶ画面。MOVIE ではなくタップで 1 つずつキャラが表示される。
     # MOVIE 中はスキップ（動画内のキャラ表示シーンで誤発火防止）
-    if img_path and state.current_scene != "MOVIE":
+    if img_path and state.current_scene != "MOVIE" and getattr(state, "_from_movie_ttl", 0) <= 0:
         _gacha_skip = detect_movie_skip_button(img_path)
         if _gacha_skip:
             _gacha_img = imread_cached(img_path)
@@ -2107,23 +2107,24 @@ def main():
     logger.info("[TOKEN_SAVE] 節約モード稼働中。バトル発光検知で OCR スキップ → 爆速モードで進行します")
 
     # ─── ランドスケープ待機: ポートレートならアプリ起動待ち ───
+    _was_portrait = False
     for _orient_wait in range(10):
         _ss_check = take_screenshot()
         if _ss_check[0] is not None and _ss_check[1] > _ss_check[2]:
             logger.info("[STARTUP] ランドスケープ確認 (%dx%d)", _ss_check[1], _ss_check[2])
-            # ポートレート→ランドスケープ遷移でscrcpyウィンドウが縮小された可能性
-            # → scrcpy を強制kill→再起動でウィンドウサイズを1440に復帰
-            # manage_scrcpy() は規定プロセスを「継続」するのでkillしない
-            try:
-                subprocess.run(["pkill", "-f", "scrcpy"], timeout=5)
-                logger.info("[STARTUP] scrcpy pkill 実行")
-            except Exception as _e:
-                logger.debug("[STARTUP] scrcpy pkill error: %s", _e)
-            time.sleep(2)
-            manage_scrcpy()
-            logger.info("[STARTUP] scrcpy 再起動 (ウィンドウサイズ復帰)")
-            time.sleep(3)
+            # ポートレートを経由した場合のみ scrcpy 再起動 (ウィンドウ縮小復帰)
+            if _was_portrait:
+                try:
+                    subprocess.run(["pkill", "-f", "scrcpy"], timeout=5)
+                    logger.info("[STARTUP] scrcpy pkill 実行 (ポートレート経由)")
+                except Exception as _e:
+                    logger.debug("[STARTUP] scrcpy pkill error: %s", _e)
+                time.sleep(2)
+                manage_scrcpy()
+                logger.info("[STARTUP] scrcpy 再起動 (ウィンドウサイズ復帰)")
+                time.sleep(3)
             break
+        _was_portrait = True
         logger.info("[STARTUP] ポートレート検出 (%dx%d) — アプリ起動待ち (%d/10)",
                     _ss_check[1], _ss_check[2], _orient_wait + 1)
         if _orient_wait == 4:
