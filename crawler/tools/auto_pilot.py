@@ -486,7 +486,7 @@ def generate_and_copy_report(state: PilotState, reason: str) -> None:
         logger.error("[REPORT] コピー失敗: %s", e)
 
     print("\n" + report)
-    print("\n>>> 報告をクリップボードにコピーしました。Geminiにペーストしてください。")
+    print("\n>>> 報告をクリップボードにコピーしました。")
 
 
 # ─── BATTLE 高速パス: OCR 前テンプレートマッチング ──────────────────
