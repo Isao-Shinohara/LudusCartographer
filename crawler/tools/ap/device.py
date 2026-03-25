@@ -75,8 +75,8 @@ def _build_scrcpy_args(device_serial: str) -> list:
                 dev_w, dev_h, land_w, land_h, _MAX_SIZE)
     # scrcpy バイナリ: PATH 検索で絶対パスを解決 (子プロセスの PATH 差異を回避)
     _scrcpy_bin = shutil.which("scrcpy") or "scrcpy"
-    # NOTE: --window-width は指定しない。Quartz キャプチャはウィンドウ表示サイズに
-    # 依存するため、ウィンドウを小さくするとキャプチャ品質が低下する。
+    # NOTE: --window-width は指定しない。ユーザーが手動リサイズ可能。
+    # キャプチャ画像の実サイズを take_screenshot で取得し座標変換に使用する。
     return [
         _scrcpy_bin,
         "-s", device_serial,
@@ -276,12 +276,17 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
         logger.warning("[SCRCPY] キャプチャが真っ黒 (mean=%.1f) → ADB フォールバック", float(bgr.mean()))
         _LAST_SCRCPY_BGR = None
         return None
+    # 解像度チェック: ウィンドウが小さすぎるとテンプレマッチ精度が劣化
+    _h, _w = bgr.shape[:2]
+    if _w < ANALYSIS_W or _h < ANALYSIS_H:
+        logger.warning("[SCRCPY] キャプチャ解像度不足 (%dx%d < %dx%d) → ADB フォールバック",
+                       _w, _h, ANALYSIS_W, ANALYSIS_H)
+        _LAST_SCRCPY_BGR = None
+        return None
     _LAST_SCRCPY_BGR = bgr  # cv2.imread 不要にするキャッシュ
-    # 実機解像度を返す (scrcpy ウィンドウはリサイズ済みで実機と異なる)
+    # 実機解像度を返す (adb input tap はデバイス物理座標を使用)
     dev_w, dev_h = _get_cached_device_resolution()
     if dev_w <= 0 or dev_h <= 0:
-        # キャッシュ未設定なら画像サイズをフォールバック
-        _h, _w = bgr.shape[:2]
         dev_w, dev_h = _w, _h
     return path, dev_w, dev_h
 
