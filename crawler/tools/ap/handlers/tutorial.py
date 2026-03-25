@@ -271,6 +271,14 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     # 次優先: セリフ/ADVテキスト確認 (後続の#0/#3-ADV処理)
     if analysis_path is not None:
         asset_hit = ASSET_MANAGER.match(analysis_path, ocr_texts=texts)
+        # BATTLE_UPPER_GUARD: バトル中は上部テンプレマッチを除外
+        # バトル中のタップ対象は画面下部のみ (攻撃ボタン等)
+        if asset_hit and (ctx.is_battle_early or state.current_scene == "BATTLE"):
+            _hit_cy = asset_hit[1]
+            if _hit_cy < H * 0.4:
+                logger.info("[Asset] '%s' をバトル中の上部マッチとして抑制 (y=%d < %d) (BATTLE_UPPER_GUARD)",
+                            asset_hit[2], _hit_cy, int(H * 0.4))
+                asset_hit = None
         # DIALOG_NAV_RIGHT: ページ送りダイアログの ▷ ボタン
         # ロジック: ▷ が見える限りタップしてページ送り。
         # 最終ページに到達すると × ボタンが出現するので、× を検出したら閉じる。
