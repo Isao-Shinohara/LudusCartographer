@@ -351,8 +351,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     # お知らせポップアップ検出時はガードをバイパス (×で確実に閉じるため)
     # ADV/ミニ会話/動画シーン検出時はスキップ (指アイコンは出ない — 背景装飾の誤検出防止)
     _pre_dialog_finger = False
-    _is_mini_conv = detect_mini_conversation(analysis_path) is not None if analysis_path else False
-    ctx.is_mini_conv = _is_mini_conv
+    _is_mini_conv = ctx.is_mini_conv  # detect_and_act で OCR 付きで検出済み
     _is_result_screen = any(
         any(k in t for k in ("Result", "リザルト", "次へ"))
         for t in texts

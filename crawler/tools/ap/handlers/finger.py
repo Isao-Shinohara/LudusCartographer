@@ -222,8 +222,11 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
         elif _is_tos_screen or _is_system_dialog:
             logger.info("  システムダイアログ/利用規約検出 → MOYA_TAP スキップ")
             blobs = []
-        elif _adv_result.is_adv or _is_mini_conv:
-            logger.info("  ADV/ミニ会話シーン検出 → 指ブロブ検出スキップ (背景装飾の誤検出防止)")
+        elif _adv_result.is_adv:
+            logger.info("  ADV シーン検出 → 指ブロブ検出スキップ (背景装飾の誤検出防止)")
+            blobs = []
+        elif _is_mini_conv:
+            logger.info("  ミニ会話検出 → 指ブロブ検出スキップ (背景装飾の誤検出防止)")
             blobs = []
         else:
             state.home_tutorial_tap_count = 0  # ホーム以外 → カウンタリセット
