@@ -1,0 +1,5 @@
+{
+    "action": "ASSET_CLOSE_BTN",
+    "threshold": 0.80,
+    "note": "ダイアログ右上の×ボタン。閾値をADVツールバー誤マッチ(0.61)より上に設定。"
+}
