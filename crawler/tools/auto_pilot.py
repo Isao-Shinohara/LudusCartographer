@@ -2511,7 +2511,7 @@ def main():
             _gacha_static = getattr(state, "_gacha_static_count", 0)
             _gacha_total_wait = getattr(state, "_gacha_total_wait", 0) + 1
             state._gacha_total_wait = _gacha_total_wait
-            if dist <= 35:  # ガチャ光の玉エフェクト(dist=25-32)も許容
+            if dist <= 8:  # キャラ表示の微小変化のみ許容(光の玉dist=25-32は待機)
                 _gacha_static += 1
             else:
                 _gacha_static = 0
