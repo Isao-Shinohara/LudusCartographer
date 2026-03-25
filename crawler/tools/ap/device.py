@@ -280,14 +280,14 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
         logger.warning("[SCRCPY] キャプチャが真っ黒 (mean=%.1f) → ADB フォールバック", float(bgr.mean()))
         _LAST_SCRCPY_BGR = None
         return None
-    # 最低サイズチェック: ウィンドウリサイズで解像度不足 → scrcpy 再起動
-    _MIN_CAPTURE_W = 720  # 最低キャプチャ幅 (ANALYSIS_W の 50%)
+    # 最低サイズチェック: ウィンドウが小さすぎる → ADB フォールバック
+    # (ランドスケープ確認後のscrcpy再起動で復帰する)
+    _MIN_CAPTURE_W = 720
     _h, _w = bgr.shape[:2]
     if _w < _MIN_CAPTURE_W:
-        logger.warning("[SCRCPY] キャプチャ解像度不足 (%dx%d < min %d) → scrcpy 再起動",
+        logger.warning("[SCRCPY] キャプチャ解像度不足 (%dx%d < min %d) → ADB フォールバック",
                        _w, _h, _MIN_CAPTURE_W)
         _LAST_SCRCPY_BGR = None
-        manage_scrcpy()
         return None
     _LAST_SCRCPY_BGR = bgr  # cv2.imread 不要にするキャッシュ
     # 実機解像度を返す (adb input tap はデバイス物理座標を使用)

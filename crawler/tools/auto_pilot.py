@@ -2112,10 +2112,22 @@ def main():
         if _ss_check[0] is not None and _ss_check[1] > _ss_check[2]:
             logger.info("[STARTUP] ランドスケープ確認 (%dx%d)", _ss_check[1], _ss_check[2])
             # ポートレート→ランドスケープ遷移でscrcpyウィンドウが縮小された可能性
-            # → scrcpy再起動でウィンドウサイズを1440に復帰
+            # → scrcpy を強制kill→再起動でウィンドウサイズを1440に復帰
+            # manage_scrcpy() は規定プロセスを「継続」するのでkillしない
+            import subprocess, signal
+            try:
+                _ps = subprocess.run(["/bin/ps", "aux"], capture_output=True, text=True, timeout=5)
+                for _line in _ps.stdout.splitlines():
+                    if "scrcpy" in _line and SCRCPY_DEVICE in _line and "/bin/ps" not in _line:
+                        _pid = int(_line.split()[1])
+                        os.kill(_pid, signal.SIGTERM)
+                        logger.info("[STARTUP] scrcpy kill PID=%d", _pid)
+            except Exception as _e:
+                logger.debug("[STARTUP] scrcpy kill error: %s", _e)
+            time.sleep(1)
             manage_scrcpy()
             logger.info("[STARTUP] scrcpy 再起動 (ウィンドウサイズ復帰)")
-            time.sleep(2)
+            time.sleep(3)
             break
         logger.info("[STARTUP] ポートレート検出 (%dx%d) — アプリ起動待ち (%d/10)",
                     _ss_check[1], _ss_check[2], _orient_wait + 1)
