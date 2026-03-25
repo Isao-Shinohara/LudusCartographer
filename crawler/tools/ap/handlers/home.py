@@ -197,6 +197,8 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
             else:
                 # ── 優先2: OCR テキスト (金枠が検出できない場合のフォールバック) ──
                 _ocr_target = None
+                _ocr_target_label = ""
+                _ocr_best_dist = 999
                 _HOME_NAV_KWS = {"光の間", "ショップ", "ガチャ", "ガシャ", "マップ", "レイヤ",
                                  "マッチ", "ユニオン", "クエスト", "クエス", "パーティ", "育成",
                                  "ころの器", "こころの器"}
@@ -215,12 +217,15 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
                         _dir_ok = False
                     elif _finger_dir == "up" and _oc[1] > _by:
                         _dir_ok = False
-                    if _dir_ok and _odx < 250 and _ody < 250:
+                    _dist = (_odx ** 2 + _ody ** 2) ** 0.5
+                    if _dir_ok and _odx < 250 and _ody < 250 and _dist < _ocr_best_dist:
+                        _ocr_best_dist = _dist
                         _ocr_target = (_oc[0], _oc[1])
-                        logger.info(">>> ホームチュートリアル: 指(%d,%d,dir=%s)→OCRテキスト '%s'(%d,%d) [%d回目]",
-                                    _bx, _by, _finger_dir, _ot, _oc[0], _oc[1],
-                                    state.home_tutorial_tap_count + 1)
-                        break
+                        _ocr_target_label = _ot
+                if _ocr_target:
+                    logger.info(">>> ホームチュートリアル: 指(%d,%d,dir=%s)→OCRテキスト '%s'(%d,%d) [%d回目]",
+                                _bx, _by, _finger_dir, _ocr_target_label, _ocr_target[0], _ocr_target[1],
+                                state.home_tutorial_tap_count + 1)
                 if _ocr_target:
                     _tap_target = _ocr_target
                 elif _home_gold:
