@@ -2509,15 +2509,21 @@ def main():
             # phash が安定（アニメーション終了）したら中央タップで進行
             state.current_scene = "GACHA"
             _gacha_static = getattr(state, "_gacha_static_count", 0)
-            if dist <= 8:  # キラキラエフェクトの微小変化(dist=4-8)を許容
+            _gacha_total_wait = getattr(state, "_gacha_total_wait", 0) + 1
+            state._gacha_total_wait = _gacha_total_wait
+            if dist <= 35:  # ガチャ光の玉エフェクト(dist=25-32)も許容
                 _gacha_static += 1
             else:
                 _gacha_static = 0
             state._gacha_static_count = _gacha_static
-            if _gacha_static >= 5:  # ~3秒安定 → アニメーション終了
+            # 安定判定 OR 長時間待機(200回≒30秒)で強制タップ
+            _GACHA_MAX_WAIT = 70  # ~10秒
+            if _gacha_static >= 5 or _gacha_total_wait >= _GACHA_MAX_WAIT:
                 tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "GACHA_TAP")
-                logger.info("[GACHA] アニメーション終了 (static=%d) → タップで進行", _gacha_static)
+                _reason = "安定" if _gacha_static >= 5 else f"長時間待機({_gacha_total_wait}回)"
+                logger.info("[GACHA] %s → タップで進行", _reason)
                 state._gacha_static_count = 0
+                state._gacha_total_wait = 0
                 state.last_phash = ""
             else:
                 logger.info("[GACHA] アニメーション待機 (dist=%d static=%d/5)", dist, _gacha_static)
