@@ -331,7 +331,7 @@ class TestPilotStateDynamicAttrsRemoved:
     def test_normatk_fallback_is_stall_counter(self, state):
         from tools.auto_pilot import StallCounter
         assert isinstance(state.normatk_fallback, StallCounter)
-        assert state.normatk_fallback.threshold == 10
+        assert state.normatk_fallback.threshold == 1
 
 
 # ─── handle_dialog_screen テスト ──────────────────────────────

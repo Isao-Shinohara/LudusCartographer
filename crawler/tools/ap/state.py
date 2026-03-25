@@ -141,7 +141,7 @@ class PilotState:
     grind_max_cycles: int = 0         # 0=無制限, N>0=N周で停止
     grind_cycles_completed: int = 0   # 周回完了回数
     normatk_fallback: StallCounter = field(
-        default_factory=lambda: StallCounter("normatk_fallback", threshold=10))
+        default_factory=lambda: StallCounter("normatk_fallback", threshold=1))
     battle_rapid_consecutive: StallCounter = field(
         default_factory=lambda: StallCounter("battle_rapid_consecutive", threshold=50))
     # ─── MOVIE_WAIT 脱出カウンタ ───
