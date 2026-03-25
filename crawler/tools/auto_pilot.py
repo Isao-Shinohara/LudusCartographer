@@ -2111,6 +2111,11 @@ def main():
         _ss_check = take_screenshot()
         if _ss_check[0] is not None and _ss_check[1] > _ss_check[2]:
             logger.info("[STARTUP] ランドスケープ確認 (%dx%d)", _ss_check[1], _ss_check[2])
+            # ポートレート→ランドスケープ遷移でscrcpyウィンドウが縮小された可能性
+            # → scrcpy再起動でウィンドウサイズを1440に復帰
+            manage_scrcpy()
+            logger.info("[STARTUP] scrcpy 再起動 (ウィンドウサイズ復帰)")
+            time.sleep(2)
             break
         logger.info("[STARTUP] ポートレート検出 (%dx%d) — アプリ起動待ち (%d/10)",
                     _ss_check[1], _ss_check[2], _orient_wait + 1)

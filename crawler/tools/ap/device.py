@@ -85,7 +85,8 @@ def _build_scrcpy_args(device_serial: str) -> list:
         "--stay-awake",
         "--max-size", str(_MAX_SIZE),
         "--window-width", str(_MAX_SIZE),
-        "--orientation", "90",  # PC上の表示をlandscape固定 (ポートレート時のウィンドウ縮小防止)
+        # NOTE: --orientation は使わない。ポートレート画面も回転してしまうため。
+        # ランドスケープ確認後に scrcpy を再起動してウィンドウサイズを復帰する。
     ]
 
 
