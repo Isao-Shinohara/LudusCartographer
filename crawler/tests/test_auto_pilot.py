@@ -363,7 +363,7 @@ class TestHandleDialogScreen:
         result = handle_dialog_screen(state, analysis, [], [], False)
         assert result is not None
         assert result[0] == "DIALOG_CLOSE"
-        assert result[1] == 1.0
+        from tools.ap.constants import CLOSE_ACTION_WAIT; assert result[1] == CLOSE_ACTION_WAIT
         mock_tap.assert_called_once()
 
     @patch("tools.ap.handlers.dialog_phase.detect_white_hand_pointer", return_value=None)
@@ -381,7 +381,7 @@ class TestHandleDialogScreen:
         result = handle_dialog_screen(state, analysis, [], [], False)
         assert result is not None
         assert result[0] == "DIALOG_CLOSED"
-        assert result[1] == 1.0
+        from tools.ap.constants import CLOSE_ACTION_WAIT; assert result[1] == CLOSE_ACTION_WAIT
         mock_paging.assert_called_once()
 
     @patch("tools.ap.handlers.dialog_phase.tap_device")
@@ -396,7 +396,7 @@ class TestHandleDialogScreen:
                                        is_notice_popup=True)
         assert result is not None
         assert result[0] == "NOTICE_POPUP_CLOSE"
-        assert result[1] == 1.0
+        from tools.ap.constants import CLOSE_ACTION_WAIT; assert result[1] == CLOSE_ACTION_WAIT
         mock_tap.assert_called_once()
 
     @patch("tools.ap.handlers.dialog_phase.take_screenshot", return_value=(Path("/tmp/test.png"), 1520, 720, 0))
@@ -421,7 +421,7 @@ class TestHandleDialogScreen:
                                        is_notice_popup=True)
         assert result is not None
         assert result[0] == "NOTICE_POPUP_CLOSE"
-        assert result[1] == 1.0
+        from tools.ap.constants import CLOSE_ACTION_WAIT; assert result[1] == CLOSE_ACTION_WAIT
         # ドット3 → ▷2回 + ×1回 = 3タップ
         assert mock_tap.call_count == 3
 
@@ -498,7 +498,7 @@ class TestHandleDialogScreen:
         result = handle_dialog_screen(state, analysis, [], [], True)
         assert result is not None
         assert result[0] == "DIALOG_CLOSED"
-        assert result[1] == 1.0
+        from tools.ap.constants import CLOSE_ACTION_WAIT; assert result[1] == CLOSE_ACTION_WAIT
         mock_paging.assert_called_once()
 
 

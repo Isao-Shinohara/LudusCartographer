@@ -123,6 +123,11 @@ ADV_TOOLBAR_ROI = (0, 0, ANALYSIS_W, int(ANALYSIS_H * 0.20))
 BATTLE_BTN_ROI = (int(ANALYSIS_W * 0.75), int(ANALYSIS_H * 0.60),
                   int(ANALYSIS_W * 0.25), int(ANALYSIS_H * 0.40))
 
+# ─── 画面遷移待機 ───
+# ダイアログ/ポップアップのクローズ後、次の画面判定までの待機秒数。
+# 画面遷移アニメーション中にMOVIE誤判定されるのを防止する。
+CLOSE_ACTION_WAIT = 2.0
+
 # ─── 座標補正定数 ───
 # Vision framework は bbox が正確なので補正不要、PaddleOCR は下部パディングあり
 try:

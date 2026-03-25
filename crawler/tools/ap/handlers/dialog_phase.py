@@ -22,6 +22,7 @@ from tools.ap.constants import (
     _SPATIAL_MARGIN_TOP, _CLOSE_BTN_OFFSET,
     ANALYSIS_W, ANALYSIS_H,
     _BATTLE_CORE_KWS, _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS,
+    CLOSE_ACTION_WAIT,
 )
 from tools.ap.helpers import has_any, has_text
 from tools.ap.device import adb, tap_device, take_screenshot
@@ -88,7 +89,7 @@ def handle_dialog_screen(
             _fx, _fy = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
             logger.info("[NOTICE_POPUP] ▷/× 未検出 → 右上 × 固定座標 (%d,%d) で閉じる", _fx, _fy)
             tap_device(_fx, _fy, state, "NOTICE_POPUP_CLOSE_DIRECT")
-            return "NOTICE_POPUP_CLOSE", 1.0
+            return "NOTICE_POPUP_CLOSE", CLOSE_ACTION_WAIT
 
     if _dlg is None:
         return None
@@ -118,7 +119,7 @@ def handle_dialog_screen(
         logger.info("[NOTICE_POPUP] ×閉じ完了 (total=%d pages)", _total_pages)
 
         state.pre_popup_tap_count = 0
-        return "NOTICE_POPUP_CLOSE", 1.0
+        return "NOTICE_POPUP_CLOSE", CLOSE_ACTION_WAIT
 
     # ── [SPATIAL GATE 撤廃] ──────────────────────────────────
     # handle_dialog_screen 内部での指ブロブ・金枠によるダイアログスキップは廃止。
@@ -183,7 +184,7 @@ def handle_dialog_screen(
                         _ok_btn["text"], _ok_x, _ok_y)
             tap_device(_ok_x, _ok_y, state, f"DIALOG_OK_DIRECT '{_ok_btn['text']}'")
             state.pre_popup_tap_count = 0
-            return "DIALOG_OK_DIRECT", 1.0
+            return "DIALOG_OK_DIRECT", CLOSE_ACTION_WAIT
         # ── ダイアログ再確認ガード ──
         # 1. 四隅テンプレ必須
         _has_dialog_frame = detect_dialog_corners(analysis_path) if analysis_path else False
@@ -240,7 +241,7 @@ def handle_dialog_screen(
                 "[PAGING_TIMEOUT_FALLBACK] ×未検出 → 右上固定タップ(%d,%d)でクローズ試行",
                 _close_x, _close_y)
             tap_device(_close_x, _close_y, state, "PAGING_TIMEOUT_CLOSE_TAP")
-        return _pg_result, 1.0
+        return _pg_result, CLOSE_ACTION_WAIT
     else:
         # "close": × ボタンを即タップ
         # ── 確認ダイアログ (OK+キャンセル共存) → × ではなく OK 優先 ──
@@ -254,7 +255,7 @@ def handle_dialog_screen(
             )
             tap_device(_dp_x, _dp_y, state, f"DIALOG_CONFIRM_OK '{_dlg_pos['text']}'")
             state.pre_popup_tap_count = 0
-            return "DIALOG_CONFIRM_OK", 1.0
+            return "DIALOG_CONFIRM_OK", CLOSE_ACTION_WAIT
         # ── OK のみダイアログ (キャンセルなし) → 2回で OK 直タップ ──
         if state.pre_popup_tap_count >= 2 and _dlg_pos and not _dlg_neg:
             _dp_x, _dp_y = _dlg_pos["center"]
@@ -265,7 +266,7 @@ def handle_dialog_screen(
             )
             tap_device(_dp_x, _dp_y_adj, state, f"DIALOG_OK_ONLY '{_dlg_pos['text']}'")
             state.pre_popup_tap_count = 0
-            return "DIALOG_OK_ONLY", 1.0
+            return "DIALOG_OK_ONLY", CLOSE_ACTION_WAIT
         # ── 4回連続失敗 → OK/確認ボタンを探してフォールバック ──
         if state.pre_popup_tap_count >= 4:
             _ok_ocr = has_any(ocr, ["OK", "確認", "決定", "おまかせ"])
@@ -277,7 +278,7 @@ def handle_dialog_screen(
                 )
                 tap_device(_ok_cx, _ok_cy, state, "DIALOG_OK_FALLBACK")
                 state.pre_popup_tap_count = 0
-                return "DIALOG_OK_FALLBACK", 1.0
+                return "DIALOG_OK_FALLBACK", CLOSE_ACTION_WAIT
             # OCR で OK 未検出 → ダイアログ下部中央をタップ
             _ok_fb_x, _ok_fb_y = roi_to_device(int(W * 0.7), int(H * 0.92), state.game_roi)
             logger.info(
@@ -286,13 +287,13 @@ def handle_dialog_screen(
             )
             tap_device(_ok_fb_x, _ok_fb_y, state, "DIALOG_BOTTOM_FALLBACK")
             state.pre_popup_tap_count = 0
-            return "DIALOG_BOTTOM_FALLBACK", 1.0
+            return "DIALOG_BOTTOM_FALLBACK", CLOSE_ACTION_WAIT
         logger.info(
             ">>> 【ダイアログ#0-DIALOG】%s(%d,%d) (試行%d回)",
             _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
         )
         tap_device(_dlg_x, _dlg_y, state, "DIALOG_CLOSE")
-        return "DIALOG_CLOSE", 1.0
+        return "DIALOG_CLOSE", CLOSE_ACTION_WAIT
 
 
 # ═══════════════════════════════════════════════════════════════════
