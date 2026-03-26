@@ -395,55 +395,65 @@ def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[
     return _take_screenshot_adb(path, retries=retries, min_bytes=min_bytes)
 
 
+def _get_scrcpy_window_size() -> tuple[int, int]:
+    """Quartz API で scrcpy ウィンドウの現在の表示サイズを取得。"""
+    if not _HAS_QUARTZ:
+        return 0, 0
+    try:
+        windows = _Quartz.CGWindowListCopyWindowInfo(
+            _Quartz.kCGWindowListOptionAll, _Quartz.kCGNullWindowID)
+        for w in windows:
+            if "scrcpy" not in w.get("kCGWindowOwnerName", "").lower():
+                continue
+            bounds = w.get("kCGWindowBounds", {})
+            bw = int(bounds.get("Width", 0))
+            bh = int(bounds.get("Height", 0))
+            if bw > 100 and bh > 100:
+                return bw, bh
+    except Exception:
+        pass
+    return 0, 0
+
+
 def manage_scrcpy() -> Optional[subprocess.Popen]:
-    """scrcpy を規定オプションで起動。不整合プロセスは Kill → 再起動。"""
+    """scrcpy を規定オプションで起動。ウィンドウサイズが不足している場合のみ再起動。"""
+    # 現在の scrcpy ウィンドウサイズで判定 (コマンドライン引数は見ない)
+    _MIN_W = 720
+    win_w, win_h = _get_scrcpy_window_size()
+    if win_w >= _MIN_W:
+        logger.info("[SCRCPY] 既存ウィンドウ検出 (%dx%d >= min %d) — 継続", win_w, win_h, _MIN_W)
+        return None
+
+    # scrcpy ウィンドウが見つからない or サイズ不足 → 既存プロセスを Kill して再起動
+    if win_w > 0:
+        logger.info("[SCRCPY] ウィンドウサイズ不足 (%dx%d < min %d) — 再起動", win_w, win_h, _MIN_W)
+    else:
+        logger.info("[SCRCPY] ウィンドウ未検出 — 新規起動")
+
+    # 既存 scrcpy プロセスを Kill
     try:
         ps = subprocess.run(
             ["/bin/ps", "aux"], capture_output=True, text=True, timeout=5
         )
+        for line in ps.stdout.splitlines():
+            if "scrcpy" not in line or "grep" in line:
+                continue
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            if "adb" in line and "scrcpy-server" in line:
+                continue
+            try:
+                pid = int(parts[1])
+                os.kill(pid, signal.SIGTERM)
+                logger.info("[SCRCPY] 既存プロセス Kill PID=%d", pid)
+            except (ValueError, OSError):
+                pass
     except Exception as e:
         logger.warning("[SCRCPY] ps aux 失敗: %s", e)
-        return None
 
-    # 期待する --max-size を事前計算 (ループ外で1回だけ)
+    # 新規起動
     _expected_args = _build_scrcpy_args(SCRCPY_DEVICE)
-    _expected_ms = _expected_args[_expected_args.index("--max-size") + 1]
-
-    conforming_pid = None
-    for line in ps.stdout.splitlines():
-        if "scrcpy" not in line or "grep" in line:
-            continue
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        if "adb" in line and "scrcpy-server" in line:
-            continue
-        try:
-            pid = int(parts[1])
-        except ValueError:
-            continue
-        has_device = SCRCPY_DEVICE in line
-        has_correct_size = f"--max-size {_expected_ms}" in line
-        if has_device and has_correct_size:
-            conforming_pid = pid
-            logger.info("[SCRCPY] 規定プロセス検出 PID=%d — 継続", pid)
-        else:
-            logger.info("[SCRCPY] 不整合プロセス Kill PID=%d (cmdline: ...%s)",
-                        pid, line[-80:])
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except OSError:
-                pass
-
-    if conforming_pid is not None:
-        # プロセスが本当に生存しているか確認
-        try:
-            os.kill(conforming_pid, 0)  # シグナル0 = 生存確認のみ
-            return None
-        except OSError:
-            logger.warning("[SCRCPY] PID=%d は既に終了 — 再起動します", conforming_pid)
-            # fall through to launch new process
-
     try:
         proc = subprocess.Popen(
             _expected_args,
