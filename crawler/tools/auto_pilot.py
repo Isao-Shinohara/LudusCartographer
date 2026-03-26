@@ -634,12 +634,23 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # ── チェッカー柄歩行モード: 一度入ったら抜けるまで最優先 ──
     # MOVIE 判定より先にチェックし、不要な MOVIE 待機を回避する
     # post_download 中は動画チェッカー柄の可能性があるため無視
+    _CHECKER_EXIT_PATIENCE = 30  # この回数チェッカー床なしが続いたらモード解除 (~15秒)
     if getattr(state, "_in_checker_walk", False) and not state.post_download:
         if _is_walk_swipe_ready(img_path, state):
+            state._checker_miss_count = 0
             return "TUTORIAL_WALK"
-        # チェッカー柄が検出されなくなった → モード解除
-        state._in_checker_walk = False
-        logger.info("[SCENE_EARLY] チェッカー柄歩行モード解除 (床検出なし)")
+        # チェッカー床なし → カウント。画面遷移中は一時的に消えるので即解除しない
+        _miss = getattr(state, "_checker_miss_count", 0) + 1
+        state._checker_miss_count = _miss
+        if _miss >= _CHECKER_EXIT_PATIENCE:
+            state._in_checker_walk = False
+            state._checker_miss_count = 0
+            logger.info("[SCENE_EARLY] チェッカー柄歩行モード解除 (床未検出 %d回)", _miss)
+        else:
+            # モード維持中: MOVIE判定をスキップして UNKNOWN を返す
+            logger.debug("[SCENE_EARLY] チェッカー歩行モード維持 (床未検出 %d/%d)",
+                         _miss, _CHECKER_EXIT_PATIENCE)
+            return "UNKNOWN"
 
     # ── MOVIE 継続: phash が安定するまで即 MOVIE を返す ──
     # 動画再生中 (dist >= 3) はフレームが変化するので MOVIE 維持。
