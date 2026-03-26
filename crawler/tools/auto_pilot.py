@@ -932,9 +932,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist,
                                 phash_moving_count=state.phash_moving_count)
     if _movie.is_movie:
-        # ADV→MOVIE 誤遷移防止: 前回 ADV なら ADV テンプレが消えるまで MOVIE 遷移しない
+        # ADV→MOVIE 誤遷移防止: ADV テンプレが見えている間は MOVIE 遷移しない
+        # current_scene に依存しない (UNKNOWN 状態でも ADV テンプレがあれば防止)
         _ADV_TO_MOVIE_PATIENCE = 3  # ~2秒
-        if state.current_scene == "ADV" and not _movie.has_skip_btn:
+        if not _movie.has_skip_btn:
             _adv_miss = getattr(state, "_adv_to_movie_miss", 0)
             # ADV テンプレ (↓, >>, AUTO) のいずれかが見えるか
             _adv_toolbar_roi = ADV_TOOLBAR_ROI
