@@ -1344,7 +1344,7 @@ def detect_dialog_frame_and_nav(
 
         def _has_page_arrow(img_full, _H, _W) -> Optional[tuple[int, int]]:
             """右サイドにページング矢印 (▷) が存在するか確認。
-            PRIMARY: テンプレートマッチング (dialog_nav_right)
+            PRIMARY: テンプレートマッチング (tutorial_dialog_next)
             FALLBACK: 輝度ベース検出 (右端6% × 中央帯)
             """
             # PRIMARY: テンプレートマッチング
@@ -1352,7 +1352,7 @@ def detect_dialog_frame_and_nav(
                 _nav_roi = (int(_W * 0.90), int(_H * 0.25),
                             int(_W * 0.10), int(_H * 0.50))
                 _nav_m = ASSET_MANAGER.match_single(
-                    "dialog_nav_right", img_path, roi=_nav_roi)
+                    "tutorial_dialog_next", img_path, roi=_nav_roi)
                 if _nav_m and _nav_m[2] >= 0.65:
                     logger.debug("[Dialog▷] テンプレート検出: (%d,%d) score=%.3f",
                                  _nav_m[0], _nav_m[1], _nav_m[2])

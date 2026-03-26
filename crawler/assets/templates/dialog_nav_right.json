@@ -1,6 +1,0 @@
-{
-  "action": "DIALOG_NAV_RIGHT",
-  "threshold": 0.60,
-  "edge_weight": 0.7,
-  "note": "ダイアログ右ページング矢印(▷)。edge_weight=0.7でエッジマッチ重視 (背景装飾での偽陽性防止)。TP=0.69, FP=0.55 (2026-03-13測定)。"
-}
