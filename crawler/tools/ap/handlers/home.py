@@ -103,16 +103,9 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
             logger.info(">>> ホーム: %s(%.2f) (%d,%d) 検出 → チュートリアル中",
                         _ft_name_found, _ft_rot[2], _ft_rot[0], _ft_rot[1])
 
-    # 金枠検出 — テンプレートマッチのみ (HSV は装飾UIで偽陽性が多い)
-    _home_gold_tmpl = ASSET_MANAGER.match_single("gold_frame_small", analysis_path) if analysis_path else None
-    # 位置ガード: 左上端やフッターナビ領域の偽陽性を除外
-    if _home_gold_tmpl:
-        _gx, _gy = _home_gold_tmpl[0], _home_gold_tmpl[1]
-        if _gx < 60 and _gy < 60:
-            logger.debug(">>> ホーム: gold_frame_small (%d,%d) を左上端のため除外", _gx, _gy)
-            _home_gold_tmpl = None
-    # HSV 金枠はチュートリアル証拠判定には使わない (タップ候補としてのみ後で使う)
+    # 金枠検出 — HSV で検出
     _home_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
+    _home_gold_tmpl = _home_gold  # チュートリアル証拠として使用
 
     if _has_hand:
         _hx, _hy = _hand_match[0], _hand_match[1]
@@ -120,8 +113,7 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     else:
         _home_blobs = []
 
-    # チュートリアル証拠: 指テンプレ or gold_frame_small テンプレのみ
-    # HSV 金枠 (_home_gold) はホーム画面の装飾金色UIで偽陽性が出るため除外
+    # チュートリアル証拠: 指テンプレ or HSV金枠
     # 追加ガード: チュートリアル証拠があっても暗転オーバーレイがなければ偽陽性
     # (チュートリアル中は対象以外が暗くなる。完了後は暗転しない)
     _has_overlay = detect_tutorial_overlay(analysis_path) if analysis_path else False
@@ -131,7 +123,7 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
             _has_hand = False
             _home_blobs = []
         if _home_gold_tmpl is not None:
-            logger.info(">>> ホーム: gold_frame_small 検出だが暗転なし → 偽陽性として無視")
+            logger.info(">>> ホーム: 金枠検出だが暗転なし → 偽陽性として無視")
             _home_gold_tmpl = None
     _has_tutorial_evidence = _has_hand or (_home_gold_tmpl is not None)
 

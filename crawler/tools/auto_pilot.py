@@ -836,8 +836,8 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # 金枠単独だと動画装飾で偽陽性 → 指テンプレとの共検出を必須化
     # ただしガチャ演出 (SKIP + 暗背景) は金枠装飾があっても GACHA として通す
     if img_path and not state.download_active:
-        _gf_m = ASSET_MANAGER.match_single("gold_frame_small", img_path)
-        if _gf_m and _gf_m[2] >= 0.70:
+        _gf_hsv = detect_tutorial_gold_button_tap(img_path, right_half_only=False)
+        if _gf_hsv:
             # ガチャ演出チェック: SKIP + 暗背景 + 光の玉 → GACHA (金枠スキップしない)
             if is_gacha_scene(img_path):
                 return "GACHA"
