@@ -1169,7 +1169,6 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
 _DIALOG_CLOSE_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "tutorial_dialog_close.png"
 _DIALOG_NEXT_TEMPLATE  = _CRAWLER_ROOT / "assets" / "templates" / "tutorial_dialog_next.png"
 _DIALOG_CORNER_TL      = _CRAWLER_ROOT / "assets" / "templates" / "dialog_corner_tl.png"
-_DIALOG_CORNER_BL      = _CRAWLER_ROOT / "assets" / "templates" / "dialog_corner_bl.png"
 
 
 def detect_dialog_nav(img_path: Path,
@@ -1233,8 +1232,9 @@ def detect_dialog_nav(img_path: Path,
 
 
 def detect_dialog_corners(img_path: Path) -> bool:
-    """ダイアログ四隅テンプレ (TL+BL) の両方検出 + X座標一致で判定。
+    """ダイアログ四隅テンプレ (TL の反転で BL も検出) + X座標一致で判定。
 
+    dialog_corner_tl を上下反転して BL 用テンプレートとしても使う。
     全てのダイアログ判定で共通利用する。
     """
     try:
@@ -1244,14 +1244,14 @@ def detect_dialog_corners(img_path: Path) -> bool:
         _H, _W = img.shape[:2]
         _CORNER_THRESHOLD = 0.65
         _X_TOLERANCE = int(_W * 0.15)
+        if not _DIALOG_CORNER_TL.exists():
+            return False
+        _tpl_tl = imread_cached(_DIALOG_CORNER_TL)
+        if _tpl_tl is None:
+            return False
+        _tpl_bl = cv2.flip(_tpl_tl, 0)  # 上下反転で BL 用
         _corners = {}
-        for _tpl_path in (_DIALOG_CORNER_TL, _DIALOG_CORNER_BL):
-            if not _tpl_path.exists():
-                continue
-            _tpl = imread_cached(_tpl_path)
-            if _tpl is None:
-                continue
-            _key = "tl" if _tpl_path == _DIALOG_CORNER_TL else "bl"
+        for _key, _tpl in (("tl", _tpl_tl), ("bl", _tpl_bl)):
             if _key == "tl":
                 _roi = img[: _H // 2, : _W // 2]
                 _oy = 0

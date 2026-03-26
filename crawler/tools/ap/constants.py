@@ -80,8 +80,7 @@ _SINGLE_ONLY: frozenset = frozenset([
     "tutorial_dialog_close",  # カード表示画面で偽陽性(0.93)するため一般マッチから除外
     "gold_frame_small",       # ホーム画面UIで偽陽性(0.81-0.85)するため match_single 専用
     "nav_back",               # 戻るボタン用、match_single 専用
-    "dialog_corner_tl",       # ダイアログ検出専用
-    "dialog_corner_bl",       # ダイアログ検出専用
+    "dialog_corner_tl",       # ダイアログ検出専用 (反転で BL も兼用)
 ])
 
 # ─── ダイアログ・ファースト: 検知キーワード一覧 ───────────────────────────────
