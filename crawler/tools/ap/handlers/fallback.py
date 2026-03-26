@@ -30,6 +30,24 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     H = ctx.H
     analysis_path = ctx.analysis_path
 
+    # ─── シーン判定フラグ ───
+    from tools.ap.image_proc import detect_dialog_corners as _ddc_fb
+    _is_dialog = _ddc_fb(analysis_path) if analysis_path else False
+    _has_close_btn = False
+    _close_btn_pos = None
+    if analysis_path:
+        _close_m = ASSET_MANAGER.match_single("close_btn", analysis_path)
+        if _close_m and _close_m[2] >= 0.90:
+            _has_close_btn = True
+            _close_btn_pos = (_close_m[0], _close_m[1])
+
+    # ─── 非ダイアログ画面の×ボタン: メモリア詳細等 ───
+    if _has_close_btn and not _is_dialog:
+        logger.info(">>> ×ボタン検出 (非ダイアログ) → タップ (%d,%d)",
+                    _close_btn_pos[0], _close_btn_pos[1])
+        tap_device(_close_btn_pos[0], _close_btn_pos[1], state, "CLOSE_BTN_SCREEN")
+        return "CLOSE_BTN_SCREEN", 1.0
+
     # ─── 閉じるボタン ───
     close_match = has_any(ocr, ["閉じる", "Close", "CLOSE", "とじる"])
     if close_match:
@@ -189,17 +207,6 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         logger.info(">>> ポップアップ '%s' (%d,%d)", bonus_match["text"], cx, cy)
         tap_device(cx, cy, state, "POPUP_TAP")
         return "POPUP_TAP", 1.0
-
-    # ─── ×ボタン検出: ダイアログ以外の画面でも×が見えたら閉じる ───
-    # メモリア詳細等、ダイアログ角装飾がない画面の×ボタン対応
-    if analysis_path:
-        from tools.ap.image_proc import ASSET_MANAGER as _AM_fb
-        _close_fb = _AM_fb.match_single("close_btn", analysis_path)
-        if _close_fb and _close_fb[2] >= 0.90:
-            logger.info(">>> ×ボタン検出 (score=%.2f) → タップ (%d,%d)",
-                        _close_fb[2], _close_fb[0], _close_fb[1])
-            tap_device(_close_fb[0], _close_fb[1], state, "CLOSE_BTN_FALLBACK")
-            return "CLOSE_BTN_FALLBACK", 1.0
 
     # ─── フォールバック: 何も見つからない ───
     logger.info(">>> 画面が安定するまで待機 (OCR %d件)", len(ocr))
