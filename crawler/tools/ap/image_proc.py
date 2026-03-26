@@ -1118,9 +1118,12 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
         if not candidates:
             return None
 
-        # 白領域が3個以上 → UIリスト画面 (お知らせ一覧等) の誤検出、吹き出しではない
-        if len(candidates) >= 3:
-            logger.debug("[MINI_CONV] 白領域 %d 個 → UIリスト画面として棄却", len(candidates))
+        # UI画面ガード: ×ボタン (close_btn_cross) が検出された画面は
+        # お知らせ一覧・ダイアログ等のUI画面であり、ミニ会話の吹き出しではない
+        _close_btn = ASSET_MANAGER.match_single("close_btn_cross", img_path)
+        if _close_btn and _close_btn[2] >= 0.75:
+            logger.debug("[MINI_CONV] ×ボタン検出 (score=%.2f) → UI画面として棄却",
+                         _close_btn[2])
             return None
 
         # 最も明るい = アクティブ話者
