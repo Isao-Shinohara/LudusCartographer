@@ -242,33 +242,20 @@ def detect_white_hand_pointer(
     img_path: Path, threshold: float = 0.85
 ) -> Optional[tuple[int, int, float, str]]:
     """
-    白いハンドポインタ（home_nav_finger / home_nav_finger_up）をテンプレートマッチングで検出。
+    指アイコン（tutorial_hand_pointer）をテンプレートマッチングで検出。
     Returns: (cx, cy, score, direction) or None
-        direction: "down" (home_nav_finger) / "up" (home_nav_finger_up)
+        direction: "down" (固定)
     """
     try:
         img = imread_cached(img_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             return None
-        templates_dir = _CRAWLER_ROOT / "assets" / "templates"
-        best: Optional[tuple[int, int, float, str]] = None
-        _dir_map = {"home_nav_finger": "down", "home_nav_finger_up": "up"}
-        for name in ("home_nav_finger", "home_nav_finger_up"):
-            tpl_path = templates_dir / f"{name}.png"
-            if not tpl_path.exists():
-                continue
-            tmpl = imread_cached(tpl_path, cv2.IMREAD_GRAYSCALE)
-            if tmpl is None or tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
-                continue
-            res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(res)
-            if max_val >= threshold and (best is None or max_val > best[2]):
-                h, w = tmpl.shape
-                best = (max_loc[0] + w // 2, max_loc[1] + h // 2, max_val, _dir_map[name])
-        if best:
-            logger.info("[WHITE_HAND] 白ハンドポインタ検出 (%d,%d) score=%.3f dir=%s",
-                        best[0], best[1], best[2], best[3])
-        return best
+        _m = ASSET_MANAGER.match_single("tutorial_hand_pointer", img_path)
+        if _m and _m[2] >= threshold:
+            logger.info("[WHITE_HAND] 指アイコン検出 (%d,%d) score=%.3f",
+                        _m[0], _m[1], _m[2])
+            return (_m[0], _m[1], _m[2], "down")
+        return None
     except Exception as e:
         logger.debug("detect_white_hand_pointer error: %s", e)
         return None
@@ -2338,53 +2325,6 @@ class AssetManager:
         except Exception:
             pass
         return None
-
-    # ─── 回転指テンプレマッチ ───
-    _FINGER_ROTATIONS: list[tuple[str, Optional[int]]] = [
-        ("up", None),                          # hand_pointer そのまま (上向き)
-        ("down", cv2.ROTATE_180),
-        ("left", cv2.ROTATE_90_COUNTERCLOCKWISE),
-        ("right", cv2.ROTATE_90_CLOCKWISE),
-    ]
-
-    def match_finger_rotated(
-        self, screenshot_path: Path,
-        threshold: float = 0.70,
-        roi: Optional[tuple[int, int, int, int]] = None,
-    ) -> Optional[tuple[int, int, float, str]]:
-        """tutorial_hand_pointer を4方向回転してマッチング。
-
-        Returns: (cx, cy, score, direction) or None
-            direction: "up" / "down" / "left" / "right" / "" (方向不定フォールバック)
-        """
-        data = self._templates.get("tutorial_hand_pointer")
-        if data is None:
-            return None
-        img = imread_cached(screenshot_path, cv2.IMREAD_GRAYSCALE)
-        if img is None:
-            return None
-        _roi_ox, _roi_oy = 0, 0
-        if roi is not None:
-            _rx, _ry, _rw, _rh = roi
-            img = img[_ry:_ry + _rh, _rx:_rx + _rw]
-            _roi_ox, _roi_oy = _rx, _ry
-        base_tmpl = data["img"]
-        best: Optional[tuple[int, int, float, str]] = None
-        for direction, rot_code in self._FINGER_ROTATIONS:
-            tmpl = cv2.rotate(base_tmpl, rot_code) if rot_code is not None else base_tmpl
-            if tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
-                continue
-            try:
-                res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, max_loc = cv2.minMaxLoc(res)
-                if max_val >= threshold and (best is None or max_val > best[2]):
-                    h, w = tmpl.shape
-                    cx = max_loc[0] + w // 2 + _roi_ox
-                    cy = max_loc[1] + h // 2 + _roi_oy
-                    best = (cx, cy, max_val, direction)
-            except Exception:
-                pass
-        return best
 
     def match_best_in_roi(self, screenshot_path: Path,
                          roi: tuple[int, int, int, int],

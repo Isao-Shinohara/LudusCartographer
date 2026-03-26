@@ -827,29 +827,17 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             if is_gacha_scene(img_path):
                 return "GACHA"
             # 指テンプレ共検出: 金枠だけでは動画装飾の偽陽性があるため
-            _finger_rot = ASSET_MANAGER.match_finger_rotated(img_path)
-            if _finger_rot:
-                _fm = _finger_rot  # (cx, cy, score, direction)
+            _finger_rot = ASSET_MANAGER.match_single("tutorial_hand_pointer", img_path)
+            if _finger_rot and _finger_rot[2] >= 0.70:
+                _fm = _finger_rot  # (cx, cy, score)
                 # ダイアログ画面では OCR パスに委譲 (OK ボタン等を正確に検出)
                 from tools.ap.image_proc import detect_dialog_corners as _ddc_tt
                 if _ddc_tt(img_path):
                     logger.info("[SCENE_EARLY] 金枠+指テンプレ+ダイアログ四隅 → OCRに委譲")
                     return "UNKNOWN"
-                # 指先位置を直接タップ (find_gold_frame_near は装飾誤マッチが多いため不使用)
-                # 指テンプレ中心から指す方向にオフセット = 指先 ≒ ターゲット
-                _FINGER_TIP_OFFSET = 30  # テンプレ半幅 (解析座標)
                 _tip_x, _tip_y = _fm[0], _fm[1]
-                _finger_dir = _fm[3]
-                if _finger_dir == "up":
-                    _tip_y -= _FINGER_TIP_OFFSET
-                elif _finger_dir == "down":
-                    _tip_y += _FINGER_TIP_OFFSET
-                elif _finger_dir == "left":
-                    _tip_x -= _FINGER_TIP_OFFSET
-                elif _finger_dir == "right":
-                    _tip_x += _FINGER_TIP_OFFSET
                 state._tutorial_tap_target = (_tip_x, _tip_y)
-                state._tutorial_tap_dir = _finger_dir
+                state._tutorial_tap_dir = ""
                 # 新しい指検出 → カウンタリセット (前回と大きく異なる位置なら再試行)
                 # ±10px 以内は同一位置とみなす (指アイコンのアニメーション揺れ対策)
                 _prev_tt = getattr(state, "_prev_tutorial_tap_target", None)
@@ -859,8 +847,8 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 if not _same_pos:
                     state._tutorial_tap_attempt = 0
                 state._prev_tutorial_tap_target = (_tip_x, _tip_y)
-                logger.info("[SCENE_EARLY] 金枠+指テンプレ(%s) → TUTORIAL_TAP 指先(%d,%d)",
-                            _finger_dir or "unknown", _tip_x, _tip_y)
+                logger.info("[SCENE_EARLY] 指テンプレ → TUTORIAL_TAP (%d,%d)",
+                            _tip_x, _tip_y)
                 return "TUTORIAL_TAP"
 
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
@@ -995,11 +983,11 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
                 state.phash_moving_count = 0
                 state._movie_stable_count = 0
                 return False  # MOVIE ハンドラ脱出 → フルOCRへ
-        # 指テンプレ回転マッチ (4方向一括)
-        _esc_finger = _AM_movie_esc.match_finger_rotated(img_path, threshold=0.65)
+        # 指テンプレマッチ
+        _esc_finger = _AM_movie_esc.match_single("tutorial_hand_pointer", img_path)
         if _esc_finger:
-            logger.info("[MOVIE_ESCAPE] phash安定+指テンプレ %s(%.2f) → MOVIE脱出",
-                        _esc_finger[3], _esc_finger[2])
+            logger.info("[MOVIE_ESCAPE] phash安定+指テンプレ(%.2f) → MOVIE脱出",
+                        _esc_finger[2])
             state.movie_static_count = 0
             state.movie_wait_consecutive = 0
             state._movie_low_dist_count = 0
@@ -1104,7 +1092,7 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     _rapid_double = False
 
     # ── 共通: 指テンプレートマッチ検出 (4方向回転) ──
-    _rapid_finger_rot = ASSET_MANAGER.match_finger_rotated(analysis_path)
+    _rapid_finger_rot = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path)
     _rapid_blobs = []
     if _rapid_finger_rot and _rapid_finger_rot[2] >= 0.70:
         _rf_cx, _rf_cy = _rapid_finger_rot[0], _rapid_finger_rot[1]
@@ -1120,10 +1108,10 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     # ただしチュートリアル指テンプレが左側で検出された場合は全画面探索を許可
     # (必殺技チュートリアル等で左側キャラカードをタップさせるケース)
     _battle_rho = True  # right_half_only default
-    _fm = _rapid_finger_rot  # 指テンプレ回転マッチ結果
+    _fm = _rapid_finger_rot  # 指テンプレマッチ結果 (cx, cy, score)
     if _fm and _fm[2] >= 0.70 and _fm[0] < ANALYSIS_W * 0.5:
         _battle_rho = False
-        logger.info("[BATTLE] 指テンプレ左側検出 (%s, x=%d) → 金枠全画面探索", _fm[3], _fm[0])
+        logger.info("[BATTLE] 指テンプレ左側検出 (x=%d) → 金枠全画面探索", _fm[0])
     _gold_tap = detect_tutorial_gold_button_tap(
         analysis_path, right_half_only=_battle_rho, overlay_mode=False,
         skip_upper_filter=True)
@@ -1133,9 +1121,8 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     # 指テンプレ検出済み + gold_button未検出 → 指テンプレ位置から金枠を探索
     # 指テンプレ名から方向を取得し、指の指す先の金枠のみ採用
     if not _rapid_action and not _battle_rho and _fm is not None:
-        _finger_dir = _fm[3]  # direction from match_finger_rotated
         _gf_from_finger = find_gold_frame_near(
-            analysis_path, _fm[0], _fm[1], search_radius=400, direction=_finger_dir)
+            analysis_path, _fm[0], _fm[1], search_radius=400)
         if _gf_from_finger is not None:
             _rapid_tx, _rapid_ty = _gf_from_finger[0], _gf_from_finger[1]
             _rapid_action = "BATTLE_RAPID_GOLD_FINGER_FB"
@@ -2940,8 +2927,8 @@ def main():
             _rapid_action = ""
             _rapid_double = False
 
-            # ── 共通: 指テンプレートマッチ検出 (Phase 0 / Phase B で共用, 4方向回転) ──
-            _rapid_finger_rot = ASSET_MANAGER.match_finger_rotated(analysis_path)
+            # ── 共通: 指テンプレートマッチ検出 (Phase 0 / Phase B で共用) ──
+            _rapid_finger_rot = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path)
             _rapid_blobs = []
             if _rapid_finger_rot and _rapid_finger_rot[2] >= 0.70:
                 _rf_cx, _rf_cy = _rapid_finger_rot[0], _rapid_finger_rot[1]

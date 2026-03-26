@@ -95,13 +95,13 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     _has_hand = False
     _ft_name_found = ""
     if analysis_path:
-        _ft_rot = ASSET_MANAGER.match_finger_rotated(analysis_path)
-        if _ft_rot:
-            _hand_match = _ft_rot  # (cx, cy, score, direction)
+        _ft_m = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path)
+        if _ft_m and _ft_m[2] >= 0.70:
+            _hand_match = _ft_m  # (cx, cy, score)
             _has_hand = True
-            _ft_name_found = f"finger_{_ft_rot[3]}" if _ft_rot[3] else "hand_pointer"
-            logger.info(">>> ホーム: %s(%.2f) (%d,%d) 検出 → チュートリアル中",
-                        _ft_name_found, _ft_rot[2], _ft_rot[0], _ft_rot[1])
+            _ft_name_found = "tutorial_hand_pointer"
+            logger.info(">>> ホーム: hand_pointer(%.2f) (%d,%d) 検出 → チュートリアル中",
+                        _ft_m[2], _ft_m[0], _ft_m[1])
 
     # 金枠検出 — テンプレートマッチのみ (HSV は装飾UIで偽陽性が多い)
     _home_gold_tmpl = ASSET_MANAGER.match_single("gold_frame_small", analysis_path) if analysis_path else None
