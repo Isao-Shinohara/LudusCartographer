@@ -537,20 +537,35 @@ def _battle_fast_check(analysis_path: Path,
     return "", 0.0
 
 
-def _check_battle_templates(img_path: Path, asset_mgr) -> Optional[tuple]:
-    """バトルテンプレ + char_icon 二重確認の共通ロジック。
+def _detect_battle_char_circles(img_path: Path) -> int:
+    """左下キャラアイコン領域の円形検出数を返す。"""
+    try:
+        img = imread_cached(img_path)
+        if img is None:
+            return 0
+        _H, _W = img.shape[:2]
+        _roi = img[int(_H * 0.70):_H, 0:int(_W * 0.30)]
+        _gray = cv2.cvtColor(_roi, cv2.COLOR_BGR2GRAY)
+        _circles = cv2.HoughCircles(_gray, cv2.HOUGH_GRADIENT, 1, 30,
+                                     param1=80, param2=30, minRadius=15, maxRadius=40)
+        return len(_circles[0]) if _circles is not None else 0
+    except Exception:
+        return 0
 
-    Returns: (btn_name, btn_score, char_icon_score) or None
+
+def _check_battle_templates(img_path: Path, asset_mgr) -> Optional[tuple]:
+    """バトルテンプレ + 左下キャラアイコン円形検出の二重確認。
+
+    Returns: (btn_name, btn_score, circle_count) or None
     """
     _battle_roi = BATTLE_BTN_ROI
-    _char_icon_roi = (0, int(ANALYSIS_H * 0.80), int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))
     for _btn in ("battle_normal_attack", "battle_skill", "battle_special"):
         _bm = asset_mgr.match_single(_btn, img_path, roi=_battle_roi)
         if _bm and _bm[2] >= 0.60:
-            _ci = asset_mgr.match_single("battle_char_icon", img_path, roi=_char_icon_roi)
-            if _ci and _ci[2] >= 0.75:
-                return (_btn, _bm[2], _ci[2])
-            logger.info("[BATTLE_CHECK] %s(%.2f) だがchar_icon未検出 → 棄却", _btn, _bm[2])
+            _n_circles = _detect_battle_char_circles(img_path)
+            if _n_circles >= 2:
+                return (_btn, _bm[2], _n_circles)
+            logger.info("[BATTLE_CHECK] %s(%.2f) だが円形検出数=%d → 棄却", _btn, _bm[2], _n_circles)
     return None
 
 
