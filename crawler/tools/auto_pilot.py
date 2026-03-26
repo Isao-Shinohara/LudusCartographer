@@ -932,6 +932,35 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist,
                                 phash_moving_count=state.phash_moving_count)
     if _movie.is_movie:
+        # ADV→MOVIE 誤遷移防止: 前回 ADV なら ADV テンプレが消えるまで MOVIE 遷移しない
+        _ADV_TO_MOVIE_PATIENCE = 3  # ~2秒
+        if state.current_scene == "ADV" and not _movie.has_skip_btn:
+            _adv_miss = getattr(state, "_adv_to_movie_miss", 0)
+            # ADV テンプレ (↓, >>, AUTO) のいずれかが見えるか
+            _adv_toolbar_roi = ADV_TOOLBAR_ROI
+            _has_any_adv = False
+            for _tpl in ("adv_next_btn", "adv_icon_ff", "adv_icon_auto"):
+                _m = ASSET_MANAGER.match_single(_tpl, img_path,
+                      roi=_adv_toolbar_roi if _tpl != "adv_next_btn" else None)
+                if _m and _m[2] >= 0.55:
+                    _has_any_adv = True
+                    break
+            if _has_any_adv:
+                state._adv_to_movie_miss = 0
+                logger.debug("[SCENE_EARLY] ADV→MOVIE候補だが ADV テンプレ検出 → ADV 維持")
+                return "UNKNOWN"  # ADV 維持 (OCR パスへ)
+            else:
+                state._adv_to_movie_miss = _adv_miss + 1
+                if _adv_miss + 1 < _ADV_TO_MOVIE_PATIENCE:
+                    logger.debug("[SCENE_EARLY] ADV→MOVIE候補 ADV テンプレ未検出 (%d/%d) → 待機",
+                                 _adv_miss + 1, _ADV_TO_MOVIE_PATIENCE)
+                    return "UNKNOWN"
+                # patience 超過 → 本当に MOVIE
+                state._adv_to_movie_miss = 0
+                logger.info("[SCENE_EARLY] ADV→MOVIE: ADV テンプレ %d回未検出 → MOVIE 確定",
+                            _ADV_TO_MOVIE_PATIENCE)
+        else:
+            state._adv_to_movie_miss = 0
         if _movie.has_skip_btn:
             logger.info("[SCENE_EARLY] Movie検出 (conf=%.2f, ⏭あり) → MOVIE", _movie.confidence)
         else:
@@ -939,6 +968,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                         _movie.confidence, state.phash_moving_count)
         return "MOVIE"
 
+    state._adv_to_movie_miss = 0
     return "UNKNOWN"
 
 
