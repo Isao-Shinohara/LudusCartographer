@@ -2610,6 +2610,7 @@ def main():
             _skip_rapid = True  # BATTLE ハンドラがフォールスルー → OCR へ直行
 
         elif _early_scene == "ADV":
+            state.current_scene = "ADV"
             # ADV_EARLY スタック脱出: 15回連続ハンドル成功 → OCR フォールスルー
             _ADV_EARLY_STALL = 15
             if state.adv_early_consecutive >= _ADV_EARLY_STALL:
