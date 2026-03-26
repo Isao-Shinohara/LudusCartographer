@@ -528,91 +528,64 @@ def detect_active_battle_char(
 
 
 def find_gold_frame_near(img_path: Path, cx: int, cy: int,
-                         search_radius: int = 150,
+                         search_radius: int = 200,
                          direction: str = "") -> Optional[tuple[int, int, int, int]]:
     """
-    指アイコン中心(cx,cy)の近傍内で金枠（装飾ボタン枠）を検索。
-    gold_frame_small テンプレートの複数コーナーを検出し、その中心を返す。
+    指アイコン中心(cx,cy)の近傍内で金枠（装飾ボタン枠）をHSVで検索。
 
-    direction: "up"/"down"/"left"/"right" を指定すると、指の向き方向の
-               コーナーのみでフィルタして中心を計算する。空文字は全方向。
+    指の近傍に限定するため偽陽性リスクが低く、extent 制限を緩和できる。
+    direction: "up"/"down"/"left"/"right" で指先方向に探索範囲をシフト。
     Returns: (frame_cx, frame_cy, frame_w, frame_h) or None
     """
     try:
-        _tpl_data = ASSET_MANAGER._templates.get("gold_frame_small")
-        if not _tpl_data:
-            return None
-        _tpl = _tpl_data["img"]
-        _th, _tw = _tpl.shape[:2]
-
         _img = imread_cached(img_path)
         if _img is None:
             return None
-        _gray = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY) if len(_img.shape) == 3 else _img
+        _H, _W = _img.shape[:2]
 
-        # 探索 ROI: 指の近傍
-        _x1 = max(0, cx - search_radius)
-        _y1 = max(0, cy - search_radius)
-        _x2 = min(_gray.shape[1], cx + search_radius)
-        _y2 = min(_gray.shape[0], cy + search_radius)
-        _roi = _gray[_y1:_y2, _x1:_x2]
-        if _roi.shape[0] < _th or _roi.shape[1] < _tw:
+        # 探索 ROI: 指の近傍 (direction で指先方向にシフト)
+        _ox, _oy = 0, 0
+        if direction == "down":
+            _oy = search_radius // 2
+        elif direction == "up":
+            _oy = -search_radius // 2
+        elif direction == "right":
+            _ox = search_radius // 2
+        elif direction == "left":
+            _ox = -search_radius // 2
+        _x1 = max(0, cx + _ox - search_radius)
+        _y1 = max(0, cy + _oy - search_radius)
+        _x2 = min(_W, cx + _ox + search_radius)
+        _y2 = min(_H, cy + _oy + search_radius)
+        _roi = _img[_y1:_y2, _x1:_x2]
+        if _roi.shape[0] < 30 or _roi.shape[1] < 30:
             return None
 
-        _result = cv2.matchTemplate(_roi, _tpl, cv2.TM_CCOEFF_NORMED)
-        _THRESHOLD = 0.72
-        _locs = np.where(_result >= _THRESHOLD)
-        if len(_locs[0]) == 0:
+        # HSV 金色検出
+        _hsv = cv2.cvtColor(_roi, cv2.COLOR_BGR2HSV)
+        _mask = cv2.inRange(_hsv, np.array([15, 60, 140]), np.array([50, 255, 255]))
+        _k = np.ones((7, 7), np.uint8)
+        _mask = cv2.morphologyEx(_mask, cv2.MORPH_CLOSE, _k)
+        _mask = cv2.dilate(_mask, _k, iterations=1)
+
+        _contours, _ = cv2.findContours(_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not _contours:
             return None
 
-        # NMS: 30px 以内の点をクラスタリングし、各クラスタの最高スコア点を採用
-        _points = sorted(zip(_locs[1].tolist(), _locs[0].tolist(),
-                             [float(_result[y, x]) for y, x in zip(_locs[0], _locs[1])]),
-                         key=lambda p: -p[2])
-        _clusters = []
-        _used = set()
-        for i, (px, py, ps) in enumerate(_points):
-            if i in _used:
-                continue
-            _used.add(i)
-            for j, (qx, qy, _) in enumerate(_points):
-                if j not in _used and abs(px - qx) < 30 and abs(py - qy) < 30:
-                    _used.add(j)
-            _clusters.append((_x1 + px + _tw // 2, _y1 + py + _th // 2, ps))
-
-        if not _clusters:
+        # 最大輪郭を金枠候補とする (指近傍なので偽陽性リスク低い)
+        _best = max(_contours, key=cv2.contourArea)
+        _area = cv2.contourArea(_best)
+        if _area < 2000:
             return None
+        _bx, _by, _bw, _bh = cv2.boundingRect(_best)
+        # 元画像座標に変換
+        _frame_cx = _x1 + _bx + _bw // 2
+        _frame_cy = _y1 + _by + int(_bh * 0.6)  # 下寄り (指の金色が上端を押し上げるため)
+        _frame_w = _bw
+        _frame_h = _bh
 
-        # 方向フィルタ: 指の向き方向のコーナーのみに絞る
-        if direction:
-            _filtered = []
-            for _c in _clusters:
-                _ccx, _ccy = _c[0], _c[1]
-                if direction == "down" and _ccy >= cy:
-                    _filtered.append(_c)
-                elif direction == "up" and _ccy <= cy:
-                    _filtered.append(_c)
-                elif direction == "right" and _ccx >= cx:
-                    _filtered.append(_c)
-                elif direction == "left" and _ccx <= cx:
-                    _filtered.append(_c)
-            if _filtered:
-                _clusters = _filtered
-
-        # 複数コーナーの中心を計算
-        _xs = [c[0] for c in _clusters]
-        _ys = [c[1] for c in _clusters]
-        _frame_cx = (min(_xs) + max(_xs)) // 2
-        _frame_cy = (min(_ys) + max(_ys)) // 2
-        _frame_w = max(_xs) - min(_xs) + _tw
-        _frame_h = max(_ys) - min(_ys) + _th
-        if _frame_w < 30:
-            _frame_w = 120  # コーナー1つだけの場合のデフォルト幅
-        if _frame_h < 30:
-            _frame_h = 60
-
-        logger.debug("[find_gold_frame_near] %d corners → center(%d,%d) %dx%d",
-                     len(_clusters), _frame_cx, _frame_cy, _frame_w, _frame_h)
+        logger.debug("[find_gold_frame_near] HSV gold area=%d → center(%d,%d) %dx%d",
+                     int(_area), _frame_cx, _frame_cy, _frame_w, _frame_h)
         return (_frame_cx, _frame_cy, _frame_w, _frame_h)
     except Exception as e:
         logger.debug("find_gold_frame_near error: %s", e)
@@ -1927,6 +1900,7 @@ def detect_tutorial_gold_button_tap(img_path: Path,
                                     right_half_only: bool = True,
                                     overlay_mode: bool = False,
                                     skip_upper_filter: bool = False,
+                                    has_finger: bool = False,
                                     ) -> Optional[tuple[int, int]]:
     """
     チュートリアルバトルで指アイコンが指し示す「金枠ハイライトボタン」を検出し
