@@ -1136,6 +1136,7 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
 _DIALOG_CLOSE_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "close_btn.png"
 _DIALOG_NEXT_TEMPLATE  = _CRAWLER_ROOT / "assets" / "templates" / "tutorial_dialog_next.png"
 _DIALOG_CORNER_TL      = _CRAWLER_ROOT / "assets" / "templates" / "dialog_corner_tl.png"
+_DIALOG_CORNER_BL      = _CRAWLER_ROOT / "assets" / "templates" / "dialog_corner_bl.png"
 
 
 def detect_dialog_nav(img_path: Path,
@@ -1216,7 +1217,8 @@ def detect_dialog_corners(img_path: Path) -> bool:
         _tpl_tl = imread_cached(_DIALOG_CORNER_TL)
         if _tpl_tl is None:
             return False
-        _tpl_bl = cv2.flip(_tpl_tl, 0)  # 上下反転で BL 用
+        # BL: 専用テンプレ。なければ TL の上下反転をフォールバック
+        _tpl_bl = imread_cached(_DIALOG_CORNER_BL) if _DIALOG_CORNER_BL.exists() else cv2.flip(_tpl_tl, 0)
         _corners = {}
         for _key, _tpl in (("tl", _tpl_tl), ("bl", _tpl_bl)):
             if _key == "tl":

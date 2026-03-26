@@ -79,7 +79,8 @@ _SINGLE_ONLY: frozenset = frozenset([
     "battle_normal_attack", "battle_skill",
     "close_btn",              # × ボタン。一般マッチから除外 (match_single 専用)
     "nav_back",               # 戻るボタン用、match_single 専用
-    "dialog_corner_tl",       # ダイアログ検出専用 (反転で BL も兼用)
+    "dialog_corner_tl",       # ダイアログ検出専用
+    "dialog_corner_bl",       # ダイアログ検出専用 (下部角は上部と異なるデザイン)
 ])
 
 # ─── ダイアログ・ファースト: 検知キーワード一覧 ───────────────────────────────
