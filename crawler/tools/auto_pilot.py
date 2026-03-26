@@ -190,6 +190,7 @@ _pilot_state_ref: Optional["PilotState"] = None
 # ─── 画像処理: ap/image_proc.py から import ───
 from tools.ap.image_proc import (  # noqa: E402
     detect_game_roi, roi_to_device, is_dark_screen, is_tutorial_walk_scene,
+    detect_gacha_orbs, is_gacha_scene,
     prepare_analysis_image,
     detect_white_hand_pointer, create_finger_mask_image,
     detect_guide_glow, _run_battle_glow_sm, detect_active_battle_char,
@@ -623,16 +624,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                                 _btn, _bs, _cs)
                     state._movie_recheck_count = 0
                     return "BATTLE"
-                # ガチャ演出チェック: SKIP ボタン + 暗い背景
-                _gacha_skip = detect_movie_skip_button(img_path)
-                if _gacha_skip:
-                    _gi = imread_cached(img_path)
-                    if _gi is not None:
-                        _gb = float(cv2.cvtColor(_gi, cv2.COLOR_BGR2GRAY).mean())
-                        if _gb < 80:
-                            logger.info("[SCENE_EARLY] MOVIE中ガチャ演出検出 (SKIP+暗背景 brightness=%.0f) → GACHA", _gb)
-                            state._movie_recheck_count = 0
-                            return "GACHA"
+                # ガチャ演出チェック: SKIP + 暗背景 + 光の玉
+                if is_gacha_scene(img_path):
+                    state._movie_recheck_count = 0
+                    return "GACHA"
                 # ADV チェック: 上部ツールバー領域でのみ AUTO を検出
                 # ADV/動画のツールバーは画面上部 (y < 15%) にある
                 # 字幕 (画面下部) への偽陽性マッチを防止
@@ -815,19 +810,11 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     else:
         state.phash_moving_count = 0
 
-    # ── ガチャ演出画面: SKIP ボタン + 暗い背景 → タップで進行 ──
-    # 光の玉が並ぶ画面。MOVIE ではなくタップで 1 つずつキャラが表示される。
-    # MOVIE 中はスキップ（動画内のキャラ表示シーンで誤発火防止）
+    # ── ガチャ演出画面: SKIP + 暗背景 + 光の玉 → タップで進行 ──
+    # MOVIE 中はスキップ (動画内のキャラ表示シーンで誤発火防止)
     if img_path and state.current_scene != "MOVIE" and getattr(state, "_from_movie_ttl", 0) <= 0:
-        _gacha_skip = detect_movie_skip_button(img_path)
-        if _gacha_skip:
-            _gacha_img = imread_cached(img_path)
-            if _gacha_img is not None:
-                _gacha_brightness = float(cv2.cvtColor(_gacha_img, cv2.COLOR_BGR2GRAY).mean())
-                if _gacha_brightness < 80:
-                    logger.info("[SCENE_EARLY] ガチャ演出検出 (SKIP+暗背景 brightness=%.0f) → GACHA",
-                                _gacha_brightness)
-                    return "GACHA"
+        if is_gacha_scene(img_path):
+            return "GACHA"
 
     # ── 金枠+指テンプレ共検出: MOVIE 判定より先にチェック ──
     # チュートリアル指+金枠画面が MOVIE と誤判定されるのを防止
@@ -836,16 +823,9 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     if img_path and not state.download_active:
         _gf_m = ASSET_MANAGER.match_single("gold_frame_small", img_path)
         if _gf_m and _gf_m[2] >= 0.70:
-            # ガチャ演出チェック: SKIP ボタン + 暗背景 → GACHA (金枠スキップしない)
-            _gf_skip = detect_movie_skip_button(img_path)
-            if _gf_skip:
-                _gf_img = imread_cached(img_path)
-                if _gf_img is not None:
-                    _gf_bright = float(cv2.cvtColor(_gf_img, cv2.COLOR_BGR2GRAY).mean())
-                    if _gf_bright < 80:
-                        logger.info("[SCENE_EARLY] 金枠+SKIP+暗背景(%.0f) → ガチャ演出 → GACHA",
-                                    _gf_bright)
-                        return "GACHA"
+            # ガチャ演出チェック: SKIP + 暗背景 + 光の玉 → GACHA (金枠スキップしない)
+            if is_gacha_scene(img_path):
+                return "GACHA"
             # 指テンプレ共検出: 金枠だけでは動画装飾の偽陽性があるため
             _has_finger = False
             # 方向付き指テンプレを優先 (hand_pointer は方向不定のため最後)

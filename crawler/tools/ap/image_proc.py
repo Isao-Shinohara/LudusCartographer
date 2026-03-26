@@ -129,6 +129,60 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
         return False
 
 
+def detect_gacha_orbs(img_path: Path, min_orbs: int = 3) -> bool:
+    """ガチャ演出の光の玉を検出。
+
+    暗い背景上に高輝度の円形ブロブが min_orbs 個以上あれば True。
+    ガチャ演出と暗い動画シーンを区別するために使用。
+    """
+    try:
+        img = imread_cached(img_path)
+        if img is None:
+            return False
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        # 中央領域のみ (黒帯・SKIPボタン等を除外)
+        y0, y1 = int(h * 0.15), int(h * 0.85)
+        x0, x1 = int(w * 0.1), int(w * 0.9)
+        roi = gray[y0:y1, x0:x1]
+        # 高輝度閾値: 200以上の明るいピクセルを抽出
+        _, binary = cv2.threshold(roi, 200, 255, cv2.THRESH_BINARY)
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # 光の玉: 面積が一定範囲内の円形ブロブをカウント
+        _min_area = 50   # 小さすぎるノイズ除外
+        _max_area = 8000  # 大きすぎる領域除外
+        orb_count = 0
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if _min_area <= area <= _max_area:
+                orb_count += 1
+        if orb_count >= min_orbs:
+            logger.debug("[GACHA_ORBS] 光の玉 %d 個検出 (閾値=%d)", orb_count, min_orbs)
+        return orb_count >= min_orbs
+    except Exception:
+        return False
+
+
+def is_gacha_scene(img_path: Path) -> bool:
+    """ガチャ演出画面を判定: SKIP ボタン + 暗い背景 + 光の玉。
+
+    3条件すべてを満たす場合のみ True。
+    動画シーン（SKIP+暗背景のみ）との誤判定を防止する。
+    """
+    if not detect_movie_skip_button(img_path):
+        return False
+    img = imread_cached(img_path)
+    if img is None:
+        return False
+    brightness = float(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).mean())
+    if brightness >= 80:
+        return False
+    if not detect_gacha_orbs(img_path):
+        return False
+    logger.info("[GACHA_DETECT] SKIP+暗背景(%.0f)+光の玉 → ガチャ演出確定", brightness)
+    return True
+
+
 def is_dark_screen(img_path: Path) -> bool:
     """暗転判定 — 中央60%領域の 90th percentile 輝度で判定。
 
