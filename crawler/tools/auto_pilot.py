@@ -537,6 +537,43 @@ def _battle_fast_check(analysis_path: Path,
     return "", 0.0
 
 
+_WALK_CHECKER_STABLE_COUNT: int = 0  # チェッカー床+phash安定のカウンタ
+_WALK_CHECKER_STABLE_THRESHOLD: int = 3  # この回数phash安定ならスワイプ開始 (~2秒)
+
+
+def _is_walk_swipe_ready(img_path: Path, state=None) -> bool:
+    """チェッカー床でスワイプ可能か判定。
+
+    以下のいずれかでTrue:
+    1. _in_checker_walk モード中（継続）→ 指アイコン不要
+    2. チェッカー床 + スワイプ指アイコン検出 → 初回スワイプ開始
+    3. チェッカー床 + phash安定が連続 → 再起動時の復帰
+    """
+    global _WALK_CHECKER_STABLE_COUNT
+    if not img_path or not is_tutorial_walk_scene(img_path):
+        _WALK_CHECKER_STABLE_COUNT = 0
+        return False
+    # 既にチェッカー歩行モード中 → 指アイコン不要
+    if state and getattr(state, "_in_checker_walk", False):
+        return True
+    # スワイプ指アイコンあり → 即スワイプ
+    _swipe_m = ASSET_MANAGER.match_single("tutorial_swipe_finger", img_path)
+    if _swipe_m and _swipe_m[2] >= 0.70:
+        _WALK_CHECKER_STABLE_COUNT = 0
+        return True
+    # チェッカー床 + phash安定 → 再起動復帰
+    if state and getattr(state, "same_phash_count", 0) >= 2:
+        _WALK_CHECKER_STABLE_COUNT += 1
+        if _WALK_CHECKER_STABLE_COUNT >= _WALK_CHECKER_STABLE_THRESHOLD:
+            logger.info("[TutorialWalk] チェッカー床+phash安定%d回 → スワイプ開始(再起動復帰)",
+                        _WALK_CHECKER_STABLE_COUNT)
+            _WALK_CHECKER_STABLE_COUNT = 0
+            return True
+    logger.debug("[TutorialWalk] チェッカー床あり、スワイプ指なし (stable=%d) → 待機",
+                 _WALK_CHECKER_STABLE_COUNT)
+    return False
+
+
 def _detect_battle_char_circles(img_path: Path) -> int:
     """左下キャラアイコン領域の円形検出数を返す。"""
     try:
@@ -594,7 +631,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # MOVIE 判定より先にチェックし、不要な MOVIE 待機を回避する
     # post_download 中は動画チェッカー柄の可能性があるため無視
     if getattr(state, "_in_checker_walk", False) and not state.post_download:
-        if img_path and is_tutorial_walk_scene(img_path):
+        if _is_walk_swipe_ready(img_path, state):
             return "TUTORIAL_WALK"
         # チェッカー柄が検出されなくなった → モード解除
         state._in_checker_walk = False
@@ -705,8 +742,8 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
     # チュートリアル歩行シーン (チェッカー床): BATTLE/MOVIE 判定より先に検出
     # 低彩度+アイドルアニメで MOVIE 誤判定されるのを防止
-    if img_path and not state.post_download and is_tutorial_walk_scene(img_path):
-        logger.info("[SCENE_EARLY] TutorialWalk検出 (チェッカー床) → 即スワイプ")
+    if not state.post_download and _is_walk_swipe_ready(img_path, state):
+        logger.info("[SCENE_EARLY] TutorialWalk検出 (チェッカー床+スワイプ指) → 即スワイプ")
         return "TUTORIAL_WALK"
 
     # BATTLE 初回/再検出: 右下の「通常攻撃」or「戦闘スキル」ボタンアイコンで判定
@@ -1011,9 +1048,9 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
             state.phash_moving_count = 0
             state._movie_stable_count = 0
             return False
-        # TutorialWalk チェック: post_download 中でもチェッカー床なら即スワイプで脱出
-        if is_tutorial_walk_scene(img_path):
-            logger.info("[MOVIE_ESCAPE] チェッカー床検出 → TutorialWalk スワイプで脱出")
+        # TutorialWalk チェック: post_download 中でもチェッカー床+指なら即スワイプで脱出
+        if _is_walk_swipe_ready(img_path, state):
+            logger.info("[MOVIE_ESCAPE] チェッカー床+スワイプ指検出 → TutorialWalk スワイプで脱出")
             _walk_sx = int(ANALYSIS_W * 0.5)
             _walk_fy = int(ANALYSIS_H * 0.89)
             _walk_ty = int(ANALYSIS_H * 0.07)
@@ -1310,9 +1347,9 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
         state.last_phash = ""
         return True
 
-    # ── チェッカー床検出: MINI_CONV より優先してスワイプ ──
-    if img_path and is_tutorial_walk_scene(img_path):
-        logger.info("[ADV] チェッカー床検出 → スワイプ (handle_adv)")
+    # ── チェッカー床+スワイプ指検出: MINI_CONV より優先してスワイプ ──
+    if _is_walk_swipe_ready(img_path, state):
+        logger.info("[ADV] チェッカー床+スワイプ指検出 → スワイプ (handle_adv)")
         return False  # handle_adv 脱出 → detect_scene_early で TutorialWalk 処理
     # ── ミニ会話タップ ──
     _mc = detect_mini_conversation(img_path, ocr_items=ocr_items)
@@ -2247,7 +2284,7 @@ def main():
             # post_download 後はお知らせポップアップ等の暗背景を TutorialWalk と誤検出するため除外
             if (state.consecutive_blackouts >= 10
                     and not state.post_download
-                    and is_tutorial_walk_scene(img_path)):
+                    and _is_walk_swipe_ready(img_path, state)):
                 _walk_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
                 _battle_roi = BATTLE_BTN_ROI
                 _has_battle = any(
@@ -2602,12 +2639,12 @@ def main():
                         state.last_action = "ADV_RAPID_TAP"
                     state.last_phash = ""
                     continue
-                # ── チェッカー床検出: MINI_CONV より優先してスワイプ ──
-                if img_path and is_tutorial_walk_scene(img_path):
+                # ── チェッカー床+スワイプ指検出: MINI_CONV より優先してスワイプ ──
+                if _is_walk_swipe_ready(img_path, state):
                     _walk_sx = int(ANALYSIS_W * 0.5)
                     _walk_fy = int(ANALYSIS_H * 0.89)
                     _walk_ty = int(ANALYSIS_H * 0.07)
-                    logger.info("[ADV_RAPID] チェッカー床検出 → スワイプ")
+                    logger.info("[ADV_RAPID] チェッカー床+スワイプ指検出 → スワイプ")
                     swipe_device(_walk_sx, _walk_fy, _walk_sx, _walk_ty, 10000,
                                  state=state, desc="TutorialWalk_ADV_RAPID_UP")
                     state.last_phash = ""
@@ -2752,12 +2789,12 @@ def main():
                     state.same_phash_count = 0
                     state.stall_start = 0.0
                     continue
-                # ── チェッカー床検出: MINI_CONV より優先してスワイプ ──
-                if img_path and is_tutorial_walk_scene(img_path):
+                # ── チェッカー床+スワイプ指検出: MINI_CONV より優先してスワイプ ──
+                if _is_walk_swipe_ready(img_path, state):
                     _walk_sx = int(ANALYSIS_W * 0.5)
                     _walk_fy = int(ANALYSIS_H * 0.89)
                     _walk_ty = int(ANALYSIS_H * 0.07)
-                    logger.info("[POLLING] チェッカー床検出 → スワイプ")
+                    logger.info("[POLLING] チェッカー床+スワイプ指検出 → スワイプ")
                     swipe_device(_walk_sx, _walk_fy, _walk_sx, _walk_ty, 10000,
                                  state=state, desc="TutorialWalk_POLLING_UP")
                     state.last_phash = ""
