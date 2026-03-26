@@ -191,5 +191,5 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         return "POPUP_TAP", 1.0
 
     # ─── フォールバック: 何も見つからない ───
-    logger.info(">>> 不明な画面 — WAIT_FOR_CHANGE (OCR %d件)", len(ocr))
+    logger.info(">>> 画面が安定するまで待機 (OCR %d件)", len(ocr))
     return "WAIT_FOR_CHANGE", 0
