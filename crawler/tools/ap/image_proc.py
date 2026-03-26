@@ -564,6 +564,11 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
         # HSV 金色検出
         _hsv = cv2.cvtColor(_roi, cv2.COLOR_BGR2HSV)
         _mask = cv2.inRange(_hsv, np.array([15, 60, 140]), np.array([50, 255, 255]))
+        # 指アイコン周辺をマスク除外（指の金色が金枠と繋がるのを防止）
+        _finger_roi_x = cx + _ox - _x1  # ROI 内での指の相対座標
+        _finger_roi_y = cy + _oy - _y1
+        _finger_r = 50  # 指アイコンの除外半径
+        cv2.circle(_mask, (_finger_roi_x, _finger_roi_y), _finger_r, 0, -1)
         _k = np.ones((7, 7), np.uint8)
         _mask = cv2.morphologyEx(_mask, cv2.MORPH_CLOSE, _k)
         _mask = cv2.dilate(_mask, _k, iterations=1)
@@ -580,9 +585,7 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
         _bx, _by, _bw, _bh = cv2.boundingRect(_best)
         # 元画像座標に変換
         _frame_cx = _x1 + _bx + _bw // 2
-        # 方向に応じたY補正: 指の金色がbboxを押し広げるため、指と反対側に寄せる
-        _cy_ratio = {"down": 0.6, "up": 0.4, "left": 0.5, "right": 0.5}.get(direction, 0.5)
-        _frame_cy = _y1 + _by + int(_bh * _cy_ratio)
+        _frame_cy = _y1 + _by + _bh // 2  # 指の金色を除外済みなので素直に中心
         _frame_w = _bw
         _frame_h = _bh
 
