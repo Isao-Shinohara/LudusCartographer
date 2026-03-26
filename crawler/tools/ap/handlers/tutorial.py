@@ -400,7 +400,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                             _swipe_skip = True
                             logger.info("[SWIPE_UP] 背景ぼかし+OCR%d件 → ポップアップ上のスワイプを回避", len(texts))
                 if not _swipe_skip:
-                    tmpl_meta = ASSET_MANAGER._templates.get("tutorial_swipe_pointer", {})
+                    tmpl_meta = ASSET_MANAGER._templates.get("tutorial_swipe_finger", {})
                     # ratio ベース座標 (解像度非依存)
                     _sw_fx_r = tmpl_meta.get("swipe_from_x_ratio", 0.691)
                     _sw_fy_r = tmpl_meta.get("swipe_from_y_ratio", 0.806)

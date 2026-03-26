@@ -10,5 +10,5 @@
   "max_repeat": 10,
   "threshold": 0.82,
   "require_ocr": [],
-  "note": "tutorial_swipe_pointer と同じスワイプ設定。JSON未設定でタップ扱いになっていた。"
+  "note": "スワイプ指テンプレ。旧 tutorial_swipe_pointer を統合。"
 }
