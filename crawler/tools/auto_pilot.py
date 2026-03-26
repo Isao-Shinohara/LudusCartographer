@@ -541,6 +541,10 @@ _WALK_CHECKER_STABLE_COUNT: int = 0  # チェッカー床+phash安定のカウ�
 _WALK_CHECKER_STABLE_THRESHOLD: int = 3  # この回数phash安定ならスワイプ開始 (~2秒)
 
 
+_WALK_SWIPE_FROM_Y = 0.97  # スワイプ開始: 画面下端97%
+_WALK_SWIPE_TO_Y = 0.03    # スワイプ終了: 画面上端3%
+
+
 def _is_walk_swipe_ready(img_path: Path, state=None) -> bool:
     """チェッカー床でスワイプ可能か判定。
 
@@ -1052,8 +1056,8 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
         if _is_walk_swipe_ready(img_path, state):
             logger.info("[MOVIE_ESCAPE] チェッカー床+スワイプ指検出 → TutorialWalk スワイプで脱出")
             _walk_sx = int(ANALYSIS_W * 0.5)
-            _walk_fy = int(ANALYSIS_H * 0.89)
-            _walk_ty = int(ANALYSIS_H * 0.07)
+            _walk_fy = int(ANALYSIS_H * _WALK_SWIPE_FROM_Y)
+            _walk_ty = int(ANALYSIS_H * _WALK_SWIPE_TO_Y)
             from tools.ap.device import swipe_device
             swipe_device(_walk_sx, _walk_fy, _walk_sx, _walk_ty, 10000,
                          state=state, desc="MOVIE_ESCAPE_Walk_UP")
@@ -2297,9 +2301,9 @@ def main():
             if _is_walk:
                 logger.info("[iter %d] 暗転→TutorialWalk検出 → スワイプで進行", i)
                 _walk_sx, _walk_sy = roi_to_device(
-                    int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.89), state.game_roi)
+                    int(ANALYSIS_W * 0.5), int(ANALYSIS_H * _WALK_SWIPE_FROM_Y), state.game_roi)
                 _walk_ex, _walk_ey = roi_to_device(
-                    int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.07), state.game_roi)
+                    int(ANALYSIS_W * 0.5), int(ANALYSIS_H * _WALK_SWIPE_TO_Y), state.game_roi)
                 swipe_device(_walk_sx, _walk_sy, _walk_ex, _walk_ey, 10000,
                              state=state, desc="TutorialWalk_UP")
                 state.consecutive_blackouts = 0
@@ -2452,8 +2456,8 @@ def main():
             state.current_scene = "UNKNOWN"
             state._in_checker_walk = True  # 次ループも最優先でチェッカー柄チェック
             _walk_sx = int(ANALYSIS_W * 0.5)
-            _walk_fy = int(ANALYSIS_H * 0.89)
-            _walk_ty = int(ANALYSIS_H * 0.07)
+            _walk_fy = int(ANALYSIS_H * _WALK_SWIPE_FROM_Y)
+            _walk_ty = int(ANALYSIS_H * _WALK_SWIPE_TO_Y)
             swipe_device(_walk_sx, _walk_fy, _walk_sx, _walk_ty, 10000,
                          state=state, desc="TutorialWalk_UP")
             state.last_phash = ""
@@ -2642,8 +2646,8 @@ def main():
                 # ── チェッカー床+スワイプ指検出: MINI_CONV より優先してスワイプ ──
                 if _is_walk_swipe_ready(img_path, state):
                     _walk_sx = int(ANALYSIS_W * 0.5)
-                    _walk_fy = int(ANALYSIS_H * 0.89)
-                    _walk_ty = int(ANALYSIS_H * 0.07)
+                    _walk_fy = int(ANALYSIS_H * _WALK_SWIPE_FROM_Y)
+                    _walk_ty = int(ANALYSIS_H * _WALK_SWIPE_TO_Y)
                     logger.info("[ADV_RAPID] チェッカー床+スワイプ指検出 → スワイプ")
                     swipe_device(_walk_sx, _walk_fy, _walk_sx, _walk_ty, 10000,
                                  state=state, desc="TutorialWalk_ADV_RAPID_UP")
@@ -2792,8 +2796,8 @@ def main():
                 # ── チェッカー床+スワイプ指検出: MINI_CONV より優先してスワイプ ──
                 if _is_walk_swipe_ready(img_path, state):
                     _walk_sx = int(ANALYSIS_W * 0.5)
-                    _walk_fy = int(ANALYSIS_H * 0.89)
-                    _walk_ty = int(ANALYSIS_H * 0.07)
+                    _walk_fy = int(ANALYSIS_H * _WALK_SWIPE_FROM_Y)
+                    _walk_ty = int(ANALYSIS_H * _WALK_SWIPE_TO_Y)
                     logger.info("[POLLING] チェッカー床+スワイプ指検出 → スワイプ")
                     swipe_device(_walk_sx, _walk_fy, _walk_sx, _walk_ty, 10000,
                                  state=state, desc="TutorialWalk_POLLING_UP")
