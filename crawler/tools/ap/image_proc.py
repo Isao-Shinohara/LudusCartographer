@@ -1118,6 +1118,11 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
         if not candidates:
             return None
 
+        # 白領域が3個以上 → UIリスト画面 (お知らせ一覧等) の誤検出、吹き出しではない
+        if len(candidates) >= 3:
+            logger.debug("[MINI_CONV] 白領域 %d 個 → UIリスト画面として棄却", len(candidates))
+            return None
+
         # 最も明るい = アクティブ話者
         best = max(candidates, key=lambda c: c["mean_v"])
 
