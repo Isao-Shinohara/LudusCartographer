@@ -367,8 +367,8 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     ctx.is_adv_or_movie = _is_adv_or_movie
     _white_hand_pos = None  # (cx, cy, score, direction) or None
     if analysis_path is not None and not _is_result_screen and not _is_notice and not _is_adv_or_movie and not _is_mini_conv:
-        _pdg_m = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path)
-        _pdg_match = _pdg_m if (_pdg_m and _pdg_m[2] >= 0.70) else None
+        _pdg_rot = ASSET_MANAGER.match_finger_rotated(analysis_path)
+        _pdg_match = (_pdg_rot[0], _pdg_rot[1], _pdg_rot[2]) if _pdg_rot else None
         if _pdg_match and _pdg_match[2] >= 0.70:
             _pdg_cx, _pdg_cy = _pdg_match[0], _pdg_match[1]
             if _pdg_cy > _SPATIAL_MARGIN_TOP and _pdg_cx < W - _CLOSE_BTN_OFFSET:

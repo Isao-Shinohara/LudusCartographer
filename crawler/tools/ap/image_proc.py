@@ -2326,6 +2326,47 @@ class AssetManager:
             pass
         return None
 
+    # ─── 回転指テンプレマッチ ───
+    _FINGER_ROTATIONS: list[tuple[str, Optional[int]]] = [
+        ("down", None),                        # tutorial_hand_pointer は下向き
+        ("up", cv2.ROTATE_180),
+        ("left", cv2.ROTATE_90_CLOCKWISE),
+        ("right", cv2.ROTATE_90_COUNTERCLOCKWISE),
+    ]
+
+    def match_finger_rotated(
+        self, screenshot_path: Path,
+        threshold: float = 0.70,
+    ) -> Optional[tuple[int, int, float, str]]:
+        """tutorial_hand_pointer を4方向回転してマッチング。
+
+        Returns: (cx, cy, score, direction) or None
+            direction: "up" / "down" / "left" / "right"
+        """
+        data = self._templates.get("tutorial_hand_pointer")
+        if data is None:
+            return None
+        img = imread_cached(screenshot_path, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            return None
+        base_tmpl = data["img"]
+        best: Optional[tuple[int, int, float, str]] = None
+        for direction, rot_code in self._FINGER_ROTATIONS:
+            tmpl = cv2.rotate(base_tmpl, rot_code) if rot_code is not None else base_tmpl
+            if tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
+                continue
+            try:
+                res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val >= threshold and (best is None or max_val > best[2]):
+                    h, w = tmpl.shape
+                    cx = max_loc[0] + w // 2
+                    cy = max_loc[1] + h // 2
+                    best = (cx, cy, max_val, direction)
+            except Exception:
+                pass
+        return best
+
     def match_best_in_roi(self, screenshot_path: Path,
                          roi: tuple[int, int, int, int],
                          threshold: float = 0.65,

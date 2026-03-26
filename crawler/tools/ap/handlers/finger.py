@@ -162,8 +162,8 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
                     return "CHALLENGE_TAP", 1.0
             # ── ホームチュートリアル: 指アイコン+金枠がある場合は優先タップ ──
             # 回数制限なし: 指+金枠が実在する限り何回でもタップ
-            _ht_m = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path) if analysis_path else None
-            _ht_match = _ht_m if (_ht_m and _ht_m[2] >= 0.70) else None
+            _ht_rot = ASSET_MANAGER.match_finger_rotated(analysis_path) if analysis_path else None
+            _ht_match = (_ht_rot[0], _ht_rot[1], _ht_rot[2]) if _ht_rot else None
             _ht_blobs = [(_ht_match[0], _ht_match[1], _ht_match[2], _ht_match[0] - 20, _ht_match[1] - 40, 40, 80)] if (_ht_match and _ht_match[2] >= 0.70) else []
             _ht_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
             # 暗転オーバーレイ検出 (チュートリアル中は非ハイライト部分が暗い)
@@ -231,9 +231,9 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
             blobs = []
         else:
             state.home_tutorial_tap_count = 0  # ホーム以外 → カウンタリセット
-            # テンプレートマッチで指アイコン検出
-            _finger_m = ASSET_MANAGER.match_single("tutorial_hand_pointer", analysis_path)
-            _finger_match = _finger_m if (_finger_m and _finger_m[2] >= 0.70) else None
+            # テンプレートマッチで指アイコン検出 (4方向回転)
+            _finger_rot = ASSET_MANAGER.match_finger_rotated(analysis_path)
+            _finger_match = (_finger_rot[0], _finger_rot[1], _finger_rot[2]) if _finger_rot else None
             if _finger_match and _finger_match[2] >= 0.70:
                 _fm_cx, _fm_cy = _finger_match[0], _finger_match[1]
                 # 画面端の誤検出を除去: 上端/右端最端はシステムUI
