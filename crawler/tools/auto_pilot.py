@@ -656,7 +656,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                     if _adv_auto_m and _adv_auto_m[2] >= 0.80:
                         # さらに ADV 固有アイコン (↓/LOG/MENU/FF) が上部に2つ以上あることを確認
                         _adv_evidence = 0
-                        for _adv_icon in ("adv_next_btn", "adv_icon_log", "adv_icon_menu", "adv_icon_ff"):
+                        for _adv_icon in ("adv_next_btn", "adv_icon_log", "adv_icon_showhide", "adv_icon_ff"):
                             _am = ASSET_MANAGER.match_single(_adv_icon, img_path, roi=_adv_toolbar_roi)
                             if _am and _am[2] >= 0.55:
                                 _adv_evidence += 1

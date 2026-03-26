@@ -649,7 +649,7 @@ class TestDetectAdvToolbarButtons:
         # AUTO + menu (ADV専用) + adv_next_btn (↓) を埋め込み
         icon_positions = [
             ("adv_icon_auto", 1274, 45),
-            ("adv_icon_menu", 1116, 45),
+            ("adv_icon_showhide", 1116, 45),
             ("adv_next_btn", 1305, 642),
         ]
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
@@ -807,7 +807,7 @@ class TestAdvScene:
 
         icon_positions = [
             ("adv_icon_auto", 1274, 45),
-            ("adv_icon_menu", 1116, 45),
+            ("adv_icon_showhide", 1116, 45),
             ("adv_next_btn", 1305, 642),
         ]
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
@@ -836,7 +836,7 @@ class TestAdvScene:
 
         # アイコン位置を ANALYSIS_W ベースの比率で計算
         _icon_x_ratios = [0.734, 0.784, 0.838, 0.893, 0.951]
-        _icon_names = ["adv_icon_menu", "adv_icon_log", "adv_icon_auto", "adv_icon_ff", "adv_icon_skip"]
+        _icon_names = ["adv_icon_showhide", "adv_icon_log", "adv_icon_auto", "adv_icon_ff", "adv_icon_skip"]
         icon_positions = [(name, int(ANALYSIS_W * r), 45) for name, r in zip(_icon_names, _icon_x_ratios)]
 
         next_path = _CRAWLER_ROOT / "assets" / "templates" / "adv_next_btn.png"
@@ -1038,7 +1038,7 @@ class TestAdvSceneWithAdvanceIcon:
         座標はツールバー領域 (右上: x>70%, y<15%) に配置。"""
         # ANALYSIS_W=1520, ANALYSIS_H=720 → x>1064, y<108
         _positions = {
-            "adv_icon_menu": (1116, 45),
+            "adv_icon_showhide": (1116, 45),
             "adv_icon_log": (1191, 45),
             "adv_icon_auto": (1274, 45),
             "adv_icon_ff": (1358, 45),

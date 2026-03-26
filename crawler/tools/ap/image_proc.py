@@ -623,7 +623,7 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
 
 # ─── ADV ツールバー: 5個別アイコン名 ──────────────────────────────
 _ADV_TOOLBAR_ICON_NAMES = (
-    "adv_icon_menu", "adv_icon_log", "adv_icon_auto",
+    "adv_icon_showhide", "adv_icon_log", "adv_icon_auto",
     "adv_icon_ff", "adv_icon_skip",
 )
 

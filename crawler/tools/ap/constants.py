@@ -75,7 +75,7 @@ _UI_TEXT_KWS: tuple = ("利用規約", "同意", "規約", "プライバシー",
 # ─── match_single() 専用テンプレート (一般マッチから除外) ───
 _SINGLE_ONLY: frozenset = frozenset([
     "adv_next_btn",
-    "adv_icon_menu", "adv_icon_log", "adv_icon_auto", "adv_icon_ff", "adv_icon_skip",
+    "adv_icon_showhide", "adv_icon_log", "adv_icon_auto", "adv_icon_ff", "adv_icon_skip",
     "battle_normal_attack", "battle_skill",
     "close_btn",              # × ボタン。一般マッチから除外 (match_single 専用)
     "nav_back",               # 戻るボタン用、match_single 専用
