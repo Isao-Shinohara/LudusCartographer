@@ -809,6 +809,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # NOTE: AUTO アイコン単独ではバトル画面の AUTO ボタンと区別不能 (score=0.91 で誤一致)
     #        → ADV ツールバー全体も確認して確定する
     if state.current_scene == "ADV" and dist < 20:
+        # ADV 継続: ↓ボタン or AUTO が見えれば ADV 維持
+        _adv_next_cont = ASSET_MANAGER.match_single("adv_next_btn", img_path, roi=ADV_NEXT_BTN_ROI)
+        if _adv_next_cont:
+            return "ADV"
         from tools.ap.image_proc import ASSET_MANAGER as _AM_adv
         try:
             _auto_roi = ADV_TOOLBAR_ROI
@@ -827,8 +831,8 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                     logger.info("[SCENE_EARLY] ADV継続: AUTO(%.2f)+BATTLEテンプレ(%.2f) → BATTLE",
                                 _auto_m[2], _b_best)
                     return "BATTLE"
-                logger.info("[SCENE_EARLY] ADV継続: AUTO(%.2f) ADVでもBATTLEでもなし → UNKNOWN",
-                            _auto_m[2])
+                # AUTO のみ検出、↓もバトルもなし → セリフ切り替え中、ADV 維持
+                return "ADV"
         except Exception:
             pass
 
