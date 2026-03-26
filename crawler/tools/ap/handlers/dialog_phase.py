@@ -373,7 +373,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
             _pdg_cx, _pdg_cy = _pdg_match[0], _pdg_match[1]
             if _pdg_cy > _SPATIAL_MARGIN_TOP and _pdg_cx < W - _CLOSE_BTN_OFFSET:
                 # × ボタンが高信頼度で存在する場合は指ガードを抑制
-                _close_match = ASSET_MANAGER.match_single("tutorial_dialog_close", analysis_path)
+                _close_match = ASSET_MANAGER.match_single("close_btn", analysis_path)
                 if _close_match and _close_match[2] >= 0.85:
                     logger.info("[PRE_DIALOG_GUARD] 指(%.3f)だが ×(%.3f) → ガード抑制",
                                 _pdg_match[2], _close_match[2])

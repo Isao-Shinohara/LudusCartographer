@@ -317,9 +317,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                 asset_hit = None
             if asset_hit:
                 # × ボタンが見える場合は最終ページ → × をタップして閉じる (▷ ループ防止)
-                _nav_close = ASSET_MANAGER.match_single("close_btn", analysis_path)
-                _tdc = ASSET_MANAGER.match_single("tutorial_dialog_close", analysis_path)
-                _close = _tdc if (_tdc and _tdc[2] >= 0.60) else (_nav_close if (_nav_close and _nav_close[2] >= 0.60) else None)
+                _close = ASSET_MANAGER.match_single("close_btn", analysis_path)
+                _close = _close if (_close and _close[2] >= 0.60) else None
                 if _close:
                     logger.info("[DIALOG_NEXT] × ボタン検出 (%.2f) → 最終ページ、× タップ (%d,%d)",
                                 _close[2], _close[0], _close[1])

@@ -284,7 +284,7 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
     if _notice_list_hits >= 3:
         # × テンプレートで閉じる
         from tools.ap.image_proc import ASSET_MANAGER as _AM_notice
-        _close_m = _AM_notice.match_single("close_btn_cross", analysis_path)
+        _close_m = _AM_notice.match_single("close_btn", analysis_path)
         if _close_m and _close_m[2] >= 0.50:
             tap_device(_close_m[0], _close_m[1], state, "NOTICE_LIST_CLOSE")
             logger.info(">>> 【お知らせ一覧】 ×テンプレート(%d,%d score=%.2f) で閉じる",

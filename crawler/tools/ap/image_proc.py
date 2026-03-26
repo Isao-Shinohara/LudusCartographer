@@ -1166,7 +1166,7 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
 #
 # 戻り値: ("next", cx, cy) | ("close", cx, cy) | None
 
-_DIALOG_CLOSE_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "tutorial_dialog_close.png"
+_DIALOG_CLOSE_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "close_btn.png"
 _DIALOG_NEXT_TEMPLATE  = _CRAWLER_ROOT / "assets" / "templates" / "tutorial_dialog_next.png"
 _DIALOG_CORNER_TL      = _CRAWLER_ROOT / "assets" / "templates" / "dialog_corner_tl.png"
 
@@ -1663,7 +1663,7 @@ def _find_close_by_asset(analysis_path: Path) -> Optional[tuple]:
     """
     _close_roi = (int(ANALYSIS_W * 0.85), 0,
                   int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.15))
-    for _tpl_name in ("tutorial_dialog_close", "close_btn_cross", "close_btn"):
+    for _tpl_name in ("close_btn",):
         _m = ASSET_MANAGER.match_single(_tpl_name, analysis_path, roi=_close_roi)
         if _m and _m[2] >= 0.65:
             logger.debug("[PAGING_CLOSE_ASSET] %s 検出 (%d,%d) score=%.2f",

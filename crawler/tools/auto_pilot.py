@@ -3342,7 +3342,7 @@ def main():
                         # × ボタンを探してタップ (BACK キーより確実)
                         _esc_close = None
                         if state.analysis_path:
-                            for _tpl in ("tutorial_dialog_close", "close_btn", "close_btn_cross"):
+                            for _tpl in ("close_btn",):
                                 _cm = ASSET_MANAGER.match_single(_tpl, state.analysis_path)
                                 if _cm and _cm[2] >= 0.55:
                                     _esc_close = _cm
