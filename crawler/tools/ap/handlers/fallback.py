@@ -190,6 +190,17 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         tap_device(cx, cy, state, "POPUP_TAP")
         return "POPUP_TAP", 1.0
 
+    # ─── ×ボタン検出: ダイアログ以外の画面でも×が見えたら閉じる ───
+    # メモリア詳細等、ダイアログ角装飾がない画面の×ボタン対応
+    if analysis_path:
+        from tools.ap.image_proc import ASSET_MANAGER as _AM_fb
+        _close_fb = _AM_fb.match_single("close_btn", analysis_path)
+        if _close_fb and _close_fb[2] >= 0.90:
+            logger.info(">>> ×ボタン検出 (score=%.2f) → タップ (%d,%d)",
+                        _close_fb[2], _close_fb[0], _close_fb[1])
+            tap_device(_close_fb[0], _close_fb[1], state, "CLOSE_BTN_FALLBACK")
+            return "CLOSE_BTN_FALLBACK", 1.0
+
     # ─── フォールバック: 何も見つからない ───
     logger.info(">>> 画面が安定するまで待機 (OCR %d件)", len(ocr))
     return "WAIT_FOR_CHANGE", 0
