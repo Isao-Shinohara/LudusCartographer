@@ -1102,12 +1102,14 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
             if cx_cnt > toolbar_x and cy_cnt < toolbar_y:
                 continue
 
-            # 楕円形判定: 吹き出しは楕円形 (circularity >= 0.4)
-            # お知らせ一覧のタブヘッダ等の不規則形状 (circ ≈ 0.27) を除外
+            # 形状判定: circularity + fill_ratio で吹き出しを識別
+            # 吹き出し: circ=0.30-0.80, fill=0.40-0.80 (キャラの白体が繋がると circ が下がる)
+            # お知らせタブヘッダ: circ≈0.27, fill<0.35 (不規則形状)
             _perimeter = cv2.arcLength(cnt, True)
             _circularity = (4 * np.pi * area / (_perimeter * _perimeter)
                             if _perimeter > 0 else 0)
-            if _circularity < 0.4:
+            _fill_ratio = area / (w * bh) if w * bh > 0 else 0
+            if _circularity < 0.28 or _fill_ratio < 0.35:
                 continue
 
             # 平均輝度 (V チャンネル)
