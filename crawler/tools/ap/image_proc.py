@@ -580,7 +580,9 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
         _bx, _by, _bw, _bh = cv2.boundingRect(_best)
         # 元画像座標に変換
         _frame_cx = _x1 + _bx + _bw // 2
-        _frame_cy = _y1 + _by + int(_bh * 0.6)  # 下寄り (指の金色が上端を押し上げるため)
+        # 方向に応じたY補正: 指の金色がbboxを押し広げるため、指と反対側に寄せる
+        _cy_ratio = {"down": 0.6, "up": 0.4, "left": 0.5, "right": 0.5}.get(direction, 0.5)
+        _frame_cy = _y1 + _by + int(_bh * _cy_ratio)
         _frame_w = _bw
         _frame_h = _bh
 
