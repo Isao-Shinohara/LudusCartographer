@@ -1444,16 +1444,22 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     _diag_dir.mkdir(parents=True, exist_ok=True)
 
     def _adb_tap(x: int, y: int) -> None:
-        subprocess.run(
-            ["adb", "-s", serial, "shell", "input", "tap", str(x), str(y)],
-            capture_output=True, timeout=5,
-        )
+        try:
+            subprocess.run(
+                ["adb", "-s", serial, "shell", "input", "tap", str(x), str(y)],
+                capture_output=True, timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("[FRESH_INSTALL] ADB tap タイムアウト — デバイス接続を確認してください")
 
     def _adb_key(keycode: str) -> None:
-        subprocess.run(
-            ["adb", "-s", serial, "shell", "input", "keyevent", keycode],
-            capture_output=True, timeout=5,
-        )
+        try:
+            subprocess.run(
+                ["adb", "-s", serial, "shell", "input", "keyevent", keycode],
+                capture_output=True, timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("[FRESH_INSTALL] ADB keyevent タイムアウト (%s) — デバイス接続を確認してください", keycode)
 
     def _adb_screenshot(path: str) -> bool:
         """スクリーンショット取得 + PNG ヘッダ検証。3回リトライ。"""
@@ -2034,8 +2040,11 @@ def main():
         _fresh_install_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
 
     # ─── ゲーム未インストール → 自動インストール ───
+    # NOTE: ADB 接続不良で is_app_installed がタイムアウトすると False を返し
+    # 誤って再インストールが発火する。ログに警告が出ていないか確認すること。
     if not is_app_installed(_ap_device.DEVICE_SERIAL, APP_PACKAGE):
-        logger.info("[AUTO_INSTALL] ゲーム '%s' 未インストール → Play Store から自動インストール", APP_PACKAGE)
+        logger.info("[AUTO_INSTALL] ゲーム '%s' 未インストール → Play Store から自動インストール"
+                    " (ADB タイムアウトの場合は誤検知の可能性あり)", APP_PACKAGE)
         _fresh_install_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
         if not is_app_installed(_ap_device.DEVICE_SERIAL, APP_PACKAGE):
             logger.error("[ABORT] 自動インストール失敗。手動でインストールしてから再実行してください。")

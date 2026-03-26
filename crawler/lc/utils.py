@@ -581,7 +581,11 @@ def is_app_installed(serial: str, package: str, timeout: int = 10) -> bool:
             capture_output=True, text=True, timeout=timeout,
         )
         return f"package:{package}" in r.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        logger.warning("[is_app_installed] ADB タイムアウト (%ds) — デバイス接続を確認してください", timeout)
+        return False
+    except FileNotFoundError:
+        logger.warning("[is_app_installed] adb コマンドが見つかりません")
         return False
 
 
