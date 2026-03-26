@@ -1103,6 +1103,14 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
             if cx_cnt > toolbar_x and cy_cnt < toolbar_y:
                 continue
 
+            # 楕円形判定: 吹き出しは楕円形 (circularity >= 0.4)
+            # お知らせ一覧のタブヘッダ等の不規則形状 (circ ≈ 0.27) を除外
+            _perimeter = cv2.arcLength(cnt, True)
+            _circularity = (4 * np.pi * area / (_perimeter * _perimeter)
+                            if _perimeter > 0 else 0)
+            if _circularity < 0.4:
+                continue
+
             # 平均輝度 (V チャンネル)
             cnt_mask = np.zeros(mask.shape, dtype=np.uint8)
             cv2.drawContours(cnt_mask, [cnt], -1, 255, -1)
@@ -1116,14 +1124,6 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
             })
 
         if not candidates:
-            return None
-
-        # UI画面ガード: ×ボタン (close_btn_cross) が検出された画面は
-        # お知らせ一覧・ダイアログ等のUI画面であり、ミニ会話の吹き出しではない
-        _close_btn = ASSET_MANAGER.match_single("close_btn_cross", img_path)
-        if _close_btn and _close_btn[2] >= 0.75:
-            logger.debug("[MINI_CONV] ×ボタン検出 (score=%.2f) → UI画面として棄却",
-                         _close_btn[2])
             return None
 
         # 最も明るい = アクティブ話者
