@@ -181,14 +181,6 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
             tap_device(cx, cy, state, "BATTLE_TUTORIAL_POPUP")
             return "BATTLE_TUTORIAL", 0.5
 
-        # AUTO ボタン
-        if not state.auto_activated:
-            ax, ay = roi_to_device(int(W * 0.845), int(H * 0.090), state.game_roi)
-            logger.info(">>> AUTO タップ (%d,%d)", ax, ay)
-            tap_device(ax, ay, state, "AUTO_ON")
-            state.auto_activated = True
-            return "BATTLE_AUTO", BATTLE_WAIT
-
         # バトル停滞時: ハイライト候補を順番にタップ試行
         if state.battle_wait_count > 8:
             stall_phase = (state.battle_wait_count - 8) % 12
