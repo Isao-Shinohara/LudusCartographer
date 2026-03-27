@@ -1092,10 +1092,45 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
             })
 
         if not candidates:
-            return None
+            # ── フォールバック: Canny エッジ検出 (明るい背景用) ──
+            # HSV で背景と吹き出しが融合する場合、輪郭線で分離する
+            gray = cv2.cvtColor(upper, cv2.COLOR_BGR2GRAY)
+            edges = cv2.Canny(gray, 50, 150)
+            _ek = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+            edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, _ek)
+            _e_contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL,
+                                               cv2.CHAIN_APPROX_SIMPLE)
+            for cnt in _e_contours:
+                area = cv2.contourArea(cnt)
+                if area < min_bubble_area:
+                    continue
+                x, y, w, bh = cv2.boundingRect(cnt)
+                if bh == 0:
+                    continue
+                aspect = w / bh
+                if aspect < 1.2 or aspect > 8.0:
+                    continue
+                cx_cnt = x + w // 2
+                cy_cnt = y + bh // 2
+                if cx_cnt > toolbar_x and cy_cnt < toolbar_y:
+                    continue
+                side = "left" if cx_cnt < ANALYSIS_W // 2 else "right"
+                candidates.append({
+                    "cx": cx_cnt, "cy": cy_cnt,
+                    "x": x, "y": y, "w": w, "h": bh,
+                    "mean_v": 255.0, "side": side, "area": area,
+                    "_edge": True,
+                })
+            if not candidates:
+                return None
+            logger.info("[MINI_CONV] HSV候補なし → Canny エッジ検出にフォールバック (%d候補)",
+                        len(candidates))
 
-        # 最も明るい = アクティブ話者
-        best = max(candidates, key=lambda c: c["mean_v"])
+        # 最も明るい = アクティブ話者 (エッジ検出時は面積最大)
+        if any(c.get("_edge") for c in candidates):
+            best = max(candidates, key=lambda c: c["area"])
+        else:
+            best = max(candidates, key=lambda c: c["mean_v"])
 
         # OCR 検証: 吹き出し BBox 内にテキストが存在するか
         if ocr_items is not None:
@@ -1114,9 +1149,9 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
                 logger.debug("[MINI_CONV] ocr_items=None + チェッカー柄 → 棄却")
                 return None
 
-        logger.debug("[MINI_CONV] bubble (%d,%d) side=%s area=%d mean_v=%.1f",
-                     best["cx"], best["cy"], best["side"], best["area"],
-                     best["mean_v"])
+        _method = "EDGE" if best.get("_edge") else "HSV"
+        logger.debug("[MINI_CONV] bubble (%d,%d) side=%s area=%d method=%s",
+                     best["cx"], best["cy"], best["side"], best["area"], _method)
         return (best["cx"], best["cy"], best["side"])
 
     except Exception:
