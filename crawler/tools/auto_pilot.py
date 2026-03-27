@@ -2710,8 +2710,9 @@ def main():
                     state.last_phash = ""
                     continue
                 # ── ミニ会話タップ (1回) ──
-                # ホーム画面 (MENU) では通知バナーを吹き出しと誤認するため抑制
-                if state.current_scene != "MENU":
+                # MENU: 通知バナーを吹き出しと誤認 / MOVIE_WAIT: 動画中タップで一時停止
+                if (state.current_scene != "MENU"
+                        and state.last_action != "MOVIE_WAIT"):
                     _mc = detect_mini_conversation(img_path)
                     if _mc is not None:
                         _mc_cx, _mc_cy, _mc_side = _mc
@@ -2864,8 +2865,10 @@ def main():
                 # MENU: 通知バナーを吹き出しと誤認 / MOVIE: 動画中タップで一時停止
                 # GACHA: ガチャ演出の光エフェクトを吹き出しと誤認
                 # _from_movie_ttl: MOVIE→UNKNOWN遷移直後のタップ抑制
+                # MOVIE_WAIT: WFC_ESCAPE がアニメーション検出した直後のタップ抑制
                 if (state.current_scene not in ("MENU", "MOVIE", "GACHA")
-                        and getattr(state, "_from_movie_ttl", 0) <= 0):
+                        and getattr(state, "_from_movie_ttl", 0) <= 0
+                        and state.last_action != "MOVIE_WAIT"):
                     _mc = detect_mini_conversation(img_path)
                     if _mc is not None:
                         _mc_cx, _mc_cy, _mc_side = _mc
