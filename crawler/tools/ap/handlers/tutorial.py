@@ -350,11 +350,13 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                 logger.info("[Asset] MOVIE_SKIP_TEXT をメニュー画面で抑制 (menu_kw=%d)", _menu_hits)
                 asset_hit = None
         # ホーム画面では FINGER_TEMPLATE 偽陽性を抑制 → ホーム検出ハンドラに委譲
+        # ただし指テンプレが実際に検出されている場合は抑制しない
+        # (CLAUDE.md: 指アイコン+金枠が検出できたらシーンに関係なくタップする)
         elif asset_hit and asset_hit[2] == "FINGER_TEMPLATE":
             _home_kws_check = ["光の間", "ショップ", "ガチャ", "ガシャ", "マップ", "レイヤ"]
             _home_kw_hits = sum(1 for kw in _home_kws_check
                                 if any(kw in t or t in kw for t in texts))
-            if _home_kw_hits >= 2:
+            if _home_kw_hits >= 2 and not ctx.pre_dialog_finger:
                 logger.info("[Asset] FINGER_TEMPLATE をホーム画面で抑制 (home_kw=%d)", _home_kw_hits)
                 asset_hit = None
             # プレゼントボックス画面: アイテムありなら一括受取、なしなら通常の指+金枠フロー
