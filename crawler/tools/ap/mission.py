@@ -110,6 +110,6 @@ def select_mission(args: argparse.Namespace) -> Mission:
     """CLI 引数からミッションを選択する。"""
     if args.fresh_install:
         return TutorialMission()
-    if args.grind:
+    if args.max_cycles >= 1:
         return GrindMission(max_cycles=args.max_cycles)
     return ResumeMission()

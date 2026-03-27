@@ -1468,10 +1468,8 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
 def parse_args():
     parser = argparse.ArgumentParser(description="まどドラ自律操縦")
     parser.add_argument("--verbose", action="store_true", help="デバッグログ出力")
-    parser.add_argument("--grind", action="store_true",
-                        help="周回モード: ホーム到達後もクエストへ自動ナビゲート")
     parser.add_argument("--max-cycles", type=int, default=0,
-                        help="周回上限 (0=無制限, デフォルト: 0)")
+                        help="周回数 (0=周回なし, N=N周で停止)")
     parser.add_argument("--pairing-code", type=str, default=None,
                         help="adb pair 用ペアリングコード (Android 11+)")
     parser.add_argument("--pairing-port", type=int, default=None,
