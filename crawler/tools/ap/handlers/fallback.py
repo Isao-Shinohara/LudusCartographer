@@ -158,36 +158,6 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         tap_device(cx, cy, state, "STORY_TAP")
         return "STORY_TAP", 0.3
 
-    # ─── 吹き出しセリフ (上部エリアのキャラガイダンス) ───
-    # 上部エリア (y<35%) にテキストがあり、AUTO/>> ボタン等のUI要素と共存
-    # 左上・右上どちらの吹き出しも対象
-    # → セリフが止まっている (前回と同一テキスト or phash安定) ならタップで送る
-    _BUBBLE_EXCLUDE_EXACT_2 = {"AUTO", ">>", ">|", "D1", "×", "+", "■", "畄", "目", "SKIP"}
-    _BUBBLE_EXCLUDE_SUBSTR_2 = ("Max", "Lv", "Lx", "Rank", "LV", "MadoDora",
-                                "AUTO", "UTO", "UT0", "AUT",
-                                "光の間", "ショップ", "ガチャ", "パーティ", "クエスト")
-    _BUBBLE_NUM_RE_2 = re.compile(r'^[\d,./:%+\-・\s]+$')
-    # AUTO ボタン位置を検出 → その近傍 50px 以内のテキストも除外
-    _auto_pos = None
-    if analysis_path:
-        _auto_m = ASSET_MANAGER.match_single("icon_auto", analysis_path)
-        if _auto_m and _auto_m[2] >= 0.60:
-            _auto_pos = (_auto_m[0], _auto_m[1])
-    _bubble_region = [r for r in ocr
-                      if r["center"][1] < H * 0.35
-                      and r["text"] not in _BUBBLE_EXCLUDE_EXACT_2
-                      and not any(s in r["text"] for s in _BUBBLE_EXCLUDE_SUBSTR_2)
-                      and not _BUBBLE_NUM_RE_2.match(r["text"])
-                      and len(r["text"]) > 2
-                      and not (_auto_pos and abs(r["center"][0] - _auto_pos[0]) < 50
-                               and abs(r["center"][1] - _auto_pos[1]) < 50)]
-    if _bubble_region and len(ocr) <= 20:
-        _bubble = _bubble_region[0]
-        _bx, _by = _bubble["center"]
-        logger.info(">>> 吹き出しセリフ送り '%s' (%d,%d)", _bubble["text"][:10], _bx, _by)
-        tap_device(_bx, _by, state, "BUBBLE_TAP")
-        return "BUBBLE_TAP", 0.3
-
     # ─── お知らせ一覧画面 (タブ: お知らせ/情報/不具合 の3つ全て) → ×ボタンで閉じる ───
     _notice_tabs = sum(1 for kw in ["お知らせ", "情報", "不具合"]
                        if has_text(ocr, kw, min_conf=0.3))
