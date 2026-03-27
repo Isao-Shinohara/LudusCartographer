@@ -149,8 +149,8 @@ def detect_gacha_orbs(img_path: Path, min_orbs: int = 3) -> bool:
         _, binary = cv2.threshold(roi, 200, 255, cv2.THRESH_BINARY)
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         # 光の玉: 面積が一定範囲内の円形ブロブをカウント
-        _min_area = 50   # 小さすぎるノイズ除外
-        _max_area = 8000  # 大きすぎる領域除外
+        _min_area = 50    # 小さすぎるノイズ除外
+        _max_area = 15000  # 大きすぎる領域除外 (実測: 光の玉≈9500-14000)
         orb_count = 0
         for cnt in contours:
             area = cv2.contourArea(cnt)
