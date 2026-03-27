@@ -79,7 +79,7 @@ _SINGLE_ONLY: frozenset = frozenset([
     "icon_showhide_round", "icon_log_round", "icon_auto_round", "icon_ff_round", "icon_skip_round",
     "battle_normal_attack", "battle_skill",
     "close_btn",              # × ボタン。一般マッチから除外 (match_single 専用)
-    "nav_back",               # 戻るボタン用、match_single 専用
+    "icon_back",               # 戻るボタン用、match_single 専用
     "dialog_corner_tl",       # ダイアログ検出専用
     "dialog_corner_bl",       # ダイアログ検出専用 (下部角は上部と異なるデザイン)
 ])

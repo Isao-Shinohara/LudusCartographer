@@ -810,7 +810,7 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
         # ⏭アイコンとは別UIだがどちらもスキップ用
         try:
             _skip_text_m = ASSET_MANAGER.match_single(
-                "movie_skip_text", img_path, roi=_skip_roi)
+                "movie_skip", img_path, roi=_skip_roi)
             if _skip_text_m and _skip_text_m[2] >= 0.70:
                 logger.debug("[MOVIE_SKIP_BTN] SKIPテキスト検出 (%d,%d) score=%.2f",
                              _skip_text_m[0], _skip_text_m[1], _skip_text_m[2])
@@ -892,7 +892,7 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     skip_btn = detect_movie_skip_button(img_path) if img_path else None
     has_skip = skip_btn is not None
     # icon_skip がマッチ → ADV ツールバーの存在を示す直接証拠
-    # movie_skip_text がマッチ → 動画固有の SKIP ボタン
+    # movie_skip がマッチ → 動画固有の SKIP ボタン
     _skip_source = skip_btn[2] if skip_btn else None
 
     # ── ADV 証拠チェック (⏭有無に関わらず共通) ──
