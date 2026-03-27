@@ -2256,29 +2256,36 @@ class AssetManager:
                     logger.debug("[Asset] '%s' skip: require_ocr_all not all found in OCR", name)
                     continue
             tmpl = data["img"]
-            if tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
-                continue
-            try:
-                res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, max_loc = cv2.minMaxLoc(res)
-                # エッジ重みスコアリング: edge_weight > 0 なら形状重視
-                _ew = data["edge_weight"]
-                if _ew > 0 and data["edge_img"] is not None:
-                    _img_edge = cv2.Canny(img, 50, 150)
-                    _res_e = cv2.matchTemplate(_img_edge, data["edge_img"], cv2.TM_CCOEFF_NORMED)
-                    _, _ev, _, _ = cv2.minMaxLoc(_res_e)
-                    max_val = (1 - _ew) * max_val + _ew * _ev
-                if max_val >= data["threshold"] and max_val > best_score:
-                    best_score = max_val
-                    h, w = tmpl.shape
-                    bx = max_loc[0] + int(data["offset"][0])
-                    by = max_loc[1] + int(data["offset"][1])
-                    cx = bx + w // 2
-                    cy = by + h // 2
-                    best_result = (cx, cy, data["action"], (bx, by, w, h))
-                    logger.debug("[Asset] '%s' score=%.3f at (%d,%d)", name, max_val, cx, cy)
-            except Exception as e:
-                logger.debug("[Asset] match error '%s': %s", name, e)
+            # tutorial_hand_pointer: 4方向回転でマッチング (上下左右の指を検出)
+            _rotations = (self._FINGER_ROTATIONS
+                          if name == "tutorial_hand_pointer"
+                          else [(None, None)])
+            for _rot_dir, _rot_code in _rotations:
+                _tmpl = cv2.rotate(tmpl, _rot_code) if _rot_code is not None else tmpl
+                if _tmpl.shape[0] > img.shape[0] or _tmpl.shape[1] > img.shape[1]:
+                    continue
+                try:
+                    res = cv2.matchTemplate(img, _tmpl, cv2.TM_CCOEFF_NORMED)
+                    _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                    # エッジ重みスコアリング: edge_weight > 0 なら形状重視
+                    _ew = data["edge_weight"]
+                    if _ew > 0 and data["edge_img"] is not None:
+                        _img_edge = cv2.Canny(img, 50, 150)
+                        _res_e = cv2.matchTemplate(_img_edge, data["edge_img"], cv2.TM_CCOEFF_NORMED)
+                        _, _ev, _, _ = cv2.minMaxLoc(_res_e)
+                        max_val = (1 - _ew) * max_val + _ew * _ev
+                    if max_val >= data["threshold"] and max_val > best_score:
+                        best_score = max_val
+                        h, w = _tmpl.shape
+                        bx = max_loc[0] + int(data["offset"][0])
+                        by = max_loc[1] + int(data["offset"][1])
+                        cx = bx + w // 2
+                        cy = by + h // 2
+                        best_result = (cx, cy, data["action"], (bx, by, w, h))
+                        logger.debug("[Asset] '%s' score=%.3f at (%d,%d) rot=%s",
+                                     name, max_val, cx, cy, _rot_dir)
+                except Exception as e:
+                    logger.debug("[Asset] match error '%s': %s", name, e)
         if best_result:
             cx, cy, action, _ = best_result
             logger.info("[Asset] HIT: '%s' score=%.3f → (%d,%d)", action, best_score, cx, cy)
