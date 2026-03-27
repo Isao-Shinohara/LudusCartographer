@@ -357,12 +357,16 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             if _home_kw_hits >= 2:
                 logger.info("[Asset] FINGER_TEMPLATE をホーム画面で抑制 (home_kw=%d)", _home_kw_hits)
                 asset_hit = None
-            # プレゼントボックス画面: 指テンプレ座標ではなく一括受取ボタンの固定座標をタップ
+            # プレゼントボックス画面: アイテムありなら一括受取、なしなら通常の指+金枠フロー
             elif any("プレゼント" in t or "プレセント" in t for t in texts):
-                _bulk_x, _bulk_y = roi_to_device(int(W * 0.89), int(H * 0.92), state.game_roi)
-                logger.info("[Asset] FINGER_TEMPLATE をプレゼントボックスで補正 → 一括受取 (%d,%d)", _bulk_x, _bulk_y)
-                tap_device(_bulk_x, _bulk_y, state, "PRESENT_BULK_RECEIVE")
-                return "PRESENT_BULK_RECEIVE", 2.0
+                _no_items = any("受け取れるアイテム" in t for t in texts)
+                if not _no_items:
+                    _bulk_x, _bulk_y = roi_to_device(int(W * 0.89), int(H * 0.92), state.game_roi)
+                    logger.info("[Asset] FINGER_TEMPLATE をプレゼントボックスで補正 → 一括受取 (%d,%d)", _bulk_x, _bulk_y)
+                    tap_device(_bulk_x, _bulk_y, state, "PRESENT_BULK_RECEIVE")
+                    return "PRESENT_BULK_RECEIVE", 2.0
+                # アイテムなし → 指は戻るボタンを指している。通常の FINGER_TEMPLATE フローへ
+                logger.info("[Asset] プレゼントボックスだがアイテムなし → 指+金枠フローへ")
         if asset_hit:
             # DIALOG_NEXT 以外のアセットが検出された場合、スタックカウンタリセット
             if asset_hit[2] != "ASSET_TUTORIAL_DIALOG_NEXT":

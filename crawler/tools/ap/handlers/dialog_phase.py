@@ -393,10 +393,13 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     ctx.white_hand_pos = _white_hand_pos
 
     # ─── 【最優先 #0-DIALOG】ダイアログ・ファースト ────────────
-    _dialog_result = handle_dialog_screen(
-        state, analysis_path, ocr, texts, _is_battle_early,
-        is_notice_popup=_is_notice)
-    if _dialog_result is not None:
-        return _dialog_result
+    # 指テンプレ検出時はダイアログ処理をスキップ → tutorial ハンドラで指+金枠タップ
+    # (CLAUDE.md: 指アイコン+金枠が検出できたらシーンに関係なくタップする)
+    if not _pre_dialog_finger:
+        _dialog_result = handle_dialog_screen(
+            state, analysis_path, ocr, texts, _is_battle_early,
+            is_notice_popup=_is_notice)
+        if _dialog_result is not None:
+            return _dialog_result
 
     return None
