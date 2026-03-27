@@ -2685,6 +2685,24 @@ def main():
                 state.adv_early_consecutive = 0
                 _skip_rapid = True  # ADV ハンドラがフォールスルー → OCR へ直行
 
+        # ── MINI_CONV 高速モード: 前回ミニ会話なら OCR スキップして即吹き出し検出 ──
+        if (not _skip_rapid
+                and state.last_action == "MINI_CONV_TAP"
+                and state.current_scene not in ("MENU", "MOVIE", "BATTLE")
+                and _early_analysis is not None):
+            _mc_rapid = detect_mini_conversation(_early_analysis)
+            if _mc_rapid is not None:
+                _mc_rx, _mc_ry, _mc_rs = _mc_rapid
+                logger.info("[MINI_CONV_RAPID][iter %d] 吹き出し(%s) → タップ (%d,%d)",
+                            i, _mc_rs, _mc_rx, _mc_ry)
+                tap_device(_mc_rx, _mc_ry, state, "MINI_CONV_TAP")
+                state.last_action = "MINI_CONV_TAP"
+                state.last_phash = ""
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                logger.info("  [PERF] Loop %.0fms (MINI_CONV_RAPID)", _fms)
+                continue
+
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
             state.same_phash_count = 0
