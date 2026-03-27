@@ -178,9 +178,8 @@ def main():
         texts_str = " ".join(texts)
 
         # ホーム画面チェック
-        home_kw = ["光の間", "ショップ", "ガチャ", "ガシャ", "パーティ",
-                   "クエスト", "ユニオン", "プレイヤーマッチ"]
-        home_count = sum(1 for kw in home_kw if any(kw in t for t in texts))
+        from tools.ap.constants import count_home_nav_keywords
+        home_count = count_home_nav_keywords(texts)
         if home_count >= 3:
             logger.info(">>> ホーム画面到達！ (%d indicators)", home_count)
             return

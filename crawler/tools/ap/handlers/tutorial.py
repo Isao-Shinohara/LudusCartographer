@@ -18,6 +18,7 @@ from tools.ap.constants import (
     BATTLE_WAIT, PHASH_THRESHOLD,
     _DIALOG_FIRST_KWS, _BATTLE_UI_KWS, _BATTLE_CORE_KWS,
     _CLOSE_BTN_OFFSET,
+    count_home_nav_keywords,
 )
 from tools.ap.device import adb, tap_device, swipe_device, take_screenshot
 from tools.ap.helpers import (
@@ -167,9 +168,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     # バトルUI（通常攻撃・単体攻撃・WAVE・Turn）が見えるとき はバトル中なのでスキップ
     _is_battle_ui = any(kw in joined for kw in _BATTLE_UI_KWS)
     _has_dialog_kw = any(kw in joined for kw in _DIALOG_FIRST_KWS)
-    _home_swipe_guard_kws = ["光の間", "ショップ", "ガチャ", "ガシャ", "パーティ",
-                             "クエスト", "ユニオン", "プレイヤーマッチ"]
-    _is_home_screen = sum(1 for h in _home_swipe_guard_kws if h in joined) >= 3
+    _is_home_screen = count_home_nav_keywords(texts) >= 3
     if analysis_path is not None and not _is_battle_ui and not ctx.adv_result.is_adv and not _has_dialog_kw and not _is_home_screen and not state.post_download:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:
@@ -353,10 +352,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
         # ただし指テンプレが実際に検出されている場合は抑制しない
         # (CLAUDE.md: 指アイコン+金枠が検出できたらシーンに関係なくタップする)
         elif asset_hit and asset_hit[2] == "FINGER_TEMPLATE":
-            _home_kws_check = ["光の間", "ショップ", "ガチャ", "ガシャ", "パーティ",
-                                "クエスト", "ユニオン", "プレイヤーマッチ"]
-            _home_kw_hits = sum(1 for kw in _home_kws_check
-                                if any(kw in t or t in kw for t in texts))
+            _home_kw_hits = count_home_nav_keywords(texts)
             if _home_kw_hits >= 2 and not ctx.pre_dialog_finger:
                 logger.info("[Asset] FINGER_TEMPLATE をホーム画面で抑制 (home_kw=%d)", _home_kw_hits)
                 asset_hit = None

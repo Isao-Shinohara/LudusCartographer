@@ -58,6 +58,30 @@ _GOLD_UI_ACTIONS: frozenset = frozenset([
 # ─── シーン再評価: 同一アクション連続閾値 ───
 _SCENE_REEVAL_THRESHOLD = 5
 
+# ─── ホーム画面ナビバー キーワード (複数箇所で共有) ───
+HOME_NAV_KWS: list[str] = [
+    "光の間", "ショップ", "ガチャ", "ガシャ", "パーティ",
+    "クエスト", "ユニオン", "プレイヤーマッチ",
+]
+HOME_NAV_PREFIXES: list[str] = [
+    "光の", "ショッ", "ガシャ", "ガチャ", "パーテ",
+    "クエス", "ユニオ", "マッチ",
+]
+
+
+def count_home_nav_keywords(texts: list[str]) -> int:
+    """ホームナビバーのキーワードマッチ数を返す (重複排除)。
+
+    texts: OCR テキストのリスト。
+    プレフィックス部分一致 + 双方向部分一致で判定。
+    """
+    matched: set[int] = set()
+    for t in texts:
+        for idx, (kw, prefix) in enumerate(zip(HOME_NAV_KWS, HOME_NAV_PREFIXES)):
+            if idx not in matched and (kw in t or prefix in t or t in kw):
+                matched.add(idx)
+    return len(matched)
+
 # ─── 確認ダイアログ キーワード (複数箇所で共有) ───
 _CONFIRM_POS_KWS: list[str] = ["OK", "はい", "わかった", "了解", "決定", "許可", "Allow", "ALLOW", "リトライ", "Retry", "挑戦"]
 _CONFIRM_NEG_KWS: list[str] = ["キャンセル", "いいえ", "戻る", "やめる", "許可しない", "拒否", "Deny"]
