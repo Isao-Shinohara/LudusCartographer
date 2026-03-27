@@ -697,6 +697,12 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             # 長期滞留カウンタは全 dist レンジでインクリメント
             state._movie_recheck_count = getattr(state, "_movie_recheck_count", 0) + 1
             if state._movie_recheck_count >= 8:
+                # ガチャ演出中は脱出しない (光の玉アニメーション中)
+                if is_gacha_scene(img_path):
+                    logger.info("[SCENE_EARLY] MOVIE長期滞留 (%d回) だがガチャ演出中 → MOVIE継続",
+                                state._movie_recheck_count)
+                    state._movie_recheck_count = 0
+                    return "MOVIE"
                 logger.info("[SCENE_EARLY] MOVIE長期滞留 (%d回, dist=%d) → UNKNOWN (OCRへ)",
                             state._movie_recheck_count, dist)
                 state._movie_recheck_count = 0
@@ -757,7 +763,13 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                                         _adv_auto_m[2], _adv_evidence)
             # MOVIE 長期滞留脱出: recheck が 8 回 (約5秒) 超えたら MOVIE 誤判定の可能性
             # → UNKNOWN に遷移して OCR で正確なシーン判定を行う
+            # ガチャ演出中は脱出しない
             if state._movie_recheck_count >= 8:
+                if is_gacha_scene(img_path):
+                    logger.info("[SCENE_EARLY] MOVIE長期滞留 (%d回) だがガチャ演出中 → MOVIE継続",
+                                state._movie_recheck_count)
+                    state._movie_recheck_count = 0
+                    return "MOVIE"
                 logger.info("[SCENE_EARLY] MOVIE長期滞留 (%d回) → UNKNOWN (OCRへ)",
                             state._movie_recheck_count)
                 state._movie_recheck_count = 0
