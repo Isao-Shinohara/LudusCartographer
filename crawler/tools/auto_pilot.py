@@ -3408,6 +3408,9 @@ def main():
                         state.grind_cycles_completed, GRIND_CYCLE_INTERVAL)
             logger.info("=" * 60)
             time.sleep(GRIND_CYCLE_INTERVAL)
+            # 2周目以降は常に新規インストール
+            logger.info("[GRIND] 新規インストール開始")
+            _fresh_install_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
             # 周回用状態リセット
             state.tutorial_cleared = False
             state.home_reached = False
@@ -3417,6 +3420,9 @@ def main():
             state.last_action = ""
             state.current_scene = "UNKNOWN"
             state.last_phash = ""
+            state.is_fresh_start = True
+            state.post_download = False
+            delete_state("post_download")
             logger.info("[GRIND] 状態リセット完了 → 周回 #%d 開始",
                         state.grind_cycles_completed + 1)
         # 副作用アクション以外なら代替候補を収集
