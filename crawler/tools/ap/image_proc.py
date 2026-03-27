@@ -148,14 +148,18 @@ def detect_gacha_orbs(img_path: Path, min_orbs: int = 1) -> bool:
         # 高輝度閾値: 200以上の明るいピクセルを抽出
         _, binary = cv2.threshold(roi, 200, 255, cv2.THRESH_BINARY)
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        # 光の玉: 面積が一定範囲内の円形ブロブをカウント
+        # 光の玉: 面積+円形度でフィルタ (実測: area≈9500-14000, circ≈0.76-0.90)
         _min_area = 50    # 小さすぎるノイズ除外
-        _max_area = 15000  # 大きすぎる領域除外 (実測: 光の玉≈9500-14000)
+        _max_area = 15000  # 大きすぎる領域除外
+        _min_circ = 0.60   # 円形度下限 (長方形UIを除外)
         orb_count = 0
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if _min_area <= area <= _max_area:
-                orb_count += 1
+                _peri = cv2.arcLength(cnt, True)
+                _circ = (4 * np.pi * area / (_peri * _peri)) if _peri > 0 else 0
+                if _circ >= _min_circ:
+                    orb_count += 1
         if orb_count >= min_orbs:
             logger.debug("[GACHA_ORBS] 光の玉 %d 個検出 (閾値=%d)", orb_count, min_orbs)
         return orb_count >= min_orbs
