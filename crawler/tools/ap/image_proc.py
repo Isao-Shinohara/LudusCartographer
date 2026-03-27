@@ -129,7 +129,7 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
         return False
 
 
-def detect_gacha_orbs(img_path: Path, min_orbs: int = 3) -> bool:
+def detect_gacha_orbs(img_path: Path, min_orbs: int = 1) -> bool:
     """ガチャ演出の光の玉を検出。
 
     暗い背景上に高輝度の円形ブロブが min_orbs 個以上あれば True。
