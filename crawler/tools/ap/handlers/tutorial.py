@@ -270,7 +270,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     # 指アイコン検出後 → 金色ハイライト要素をタップ。
     # 次優先: セリフ/ADVテキスト確認 (後続の#0/#3-ADV処理)
     if analysis_path is not None:
-        asset_hit = ASSET_MANAGER.match(analysis_path, ocr_texts=texts)
+        asset_hit = ASSET_MANAGER.match(analysis_path, ocr_texts=texts,
+                                        scene=state.current_scene)
         # BATTLE_UPPER_GUARD: バトル中は上部テンプレマッチを除外
         # バトル中のタップ対象は画面下部のみ (攻撃ボタン等)
         if asset_hit and (ctx.is_battle_early or state.current_scene == "BATTLE"):

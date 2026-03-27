@@ -2188,6 +2188,20 @@ class AssetManager:
             # 背景依存の偽陽性が多いテンプレートに有効
             _ew = float(meta.get("edge_weight", 0.0))
             _edge_img = cv2.Canny(img, 50, 150) if _ew > 0 else None
+            # scenes: このテンプレートが有効なシーン。JSON で指定可能。
+            # 未指定時はテンプレート名から自動推定。
+            _scenes = meta.get("scenes")
+            if _scenes is None:
+                if name.startswith("adv_"):
+                    _scenes = ["ADV"]
+                elif name.startswith("battle_"):
+                    _scenes = ["BATTLE"]
+                elif name.startswith("dialog_") or name.startswith("tutorial_dialog"):
+                    _scenes = ["DIALOG"]
+                elif name.startswith("movie_"):
+                    _scenes = ["MOVIE"]
+                else:
+                    _scenes = []  # 空 = 全シーン対象
             self._templates[name] = {
                 "img": img,
                 "edge_img": _edge_img,
@@ -2197,6 +2211,7 @@ class AssetManager:
                 "offset": meta.get("offset", [0, 0]),
                 "require_ocr": meta.get("require_ocr", []),
                 "require_ocr_all": meta.get("require_ocr_all", []),
+                "scenes": _scenes,
             }
             count += 1
         if count:
@@ -2205,9 +2220,11 @@ class AssetManager:
 
     def match(self, screenshot_path: Path,
               ocr_texts: Optional[list[str]] = None,
+              scene: str = "",
               ) -> Optional[tuple[int, int, str, tuple[int, int, int, int]]]:
         """
-        スクリーンショットと全テンプレートを比較。
+        スクリーンショットとテンプレートを比較。
+        scene が指定された場合、そのシーンに該当するテンプレートのみ照合。
         ocr_texts が渡された場合、require_ocr 条件を満たすテンプレートのみ照合。
         Returns: (tap_x, tap_y, action_name, button_region) or None
             button_region = (bx, by, bw, bh) — テンプレートマッチ領域
@@ -2221,6 +2238,10 @@ class AssetManager:
         best_result: Optional[tuple[int, int, str, tuple[int, int, int, int]]] = None
         for name, data in self._templates.items():
             if name in _SINGLE_ONLY:
+                continue
+            # シーンフィルタ: テンプレートの対象シーンに一致しない場合スキップ
+            _tmpl_scenes = data.get("scenes", [])
+            if scene and _tmpl_scenes and scene not in _tmpl_scenes:
                 continue
             # require_ocr チェック: いずれか1つのキーワードがOCRにあればOK (OR条件)
             required = data.get("require_ocr", [])
