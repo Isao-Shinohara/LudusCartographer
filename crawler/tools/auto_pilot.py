@@ -610,6 +610,40 @@ def _check_battle_templates(img_path: Path, asset_mgr) -> Optional[tuple]:
     return None
 
 
+# ─── 必殺技演出待機 ─────────────────────────────────
+def _wait_for_special_animation(state: PilotState,
+                                 max_wait: float = 10.0,
+                                 stable_threshold: int = 3) -> None:
+    """必殺技タップ後、演出が終わるまで phash 安定を待つ。
+
+    演出中は phash が激しく変化する。phash が安定 (dist < PHASH_THRESHOLD)
+    が stable_threshold 回連続したら演出完了と判断。
+    """
+    logger.info("[SPECIAL_WAIT] 必殺技演出待機開始 (max %.0fs)", max_wait)
+    _start = time.time()
+    _prev_ph = ""
+    _stable = 0
+    while time.time() - _start < max_wait:
+        time.sleep(0.5)
+        _sp_path, _sp_w, _sp_h, _ = take_screenshot()
+        if not _sp_path:
+            continue
+        _sp_analysis = prepare_analysis_image(_sp_path, _sp_w, _sp_h)
+        _sp_ph = compute_phash(_sp_analysis) if _sp_analysis else ""
+        if _prev_ph and _sp_ph:
+            _sp_dist = phash_distance(_prev_ph, _sp_ph)
+            if _sp_dist < PHASH_THRESHOLD:
+                _stable += 1
+                if _stable >= stable_threshold:
+                    logger.info("[SPECIAL_WAIT] phash安定 %d回 → 演出完了 (%.1fs)",
+                                _stable, time.time() - _start)
+                    return
+            else:
+                _stable = 0
+        _prev_ph = _sp_ph
+    logger.info("[SPECIAL_WAIT] タイムアウト %.0fs → 続行", max_wait)
+
+
 # ─── 早期シーン判定 ─────────────────────────────────
 def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     """OCR 前にシーンを判定する。
@@ -1273,6 +1307,9 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
                     state.char_just_selected = False
                     state.finger_detections += 1
                     state.battle_rapid_consecutive.tick()
+                    # 必殺技タップ後は演出完了まで phash 安定を待つ
+                    if _btn_name == "battle_special":
+                        _wait_for_special_animation(state)
                     return True
             # B-1: テンプレ未検出 → glow フォールバック
             if not _rapid_action and _rapid_right_g:
@@ -3098,6 +3135,9 @@ def main():
                             state.char_just_selected = False
                             state.finger_detections += 1
                             state.battle_rapid_consecutive.tick()
+                            # 必殺技タップ後は演出完了まで phash 安定を待つ
+                            if _btn_name == "battle_special":
+                                _wait_for_special_animation(state)
                             _rapid_action = _tmpl_action
                             _rapid_tx, _rapid_ty = _btn_m[0], _btn_m[1]
                             break
