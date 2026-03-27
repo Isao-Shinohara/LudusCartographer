@@ -137,8 +137,6 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
             state.tutorial_cleared = True
             log_milestone(state, "HOME_REACHED")
         logger.info(">>> ホーム画面検出 (%d個) — チュートリアル完了済み", home_count)
-        if state.grind_mode:
-            return _handle_grind_nav(ctx, state)
         return "GOAL_HOME_REACHED", 0
 
     # ── チュートリアル中: 指/金枠を検出してタップ ──

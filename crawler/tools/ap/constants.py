@@ -25,6 +25,7 @@ FORCE_ANALYZE_AFTER = 3     # phash 変化なし連続 N 回 → 強制 OCR (1�
 STALL_TIMEOUT = 15.0        # 強制OCRでもタップできず続く秒数 → スタック介入
 BATTLE_WAIT = 0.0           # バトル待機 (tap_device の MIN_TAP_INTERVAL=1.0s が保証)
 DOWNLOAD_WAIT = 10.0
+GRIND_CYCLE_INTERVAL = 30.0  # 周回間の待機秒数 (ホーム到達後、次の周回開始まで)
 MIN_TAP_INTERVAL = 1.0      # 全場面共通: タップ間隔は最低1.0秒
 MIN_CAPTURE_INTERVAL = 0.1  # スクショ取得の最低間隔 (秒) scrcpy高速キャプチャ用
 

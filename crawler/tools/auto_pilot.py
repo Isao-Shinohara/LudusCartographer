@@ -2148,6 +2148,9 @@ def main():
     mission.configure_state(state, args)
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
+    # ── 周回数リセット (起動ごと) ──
+    delete_state("grind_cycles")
+
     # ── SQLite から永続状態を復元 ──
     if load_state("post_download") == "1":
         state.post_download = True
@@ -3384,13 +3387,41 @@ def main():
             action, wait_sec = detect_and_act(ocr_results, state, analysis_path,
                                                   adv_result=_adv_result)
         state.last_action = action
-        # ── ホーム画面到達 → 自動操縦停止 ──
-        if action == "GOAL_HOME_REACHED" and not state.grind_mode:
+        # ── ホーム画面到達 ──
+        if action == "GOAL_HOME_REACHED":
+            if not state.grind_mode:
+                logger.info("=" * 60)
+                logger.info("  ホーム画面到達 — 自動操縦を停止します")
+                logger.info("=" * 60)
+                generate_and_copy_report(state, "ホーム画面到達")
+                break
+            # 周回モード: 待機 → 次の周回開始
+            state.grind_cycles_completed += 1
+            persist_state("grind_cycles", str(state.grind_cycles_completed))
+            if 0 < state.grind_max_cycles <= state.grind_cycles_completed:
+                logger.info("=" * 60)
+                logger.info("  [GRIND] 目標周回数 %d に到達 — 自動操縦を停止します",
+                            state.grind_max_cycles)
+                logger.info("=" * 60)
+                generate_and_copy_report(state, f"周回完了 ({state.grind_cycles_completed}周)")
+                break
+            from tools.ap.constants import GRIND_CYCLE_INTERVAL
             logger.info("=" * 60)
-            logger.info("  ホーム画面到達 — 自動操縦を停止します")
+            logger.info("  [GRIND] 周回 #%d 完了! → %.0f秒後に次の周回を開始",
+                        state.grind_cycles_completed, GRIND_CYCLE_INTERVAL)
             logger.info("=" * 60)
-            generate_and_copy_report(state, "ホーム画面到達")
-            break
+            time.sleep(GRIND_CYCLE_INTERVAL)
+            # 周回用状態リセット
+            state.tutorial_cleared = False
+            state.home_reached = False
+            state._home_no_evidence_count = 0
+            state.battle_wait_count = 0
+            state.auto_activated = False
+            state.last_action = ""
+            state.current_scene = "UNKNOWN"
+            state.last_phash = ""
+            logger.info("[GRIND] 状態リセット完了 → 周回 #%d 開始",
+                        state.grind_cycles_completed + 1)
         # 副作用アクション以外なら代替候補を収集
         if action not in _IMMEDIATE_ACTIONS:
             state.pending_candidates = collect_secondary_candidates(
