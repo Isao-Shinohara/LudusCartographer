@@ -66,15 +66,19 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
 
     # ─── ホーム画面検出 ───
     # ホームナビバーのボタン名のみでカウント (編成/メニュー等のサブ画面と区別)
+    # フッター領域 (y > 80%) の OCR テキストのみ対象
     # OCR が文字を途中で切る場合がある ("クエスト"→"クエス", "パーティ"→"パーテ")
     # → 短いプレフィックスで双方向部分一致: keyword in text OR text in keyword
+    _footer_y_min = int(H * 0.80)
+    _footer_texts = [item.get("text", "") for item in ocr
+                     if item.get("center", (0, 0))[1] >= _footer_y_min]
     home_indicators = ["光の間", "ショップ", "ガシャ", "ガチャ", "パーティ",
                        "クエスト", "ユニオン", "プレイヤーマッチ"]
     _home_prefixes = ["光の", "ショッ", "ガシャ", "ガチャ", "パーテ",
                       "クエス", "ユニオ", "マッチ"]
     # 重複排除: 同じ indicator に複数テキストがマッチしても1回
     _matched = set()
-    for t in texts:
+    for t in _footer_texts:
         for idx, (h, p) in enumerate(zip(home_indicators, _home_prefixes)):
             if idx not in _matched and (h in t or p in t or t in h):
                 _matched.add(idx)

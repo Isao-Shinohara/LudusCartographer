@@ -353,7 +353,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
         # ただし指テンプレが実際に検出されている場合は抑制しない
         # (CLAUDE.md: 指アイコン+金枠が検出できたらシーンに関係なくタップする)
         elif asset_hit and asset_hit[2] == "FINGER_TEMPLATE":
-            _home_kws_check = ["光の間", "ショップ", "ガチャ", "ガシャ", "マップ", "レイヤ"]
+            _home_kws_check = ["光の間", "ショップ", "ガチャ", "ガシャ", "パーティ",
+                                "クエスト", "ユニオン", "プレイヤーマッチ"]
             _home_kw_hits = sum(1 for kw in _home_kws_check
                                 if any(kw in t or t in kw for t in texts))
             if _home_kw_hits >= 2 and not ctx.pre_dialog_finger:

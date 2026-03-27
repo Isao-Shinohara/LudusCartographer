@@ -108,9 +108,8 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
             return "TITLE_TAP", 2.0
         # ホーム画面検出: フッターエリア (y > H*0.85) のナビキーワードが2個以上
         # フッター以外 (編成メニュー内の「パーティ」等) は誤検出になるため除外
-        _home_nav_kws = ["クエスト", "ショップ", "ガチャ", "ガシャ", "ユニオン",
-                         "光の間", "パーティ", "プレイヤーマッチ", "お知らせ",
-                         "イベント", "マイページ", "編成", "MAGIA EXEDRA"]
+        _home_nav_kws = ["光の間", "ショップ", "ガチャ", "ガシャ", "パーティ",
+                         "クエスト", "ユニオン", "プレイヤーマッチ"]
         _footer_y_min = int(H * 0.85)
         _footer_ocr = [item for item in ocr
                        if item.get("center", (0, 0))[1] >= _footer_y_min]

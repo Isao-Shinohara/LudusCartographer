@@ -178,7 +178,8 @@ def main():
         texts_str = " ".join(texts)
 
         # ホーム画面チェック
-        home_kw = ["クエスト", "ショップ", "ガチャ", "ミッション", "メニュー", "ホーム", "お知らせ", "編成"]
+        home_kw = ["光の間", "ショップ", "ガチャ", "ガシャ", "パーティ",
+                   "クエスト", "ユニオン", "プレイヤーマッチ"]
         home_count = sum(1 for kw in home_kw if any(kw in t for t in texts))
         if home_count >= 3:
             logger.info(">>> ホーム画面到達！ (%d indicators)", home_count)

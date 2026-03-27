@@ -3353,7 +3353,8 @@ def main():
         _from_movie_ttl = getattr(state, "_from_movie_ttl", 0)
         # タイトル画面・ホーム画面はTTL抑制の例外
         _is_title = any("Ver." in t or "Ver.2" in t for t in texts) and any("プレイヤーID" in t for t in texts)
-        _home_nav_kws = ["光の間", "ショップ", "ガチャ", "ガシャ", "パーティ", "クエスト"]
+        _home_nav_kws = ["光の間", "ショップ", "ガチャ", "ガシャ", "パーティ",
+                         "クエスト", "ユニオン", "プレイヤーマッチ"]
         _is_home = sum(1 for kw in _home_nav_kws if any(kw in t for t in texts)) >= 3
         _is_battle = state.current_scene == "BATTLE"
         if (_is_title or _is_home or _is_battle) and _from_movie_ttl > 0:
