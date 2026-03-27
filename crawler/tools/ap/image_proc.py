@@ -918,24 +918,20 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     # ADV 証拠の評価
     # ↓ボタン: 最も確実 (MOVIE には絶対にない)
     # ADVツールバー: 確実 (5アイコン検出、MOVIE には存在しない)
-    # adv_icon_skip: ADV ツールバーのアイコンがマッチ → ADV 確定
+    # adv_icon_skip 単独は ADV 確定にしない (CLAUDE.md: ⏭+ADV証拠なし→動画確定)
     _adv_evidence_strong = None
     if _has_adv_advance:
         _adv_evidence_strong = "↓ボタン"
     elif adv_result is not None and adv_result.is_adv:
         _adv_evidence_strong = "ADVツールバー"
-    elif _skip_source == "adv_icon":
-        # adv_icon_skip テンプレートは ADV ツールバー固有のアイコン。
-        # 動画の SKIP ボタンとは別物なので、マッチすれば ADV 確定。
-        _adv_evidence_strong = "ADV⏭アイコン"
 
     # ── ADV 証拠による即棄却 ──
     if _adv_evidence_strong:
         logger.info("[MOVIE_SCENE] %s → ADV確定, MOVIE棄却", _adv_evidence_strong)
         return MovieSceneResult()
     if has_skip:
-        # ここに来るのは movie_skip_text マッチのみ (adv_icon は上で棄却済み)
-        logger.info("[MOVIE_SCENE] SKIP テキスト検出 + ADV証拠なし → MOVIE確定")
+        # ⏭ボタンあり + ADV証拠(↓/ツールバー)なし → 動画確定 (CLAUDE.md §0)
+        logger.info("[MOVIE_SCENE] ⏭検出(%s) + ADV証拠なし → MOVIE確定", _skip_source)
     else:
         # ⏭ なし: phash 連続変化があれば動画の可能性を残す
         # AUTO 単独でも ADV 判定 OK (⏭なし時)
