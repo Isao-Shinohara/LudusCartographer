@@ -1034,9 +1034,10 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
         h_cut = int(ANALYSIS_H * upper_ratio)
         upper = resized[0:h_cut, :]
 
-        # HSV 白色マスク (S<40, V>200)
+        # HSV 白色マスク (S<40, V>240)
+        # V>=240: 3D探索UIバー(V≈227)等のグレー要素を除外
         hsv = cv2.cvtColor(upper, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, (0, 0, 200), (180, 40, 255))
+        mask = cv2.inRange(hsv, (0, 0, 240), (180, 40, 255))
 
         # morphology cleanup
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
@@ -1068,13 +1069,15 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
                 continue
 
             # 形状判定: circularity + fill_ratio で吹き出しを識別
-            # 吹き出し: circ=0.30-0.80, fill=0.40-0.80 (キャラの白体が繋がると circ が下がる)
+            # 形状判定: circularity + fill_ratio で吹き出しを識別
+            # 吹き出し: circ=0.30-0.80, fill=0.40-0.80 (楕円形 π/4≈0.785)
+            # UIバー等の長方形: fill>0.85 (角張って充填率が高い)
             # お知らせタブヘッダ: circ≈0.27, fill<0.35 (不規則形状)
             _perimeter = cv2.arcLength(cnt, True)
             _circularity = (4 * np.pi * area / (_perimeter * _perimeter)
                             if _perimeter > 0 else 0)
             _fill_ratio = area / (w * bh) if w * bh > 0 else 0
-            if _circularity < 0.28 or _fill_ratio < 0.35:
+            if _circularity < 0.28 or _fill_ratio < 0.35 or _fill_ratio > 0.80:
                 continue
 
             # 平均輝度 (V チャンネル)

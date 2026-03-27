@@ -697,9 +697,11 @@ def _make_bubble_image(tmp_path, bubbles, bg_val=40):
 
     img = np.full((ANALYSIS_H, ANALYSIS_W, 3), bg_val, dtype=np.uint8)
     for bx, by, bw, bh, brightness in bubbles:
-        # 白い吹き出し (S<40, V>200 を満たす BGR)
-        cv2.rectangle(img, (bx, by), (bx + bw, by + bh),
-                      (brightness, brightness, brightness), -1)
+        # 白い吹き出し (楕円形, S<40, V>240 を満たす BGR)
+        cx = bx + bw // 2
+        cy = by + bh // 2
+        cv2.ellipse(img, (cx, cy), (bw // 2, bh // 2), 0, 0, 360,
+                    (brightness, brightness, brightness), -1)
     img_path = tmp_path / "mini_conv.png"
     cv2.imwrite(str(img_path), img)
     return img_path
