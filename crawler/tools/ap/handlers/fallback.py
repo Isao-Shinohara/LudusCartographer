@@ -122,14 +122,12 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         return "AGREE", 1.0
 
     # ─── 確認ダイアログ ───
+    # ボタンラベルのみ。「クエスト」「バトル」等の汎用ワードは
+    # タイトル画面等で誤マッチするため含めない
     confirm_match = has_any(ocr, ["OK", "はい", "次へ", "確認", "完了", "決定",
                                    "受け取る", "受取", "了解", "わかった",
                                    "進む", "START", "開始",
-                                   "TAP TO START", "TOUCH", "始める",
-                                   "戦闘", "出撃", "クエスト開始", "バトル開始",
-                                   # チュートリアルで案内されるボタン名
-                                   "自動編成", "一括受取", "強化", "合成", "強化素材",
-                                   "クエスト", "探索開始", "バトル"])
+                                   "TAP TO START", "TOUCH", "始める"])
     if confirm_match:
         cx, cy = confirm_match["center"]
         text = confirm_match["text"]
