@@ -145,9 +145,9 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     _has_auto_template = False
     if not ctx.adv_result.is_adv and not ctx.is_mini_conv and analysis_path:
         from tools.ap.constants import ADV_TOOLBAR_ROI
-        _ft_auto = ASSET_MANAGER.match_single("adv_icon_auto", analysis_path, roi=ADV_TOOLBAR_ROI)
+        _ft_auto = ASSET_MANAGER.match_single("icon_auto", analysis_path, roi=ADV_TOOLBAR_ROI)
         if _ft_auto and _ft_auto[2] >= 0.50:
-            _ft_next = ASSET_MANAGER.match_single("adv_next_btn", analysis_path)
+            _ft_next = ASSET_MANAGER.match_single("next_btn", analysis_path)
             if _ft_next and _ft_next[2] >= 0.70:
                 _has_auto_template = True
     _has_adv_evidence = ctx.adv_result.is_adv or ctx.is_mini_conv or _has_auto_template
@@ -170,7 +170,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     # AUTO ボタン位置を検出 → その近傍 50px 以内のテキストも除外
     _auto_pos = None
     if analysis_path:
-        _auto_m = ASSET_MANAGER.match_single("adv_icon_auto", analysis_path)
+        _auto_m = ASSET_MANAGER.match_single("icon_auto", analysis_path)
         if _auto_m and _auto_m[2] >= 0.60:
             _auto_pos = (_auto_m[0], _auto_m[1])
     _bubble_region = [r for r in ocr

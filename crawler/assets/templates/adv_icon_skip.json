@@ -1,5 +1,0 @@
-{
-  "threshold": 0.65,
-  "action": "ADV_TOOLBAR_ICON",
-  "note": "ADVツールバー個別アイコン。detect_adv_scene()で5個全マッチ判定に使用。"
-}

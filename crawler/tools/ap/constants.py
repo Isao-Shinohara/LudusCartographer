@@ -74,9 +74,9 @@ _UI_TEXT_KWS: tuple = ("利用規約", "同意", "規約", "プライバシー",
 
 # ─── match_single() 専用テンプレート (一般マッチから除外) ───
 _SINGLE_ONLY: frozenset = frozenset([
-    "adv_next_btn",
-    "adv_icon_showhide", "adv_icon_log", "adv_icon_auto", "adv_icon_ff", "adv_icon_skip",
-    "adv_icon_showhide_round", "adv_icon_log_round", "adv_icon_auto_round", "adv_icon_ff_round", "adv_icon_skip_round",
+    "next_btn",
+    "icon_showhide", "icon_log", "icon_auto", "icon_ff", "icon_skip",
+    "icon_showhide_round", "icon_log_round", "icon_auto_round", "icon_ff_round", "icon_skip_round",
     "battle_normal_attack", "battle_skill",
     "close_btn",              # × ボタン。一般マッチから除外 (match_single 専用)
     "nav_back",               # 戻るボタン用、match_single 専用
@@ -114,7 +114,7 @@ ANALYSIS_W = 1440
 ANALYSIS_H = 720
 
 # ─── ADV シーン検出 ROI (共通定数) ───
-# adv_next_btn (↓ボタン): 右下領域
+# next_btn (↓ボタン): 右下領域
 ADV_NEXT_BTN_ROI = (int(ANALYSIS_W * 0.70), int(ANALYSIS_H * 0.75),
                     int(ANALYSIS_W * 0.30), int(ANALYSIS_H * 0.25))
 # ADV ツールバー (AUTO/FF/MENU/LOG 等): 上部領域

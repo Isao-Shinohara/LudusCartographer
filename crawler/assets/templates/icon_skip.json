@@ -1,0 +1,6 @@
+{
+  "threshold": 0.65,
+  "action": "ADV_TOOLBAR_ICON",
+  "scenes": ["ADV"],
+  "note": "⏭スキップアイコン。ADVツールバーと動画スキップの両方に使用。"
+}

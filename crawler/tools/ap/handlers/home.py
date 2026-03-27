@@ -270,7 +270,7 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     # AUTO ボタン位置を検出 → その近傍 50px 以内のテキストも除外
     _auto_pos_h = None
     if analysis_path:
-        _auto_mh = ASSET_MANAGER.match_single("adv_icon_auto", analysis_path)
+        _auto_mh = ASSET_MANAGER.match_single("icon_auto", analysis_path)
         if _auto_mh and _auto_mh[2] >= 0.60:
             _auto_pos_h = (_auto_mh[0], _auto_mh[1])
     _bubble_texts = [r for r in ocr

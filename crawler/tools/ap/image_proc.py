@@ -601,8 +601,8 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
 
 # ─── ADV ツールバー: 5個別アイコン名 ──────────────────────────────
 _ADV_TOOLBAR_ICON_NAMES = (
-    "adv_icon_showhide", "adv_icon_log", "adv_icon_auto",
-    "adv_icon_ff", "adv_icon_skip",
+    "icon_showhide", "icon_log", "icon_auto",
+    "icon_ff", "icon_skip",
 )
 
 # ─── ADV シーン統一検出 ────────────────────────────────────────────
@@ -683,7 +683,7 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
     )
     # ↓ボタン検出
     _has_advance_icon = False
-    _adv_btn = ASSET_MANAGER.match_single("adv_next_btn", img_path,
+    _adv_btn = ASSET_MANAGER.match_single("next_btn", img_path,
                 roi=(int(ANALYSIS_W * 0.80), int(ANALYSIS_H * 0.75),
                      int(ANALYSIS_W * 0.20), int(ANALYSIS_H * 0.25)))
     _has_advance_icon = _adv_btn is not None
@@ -703,7 +703,7 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
     if _all_matched and _icon_scores:
         # toolbar_pos = AUTO アイコンの位置 (3番目)
         try:
-            _auto_m = ASSET_MANAGER.match_single("adv_icon_auto", img_path)
+            _auto_m = ASSET_MANAGER.match_single("icon_auto", img_path)
             if _auto_m:
                 result.toolbar_pos = (_auto_m[0], _auto_m[1])
         except Exception:
@@ -711,7 +711,7 @@ def detect_adv_scene(img_path: Path, ocr_items=None, roi=None,
 
     # --- 2. ↓ボタン ---
     try:
-        next_match = ASSET_MANAGER.match_single("adv_next_btn", img_path)
+        next_match = ASSET_MANAGER.match_single("next_btn", img_path)
         if next_match:
             result.next_btn_score = next_match[2]
             result.next_btn_pos = (next_match[0], next_match[1])
@@ -795,10 +795,10 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
         _roi = _img[0:_y2, _x1:_W]
         _skip_roi = (int(ANALYSIS_W * 0.85), 0,
                      int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.15))
-        # ── プライマリ: テンプレートマッチング (adv_icon_skip) ──
+        # ── プライマリ: テンプレートマッチング (icon_skip) ──
         # HSV はリサイズ後のアイコンサイズに依存するがテンプレートは安定
         try:
-            _skip_m = ASSET_MANAGER.match_single("adv_icon_skip", img_path, roi=_skip_roi)
+            _skip_m = ASSET_MANAGER.match_single("icon_skip", img_path, roi=_skip_roi)
             if _skip_m and _skip_m[2] >= 0.70:
                 logger.debug("[MOVIE_SKIP_BTN] テンプレート検出 (%d,%d) score=%.2f",
                              _skip_m[0], _skip_m[1], _skip_m[2])
@@ -891,7 +891,7 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     # ── ⏭ スキップボタン検出 ──
     skip_btn = detect_movie_skip_button(img_path) if img_path else None
     has_skip = skip_btn is not None
-    # adv_icon_skip がマッチ → ADV ツールバーの存在を示す直接証拠
+    # icon_skip がマッチ → ADV ツールバーの存在を示す直接証拠
     # movie_skip_text がマッチ → 動画固有の SKIP ボタン
     _skip_source = skip_btn[2] if skip_btn else None
 
@@ -899,9 +899,9 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     # ADV の構造的特徴 (MOVIE にはどれもない):
     #   1. ↓送りボタン (右下) — セリフ送り可能時に表示
     #   2. ADV ツールバー (右上5アイコン: menu,log,AUTO,>>,>|)
-    #   3. adv_icon_skip マッチ — ADV ツールバーのアイコンそのもの
+    #   3. icon_skip マッチ — ADV ツールバーのアイコンそのもの
     from tools.ap.constants import ADV_NEXT_BTN_ROI
-    _adv_btn_movie = ASSET_MANAGER.match_single("adv_next_btn", img_path,
+    _adv_btn_movie = ASSET_MANAGER.match_single("next_btn", img_path,
                     roi=ADV_NEXT_BTN_ROI) if img_path else None
     _has_adv_advance = _adv_btn_movie is not None
     _has_auto_icon = False
@@ -910,7 +910,7 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
             from tools.ap.constants import ADV_TOOLBAR_ROI
             _auto_roi_chk = ADV_TOOLBAR_ROI
             _auto_chk = ASSET_MANAGER.match_single(
-                "adv_icon_auto", img_path, roi=_auto_roi_chk)
+                "icon_auto", img_path, roi=_auto_roi_chk)
             _has_auto_icon = _auto_chk is not None and _auto_chk[2] >= 0.70
         except Exception:
             pass
@@ -918,7 +918,7 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
     # ADV 証拠の評価
     # ↓ボタン: 最も確実 (MOVIE には絶対にない)
     # ADVツールバー: 確実 (5アイコン検出、MOVIE には存在しない)
-    # adv_icon_skip 単独は ADV 確定にしない (CLAUDE.md: ⏭+ADV証拠なし→動画確定)
+    # icon_skip 単独は ADV 確定にしない (CLAUDE.md: ⏭+ADV証拠なし→動画確定)
     _adv_evidence_strong = None
     if _has_adv_advance:
         _adv_evidence_strong = "↓ボタン"
@@ -2188,9 +2188,7 @@ class AssetManager:
             # 未指定時はテンプレート名から自動推定。
             _scenes = meta.get("scenes")
             if _scenes is None:
-                if name.startswith("adv_"):
-                    _scenes = ["ADV"]
-                elif name.startswith("battle_"):
+                if name.startswith("battle_"):
                     _scenes = ["BATTLE"]
                 elif name.startswith("dialog_") or name.startswith("tutorial_dialog"):
                     _scenes = ["DIALOG"]

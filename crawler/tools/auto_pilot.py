@@ -681,8 +681,8 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                     _btn, _bs, _cs = _battle_result
                     # battle_special 単独は誤検出リスクあり → AUTO/FF 二重確認
                     if _btn == "battle_special":
-                        _ma = ASSET_MANAGER.match_single("adv_icon_auto", img_path)
-                        _mf = ASSET_MANAGER.match_single("adv_icon_ff", img_path)
+                        _ma = ASSET_MANAGER.match_single("icon_auto", img_path)
+                        _mf = ASSET_MANAGER.match_single("icon_ff", img_path)
                         if not ((_ma and _ma[2] >= 0.60) or (_mf and _mf[2] >= 0.60)):
                             _battle_result = None
                 if _battle_result:
@@ -704,11 +704,11 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 _movie_stable = getattr(state, "_movie_stable_count", 0)
                 if _movie_stable >= 2:
                     _adv_toolbar_roi = ADV_TOOLBAR_ROI
-                    _adv_auto_m = ASSET_MANAGER.match_single("adv_icon_auto", img_path, roi=_adv_toolbar_roi)
+                    _adv_auto_m = ASSET_MANAGER.match_single("icon_auto", img_path, roi=_adv_toolbar_roi)
                     if _adv_auto_m and _adv_auto_m[2] >= 0.80:
                         # さらに ADV 固有アイコン (↓/LOG/MENU/FF) が上部に2つ以上あることを確認
                         _adv_evidence = 0
-                        for _adv_icon in ("adv_next_btn", "adv_icon_log", "adv_icon_showhide", "adv_icon_ff"):
+                        for _adv_icon in ("next_btn", "icon_log", "icon_showhide", "icon_ff"):
                             _am = ASSET_MANAGER.match_single(_adv_icon, img_path, roi=_adv_toolbar_roi)
                             if _am and _am[2] >= 0.55:
                                 _adv_evidence += 1
@@ -810,13 +810,13 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     #        → ADV ツールバー全体も確認して確定する
     if state.current_scene == "ADV" and dist < 20:
         # ADV 継続: ↓ボタン or AUTO が見えれば ADV 維持
-        _adv_next_cont = ASSET_MANAGER.match_single("adv_next_btn", img_path, roi=ADV_NEXT_BTN_ROI)
+        _adv_next_cont = ASSET_MANAGER.match_single("next_btn", img_path, roi=ADV_NEXT_BTN_ROI)
         if _adv_next_cont:
             return "ADV"
         from tools.ap.image_proc import ASSET_MANAGER as _AM_adv
         try:
             _auto_roi = ADV_TOOLBAR_ROI
-            _auto_m = _AM_adv.match_single("adv_icon_auto", img_path, roi=_auto_roi)
+            _auto_m = _AM_adv.match_single("icon_auto", img_path, roi=_auto_roi)
             if _auto_m and _auto_m[2] >= 0.50:
                 # AUTO あり → ADV ツールバーも確認 (バトル画面の AUTO 誤一致を排除)
                 _adv_check = detect_adv_scene(img_path, roi=state.game_roi)
@@ -837,33 +837,33 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             pass
 
     # ADV: ↓ボタンテンプレートで直接判定
-    # ↓ボタン (adv_next_btn) は ADV シーン固有。バトル/MOVIE には存在しない。
+    # ↓ボタン (next_btn) は ADV シーン固有。バトル/MOVIE には存在しない。
     # detect_adv_scene は OCR 必須のため detect_scene_early では使えない。
     # MOVIE→ADV 誤判定防止: MOVIE直後は ADV ツールバー (AUTO/↓等) の二重確認を行う
     if state.current_scene != "MENU":
-        _adv_next_early = ASSET_MANAGER.match_single("adv_next_btn", img_path,
+        _adv_next_early = ASSET_MANAGER.match_single("next_btn", img_path,
                     roi=ADV_NEXT_BTN_ROI)
         if _adv_next_early:
             # MOVIE からの遷移時は ADV ツールバー (AUTO ボタン等) の存在を二重確認
             # 黒背景＋白文字がテンプレートに誤マッチするケースを防止
             if state.current_scene == "MOVIE":
-                _adv_auto = ASSET_MANAGER.match_single("adv_icon_auto", img_path)
+                _adv_auto = ASSET_MANAGER.match_single("icon_auto", img_path)
                 if not _adv_auto or _adv_auto[2] < 0.60:
                     logger.info("[SCENE_EARLY] MOVIE中ADV↓誤検出を棄却 (AUTO未検出)")
                     return "MOVIE"
             return "ADV"
 
     # ADV: AUTO + ↓ボタン or FF (↓単独が検出できなかった場合のフォールバック)
-    # adv_next_btn の ROI 外検出 + AUTO の存在で ADV を確定する
-    # BATTLE にも AUTO/FF はあるが、↓ボタン (adv_next_btn) は ADV 固有
+    # next_btn の ROI 外検出 + AUTO の存在で ADV を確定する
+    # BATTLE にも AUTO/FF はあるが、↓ボタン (next_btn) は ADV 固有
     # ADV: AUTO + ↓ボタン (↓ボタンの ROI 外リカバリ)
     # ↓ボタンは ADV 固有のため、AUTO + ↓で ADV 確定。
     # ↓なしでの ADV 固有アイコン判定は探索パート等で誤検出するため廃止。
     if state.current_scene not in ("MENU", "BATTLE", "MOVIE"):
-        _adv_auto_init = ASSET_MANAGER.match_single("adv_icon_auto", img_path,
+        _adv_auto_init = ASSET_MANAGER.match_single("icon_auto", img_path,
                                                      roi=ADV_TOOLBAR_ROI)
         if _adv_auto_init and _adv_auto_init[2] >= 0.50:
-            _adv_next_full = ASSET_MANAGER.match_single("adv_next_btn", img_path)
+            _adv_next_full = ASSET_MANAGER.match_single("next_btn", img_path)
             if _adv_next_full and _adv_next_full[2] >= 0.70:
                 logger.info("[SCENE_EARLY] ADV初回検出 (AUTO=%.2f + ↓=%.2f) → ADV",
                             _adv_auto_init[2], _adv_next_full[2])
@@ -944,9 +944,9 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             # ADV テンプレ (↓, >>, AUTO) のいずれかが見えるか
             _adv_toolbar_roi = ADV_TOOLBAR_ROI
             _has_any_adv = False
-            for _tpl in ("adv_next_btn", "adv_icon_ff", "adv_icon_auto"):
+            for _tpl in ("next_btn", "icon_ff", "icon_auto"):
                 _m = ASSET_MANAGER.match_single(_tpl, img_path,
-                      roi=_adv_toolbar_roi if _tpl != "adv_next_btn" else None)
+                      roi=_adv_toolbar_roi if _tpl != "next_btn" else None)
                 if _m and _m[2] >= 0.55:
                     _has_any_adv = True
                     break
@@ -1064,7 +1064,7 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
         _esc_checks = [
             ("battle_normal_attack", BATTLE_BTN_ROI),
             ("battle_skill", BATTLE_BTN_ROI),
-            ("adv_next_btn", ADV_NEXT_BTN_ROI),
+            ("next_btn", ADV_NEXT_BTN_ROI),
             ("dialog_corner_tl", None),
             ("tutorial_swipe_finger", None),
         ]
@@ -1388,7 +1388,7 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
     # ── ↓ボタンテンプレートマッチ → タップ ──
     # ↓ボタンは画面右下 (y > 80%) にある。右上の ⏭ ボタン (動画スキップ) に
     # 誤マッチしないよう y > 80% に限定
-    _adv_next = ASSET_MANAGER.match_single("adv_next_btn", img_path,
+    _adv_next = ASSET_MANAGER.match_single("next_btn", img_path,
                 roi=ADV_NEXT_BTN_ROI)
     if _adv_next:
         logger.info("[ADV] ↓検出 (score=%.2f) → タップ (%d,%d)", _adv_next[2], _adv_tap_x, _adv_tap_y)
@@ -2686,7 +2686,7 @@ def main():
                 _adv_tap_x = int(ANALYSIS_W * 0.93)
                 _adv_tap_y = int(ANALYSIS_H * 0.91)
                 if _rapid_adv.is_adv:
-                    if ASSET_MANAGER.match_single("adv_next_btn", _early_analysis, roi=ADV_NEXT_BTN_ROI):
+                    if ASSET_MANAGER.match_single("next_btn", _early_analysis, roi=ADV_NEXT_BTN_ROI):
                         logger.info("[ADV_RAPID][iter %d] ↓検出 → タップ (%d,%d)",
                                     i, _adv_tap_x, _adv_tap_y)
                         tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
@@ -2842,7 +2842,7 @@ def main():
                 # ── ADV送り待ちアイコン検知: phash 安定中でも1回タップ ──
                 _adv_tap_x = int(ANALYSIS_W * 0.93)
                 _adv_tap_y = int(ANALYSIS_H * 0.91)
-                if ASSET_MANAGER.match_single("adv_next_btn", _early_analysis, roi=ADV_NEXT_BTN_ROI):
+                if ASSET_MANAGER.match_single("next_btn", _early_analysis, roi=ADV_NEXT_BTN_ROI):
                     logger.info("[ADV][iter %d] ↓検出 → タップ (%d,%d)", i, _adv_tap_x, _adv_tap_y)
                     tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
                     state.last_action = "ADV_RAPID_TAP"
@@ -3312,7 +3312,7 @@ def main():
         if _from_movie_ttl > 0:
             state._from_movie_ttl = _from_movie_ttl - 1
             # MOVIE スキップボタンがあれば SKIPタップ、なければ待機
-            # adv_icon_skip はADVツールバーのアイコンなのでタップしない (movie_textのみ)
+            # icon_skip はADVツールバーのアイコンなのでタップしない (movie_textのみ)
             _skip_btn = detect_movie_skip_button(analysis_path) if analysis_path else None
             _is_gacha = is_gacha_scene(analysis_path) if analysis_path else False
             if _skip_btn and _skip_btn[2] == "movie_text" and not _is_gacha:

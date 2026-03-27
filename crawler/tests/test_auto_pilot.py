@@ -646,11 +646,11 @@ class TestDetectAdvToolbarButtons:
         from tools.ap.image_proc import detect_adv_scene, ANALYSIS_W, ANALYSIS_H
         from tools.ap.constants import _CRAWLER_ROOT
 
-        # AUTO + menu (ADV専用) + adv_next_btn (↓) を埋め込み
+        # AUTO + menu (ADV専用) + next_btn (↓) を埋め込み
         icon_positions = [
-            ("adv_icon_auto", 1274, 45),
-            ("adv_icon_showhide", 1116, 45),
-            ("adv_next_btn", 1305, 642),
+            ("icon_auto", 1274, 45),
+            ("icon_showhide", 1116, 45),
+            ("next_btn", 1305, 642),
         ]
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
         for name, cx, cy in icon_positions:
@@ -808,9 +808,9 @@ class TestAdvScene:
         from tools.ap.constants import _CRAWLER_ROOT
 
         icon_positions = [
-            ("adv_icon_auto", 1274, 45),
-            ("adv_icon_showhide", 1116, 45),
-            ("adv_next_btn", 1305, 642),
+            ("icon_auto", 1274, 45),
+            ("icon_showhide", 1116, 45),
+            ("next_btn", 1305, 642),
         ]
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
         for name, cx, cy in icon_positions:
@@ -838,12 +838,12 @@ class TestAdvScene:
 
         # アイコン位置を ANALYSIS_W ベースの比率で計算
         _icon_x_ratios = [0.734, 0.784, 0.838, 0.893, 0.951]
-        _icon_names = ["adv_icon_showhide", "adv_icon_log", "adv_icon_auto", "adv_icon_ff", "adv_icon_skip"]
+        _icon_names = ["icon_showhide", "icon_log", "icon_auto", "icon_ff", "icon_skip"]
         icon_positions = [(name, int(ANALYSIS_W * r), 45) for name, r in zip(_icon_names, _icon_x_ratios)]
 
-        next_path = _CRAWLER_ROOT / "assets" / "templates" / "adv_next_btn.png"
+        next_path = _CRAWLER_ROOT / "assets" / "templates" / "next_btn.png"
         if not next_path.exists():
-            pytest.skip("adv_next_btn.png が存在しません")
+            pytest.skip("next_btn.png が存在しません")
 
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
         for name, cx, cy in icon_positions:
@@ -1040,11 +1040,11 @@ class TestAdvSceneWithAdvanceIcon:
         座標はツールバー領域 (右上: x>70%, y<15%) に配置。"""
         # ANALYSIS_W=1520, ANALYSIS_H=720 → x>1064, y<108
         _positions = {
-            "adv_icon_showhide": (1116, 45),
-            "adv_icon_log": (1191, 45),
-            "adv_icon_auto": (1274, 45),
-            "adv_icon_ff": (1358, 45),
-            "adv_icon_skip": (1446, 45),
+            "icon_showhide": (1116, 45),
+            "icon_log": (1191, 45),
+            "icon_auto": (1274, 45),
+            "icon_ff": (1358, 45),
+            "icon_skip": (1446, 45),
         }
         def _side_effect(name, img_path, **kwargs):
             if name in match_names:
@@ -1055,13 +1055,13 @@ class TestAdvSceneWithAdvanceIcon:
 
     @patch("tools.ap.image_proc.ASSET_MANAGER")
     def test_two_icons_plus_advance(self, mock_am, tmp_path):
-        """2 ADV固有アイコン + adv_next_btn テンプレ → is_adv=True。"""
+        """2 ADV固有アイコン + next_btn テンプレ → is_adv=True。"""
         import cv2
         import numpy as np
         from tools.ap.image_proc import detect_adv_scene, ANALYSIS_W, ANALYSIS_H
 
         mock_am.match_single.side_effect = self._mock_match_single(
-            {"adv_icon_auto", "adv_icon_skip", "adv_next_btn"})
+            {"icon_auto", "icon_skip", "next_btn"})
 
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
         img_path = tmp_path / "two_icons_advance.png"
@@ -1079,7 +1079,7 @@ class TestAdvSceneWithAdvanceIcon:
         from tools.ap.image_proc import detect_adv_scene, ANALYSIS_W, ANALYSIS_H
 
         mock_am.match_single.side_effect = self._mock_match_single(
-            {"adv_icon_auto", "adv_icon_ff"})
+            {"icon_auto", "icon_ff"})
 
         img = np.zeros((ANALYSIS_H, ANALYSIS_W, 3), dtype=np.uint8)
         img_path = tmp_path / "two_icons_only.png"

@@ -1,5 +1,0 @@
-{
-    "action": "GOLD_FRAME_SMALL",
-    "threshold": 0.78,
-    "note": "小さい金枠ボタンの左上コーナー。戻るボタン等の小型金枠UIに共通。"
-}

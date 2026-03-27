@@ -1,5 +1,6 @@
 {
   "action": "ADV_NEXT",
   "threshold": 0.80,
+  "scenes": ["ADV"],
   "note": "ADV画面の次セリフ送りボタン (↓矢印/ダイヤモンド型)。テンプレートマッチ中心=ボタン中心。"
 }
