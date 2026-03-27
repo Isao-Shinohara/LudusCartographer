@@ -301,7 +301,10 @@ cd ~/Desktop/LudusCartographer/crawler
 ./tools/run_autopilot.sh
 
 # 新規アカウント
-./tools/run_autopilot.sh --fresh-install
+./tools/run_autopilot.sh -r
+
+# 3周回
+./tools/run_autopilot.sh -c 3
 
 # 停止
 pkill -f auto_pilot.py
@@ -325,7 +328,7 @@ venv/bin/python -u tools/auto_pilot.py
 ```
 
 ### 共通ルール
-- `--fresh-install` は **ユーザーが明示的に指示した場合のみ** 付与（§11 参照）
+- `--reinstall` (`-r`) は **ユーザーが明示的に指示した場合のみ** 付与（§11 参照）
 - ログは `/tmp/auto_pilot.log` に出力される
 
 ### scrcpy ウィンドウサイズについて

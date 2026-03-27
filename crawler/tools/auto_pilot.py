@@ -1467,17 +1467,16 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
 # ─── コマンドライン引数 ───────────────────────────────
 def parse_args():
     parser = argparse.ArgumentParser(description="まどドラ自律操縦")
-    parser.add_argument("--verbose", action="store_true", help="デバッグログ出力")
-    parser.add_argument("--max-cycles", type=int, default=0,
-                        help="周回数 (0=周回なし, N=N周で停止)")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="デバッグログ出力")
+    parser.add_argument("-c", "--cycles", type=int, default=None,
+                        help="周回数 (0=無限周回, N=N周で停止, 未指定=周回なし)")
+    parser.add_argument("-r", "--reinstall", action="store_true",
+                        help="アンインストール → Play Store 再インストール (新規アカウント)")
     parser.add_argument("--pairing-code", type=str, default=None,
                         help="adb pair 用ペアリングコード (Android 11+)")
     parser.add_argument("--pairing-port", type=int, default=None,
                         help="adb pair 用ポート番号 (Android 11+)")
-    parser.add_argument("--fresh-install", action="store_true",
-                        help="アンインストール → Play Store 再インストール (新規アカウント)")
-    parser.add_argument("--wifi-addr", type=str, default=None,
-                        help="Wi-Fi ADB 接続先アドレス (IP:PORT, 例: 192.168.10.118:5555)")
     # parse_known_args: main.py 経由の場合に --android, --package 等の未知引数を無視
     args, _ = parser.parse_known_args()
     return args
@@ -2089,7 +2088,7 @@ def main():
     # ─── ADB 自動接続: USB → Wi-Fi フォールバック ───
     try:
         _detected = ensure_adb_connection(
-            wifi_addr=args.wifi_addr or WIFI_DEVICE_ADDR,
+            wifi_addr=WIFI_DEVICE_ADDR,
             pairing_code=args.pairing_code,
             pairing_port=args.pairing_port,
         )
@@ -2109,7 +2108,7 @@ def main():
         time.sleep(3)
 
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
-    if args.fresh_install:
+    if args.reinstall:
         # 永続状態をクリア (新規アカウントでは前回の状態は無効)
         try:
             conn = sqlite3.connect(str(_STATE_DB_PATH))
@@ -2132,7 +2131,7 @@ def main():
             logger.error("[ABORT] 自動インストール失敗。手動でインストールしてから再実行してください。")
             sys.exit(1)
         # 新規インストール = fresh start 扱い
-        args.fresh_install = True
+        args.reinstall = True
 
     logger.info("=" * 62)
     logger.info("  まどドラ自律操縦 — Auto Pilot (ハイブリッド版)")

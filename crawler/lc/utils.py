@@ -170,17 +170,22 @@ def ensure_adb_connection(
     """
     import time as _time  # sleep 用 (モジュール上位の time と衝突回避)
 
-    # wifi_addr が空の場合、Wi-Fi 固定接続をスキップし USB/既存デバイス自動検出にフォールバック
+    # wifi_addr が空の場合、自動検出
     if not wifi_addr:
         logger.info("[ADB_CONNECT] Wi-Fi アドレス未設定 → USB/既存デバイス自動検出モード")
         any_serial = _try_adb(timeout=5)
         if any_serial:
-            logger.info("[ADB_CONNECT] デバイス検出: %s", any_serial)
+            # Wi-Fi デバイス (IP:PORT形式) が見えたら自動 connect
+            if ":" in any_serial:
+                logger.info("[ADB_CONNECT] Wi-Fi デバイス検出: %s → 自動 connect", any_serial)
+                _adb_connect(any_serial)
+            else:
+                logger.info("[ADB_CONNECT] デバイス検出: %s", any_serial)
             return any_serial
         raise RuntimeError(
             "ADB デバイスが見つかりません。\n"
             "  [USB] USBデバッグを有効にしてケーブル接続してください\n"
-            "  [Wi-Fi] ANDROID_WIFI_ADDR 環境変数または --wifi-addr を指定してください"
+            "  [Wi-Fi] adb connect IP:PORT で手動接続してください"
         )
 
     # Step 1: 既にオンラインの Wi-Fi デバイスがあるか

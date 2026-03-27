@@ -108,8 +108,9 @@ class ResumeMission(Mission):
 
 def select_mission(args: argparse.Namespace) -> Mission:
     """CLI 引数からミッションを選択する。"""
-    if args.fresh_install:
+    if args.reinstall:
         return TutorialMission()
-    if args.max_cycles >= 1:
-        return GrindMission(max_cycles=args.max_cycles)
+    if args.cycles is not None:
+        # --cycles 0 = 無限, --cycles N = N周
+        return GrindMission(max_cycles=args.cycles)
     return ResumeMission()

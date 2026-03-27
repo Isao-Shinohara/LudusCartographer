@@ -4,8 +4,10 @@
 # SIGBUS クラッシュするため、nohup でバックグラウンド実行する。
 #
 # 使い方:
-#   ./tools/run_autopilot.sh                  # 開始
-#   ./tools/run_autopilot.sh --fresh-install  # 新規アカウント
+#   ./tools/run_autopilot.sh                  # 途中再開
+#   ./tools/run_autopilot.sh -r               # 新規アカウント (--reinstall)
+#   ./tools/run_autopilot.sh -c 3             # 3周回 (--cycles)
+#   ./tools/run_autopilot.sh -c 0             # 無限周回
 #   ./tools/run_autopilot.sh --help           # ヘルプ表示
 #
 # Ctrl+C で自動操縦も停止します。
