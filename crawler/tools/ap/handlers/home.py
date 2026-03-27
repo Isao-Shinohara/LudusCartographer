@@ -88,6 +88,11 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
 
     state.home_reached = True
 
+    # 前段ハンドラ (tutorial.py) で指テンプレが処理済みの場合、
+    # チュートリアル証拠なしカウンタをリセット (誤完了判定防止)
+    if ctx.pre_dialog_finger:
+        state._home_no_evidence_count = 0
+
     # ── チュートリアル判定: 全方向の指テンプレート + 金枠 ──
     # チュートリアル中: 指アイコン(上/下/左/右) が常に1つ + 金枠が1つ表示される
     # チュートリアル完了後: 指アイコンなし + 金枠なし
