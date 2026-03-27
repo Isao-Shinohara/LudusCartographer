@@ -1065,15 +1065,14 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
                 continue
 
             # 形状判定: circularity + fill_ratio で吹き出しを識別
-            # 形状判定: circularity + fill_ratio で吹き出しを識別
-            # 吹き出し: circ=0.30-0.80, fill=0.40-0.80 (楕円形 π/4≈0.785)
-            # UIバー等の長方形: fill>0.85 (角張って充填率が高い)
+            # 吹き出し: circ=0.30-0.80, fill=0.35-0.90 (角丸+キャラくり抜き fill≈0.85)
+            # UIバー等の長方形: fill>0.90 (角張って充填率が高い)
             # お知らせタブヘッダ: circ≈0.27, fill<0.35 (不規則形状)
             _perimeter = cv2.arcLength(cnt, True)
             _circularity = (4 * np.pi * area / (_perimeter * _perimeter)
                             if _perimeter > 0 else 0)
             _fill_ratio = area / (w * bh) if w * bh > 0 else 0
-            if _circularity < 0.28 or _fill_ratio < 0.35 or _fill_ratio > 0.80:
+            if _circularity < 0.28 or _fill_ratio < 0.35 or _fill_ratio > 0.90:
                 continue
 
             # 平均輝度 (V チャンネル)
