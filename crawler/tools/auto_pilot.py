@@ -3311,10 +3311,14 @@ def main():
             # MOVIE スキップボタンがあれば SKIPタップ、なければ待機
             # adv_icon_skip はADVツールバーのアイコンなのでタップしない (movie_textのみ)
             _skip_btn = detect_movie_skip_button(analysis_path) if analysis_path else None
-            if _skip_btn and _skip_btn[2] == "movie_text":
+            _is_gacha = is_gacha_scene(analysis_path) if analysis_path else False
+            if _skip_btn and _skip_btn[2] == "movie_text" and not _is_gacha:
                 logger.info("[MOVIE→UNKNOWN] SKIPテキスト検出 → タップ (%d,%d)", _skip_btn[0], _skip_btn[1])
                 tap_device(_skip_btn[0], _skip_btn[1], state, "MOVIE_SKIP")
                 action, wait_sec = "MOVIE_SKIP", 2.0
+            elif _is_gacha:
+                logger.info("[MOVIE→UNKNOWN] ガチャ演出中 → SKIPタップ抑制")
+                action, wait_sec = "MOVIE_WAIT", 1.0
             elif _skip_btn and _skip_btn[2] == "adv_icon":
                 logger.info("[MOVIE→UNKNOWN] ADV⏭アイコン → ADVシーン、タップ抑制")
                 action, wait_sec = "MOVIE_WAIT", 1.0
