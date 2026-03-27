@@ -164,12 +164,24 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
             # 回数制限なし: 指+金枠が実在する限り何回でもタップ
             _ht_rot = ASSET_MANAGER.match_finger_rotated(analysis_path) if analysis_path else None
             _ht_match = (_ht_rot[0], _ht_rot[1], _ht_rot[2]) if _ht_rot else None
+            _ht_finger_dir = _ht_rot[3] if _ht_rot else "down"
             _ht_blobs = [(_ht_match[0], _ht_match[1], _ht_match[2], _ht_match[0] - 20, _ht_match[1] - 40, 40, 80)] if (_ht_match and _ht_match[2] >= 0.70) else []
             _ht_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
             # 暗転オーバーレイ検出 (チュートリアル中は非ハイライト部分が暗い)
             _ht_dimmed = detect_tutorial_overlay(analysis_path) if analysis_path else False
             if _ht_blobs or _ht_gold:
                 _ht_target = None
+                # 指先座標計算 (方向対応)
+                def _fingertip(cx, cy, direction, offset=32):
+                    if direction == "down":
+                        return (cx, cy + offset)
+                    elif direction == "up":
+                        return (cx, cy - offset)
+                    elif direction == "left":
+                        return (cx - offset, cy)
+                    elif direction == "right":
+                        return (cx + offset, cy)
+                    return (cx, cy + offset)  # デフォルト: 下向き
                 if _ht_blobs:
                     _ht_chosen = max(_ht_blobs, key=lambda b: b[2])
                     _ht_bx, _ht_by = _ht_chosen[0], _ht_chosen[1]
@@ -184,27 +196,22 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
                             logger.info("  ホームチュートリアル: 指(%d,%d)→金枠(%d,%d) dist=%.0f dimmed=%s",
                                         _ht_bx, _ht_by, _ht_gf[0], _ht_gf[1], _ht_fg_dist, _ht_dimmed)
                         elif _ht_dimmed:
-                            # 金枠遠い+暗転あり → 指先タップ
-                            _ht_tip_y = _ht_chosen[4] + int(_ht_chosen[6] * 0.1)
-                            _ht_target = (_ht_chosen[3] + _ht_chosen[5] // 2, _ht_tip_y)
-                            logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠(%d,%d) dist=%.0f>200+暗転あり]",
-                                        _ht_bx, _ht_by, *_ht_target, _ht_gf[0], _ht_gf[1], _ht_fg_dist)
+                            _ht_target = _fingertip(_ht_bx, _ht_by, _ht_finger_dir)
+                            logger.info("  ホームチュートリアル: 指(%d,%d,dir=%s)→指先(%d,%d) [金枠(%d,%d) dist=%.0f>200+暗転あり]",
+                                        _ht_bx, _ht_by, _ht_finger_dir, *_ht_target, _ht_gf[0], _ht_gf[1], _ht_fg_dist)
                         else:
                             logger.info("  ホーム指検出: 指(%d,%d) 金枠(%d,%d) dist=%.0f>200+暗転なし → スキップ",
                                         _ht_bx, _ht_by, _ht_gf[0], _ht_gf[1], _ht_fg_dist)
                     elif _ht_dimmed:
-                        # 金枠なしだが暗転あり → 指先タップ (チュートリアルの可能性高い)
-                        _ht_tip_y = _ht_chosen[4] + int(_ht_chosen[6] * 0.1)
-                        _ht_target = (_ht_chosen[3] + _ht_chosen[5] // 2, _ht_tip_y)
-                        logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠なし+暗転あり]",
-                                    _ht_bx, _ht_by, *_ht_target)
+                        _ht_target = _fingertip(_ht_bx, _ht_by, _ht_finger_dir)
+                        logger.info("  ホームチュートリアル: 指(%d,%d,dir=%s)→指先(%d,%d) [金枠なし+暗転あり]",
+                                    _ht_bx, _ht_by, _ht_finger_dir, *_ht_target)
                     else:
                         # 金枠なし+暗転なし: 画面中央付近なら指先をタップ、端なら偽検出疑い
                         if _ht_bx > 150 and _ht_by > 100 and _ht_bx < W - 100 and _ht_by < H - 80:
-                            _ht_tip_y = _ht_chosen[4] + int(_ht_chosen[6] * 0.1)
-                            _ht_target = (_ht_chosen[3] + _ht_chosen[5] // 2, _ht_tip_y)
-                            logger.info("  ホームチュートリアル: 指(%d,%d)→指先(%d,%d) [金枠なし+暗転なし・中央付近]",
-                                        _ht_bx, _ht_by, *_ht_target)
+                            _ht_target = _fingertip(_ht_bx, _ht_by, _ht_finger_dir)
+                            logger.info("  ホームチュートリアル: 指(%d,%d,dir=%s)→指先(%d,%d) [金枠なし+暗転なし・中央付近]",
+                                        _ht_bx, _ht_by, _ht_finger_dir, *_ht_target)
                         else:
                             logger.info("  ホーム指検出: 指(%d,%d) 金枠なし+暗転なし+画面端 → 偽検出疑い、スキップ",
                                         _ht_bx, _ht_by)
