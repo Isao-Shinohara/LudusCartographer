@@ -78,15 +78,15 @@ cp config/.env.example config/.env
 ```bash
 cd ~/Desktop/LudusCartographer/crawler
 
-# 開始
+# 途中再開
 ./tools/run_autopilot.sh
 
 # 新規アカウントで開始
-./tools/run_autopilot.sh --fresh-install
+./tools/run_autopilot.sh -r
 ```
 
 起動すると自動で:
-1. ADB でデバイスを検出
+1. ADB でデバイスを検出（USB / Wi-Fi 自動判別）
 2. scrcpy で画面キャプチャ開始
 3. ゲームアプリを起動
 4. チュートリアルの自律操縦を開始
@@ -94,6 +94,25 @@ cd ~/Desktop/LudusCartographer/crawler
 
 起動後は自動で `tail -f` が始まります。
 **Ctrl+C** でログ監視だけ終了できます（プロセスは動き続けます）。
+
+### オプション一覧
+
+| オプション | 短縮 | 説明 |
+|-----------|------|------|
+| `--reinstall` | `-r` | アプリを再インストールして新規アカウントで開始 |
+| `--cycles N` | `-c N` | 周回モード。N=周回数、0=無限周回 |
+| `--verbose` | `-v` | デバッグログ出力 |
+
+```bash
+# 3周回（ホーム到達→30秒待機→次の周回、を3回繰り返す）
+./tools/run_autopilot.sh -c 3
+
+# 無限周回
+./tools/run_autopilot.sh -c 0
+
+# 新規アカウント + 5周回
+./tools/run_autopilot.sh -r -c 5
+```
 
 ### 停止・ログ監視
 
@@ -104,5 +123,3 @@ pkill -f auto_pilot.py
 # ログ監視（別ターミナルで）
 tail -f /tmp/auto_pilot.log
 ```
-
-> 詳細なオプション・設定・トラブルシューティングは [docs/auto_pilot_setup.md](docs/auto_pilot_setup.md) を参照。
