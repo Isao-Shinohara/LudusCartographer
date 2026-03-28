@@ -1034,118 +1034,52 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
         h_cut = int(ANALYSIS_H * upper_ratio)
         upper = resized[0:h_cut, :]
 
-        hsv = cv2.cvtColor(upper, cv2.COLOR_BGR2HSV)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
 
-        # 吹き出し色マスク (RGB ベージュ: R,G,B 全て 200-255, 色差 < 30)
-        # 吹き出しの背景色 RGB≈(237,234,220) は HSV V>=240 に届かないことがある
+        # 吹き出し色マスク (RGB ベージュ/クリーム: B,G,R 全て 190-255, 色差 < 30)
+        # 吹き出し背景色 RGB≈(237,234,220) を直接検出
         _rgb_lo = np.array([190, 200, 200], dtype=np.uint8)  # BGR order
         _rgb_hi = np.array([255, 255, 255], dtype=np.uint8)
-        _rgb_mask_raw = cv2.inRange(upper, _rgb_lo, _rgb_hi)
-        # 色差フィルタ: max(R,G,B) - min(R,G,B) < 30 → グレー〜ベージュのみ
+        _rgb_mask = cv2.inRange(upper, _rgb_lo, _rgb_hi)
         _ch_max = np.max(upper, axis=2)
         _ch_min = np.min(upper, axis=2)
         _low_spread = ((_ch_max.astype(int) - _ch_min.astype(int)) < 30).astype(np.uint8) * 255
-        _bubble_rgb_mask = cv2.bitwise_and(_rgb_mask_raw, _low_spread)
+        mask = cv2.bitwise_and(_rgb_mask, _low_spread)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         # ADVツールバー除外ゾーン (x>82%, y<22%)
         toolbar_x = int(ANALYSIS_W * 0.82)
         toolbar_y = int(ANALYSIS_H * 0.22)
 
-        def _find_bubbles(v_min, fill_max, aspect_max):
-            """HSV 白色マスク + RGB ベージュマスクで吹き出し候補を検出する。"""
-            _hsv_mask = cv2.inRange(hsv, (0, 0, v_min), (180, 40, 255))
-            _mask = cv2.bitwise_or(_hsv_mask, _bubble_rgb_mask)
-            _mask = cv2.morphologyEx(_mask, cv2.MORPH_CLOSE, kernel)
-            _mask = cv2.morphologyEx(_mask, cv2.MORPH_OPEN, kernel)
-            _contours, _ = cv2.findContours(_mask, cv2.RETR_EXTERNAL,
-                                            cv2.CHAIN_APPROX_SIMPLE)
-            _cands = []
-            _bright_bg = False
-            for cnt in _contours:
-                area = cv2.contourArea(cnt)
-                if area < min_bubble_area:
-                    continue
-                x, y, w, bh = cv2.boundingRect(cnt)
-                if bh == 0:
-                    continue
-                aspect = w / bh
-                if aspect < 1.2 or aspect > aspect_max:
-                    continue
-                cx_cnt = x + w // 2
-                cy_cnt = y + bh // 2
-                if cx_cnt > toolbar_x and cy_cnt < toolbar_y:
-                    continue
-                _perimeter = cv2.arcLength(cnt, True)
-                _circularity = (4 * np.pi * area / (_perimeter * _perimeter)
-                                if _perimeter > 0 else 0)
-                _fill_ratio = area / (w * bh) if w * bh > 0 else 0
-                if _fill_ratio > fill_max:
-                    _bright_bg = True
-                if _circularity < 0.28 or _fill_ratio < 0.35 or _fill_ratio > fill_max:
-                    continue
-                cnt_mask = np.zeros(_mask.shape, dtype=np.uint8)
-                cv2.drawContours(cnt_mask, [cnt], -1, 255, -1)
-                mean_v = float(cv2.mean(hsv[:, :, 2], mask=cnt_mask)[0])
-                side = "left" if cx_cnt < ANALYSIS_W // 2 else "right"
-                _cands.append({
-                    "cx": cx_cnt, "cy": cy_cnt,
-                    "x": x, "y": y, "w": w, "h": bh,
-                    "mean_v": mean_v, "side": side, "area": area,
-                })
-            return _cands, _bright_bg
-
-        # 1段目: V>=240 (高輝度の白い吹き出し)
-        candidates, _has_bright_bg = _find_bubbles(v_min=240, fill_max=0.90, aspect_max=8.0)
-
-        if not candidates:
-            # 2段目: V>=200 + stricter フィルタ (暗い背景のグレー寄り吹き出し)
-            # aspect_max=6.0: UIバー(aspect>8)を除外
-            # fill_max=0.93: UIバー(fill>0.95)を除外、吹き出し(fill≈0.91)を通す
-            candidates, _has_bright_bg_2 = _find_bubbles(v_min=200, fill_max=0.93, aspect_max=6.0)
-            if candidates:
-                logger.info("[MINI_CONV] V>=240 候補なし → V>=200 で %d 候補検出", len(candidates))
-            elif _has_bright_bg or _has_bright_bg_2:
-                # 明るい背景で融合 → Canny エッジ検出フォールバック
-                gray = cv2.cvtColor(upper, cv2.COLOR_BGR2GRAY)
-                edges = cv2.Canny(gray, 50, 150)
-                _ek = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-                edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, _ek)
-                _e_contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL,
-                                                   cv2.CHAIN_APPROX_SIMPLE)
-                for cnt in _e_contours:
-                    area = cv2.contourArea(cnt)
-                    if area < min_bubble_area:
-                        continue
-                    x, y, w, bh = cv2.boundingRect(cnt)
-                    if bh == 0:
-                        continue
-                    aspect = w / bh
-                    if aspect < 1.2 or aspect > 6.0:
-                        continue
-                    cx_cnt = x + w // 2
-                    cy_cnt = y + bh // 2
-                    if cx_cnt > toolbar_x and cy_cnt < toolbar_y:
-                        continue
-                    side = "left" if cx_cnt < ANALYSIS_W // 2 else "right"
-                    candidates.append({
-                        "cx": cx_cnt, "cy": cy_cnt,
-                        "x": x, "y": y, "w": w, "h": bh,
-                        "mean_v": 255.0, "side": side, "area": area,
-                        "_edge": True,
-                    })
-                if candidates:
-                    logger.info("[MINI_CONV] HSV候補なし → Canny エッジ検出にフォールバック (%d候補)",
-                                len(candidates))
+        candidates = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < min_bubble_area:
+                continue
+            x, y, w, bh = cv2.boundingRect(cnt)
+            if bh == 0:
+                continue
+            aspect = w / bh
+            if aspect < 1.2 or aspect > 8.0:
+                continue
+            cx_cnt = x + w // 2
+            cy_cnt = y + bh // 2
+            if cx_cnt > toolbar_x and cy_cnt < toolbar_y:
+                continue
+            side = "left" if cx_cnt < ANALYSIS_W // 2 else "right"
+            candidates.append({
+                "cx": cx_cnt, "cy": cy_cnt,
+                "x": x, "y": y, "w": w, "h": bh,
+                "side": side, "area": area,
+            })
 
         if not candidates:
             return None
 
-        # 最も明るい = アクティブ話者 (エッジ検出時は面積最大)
-        if any(c.get("_edge") for c in candidates):
-            best = max(candidates, key=lambda c: c["area"])
-        else:
-            best = max(candidates, key=lambda c: c["mean_v"])
+        best = max(candidates, key=lambda c: c["area"])
 
         # OCR 検証: 吹き出し BBox 内にテキストが存在するか
         if ocr_items is not None:
@@ -1159,14 +1093,12 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
             if not has_text_inside:
                 return None
         else:
-            # ocr_items=None: チェッカー柄の白領域偽陽性を防止
             if is_tutorial_walk_scene(img_path):
                 logger.debug("[MINI_CONV] ocr_items=None + チェッカー柄 → 棄却")
                 return None
 
-        _method = "EDGE" if best.get("_edge") else "HSV"
-        logger.debug("[MINI_CONV] bubble (%d,%d) side=%s area=%d method=%s",
-                     best["cx"], best["cy"], best["side"], best["area"], _method)
+        logger.debug("[MINI_CONV] bubble (%d,%d) side=%s area=%d",
+                     best["cx"], best["cy"], best["side"], best["area"])
         return (best["cx"], best["cy"], best["side"])
 
     except Exception:
