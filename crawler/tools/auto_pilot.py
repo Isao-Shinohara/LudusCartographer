@@ -2686,16 +2686,17 @@ def main():
                 _skip_rapid = True  # ADV ハンドラがフォールスルー → OCR へ直行
 
         # ── MINI_CONV 高速モード: 前回ミニ会話なら OCR スキップして即吹き出し検出 ──
-        _MINI_CONV_RAPID_MAX = 5  # 同一座標で連続タップ上限 → OCR パスにフォールスルー
+        _MINI_CONV_RAPID_MAX = 5   # 同一座標で連続タップ上限 → OCR パスにフォールスルー
+        _MINI_CONV_RETRY_MAX = 3   # 検出失敗時の前回位置再タップ上限
         if (not _skip_rapid
                 and state.last_action == "MINI_CONV_TAP"
                 and state.current_scene not in ("MENU", "MOVIE", "BATTLE")
                 and _early_analysis is not None):
             _mc_rapid = detect_mini_conversation(_early_analysis)
+            _mc_prev = getattr(state, "_mini_conv_rapid_pos", (0, 0))
             if _mc_rapid is not None:
                 _mc_rx, _mc_ry, _mc_rs = _mc_rapid
                 # スタック検出: 同一座標 (±10px) で連続タップ → OCR にフォールスルー
-                _mc_prev = getattr(state, "_mini_conv_rapid_pos", (0, 0))
                 _mc_same = (abs(_mc_rx - _mc_prev[0]) < 10
                             and abs(_mc_ry - _mc_prev[1]) < 10)
                 _mc_count = getattr(state, "_mini_conv_rapid_count", 0)
@@ -2705,6 +2706,7 @@ def main():
                     _mc_count = 1
                 state._mini_conv_rapid_pos = (_mc_rx, _mc_ry)
                 state._mini_conv_rapid_count = _mc_count
+                state._mini_conv_retry_count = 0  # 検出成功 → リトライカウンタリセット
                 if _mc_count > _MINI_CONV_RAPID_MAX:
                     logger.warning("[MINI_CONV_RAPID] 同一座標 %d 回連続 → OCR フォールスルー",
                                    _mc_count)
@@ -2720,6 +2722,24 @@ def main():
                     state.total_loop_ms += _fms
                     logger.info("  [PERF] Loop %.0fms (MINI_CONV_RAPID)", _fms)
                     continue
+            elif _mc_prev != (0, 0):
+                # 検出失敗だが直前にミニ会話だった → 前回位置を再タップ
+                # (吹き出しの見た目が微妙に変わり検出フィルタを通過できないケース)
+                _retry = getattr(state, "_mini_conv_retry_count", 0) + 1
+                state._mini_conv_retry_count = _retry
+                if _retry <= _MINI_CONV_RETRY_MAX:
+                    logger.info("[MINI_CONV_RAPID][iter %d] 検出失敗 → 前回位置 (%d,%d) 再タップ [retry %d/%d]",
+                                i, _mc_prev[0], _mc_prev[1], _retry, _MINI_CONV_RETRY_MAX)
+                    tap_device(_mc_prev[0], _mc_prev[1], state, "MINI_CONV_TAP")
+                    state.last_action = "MINI_CONV_TAP"
+                    state.last_phash = ""
+                    _fms = (time.time() - _loop_t0) * 1000
+                    state.total_loop_ms += _fms
+                    logger.info("  [PERF] Loop %.0fms (MINI_CONV_RAPID_RETRY)", _fms)
+                    continue
+                else:
+                    logger.info("[MINI_CONV_RAPID] リトライ %d 回超 → OCR フォールスルー", _retry)
+                    state._mini_conv_retry_count = 0
 
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
