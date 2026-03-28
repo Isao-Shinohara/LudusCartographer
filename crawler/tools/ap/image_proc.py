@@ -1029,11 +1029,12 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
 
     Returns: (cx, cy, "left"|"right") or None
     """
-    _BUBBLE_Y = 103     # 吹き出し上端 Y (解析解像度 1440x720 基準)
-    _BUBBLE_H = 88      # 吹き出し高さ
-    _BUBBLE_R = 46      # 角丸半径
-    _BUBBLE_MAX_W = int(ANALYSIS_W * 0.5)  # 探索する最大幅 (画面半分)
-    _BEIGE_THRESHOLD = 0.25  # マスク内ベージュ割合の閾値
+    # 吹き出し位置・サイズ (解析解像度からの比率で算出)
+    _BUBBLE_Y = int(ANALYSIS_H * 0.143)     # 吹き出し上端 Y (≈103)
+    _BUBBLE_H = int(ANALYSIS_H * 0.122)     # 吹き出し高さ (≈88)
+    _BUBBLE_R = int(ANALYSIS_H * 0.064)     # 角丸半径 (≈46)
+    _BUBBLE_MAX_W = int(ANALYSIS_W * 0.5)   # 探索する最大幅 (画面半分)
+    _BEIGE_THRESHOLD = 0.25                 # マスク内ベージュ割合の閾値
 
     try:
         img = imread_cached(img_path)
@@ -1053,14 +1054,20 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
             cv2.circle(m, (width - r, height - r), r, 255, -1)
             return m
 
-        # ── ベージュピクセルマスク (画像全体) ──
+        # ── ベージュピクセルマスク (アクティブ吹き出しのみ) ──
+        # ベージュ (暖色): R > B (差 >= 10)。グレー (非アクティブ): R ≈ B で除外。
         _rgb_lo = np.array([160, 170, 170], dtype=np.uint8)  # BGR order
         _rgb_hi = np.array([255, 255, 255], dtype=np.uint8)
         _rgb_mask = cv2.inRange(resized, _rgb_lo, _rgb_hi)
         _ch_max = np.max(resized, axis=2)
         _ch_min = np.min(resized, axis=2)
         _low_spread = ((_ch_max.astype(int) - _ch_min.astype(int)) < 50).astype(np.uint8) * 255
+        # R - B >= 10: ベージュ (暖色) のみ通過、グレー (無彩色) を除外
+        _r_ch = resized[:, :, 2].astype(int)
+        _b_ch = resized[:, :, 0].astype(int)
+        _warm_tone = ((_r_ch - _b_ch) >= 10).astype(np.uint8) * 255
         beige_mask = cv2.bitwise_and(_rgb_mask, _low_spread)
+        beige_mask = cv2.bitwise_and(beige_mask, _warm_tone)
 
         # ── 吹き出し幅を推定: 端からベージュが途切れるまでスキャン ──
         def _find_bubble_width(beige, y0, h, from_left):
