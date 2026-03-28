@@ -402,13 +402,4 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
         if _dialog_result is not None:
             return _dialog_result
 
-    # ── チュートリアルポップアップでダイアログ処理失敗 → 発光SM フォールバック ──
-    # _has_tutorial_popup で発光SM をスキップしたが、ダイアログ処理も失敗した場合、
-    # 発光が残っているなら発光SM で処理する (デッドロック防止)
-    if _has_tutorial_popup and _is_battle_early and analysis_path is not None:
-        logger.info("[#0-PRE] ダイアログ処理失敗 → 発光SM フォールバック")
-        _fallback_result = _run_battle_glow_sm(analysis_path, W, H, state, ocr, tag="#0-PRE-FB")
-        if _fallback_result is not None:
-            return _fallback_result
-
     return None
