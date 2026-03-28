@@ -2912,7 +2912,7 @@ def main():
 
             # ── 候補リトライ: 残り候補があれば次の候補をタップ ──
             # ホーム画面到達判定中は候補タップ禁止 (画面遷移で HOME_CLEAR_CHECK が中断される)
-            if state.home_reached and not state.grind_mode:
+            if state.home_reached:
                 state.pending_candidates = []
                 state.pending_candidate_idx = 0
             # 候補タップ後は数イテレーション待って画面変化を確認してから次候補へ
