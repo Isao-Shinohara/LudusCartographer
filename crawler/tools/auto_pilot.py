@@ -319,6 +319,7 @@ def detect_and_act(ocr: list, state: PilotState,
     _is_battle_early = any(kw in joined for kw in _BATTLE_CORE_KWS)
     _confirm_pos = has_any(ocr, _CONFIRM_POS_KWS)
     _confirm_neg = has_any(ocr, _CONFIRM_NEG_KWS)
+    _mini_conv_result = detect_mini_conversation(analysis_path, ocr_items=ocr) if analysis_path else None
 
     ctx = DetectContext(
         ocr=ocr,
@@ -335,7 +336,8 @@ def detect_and_act(ocr: list, state: PilotState,
         is_notice=False,
         pre_dialog_finger=False,
         white_hand_pos=None,
-        is_mini_conv=detect_mini_conversation(analysis_path, ocr_items=ocr) is not None if analysis_path else False,
+        is_mini_conv=_mini_conv_result is not None,
+        mini_conv_pos=_mini_conv_result,
         is_result_screen_flag=False,
         is_adv_or_movie=False,
     )

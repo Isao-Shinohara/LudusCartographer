@@ -38,6 +38,7 @@ class DetectContext:
     pre_dialog_finger: bool = False           # 指ブロブによるダイアログガード
     white_hand_pos: Optional[tuple] = None    # 白ハンドポインタ座標
     is_mini_conv: bool = False                # ミニ会話検出
+    mini_conv_pos: Optional[tuple] = None    # ミニ会話座標 (cx, cy, side)
     is_result_screen_flag: bool = False       # Result画面テキスト検出
     is_adv_or_movie: bool = False             # ADV/MOVIEシーン判定
     in_battle_ctx: bool = False               # バトルコンテキスト (== is_battle_early)

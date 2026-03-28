@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from typing import Optional
 
+import logging
+
 from tools.ap.context import DetectContext
 from tools.ap.state import PilotState
+from tools.ap.device import tap_device
 
 from tools.ap.handlers.common import handle_common_guards
 from tools.ap.handlers.quest import handle_quest_early
@@ -67,6 +70,15 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     r = handle_scene_specific(ctx, state)
     if r is not None:
         return r
+
+    # Phase 8.5: ミニ会話タップ (OCR パスで検出済みの座標を使用)
+    if ctx.mini_conv_pos is not None:
+        _mc_cx, _mc_cy, _mc_side = ctx.mini_conv_pos
+        logging.getLogger(__name__).info(
+            "[MINI_CONV] 吹き出し(%s) → タップ (%d,%d)", _mc_side, _mc_cx, _mc_cy)
+        tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
+        state.last_action = "MINI_CONV_TAP"
+        return "MINI_CONV_TAP", 0.3
 
     # Phase 9: フォールバック (閉じるボタン, システムダイアログ, 規約, 確認, ストーリー, etc.)
     return handle_fallback(ctx, state)
