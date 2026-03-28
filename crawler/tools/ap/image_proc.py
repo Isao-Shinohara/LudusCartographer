@@ -1076,15 +1076,24 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
 
         # ── 吹き出し幅を推定: 端からベージュが途切れるまでスキャン ──
         def _find_bubble_width(beige, y0, h, from_left):
-            """端からベージュピクセルの密度が高い列の数を数え、吹き出し幅を推定。"""
+            """端からベージュピクセルの密度が高い列の数を数え、吹き出し幅を推定。
+            アイコン等で一時的に密度が落ちても、連続10列以上途切れなければ継続する。"""
             roi = beige[y0:y0 + h, :]
             _min_w = _BUBBLE_R * 2  # 最小幅 = 角丸直径
+            _GAP_TOLERANCE = 10  # 連続N列で密度<0.1なら終了
+            _gap_count = 0
+            _last_valid = _min_w
             for col in range(_min_w, _BUBBLE_MAX_W):
                 x = col if from_left else ANALYSIS_W - 1 - col
                 col_pixels = roi[:, x]
                 density = np.count_nonzero(col_pixels) / h
                 if density < 0.1:
-                    return col
+                    _gap_count += 1
+                    if _gap_count >= _GAP_TOLERANCE:
+                        return _last_valid
+                else:
+                    _gap_count = 0
+                    _last_valid = col + 1
             return _BUBBLE_MAX_W
 
         # ── 左右それぞれチェック ──
