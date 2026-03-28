@@ -2686,6 +2686,7 @@ def main():
                 _skip_rapid = True  # ADV ハンドラがフォールスルー → OCR へ直行
 
         # ── MINI_CONV 高速モード: 前回ミニ会話なら OCR スキップして即吹き出し検出 ──
+        _MINI_CONV_RAPID_MAX = 5  # 同一座標で連続タップ上限 → OCR パスにフォールスルー
         if (not _skip_rapid
                 and state.last_action == "MINI_CONV_TAP"
                 and state.current_scene not in ("MENU", "MOVIE", "BATTLE")
@@ -2693,15 +2694,32 @@ def main():
             _mc_rapid = detect_mini_conversation(_early_analysis)
             if _mc_rapid is not None:
                 _mc_rx, _mc_ry, _mc_rs = _mc_rapid
-                logger.info("[MINI_CONV_RAPID][iter %d] 吹き出し(%s) → タップ (%d,%d)",
-                            i, _mc_rs, _mc_rx, _mc_ry)
-                tap_device(_mc_rx, _mc_ry, state, "MINI_CONV_TAP")
-                state.last_action = "MINI_CONV_TAP"
-                state.last_phash = ""
-                _fms = (time.time() - _loop_t0) * 1000
-                state.total_loop_ms += _fms
-                logger.info("  [PERF] Loop %.0fms (MINI_CONV_RAPID)", _fms)
-                continue
+                # スタック検出: 同一座標 (±10px) で連続タップ → OCR にフォールスルー
+                _mc_prev = getattr(state, "_mini_conv_rapid_pos", (0, 0))
+                _mc_same = (abs(_mc_rx - _mc_prev[0]) < 10
+                            and abs(_mc_ry - _mc_prev[1]) < 10)
+                _mc_count = getattr(state, "_mini_conv_rapid_count", 0)
+                if _mc_same:
+                    _mc_count += 1
+                else:
+                    _mc_count = 1
+                state._mini_conv_rapid_pos = (_mc_rx, _mc_ry)
+                state._mini_conv_rapid_count = _mc_count
+                if _mc_count > _MINI_CONV_RAPID_MAX:
+                    logger.warning("[MINI_CONV_RAPID] 同一座標 %d 回連続 → OCR フォールスルー",
+                                   _mc_count)
+                    state._mini_conv_rapid_count = 0
+                    state.last_action = "WAIT_FOR_CHANGE"
+                else:
+                    logger.info("[MINI_CONV_RAPID][iter %d] 吹き出し(%s) → タップ (%d,%d) [%d/%d]",
+                                i, _mc_rs, _mc_rx, _mc_ry, _mc_count, _MINI_CONV_RAPID_MAX)
+                    tap_device(_mc_rx, _mc_ry, state, "MINI_CONV_TAP")
+                    state.last_action = "MINI_CONV_TAP"
+                    state.last_phash = ""
+                    _fms = (time.time() - _loop_t0) * 1000
+                    state.total_loop_ms += _fms
+                    logger.info("  [PERF] Loop %.0fms (MINI_CONV_RAPID)", _fms)
+                    continue
 
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット

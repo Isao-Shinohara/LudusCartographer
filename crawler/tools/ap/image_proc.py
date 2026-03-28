@@ -1052,6 +1052,7 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
         toolbar_y = int(ANALYSIS_H * 0.22)
 
         candidates = []
+        _has_bright_bg = False  # HSV で巨大白矩形 (背景融合) を検出したか
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if area < min_bubble_area:
@@ -1076,6 +1077,8 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
             _circularity = (4 * np.pi * area / (_perimeter * _perimeter)
                             if _perimeter > 0 else 0)
             _fill_ratio = area / (w * bh) if w * bh > 0 else 0
+            if _fill_ratio > 0.90:
+                _has_bright_bg = True  # 明るい背景で吹き出しが融合している可能性
             if _circularity < 0.28 or _fill_ratio < 0.35 or _fill_ratio > 0.90:
                 continue
 
@@ -1091,9 +1094,9 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
                 "mean_v": mean_v, "side": side, "area": area,
             })
 
-        if not candidates:
+        if not candidates and _has_bright_bg:
             # ── フォールバック: Canny エッジ検出 (明るい背景用) ──
-            # HSV で背景と吹き出しが融合する場合、輪郭線で分離する
+            # HSV で背景と吹き出しが融合 (fill>0.90 の巨大矩形あり) する場合のみ発火
             gray = cv2.cvtColor(upper, cv2.COLOR_BGR2GRAY)
             edges = cv2.Canny(gray, 50, 150)
             _ek = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
