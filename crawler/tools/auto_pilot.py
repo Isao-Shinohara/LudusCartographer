@@ -610,6 +610,38 @@ def _check_battle_templates(img_path: Path, asset_mgr) -> Optional[tuple]:
     return None
 
 
+# ─── ミニ会話タップ共通処理 ─────────────────────────────────
+def try_mini_conv_tap(img_path, state: PilotState,
+                      ocr_items=None, tag: str = "") -> bool:
+    """ミニ会話の吹き出しを検出してタップする共通処理。
+
+    ガード条件 (MENU/MOVIE/GACHA/MOVIE_WAIT) をチェックし、
+    detect_mini_conversation() で検出 → タップ → state 更新。
+
+    Returns: True=タップ実行, False=検出なし or ガード発動
+    """
+    # ガード: ミニ会話が出ないシーン
+    if state.current_scene in ("MENU", "MOVIE", "GACHA", "BATTLE"):
+        return False
+    if state.last_action == "MOVIE_WAIT":
+        return False
+    if getattr(state, "_from_movie_ttl", 0) > 0:
+        return False
+
+    _mc = detect_mini_conversation(img_path, ocr_items=ocr_items)
+    if _mc is None:
+        return False
+
+    _mc_cx, _mc_cy, _mc_side = _mc
+    _log_tag = f"[{tag}] " if tag else ""
+    logger.info("%s[MINI_CONV] 吹き出し(%s) → タップ (%d,%d)",
+                _log_tag, _mc_side, _mc_cx, _mc_cy)
+    tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
+    state.last_action = "MINI_CONV_TAP"
+    state.last_phash = ""
+    return True
+
+
 # ─── 必殺技演出待機 ─────────────────────────────────
 def _wait_for_special_animation(state: PilotState,
                                  max_wait: float = 10.0,
@@ -1451,13 +1483,7 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
         logger.info("[ADV] チェッカー床+スワイプ指検出 → スワイプ (handle_adv)")
         return False  # handle_adv 脱出 → detect_scene_early で TutorialWalk 処理
     # ── ミニ会話タップ ──
-    _mc = detect_mini_conversation(img_path, ocr_items=ocr_items)
-    if _mc is not None:
-        _mc_cx, _mc_cy, _mc_side = _mc
-        logger.info("[ADV] 吹き出し(%s) → タップ (%d,%d)", _mc_side, _mc_cx, _mc_cy)
-        tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
-        state.last_action = "MINI_CONV_TAP"
-        state.last_phash = ""
+    if try_mini_conv_tap(img_path, state, ocr_items=ocr_items, tag="ADV"):
         return True
 
     # ↓ なし + 吹き出しなし → フォールスルー
@@ -2690,7 +2716,9 @@ def main():
         _MINI_CONV_RETRY_MAX = 3   # 検出失敗時の前回位置再タップ上限
         if (not _skip_rapid
                 and state.last_action == "MINI_CONV_TAP"
-                and state.current_scene not in ("MENU", "MOVIE", "BATTLE")
+                and state.current_scene not in ("MENU", "MOVIE", "BATTLE", "GACHA")
+                and state.last_action != "MOVIE_WAIT"
+                and getattr(state, "_from_movie_ttl", 0) <= 0
                 and _early_analysis is not None):
             _mc_rapid = detect_mini_conversation(_early_analysis)
             _mc_prev = getattr(state, "_mini_conv_rapid_pos", (0, 0))
@@ -2814,19 +2842,9 @@ def main():
                                  state=state, desc="TutorialWalk_ADV_RAPID_UP")
                     state.last_phash = ""
                     continue
-                # ── ミニ会話タップ (1回) ──
-                # MENU: 通知バナーを吹き出しと誤認 / MOVIE_WAIT: 動画中タップで一時停止
-                if (state.current_scene != "MENU"
-                        and state.last_action != "MOVIE_WAIT"):
-                    _mc = detect_mini_conversation(img_path)
-                    if _mc is not None:
-                        _mc_cx, _mc_cy, _mc_side = _mc
-                        logger.info("[MINI_CONV][iter %d] 吹き出し(%s) → タップ (%d,%d)",
-                                    i, _mc_side, _mc_cx, _mc_cy)
-                        tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
-                        state.last_action = "MINI_CONV_TAP"
-                        state.last_phash = ""
-                        continue
+                # ── ミニ会話タップ ──
+                if try_mini_conv_tap(img_path, state, tag=f"RAPID iter {i}"):
+                    continue
                 # ── ツールバーなし + ↓なし + 吹き出しなし → OCR パスへフォールスルー ──
 
         else:
@@ -2966,25 +2984,11 @@ def main():
                     state.last_phash = ""
                     state.same_phash_count = 0
                     continue
-                # ── ミニ会話タップ (phash安定時, 1回) ──
-                # MENU: 通知バナーを吹き出しと誤認 / MOVIE: 動画中タップで一時停止
-                # GACHA: ガチャ演出の光エフェクトを吹き出しと誤認
-                # _from_movie_ttl: MOVIE→UNKNOWN遷移直後のタップ抑制
-                # MOVIE_WAIT: WFC_ESCAPE がアニメーション検出した直後のタップ抑制
-                if (state.current_scene not in ("MENU", "MOVIE", "GACHA")
-                        and getattr(state, "_from_movie_ttl", 0) <= 0
-                        and state.last_action != "MOVIE_WAIT"):
-                    _mc = detect_mini_conversation(img_path)
-                    if _mc is not None:
-                        _mc_cx, _mc_cy, _mc_side = _mc
-                        logger.info("[MINI_CONV][iter %d] 吹き出し(%s) → タップ (%d,%d)",
-                                    i, _mc_side, _mc_cx, _mc_cy)
-                        tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
-                        state.last_action = "MINI_CONV_TAP"
-                        state.last_phash = ""
-                        state.same_phash_count = 0
-                        state.stall_start = 0.0
-                        continue
+                # ── ミニ会話タップ ──
+                if try_mini_conv_tap(img_path, state, tag=f"POLL iter {i}"):
+                    state.same_phash_count = 0
+                    state.stall_start = 0.0
+                    continue
                 # 動画シーンでは ADV ツールバーが無いためタップ抑制
                 if state.current_scene in ("STORY", "ADV", "UNKNOWN"):
                     _aa_adv = detect_adv_scene(img_path, roi=state.game_roi)
