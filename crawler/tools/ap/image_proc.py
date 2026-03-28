@@ -1021,73 +1021,110 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
                              min_bubble_area: int = 3000,
                              upper_ratio: float = 0.35):
     """
-    ミニ会話シーン（上部の白い吹き出し）を検出しアクティブ話者の中心座標を返す。
-    ROI: 画面上部35% (左上・右上の吹き出し固定位置)。
+    ミニ会話シーン（上部の吹き出し）を検出しアクティブ話者の中心座標を返す。
+
+    検出方法: 固定位置 (Y=103, H=88) に角丸矩形 (R=46) マスクを配置し、
+    マスク内のベージュピクセル割合で吹き出しの有無を判定。
+    左端固定 / 右端固定（左右反転）の2箇所をチェック。
 
     Returns: (cx, cy, "left"|"right") or None
     """
+    _BUBBLE_Y = 103     # 吹き出し上端 Y (解析解像度 1440x720 基準)
+    _BUBBLE_H = 88      # 吹き出し高さ
+    _BUBBLE_R = 46      # 角丸半径
+    _BUBBLE_MAX_W = int(ANALYSIS_W * 0.5)  # 探索する最大幅 (画面半分)
+    _BEIGE_THRESHOLD = 0.25  # マスク内ベージュ割合の閾値
+
     try:
         img = imread_cached(img_path)
         if img is None:
             return None
         resized = cv2.resize(img, (ANALYSIS_W, ANALYSIS_H))
-        h_cut = int(ANALYSIS_H * upper_ratio)
-        upper = resized[0:h_cut, :]
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        # ── 角丸矩形マスク生成 ──
+        def _rounded_rect_mask(width, height, radius):
+            m = np.zeros((height, width), dtype=np.uint8)
+            r = min(radius, width // 2, height // 2)
+            cv2.rectangle(m, (r, 0), (width - r, height), 255, -1)
+            cv2.rectangle(m, (0, r), (width, height - r), 255, -1)
+            cv2.circle(m, (r, r), r, 255, -1)
+            cv2.circle(m, (width - r, r), r, 255, -1)
+            cv2.circle(m, (r, height - r), r, 255, -1)
+            cv2.circle(m, (width - r, height - r), r, 255, -1)
+            return m
 
-        # 吹き出し色マスク (RGB ベージュ/クリーム: B,G,R 全て 190-255, 色差 < 30)
-        # 吹き出し背景色 RGB≈(237,234,220) を検出
-        # 透過で背景色が混ざるため、下限を緩めに設定
-        # 端固定チェックが誤検出を防止するので色範囲は広め
+        # ── ベージュピクセルマスク (画像全体) ──
         _rgb_lo = np.array([160, 170, 170], dtype=np.uint8)  # BGR order
         _rgb_hi = np.array([255, 255, 255], dtype=np.uint8)
-        _rgb_mask = cv2.inRange(upper, _rgb_lo, _rgb_hi)
-        _ch_max = np.max(upper, axis=2)
-        _ch_min = np.min(upper, axis=2)
+        _rgb_mask = cv2.inRange(resized, _rgb_lo, _rgb_hi)
+        _ch_max = np.max(resized, axis=2)
+        _ch_min = np.min(resized, axis=2)
         _low_spread = ((_ch_max.astype(int) - _ch_min.astype(int)) < 50).astype(np.uint8) * 255
-        mask = cv2.bitwise_and(_rgb_mask, _low_spread)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        beige_mask = cv2.bitwise_and(_rgb_mask, _low_spread)
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # ── 吹き出し幅を推定: 端からベージュが途切れるまでスキャン ──
+        def _find_bubble_width(beige, y0, h, from_left):
+            """端からベージュピクセルの密度が高い列の数を数え、吹き出し幅を推定。"""
+            roi = beige[y0:y0 + h, :]
+            _min_w = _BUBBLE_R * 2  # 最小幅 = 角丸直径
+            for col in range(_min_w, _BUBBLE_MAX_W):
+                x = col if from_left else ANALYSIS_W - 1 - col
+                col_pixels = roi[:, x]
+                density = np.count_nonzero(col_pixels) / h
+                if density < 0.1:
+                    return col
+            return _BUBBLE_MAX_W
 
-        # ADVツールバー除外ゾーン (x>82%, y<22%)
-        toolbar_x = int(ANALYSIS_W * 0.82)
-        toolbar_y = int(ANALYSIS_H * 0.22)
-
-        # 端固定チェック: 吹き出しは左端 or 右端に固定されている
-        _edge_margin = int(ANALYSIS_W * 0.05)  # 端から5%以内
-
+        # ── 左右それぞれチェック ──
+        shape_mask = _rounded_rect_mask(_BUBBLE_MAX_W, _BUBBLE_H, _BUBBLE_R)
         candidates = []
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < min_bubble_area:
+
+        for side, from_left in [("left", True), ("right", False)]:
+            bubble_w = _find_bubble_width(beige_mask, _BUBBLE_Y, _BUBBLE_H, from_left)
+            if bubble_w < _BUBBLE_R * 2:
                 continue
-            x, y, w, bh = cv2.boundingRect(cnt)
-            if bh == 0:
+
+            # 角丸矩形マスクを吹き出し幅で切り出し
+            bubble_mask = _rounded_rect_mask(bubble_w, _BUBBLE_H, _BUBBLE_R)
+
+            # 画像上の対応領域
+            if from_left:
+                x0 = 0
+            else:
+                x0 = ANALYSIS_W - bubble_w
+
+            # 範囲チェック
+            y0 = _BUBBLE_Y
+            y1 = min(y0 + _BUBBLE_H, ANALYSIS_H)
+            x1 = min(x0 + bubble_w, ANALYSIS_W)
+            _bw = x1 - x0
+            _bh = y1 - y0
+            if _bw <= 0 or _bh <= 0:
                 continue
-            cx_cnt = x + w // 2
-            cy_cnt = y + bh // 2
-            # 左端固定 or 右端固定の吹き出しのみ対象
-            _left_anchored = x <= _edge_margin
-            _right_anchored = (x + w) >= (ANALYSIS_W - _edge_margin)
-            if not _left_anchored and not _right_anchored:
-                continue
-            # ツールバー除外 (右端固定の吹き出しはツールバー領域と重なるため除外しない)
-            if cx_cnt > toolbar_x and cy_cnt < toolbar_y and not _right_anchored:
-                continue
-            side = "left" if _left_anchored else "right"
-            candidates.append({
-                "cx": cx_cnt, "cy": cy_cnt,
-                "x": x, "y": y, "w": w, "h": bh,
-                "side": side, "area": area,
-            })
+
+            # マスク内のベージュ割合を計算
+            roi_beige = beige_mask[y0:y1, x0:x1]
+            roi_shape = bubble_mask[0:_bh, 0:_bw]
+            masked = cv2.bitwise_and(roi_beige, roi_shape)
+            shape_pixels = np.count_nonzero(roi_shape)
+            beige_pixels = np.count_nonzero(masked)
+            ratio = beige_pixels / shape_pixels if shape_pixels > 0 else 0
+
+            if ratio >= _BEIGE_THRESHOLD:
+                cx = x0 + bubble_w // 2
+                cy = y0 + _BUBBLE_H // 2
+                candidates.append({
+                    "cx": cx, "cy": cy, "side": side,
+                    "x": x0, "y": y0, "w": bubble_w, "h": _BUBBLE_H,
+                    "ratio": ratio, "area": beige_pixels,
+                })
+                logger.debug("[MINI_CONV] %s bubble: w=%d ratio=%.2f (%d/%d)",
+                             side, bubble_w, ratio, beige_pixels, shape_pixels)
 
         if not candidates:
             return None
 
-        best = max(candidates, key=lambda c: c["area"])
+        best = max(candidates, key=lambda c: c["ratio"])
 
         # OCR 検証: 吹き出し BBox 内にテキストが存在するか
         if ocr_items is not None:
@@ -1105,8 +1142,8 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
                 logger.debug("[MINI_CONV] ocr_items=None + チェッカー柄 → 棄却")
                 return None
 
-        logger.debug("[MINI_CONV] bubble (%d,%d) side=%s area=%d",
-                     best["cx"], best["cy"], best["side"], best["area"])
+        logger.debug("[MINI_CONV] bubble (%d,%d) side=%s ratio=%.2f",
+                     best["cx"], best["cy"], best["side"], best["ratio"])
         return (best["cx"], best["cy"], best["side"])
 
     except Exception:
