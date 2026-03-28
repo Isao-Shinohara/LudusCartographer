@@ -1054,6 +1054,9 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
         toolbar_x = int(ANALYSIS_W * 0.82)
         toolbar_y = int(ANALYSIS_H * 0.22)
 
+        # 端固定チェック: 吹き出しは左端 or 右端に固定されている
+        _edge_margin = int(ANALYSIS_W * 0.05)  # 端から5%以内
+
         candidates = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
@@ -1062,14 +1065,17 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
             x, y, w, bh = cv2.boundingRect(cnt)
             if bh == 0:
                 continue
-            aspect = w / bh
-            if aspect < 1.2 or aspect > 8.0:
-                continue
             cx_cnt = x + w // 2
             cy_cnt = y + bh // 2
-            if cx_cnt > toolbar_x and cy_cnt < toolbar_y:
+            # 左端固定 or 右端固定の吹き出しのみ対象
+            _left_anchored = x <= _edge_margin
+            _right_anchored = (x + w) >= (ANALYSIS_W - _edge_margin)
+            if not _left_anchored and not _right_anchored:
                 continue
-            side = "left" if cx_cnt < ANALYSIS_W // 2 else "right"
+            # ツールバー除外 (右端固定の吹き出しはツールバー領域と重なるため除外しない)
+            if cx_cnt > toolbar_x and cy_cnt < toolbar_y and not _right_anchored:
+                continue
+            side = "left" if _left_anchored else "right"
             candidates.append({
                 "cx": cx_cnt, "cy": cy_cnt,
                 "x": x, "y": y, "w": w, "h": bh,

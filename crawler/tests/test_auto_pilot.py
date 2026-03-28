@@ -697,11 +697,9 @@ def _make_bubble_image(tmp_path, bubbles, bg_val=40):
 
     img = np.full((ANALYSIS_H, ANALYSIS_W, 3), bg_val, dtype=np.uint8)
     for bx, by, bw, bh, brightness in bubbles:
-        # 白い吹き出し (楕円形, S<40, V>240 を満たす BGR)
-        cx = bx + bw // 2
-        cy = by + bh // 2
-        cv2.ellipse(img, (cx, cy), (bw // 2, bh // 2), 0, 0, 360,
-                    (brightness, brightness, brightness), -1)
+        # 吹き出し (矩形, ベージュ色 RGB≈(237,234,220) 相当)
+        cv2.rectangle(img, (bx, by), (bx + bw, by + bh),
+                      (brightness, brightness, brightness), -1)
     img_path = tmp_path / "mini_conv.png"
     cv2.imwrite(str(img_path), img)
     return img_path
@@ -713,9 +711,9 @@ class TestDetectMiniConversation:
     def test_right_bubble_detected(self, tmp_path):
         """右上の白い吹き出し → (cx, cy, 'right') を返す。"""
         from tools.ap.image_proc import detect_mini_conversation, ANALYSIS_W
-        # 右側 (x=900) に白い吹き出し
-        img_path = _make_bubble_image(tmp_path, [(900, 50, 300, 80, 240)])
-        ocr = [_make_ocr_item("セリフ", 1050, 90)]
+        # 右端固定の吹き出し (右端 = 1440)
+        img_path = _make_bubble_image(tmp_path, [(1140, 50, 300, 80, 240)])
+        ocr = [_make_ocr_item("セリフ", 1290, 90)]
         result = detect_mini_conversation(img_path, ocr_items=ocr)
         assert result is not None
         cx, cy, side = result
@@ -725,9 +723,9 @@ class TestDetectMiniConversation:
     def test_left_bubble_detected(self, tmp_path):
         """左上の白い吹き出し → (cx, cy, 'left') を返す。"""
         from tools.ap.image_proc import detect_mini_conversation, ANALYSIS_W
-        # 左側 (x=100) に白い吹き出し
-        img_path = _make_bubble_image(tmp_path, [(100, 50, 300, 80, 240)])
-        ocr = [_make_ocr_item("セリフ", 250, 90)]
+        # 左端固定の吹き出し (左端 = 0)
+        img_path = _make_bubble_image(tmp_path, [(0, 50, 300, 80, 240)])
+        ocr = [_make_ocr_item("セリフ", 150, 90)]
         result = detect_mini_conversation(img_path, ocr_items=ocr)
         assert result is not None
         cx, cy, side = result
@@ -737,13 +735,13 @@ class TestDetectMiniConversation:
     def test_two_bubbles_selects_brighter(self, tmp_path):
         """2バブル → 明るい方(アクティブ話者)を選択。"""
         from tools.ap.image_proc import detect_mini_conversation
-        # 左: グレー(150), 右: 白(240) → 右を選択
+        # 左端固定: グレー(150), 右端固定: 白(240) → 右を選択
         img_path = _make_bubble_image(tmp_path, [
-            (100, 50, 300, 80, 150),   # 左: グレー (V=150 < 200 → マスクに入らない)
-            (900, 50, 300, 80, 240),   # 右: 白 (V=240 > 200)
+            (0, 50, 300, 80, 150),      # 左端固定: グレー
+            (1140, 50, 300, 80, 240),   # 右端固定: 白
         ])
-        ocr = [_make_ocr_item("左", 250, 90),
-               _make_ocr_item("右", 1050, 90)]
+        ocr = [_make_ocr_item("左", 150, 90),
+               _make_ocr_item("右", 1290, 90)]
         result = detect_mini_conversation(img_path, ocr_items=ocr)
         assert result is not None
         _, _, side = result
