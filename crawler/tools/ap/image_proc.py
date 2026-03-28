@@ -1037,6 +1037,11 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
     _BEIGE_THRESHOLD = 0.25                 # マスク内ベージュ割合の閾値
 
     try:
+        # ダイアログ表示中は吹き出し検出をスキップ (金色装飾枠の誤検出防止)
+        if detect_dialog_corners(img_path):
+            logger.debug("[MINI_CONV] ダイアログ四隅検出 → スキップ")
+            return None
+
         img = imread_cached(img_path)
         if img is None:
             return None
