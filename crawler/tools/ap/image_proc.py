@@ -1037,13 +1037,15 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
 
         # 吹き出し色マスク (RGB ベージュ/クリーム: B,G,R 全て 190-255, 色差 < 30)
-        # 吹き出し背景色 RGB≈(237,234,220) を直接検出
-        _rgb_lo = np.array([190, 200, 200], dtype=np.uint8)  # BGR order
+        # 吹き出し背景色 RGB≈(237,234,220) を検出
+        # 透過で背景色が混ざるため、下限を緩めに設定
+        # 端固定チェックが誤検出を防止するので色範囲は広め
+        _rgb_lo = np.array([160, 170, 170], dtype=np.uint8)  # BGR order
         _rgb_hi = np.array([255, 255, 255], dtype=np.uint8)
         _rgb_mask = cv2.inRange(upper, _rgb_lo, _rgb_hi)
         _ch_max = np.max(upper, axis=2)
         _ch_min = np.min(upper, axis=2)
-        _low_spread = ((_ch_max.astype(int) - _ch_min.astype(int)) < 30).astype(np.uint8) * 255
+        _low_spread = ((_ch_max.astype(int) - _ch_min.astype(int)) < 50).astype(np.uint8) * 255
         mask = cv2.bitwise_and(_rgb_mask, _low_spread)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
