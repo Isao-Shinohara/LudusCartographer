@@ -55,7 +55,7 @@ class TutorialMission(Mission):
         state.grind_mode = False
 
     def pre_loop(self, args, serial):
-        # fresh install は auto_pilot.py の _fresh_install_from_play_store を使う
+        # reinstall は auto_pilot.py の _reinstall_from_play_store を使う
         # (循環 import 回避のため、ここでは呼ばず auto_pilot.main() 側で制御)
         pass
 

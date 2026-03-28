@@ -1509,7 +1509,7 @@ def parse_args():
 
 
 # ─── Play Store 再インストール ──────────────────────
-def _fresh_install_from_play_store(serial: str, package: str) -> None:
+def _reinstall_from_play_store(serial: str, package: str) -> None:
     """
     アプリをアンインストール → Play Store から再インストールする。
 
@@ -1522,7 +1522,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     - uiautomator dump 結果の全テキストをログ出力 (診断用)
     - Play Store ページ読み込み待機フェーズ追加 (BACK 乱発防止)
     - 試行回数に応じた待機時間エスカレーション
-    - 診断スクリーンショットを storage/fresh_install/ に保存
+    - 診断スクリーンショットを storage/reinstall/ に保存
     - Google Play Protect / TOS 画面のハンドリング
     - フォアグラウンドアプリ検証 (BACK が Store を閉じた場合のリカバリ)
     """
@@ -1547,7 +1547,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     PLAY_STORE_PKG = "com.android.vending"
 
     # 診断スクリーンショット保存先
-    _diag_dir = Path(__file__).parent.parent / "storage" / "fresh_install"
+    _diag_dir = Path(__file__).parent.parent / "storage" / "reinstall"
     _diag_dir.mkdir(parents=True, exist_ok=True)
 
     def _adb_tap(x: int, y: int) -> None:
@@ -1557,7 +1557,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 capture_output=True, timeout=10,
             )
         except subprocess.TimeoutExpired:
-            logger.warning("[FRESH_INSTALL] ADB tap タイムアウト — デバイス接続を確認してください")
+            logger.warning("[REINSTALL] ADB tap タイムアウト — デバイス接続を確認してください")
 
     def _adb_key(keycode: str) -> None:
         try:
@@ -1566,7 +1566,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 capture_output=True, timeout=10,
             )
         except subprocess.TimeoutExpired:
-            logger.warning("[FRESH_INSTALL] ADB keyevent タイムアウト (%s) — デバイス接続を確認してください", keycode)
+            logger.warning("[REINSTALL] ADB keyevent タイムアウト (%s) — デバイス接続を確認してください", keycode)
 
     def _adb_screenshot(path: str) -> bool:
         """スクリーンショット取得 + PNG ヘッダ検証。3回リトライ。"""
@@ -1590,7 +1590,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         ts = time.strftime("%H%M%S")
         path = str(_diag_dir / f"{label}_{ts}.png")
         if _adb_screenshot(path):
-            logger.info("[FRESH_INSTALL] 診断SS保存: %s", path)
+            logger.info("[REINSTALL] 診断SS保存: %s", path)
 
     def _get_device_screen_height() -> int:
         """wm size でデバイス画面の高さを取得 (portrait 基準)。"""
@@ -1604,7 +1604,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 w, h = int(m.group(1)), int(m.group(2))
                 return max(w, h)
         except Exception as e:
-            logger.debug("[FRESH_INSTALL] wm size 取得失敗: %s", e)
+            logger.debug("[REINSTALL] wm size 取得失敗: %s", e)
         return 1920  # 安全なフォールバック (FHD 相当)
 
     def _is_play_store_foreground() -> bool:
@@ -1621,7 +1621,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     def _ensure_play_store_open() -> None:
         """Play Store がフォアグラウンドにない場合、再表示する。"""
         if not _is_play_store_foreground():
-            logger.warning("[FRESH_INSTALL] Play Store がフォアグラウンドにない → 再表示")
+            logger.warning("[REINSTALL] Play Store がフォアグラウンドにない → 再表示")
             open_play_store(serial, package)
             time.sleep(5)
 
@@ -1639,7 +1639,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             )
             # dump 成功判定: 出力に "dumped to" が含まれる
             if "dumped" not in dr.stdout.lower() and "dumped" not in dr.stderr.lower():
-                logger.debug("[FRESH_INSTALL] uiautomator dump 応答なし: stdout=%s stderr=%s",
+                logger.debug("[REINSTALL] uiautomator dump 応答なし: stdout=%s stderr=%s",
                              dr.stdout.strip()[:80], dr.stderr.strip()[:80])
                 return None
             r = subprocess.run(
@@ -1650,7 +1650,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 return None
             return r.stdout
         except Exception as e:
-            logger.warning("[FRESH_INSTALL] uiautomator dump 失敗: %s", e)
+            logger.warning("[REINSTALL] uiautomator dump 失敗: %s", e)
             return None
 
     def _uiautomator_find_button(keywords: list, xml_text: str = None) -> Optional[tuple]:
@@ -1666,7 +1666,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError as _pe:
-            logger.debug("[FRESH_INSTALL] XML パースエラー: %s", _pe)
+            logger.debug("[REINSTALL] XML パースエラー: %s", _pe)
             return None
 
         for kw in keywords:
@@ -1690,7 +1690,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 x1, y1 = int(bm[0][0]), int(bm[0][1])
                 x2, y2 = int(bm[1][0]), int(bm[1][1])
                 cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                logger.info("[FRESH_INSTALL] uiautomator '%s' (text='%s'): "
+                logger.info("[REINSTALL] uiautomator '%s' (text='%s'): "
                             "bounds=[%d,%d][%d,%d] → (%d,%d)",
                             kw, matched_text[:30], x1, y1, x2, y2, cx, cy)
                 return (cx, cy)
@@ -1709,7 +1709,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         except ET.ParseError:
             pass
         if texts:
-            logger.info("[FRESH_INSTALL] UI texts: %s", texts[:20])
+            logger.info("[REINSTALL] UI texts: %s", texts[:20])
         return texts
 
     def _verify_install_started() -> bool:
@@ -1724,17 +1724,17 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                      "Installing", "Pending", "ダウンロード中", "Downloading"],
                     xml_text=xml)
                 if _progress:
-                    logger.info("[FRESH_INSTALL] インストール開始を確認 (進捗検出, 試行%d)", _vt + 1)
+                    logger.info("[REINSTALL] インストール開始を確認 (進捗検出, 試行%d)", _vt + 1)
                     return True
                 # 2) 「インストール」ボタン消失
                 if _uiautomator_find_button(INSTALL_KEYWORDS, xml_text=xml) is None:
-                    logger.info("[FRESH_INSTALL] インストール開始を確認 (ボタン消失, 試行%d)", _vt + 1)
+                    logger.info("[REINSTALL] インストール開始を確認 (ボタン消失, 試行%d)", _vt + 1)
                     return True
             # 3) pm で既にインストール済み
             if is_app_installed(serial, package):
-                logger.info("[FRESH_INSTALL] インストール完了を確認 (pm, 試行%d)", _vt + 1)
+                logger.info("[REINSTALL] インストール完了を確認 (pm, 試行%d)", _vt + 1)
                 return True
-            logger.debug("[FRESH_INSTALL] 検証リトライ %d/3", _vt + 1)
+            logger.debug("[REINSTALL] 検証リトライ %d/3", _vt + 1)
         return False
 
     def _handle_accept_dialogs() -> None:
@@ -1745,19 +1745,19 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             if xml:
                 _acc_pos = _uiautomator_find_button(ACCEPT_KEYWORDS, xml_text=xml)
                 if _acc_pos:
-                    logger.info("[FRESH_INSTALL] 権限ダイアログ → タップ (%d,%d) [%d回目]",
+                    logger.info("[REINSTALL] 権限ダイアログ → タップ (%d,%d) [%d回目]",
                                 _acc_pos[0], _acc_pos[1], _ad + 1)
                     _adb_tap(_acc_pos[0], _acc_pos[1])
                     continue
                 # ポップアップ解除キーワード
                 _dismiss_pos = _uiautomator_find_button(_POPUP_DISMISS_KWS, xml_text=xml)
                 if _dismiss_pos:
-                    logger.info("[FRESH_INSTALL] ポップアップ解除 → タップ (%d,%d) [%d回目]",
+                    logger.info("[REINSTALL] ポップアップ解除 → タップ (%d,%d) [%d回目]",
                                 _dismiss_pos[0], _dismiss_pos[1], _ad + 1)
                     _adb_tap(_dismiss_pos[0], _dismiss_pos[1])
                     continue
             # uiautomator で見つからない → OCR フォールバック
-            tmp_ss = str(Path(tempfile.gettempdir()) / "fresh_install_ss.png")
+            tmp_ss = str(Path(tempfile.gettempdir()) / "reinstall_ss.png")
             if _adb_screenshot(tmp_ss):
                 try:
                     ocr2 = run_ocr(tmp_ss)
@@ -1766,7 +1766,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                         ahit = find_best(ocr2, akw)
                         if ahit:
                             ax, ay = ahit["center"]
-                            logger.info("[FRESH_INSTALL] OCR「%s」→ タップ (%d,%d)", akw, ax, ay)
+                            logger.info("[REINSTALL] OCR「%s」→ タップ (%d,%d)", akw, ax, ay)
                             _adb_tap(ax, ay)
                             _found = True
                             break
@@ -1774,7 +1774,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                         continue
                 except Exception:
                     pass
-            logger.debug("[FRESH_INSTALL] 権限ダイアログなし [%d回目] → 完了", _ad + 1)
+            logger.debug("[REINSTALL] 権限ダイアログなし [%d回目] → 完了", _ad + 1)
             break
 
     def _try_dismiss_popup(xml: str) -> bool:
@@ -1783,7 +1783,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         # uiautomator でポップアップ閉じるボタンを探す
         _dismiss = _uiautomator_find_button(_POPUP_DISMISS_KWS, xml_text=xml)
         if _dismiss:
-            logger.info("[FRESH_INSTALL] ポップアップ検出 → dismiss タップ (%d,%d)",
+            logger.info("[REINSTALL] ポップアップ検出 → dismiss タップ (%d,%d)",
                         _dismiss[0], _dismiss[1])
             _adb_tap(_dismiss[0], _dismiss[1])
             time.sleep(2)
@@ -1792,7 +1792,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
 
     # ─── 実行開始 ───
 
-    logger.info("[FRESH_INSTALL] === アプリ再インストール開始 ===")
+    logger.info("[REINSTALL] === アプリ再インストール開始 ===")
 
     # --- Step 0: 画面ウェイク + ロック解除 ---
     _adb_key("KEYCODE_WAKEUP")
@@ -1809,20 +1809,20 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     # ランチャーキャッシュクリア: 再インストールでアイコンが重複するのを防止
     try:
         adb("shell pm clear com.sonymobile.launcher")
-        logger.info("[FRESH_INSTALL] ランチャーキャッシュクリア完了")
+        logger.info("[REINSTALL] ランチャーキャッシュクリア完了")
     except Exception:
         pass  # Xperia 以外のランチャーでは失敗しても問題ない
     time.sleep(2)
 
     # --- Step 2: Play Store を開く ---
     if not open_play_store(serial, package):
-        logger.error("[FRESH_INSTALL] Play Store を開けませんでした。手動で対応してください。")
+        logger.error("[REINSTALL] Play Store を開けませんでした。手動で対応してください。")
         return
     time.sleep(5)
 
     # デバイス画面高さを動的取得 (Y座標フィルタ用)
     _screen_h = _get_device_screen_height()
-    logger.info("[FRESH_INSTALL] デバイス画面高さ (portrait): %dpx", _screen_h)
+    logger.info("[REINSTALL] デバイス画面高さ (portrait): %dpx", _screen_h)
 
     # --- Step 2.5: Play Store ページ読み込み待機 ---
     # 初回は十分に待つ (BACK 乱発でページロードが途切れるのを防止)
@@ -1830,7 +1830,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
     # ページ読み込み完了: まどドラ関連キーワード + インストール/開くボタン
     _PAGE_READY_KWS = _APP_PAGE_VERIFY_KWS + ["インストール", "Install", "install",
                        "開く", "Open", "プレイ", "Play", "更新", "Update"]
-    logger.info("[FRESH_INSTALL] Play Store ページ読み込み待機中...")
+    logger.info("[REINSTALL] Play Store ページ読み込み待機中...")
     _page_loaded = False
     for _wait in range(6):  # 最大 30 秒 (5秒 × 6)
         # --- uiautomator で確認 ---
@@ -1838,26 +1838,26 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         if xml:
             ui_texts = _log_ui_texts(xml)
             if any(kw in t for t in ui_texts for kw in _PAGE_READY_KWS):
-                logger.info("[FRESH_INSTALL] ページ読み込み完了 [uiautomator] (%d秒)", (_wait + 1) * 5)
+                logger.info("[REINSTALL] ページ読み込み完了 [uiautomator] (%d秒)", (_wait + 1) * 5)
                 _page_loaded = True
                 break
             if _try_dismiss_popup(xml):
                 continue
             if any(kw in t for t in ui_texts for kw in _LOADING_HINTS):
-                logger.info("[FRESH_INSTALL] 読み込み中... (%d秒)", (_wait + 1) * 5)
+                logger.info("[REINSTALL] 読み込み中... (%d秒)", (_wait + 1) * 5)
                 time.sleep(5)
                 continue
         else:
-            logger.debug("[FRESH_INSTALL] uiautomator dump 失敗 — OCR フォールバック")
+            logger.debug("[REINSTALL] uiautomator dump 失敗 — OCR フォールバック")
         # --- OCR フォールバック ---
-        _wait_ss = str(Path(tempfile.gettempdir()) / "fresh_install_wait.png")
+        _wait_ss = str(Path(tempfile.gettempdir()) / "reinstall_wait.png")
         if _adb_screenshot(_wait_ss):
             try:
                 _wait_ocr = run_ocr(_wait_ss)
                 _wait_texts = [r["text"] for r in _wait_ocr]
-                logger.info("[FRESH_INSTALL] OCR (待機中): %s", _wait_texts[:10])
+                logger.info("[REINSTALL] OCR (待機中): %s", _wait_texts[:10])
                 if any(kw in t for t in _wait_texts for kw in _PAGE_READY_KWS):
-                    logger.info("[FRESH_INSTALL] ページ読み込み完了 [OCR] (%d秒)", (_wait + 1) * 5)
+                    logger.info("[REINSTALL] ページ読み込み完了 [OCR] (%d秒)", (_wait + 1) * 5)
                     _page_loaded = True
                     break
             except Exception:
@@ -1865,11 +1865,11 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         time.sleep(5)
 
     if not _page_loaded:
-        logger.warning("[FRESH_INSTALL] ページ読み込みタイムアウト — インストール検出を開始")
+        logger.warning("[REINSTALL] ページ読み込みタイムアウト — インストール検出を開始")
         _save_diag_screenshot("page_load_timeout")
 
     # --- Step 3: インストールボタン検出 + タップ ---
-    tmp_ss = str(Path(tempfile.gettempdir()) / "fresh_install_ss.png")
+    tmp_ss = str(Path(tempfile.gettempdir()) / "reinstall_ss.png")
     installed_via_tap = False
     _reinstall_count = 0
 
@@ -1879,7 +1879,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             _wait_sec = 3 if attempt < 5 else 5 if attempt < 10 else 8
             time.sleep(_wait_sec)
 
-        logger.info("[FRESH_INSTALL] 試行 %d/%d", attempt + 1, MAX_ATTEMPTS)
+        logger.info("[REINSTALL] 試行 %d/%d", attempt + 1, MAX_ATTEMPTS)
 
         # Play Store がフォアグラウンドにあるか確認
         _ensure_play_store_open()
@@ -1897,7 +1897,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 kw in t for t in ui_texts for kw in _dl_progress_kws
             )
             if _is_downloading:
-                logger.info("[FRESH_INSTALL] ダウンロード進行中 (uiautomator) → タップせず待機")
+                logger.info("[REINSTALL] ダウンロード進行中 (uiautomator) → タップせず待機")
                 if _verify_install_started():
                     installed_via_tap = True
                     break
@@ -1907,14 +1907,14 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             _ui_open = _uiautomator_find_button(OPEN_KEYWORDS, xml_text=xml)
             if _ui_open:
                 if _reinstall_count >= MAX_REINSTALL:
-                    logger.warning("[FRESH_INSTALL] 再アンインストール上限(%d回)到達 → BACK + 再表示",
+                    logger.warning("[REINSTALL] 再アンインストール上限(%d回)到達 → BACK + 再表示",
                                    MAX_REINSTALL)
                     _adb_key("4")
                     time.sleep(2)
                     open_play_store(serial, package)
                     time.sleep(5)
                     continue
-                logger.info("[FRESH_INSTALL] 既インストール済み（'プレイ'/'開く'検出）→ 再アンインストール (%d/%d)",
+                logger.info("[REINSTALL] 既インストール済み（'プレイ'/'開く'検出）→ 再アンインストール (%d/%d)",
                             _reinstall_count + 1, MAX_REINSTALL)
                 _reinstall_count += 1
                 uninstall_app(serial, package)
@@ -1929,7 +1929,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             )
             _ui_pos = _uiautomator_find_button(INSTALL_KEYWORDS, xml_text=xml)
             if _ui_pos and not _ui_on_app_page:
-                logger.warning("[FRESH_INSTALL] uiautomator: まどドラページではない → スキップ")
+                logger.warning("[REINSTALL] uiautomator: まどドラページではない → スキップ")
                 _ui_pos = None
             if _ui_pos:
                 if _ui_pos[1] < _screen_h * 0.75:
@@ -1937,9 +1937,9 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                     if _verify_install_started():
                         installed_via_tap = True
                         break
-                    logger.warning("[FRESH_INSTALL] uiautomator タップ空振り — OCR フォールバック")
+                    logger.warning("[REINSTALL] uiautomator タップ空振り — OCR フォールバック")
                 else:
-                    logger.debug("[FRESH_INSTALL] uiautomator (%d,%d) y>75%% → 他端末ボタン除外",
+                    logger.debug("[REINSTALL] uiautomator (%d,%d) y>75%% → 他端末ボタン除外",
                                  _ui_pos[0], _ui_pos[1])
 
             # --- ポップアップ / ダイアログを閉じる試行 ---
@@ -1948,17 +1948,17 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
 
         # --- 2nd: OCR フォールバック ---
         if not _adb_screenshot(tmp_ss):
-            logger.warning("[FRESH_INSTALL] スクリーンショット取得失敗 — リトライ")
+            logger.warning("[REINSTALL] スクリーンショット取得失敗 — リトライ")
             continue
 
         try:
             ocr_results = run_ocr(tmp_ss)
         except Exception as e:
-            logger.warning("[FRESH_INSTALL] OCR 失敗: %s", e)
+            logger.warning("[REINSTALL] OCR 失敗: %s", e)
             continue
 
         _ocr_texts = [r["text"] for r in ocr_results]
-        logger.info("[FRESH_INSTALL] OCR texts: %s", _ocr_texts[:15])
+        logger.info("[REINSTALL] OCR texts: %s", _ocr_texts[:15])
 
         # --- ダウンロード/インストール進行中チェック (OCR) ---
         # NOTE: 「プレイ」チェックより先に実行する。インストール中に「プレイ」が
@@ -1969,7 +1969,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             kw in t for t in _ocr_texts for kw in _DL_PROGRESS_OCR_KWS
         )
         if _ocr_downloading:
-            logger.info("[FRESH_INSTALL] ダウンロード進行中 (OCR) → タップせず待機")
+            logger.info("[REINSTALL] ダウンロード進行中 (OCR) → タップせず待機")
             if _verify_install_started():
                 installed_via_tap = True
                 break
@@ -1982,9 +1982,9 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             if hit:
                 if is_app_installed(serial, package):
                     if _reinstall_count >= MAX_REINSTALL:
-                        logger.warning("[FRESH_INSTALL] 再アンインストール上限到達 → スキップ")
+                        logger.warning("[REINSTALL] 再アンインストール上限到達 → スキップ")
                     else:
-                        logger.info("[FRESH_INSTALL] 「%s」+ pm確認 → 再アンインストール (%d/%d)",
+                        logger.info("[REINSTALL] 「%s」+ pm確認 → 再アンインストール (%d/%d)",
                                     kw, _reinstall_count + 1, MAX_REINSTALL)
                         _reinstall_count += 1
                         uninstall_app(serial, package)
@@ -1993,7 +1993,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                         time.sleep(5)
                         _ocr_open_hit = True
                 else:
-                    logger.info("[FRESH_INSTALL] 「%s」検出だがpm未確認 → 継続", kw)
+                    logger.info("[REINSTALL] 「%s」検出だがpm未確認 → 継続", kw)
                 break
         if _ocr_open_hit:
             continue
@@ -2001,7 +2001,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         # --- エラーダイアログ検出 (「インストールできません」) → BACK + 再表示 ---
         _install_error = any("できません" in t for t in _ocr_texts)
         if _install_error:
-            logger.info("[FRESH_INSTALL] エラーダイアログ検出 → BACK + Play Store 再表示")
+            logger.info("[REINSTALL] エラーダイアログ検出 → BACK + Play Store 再表示")
             _save_diag_screenshot(f"install_error_{attempt}")
             _adb_key("4")  # BACK
             time.sleep(2)
@@ -2014,7 +2014,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
             kw in t for t in _ocr_texts for kw in _APP_PAGE_VERIFY_KWS
         )
         if not _on_app_page:
-            logger.warning("[FRESH_INSTALL] まどドラのページではない (OCR: %s) → Play Store 再表示",
+            logger.warning("[REINSTALL] まどドラのページではない (OCR: %s) → Play Store 再表示",
                            _ocr_texts[:5])
             _adb_key("4")  # BACK
             time.sleep(2)
@@ -2030,7 +2030,7 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                 if "アン" in hit["text"] or "できません" in hit["text"]:
                     continue
                 cx, cy = hit["center"]
-                logger.info("[FRESH_INSTALL] OCR「%s」検出 → タップ (%d,%d)", kw, cx, cy)
+                logger.info("[REINSTALL] OCR「%s」検出 → タップ (%d,%d)", kw, cx, cy)
                 _adb_tap(cx, cy)
                 if _verify_install_started():
                     installed_via_tap = True
@@ -2043,24 +2043,24 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
 
         # インストールボタン未検出 — BACK は最終手段 (試行 8回目以降のみ)
         if attempt >= 7:
-            logger.info("[FRESH_INSTALL] インストールボタン未検出 → BACK + Play Store 再表示")
+            logger.info("[REINSTALL] インストールボタン未検出 → BACK + Play Store 再表示")
             _save_diag_screenshot(f"no_install_btn_{attempt}")
             _adb_key("4")
             time.sleep(2)
             open_play_store(serial, package)
             time.sleep(5)
         else:
-            logger.info("[FRESH_INSTALL] インストールボタン未検出 — ページ読み込み待機 (試行%d)", attempt + 1)
+            logger.info("[REINSTALL] インストールボタン未検出 — ページ読み込み待機 (試行%d)", attempt + 1)
             _save_diag_screenshot(f"waiting_{attempt}")
 
     # --- 権限ダイアログ処理 ---
     if installed_via_tap:
         _handle_accept_dialogs()
     else:
-        logger.error("[FRESH_INSTALL] %d回の試行でインストールボタンをタップできませんでした", MAX_ATTEMPTS)
+        logger.error("[REINSTALL] %d回の試行でインストールボタンをタップできませんでした", MAX_ATTEMPTS)
         _save_diag_screenshot("final_failure")
         # 最終手段: pm install-existing (キャッシュ残りで復活することがある)
-        logger.info("[FRESH_INSTALL] pm install-existing を試行...")
+        logger.info("[REINSTALL] pm install-existing を試行...")
         subprocess.run(
             ["adb", "-s", serial, "shell", "pm", "install-existing", package],
             capture_output=True, timeout=30,
@@ -2068,11 +2068,11 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
 
     # --- Step 4: インストール完了ポーリング ---
     if not is_app_installed(serial, package):
-        logger.info("[FRESH_INSTALL] インストール完了を待機中... (最大%d秒)",
+        logger.info("[REINSTALL] インストール完了を待機中... (最大%d秒)",
                     POLL_INTERVAL_SEC * MAX_POLL_COUNT)
         for i in range(MAX_POLL_COUNT):
             if is_app_installed(serial, package):
-                logger.info("[FRESH_INSTALL] インストール完了を確認 (%d秒経過)",
+                logger.info("[REINSTALL] インストール完了を確認 (%d秒経過)",
                             (i + 1) * POLL_INTERVAL_SEC)
                 break
             # 30秒毎にダイアログチェック (Play Protect 等がインストールを止めている可能性)
@@ -2083,11 +2083,11 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
                     _handle_accept_dialogs()
             time.sleep(POLL_INTERVAL_SEC)
         else:
-            logger.error("[FRESH_INSTALL] タイムアウト — 手動でインストールを完了してください")
+            logger.error("[REINSTALL] タイムアウト — 手動でインストールを完了してください")
             _save_diag_screenshot("install_timeout")
             return
     else:
-        logger.info("[FRESH_INSTALL] 既にインストール完了済み")
+        logger.info("[REINSTALL] 既にインストール完了済み")
 
     # --- Step 5: Play Store を閉じる ---
     time.sleep(2)
@@ -2095,9 +2095,9 @@ def _fresh_install_from_play_store(serial: str, package: str) -> None:
         ["adb", "-s", serial, "shell", "am", "force-stop", PLAY_STORE_PKG],
         capture_output=True, timeout=5,
     )
-    logger.info("[FRESH_INSTALL] Play Store を閉じました")
+    logger.info("[REINSTALL] Play Store を閉じました")
     time.sleep(2)
-    logger.info("[FRESH_INSTALL] === 再インストール完了 → 通常起動シーケンスへ ===")
+    logger.info("[REINSTALL] === 再インストール完了 → 通常起動シーケンスへ ===")
 
 
 # ─── メインループ ─────────────────────────────────
@@ -2144,7 +2144,7 @@ def main():
             logger.info("[PERSIST] fresh-install → auto_pilot_state テーブルクリア")
         except Exception:
             pass
-        _fresh_install_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
+        _reinstall_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
 
     # ─── ゲーム未インストール → 自動インストール ───
     # NOTE: ADB 接続不良で is_app_installed がタイムアウトすると False を返し
@@ -2152,7 +2152,7 @@ def main():
     if not is_app_installed(_ap_device.DEVICE_SERIAL, APP_PACKAGE):
         logger.info("[AUTO_INSTALL] ゲーム '%s' 未インストール → Play Store から自動インストール"
                     " (ADB タイムアウトの場合は誤検知の可能性あり)", APP_PACKAGE)
-        _fresh_install_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
+        _reinstall_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
         if not is_app_installed(_ap_device.DEVICE_SERIAL, APP_PACKAGE):
             logger.error("[ABORT] 自動インストール失敗。手動でインストールしてから再実行してください。")
             sys.exit(1)
@@ -3452,15 +3452,15 @@ def main():
                 logger.info("=" * 60)
                 generate_and_copy_report(state, "ホーム画面到達")
                 break
-            # 周回モード: 待機 → 次の周回開始
+            # 周回モード: 報告 → 待機 → 次の周回開始
             state.grind_cycles_completed += 1
             persist_state("grind_cycles", str(state.grind_cycles_completed))
+            generate_and_copy_report(state, f"周回 #{state.grind_cycles_completed} 完了")
             if 0 < state.grind_max_cycles <= state.grind_cycles_completed:
                 logger.info("=" * 60)
                 logger.info("  [GRIND] 目標周回数 %d に到達 — 自動操縦を停止します",
                             state.grind_max_cycles)
                 logger.info("=" * 60)
-                generate_and_copy_report(state, f"周回完了 ({state.grind_cycles_completed}周)")
                 break
             from tools.ap.constants import GRIND_CYCLE_INTERVAL
             logger.info("=" * 60)
@@ -3468,9 +3468,13 @@ def main():
                         state.grind_cycles_completed, GRIND_CYCLE_INTERVAL)
             logger.info("=" * 60)
             time.sleep(GRIND_CYCLE_INTERVAL)
-            # 2周目以降は常に新規インストール
-            logger.info("[GRIND] 新規インストール開始")
-            _fresh_install_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
+            # 2周目以降は常に再インストール
+            logger.info("[GRIND] 再インストール開始")
+            _reinstall_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
+            # アプリ起動
+            logger.info("[GRIND] アプリ起動")
+            adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
+            time.sleep(5)
             # 周回用状態リセット
             state.tutorial_cleared = False
             state.home_reached = False
