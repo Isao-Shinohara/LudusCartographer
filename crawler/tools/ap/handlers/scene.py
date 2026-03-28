@@ -95,7 +95,8 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
     # 「AUTO」「HP」「戦闘」はストーリー画面にも出るため除外、戦闘固有キーワードで判定
     battle_keywords = ["通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃",
                        "隣接攻撃", "必殺技", "巫殺技",  # チュートリアルバトルキーワード追加
-                       "BREAK", "Turn", "WAVE"]
+                       "BREAK", "Turn", "WAVE",
+                       "ENEMY TURN", "ENEMY_TURN"]
     battle = has_any(ocr, battle_keywords)
     if battle:
         state.battle_wait_count += 1
@@ -139,7 +140,7 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
         tutorial_popup = has_any(ocr, [
             "タイムライン", "表示されている", "行動してい",
             "ここをタップ", "タップしてください",
-            "ことができます", "することができ",
+            "ことができます", "ことができました", "することができ",
             "スキルを使用", "スキルを選択", "カードを選択",
             "ましょう", "みましょう", "てみよう",
             "一番上に", "順番に行動", "DEFENDER",
@@ -155,11 +156,19 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
             logger.info(">>> 速度ツールチップ → 速度ボタン (%d,%d) タップ", _sp_x, _sp_y)
             tap_device(_sp_x, _sp_y, state, "SPEED_BUTTON_TAP")
             return "BATTLE_TUTORIAL", 0.5
+        _is_dialog_popup = False
         if tutorial_popup:
             # 四隅テンプレで本物のダイアログか確認
-            if analysis_path and not detect_dialog_corners(analysis_path):
-                tutorial_popup = None
-        if tutorial_popup:
+            if analysis_path and detect_dialog_corners(analysis_path):
+                _is_dialog_popup = True
+            else:
+                # ダイアログ枠なし = インライン説明テキスト → 画面中央タップで閉じる
+                _cx, _cy = roi_to_device(int(W * 0.5), int(H * 0.5), state.game_roi)
+                logger.info(">>> バトルチュートリアル テキスト '%s' → 中央タップ (%d,%d)",
+                            tutorial_popup["text"][:20], _cx, _cy)
+                tap_device(_cx, _cy, state, "BATTLE_TUTORIAL_TEXT_TAP")
+                return "BATTLE_TUTORIAL", 0.5
+        if _is_dialog_popup:
             # ── テンプレートマッチングで ▷/× を優先検出 ──
             _btl_nav = detect_dialog(analysis_path, W, H) if analysis_path else None
             if _btl_nav:
