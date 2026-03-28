@@ -1037,13 +1037,25 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
         hsv = cv2.cvtColor(upper, cv2.COLOR_BGR2HSV)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
 
+        # 吹き出し色マスク (RGB ベージュ: R,G,B 全て 200-255, 色差 < 30)
+        # 吹き出しの背景色 RGB≈(237,234,220) は HSV V>=240 に届かないことがある
+        _rgb_lo = np.array([190, 200, 200], dtype=np.uint8)  # BGR order
+        _rgb_hi = np.array([255, 255, 255], dtype=np.uint8)
+        _rgb_mask_raw = cv2.inRange(upper, _rgb_lo, _rgb_hi)
+        # 色差フィルタ: max(R,G,B) - min(R,G,B) < 30 → グレー〜ベージュのみ
+        _ch_max = np.max(upper, axis=2)
+        _ch_min = np.min(upper, axis=2)
+        _low_spread = ((_ch_max.astype(int) - _ch_min.astype(int)) < 30).astype(np.uint8) * 255
+        _bubble_rgb_mask = cv2.bitwise_and(_rgb_mask_raw, _low_spread)
+
         # ADVツールバー除外ゾーン (x>82%, y<22%)
         toolbar_x = int(ANALYSIS_W * 0.82)
         toolbar_y = int(ANALYSIS_H * 0.22)
 
         def _find_bubbles(v_min, fill_max, aspect_max):
-            """HSV 白色マスクで吹き出し候補を検出する。"""
-            _mask = cv2.inRange(hsv, (0, 0, v_min), (180, 40, 255))
+            """HSV 白色マスク + RGB ベージュマスクで吹き出し候補を検出する。"""
+            _hsv_mask = cv2.inRange(hsv, (0, 0, v_min), (180, 40, 255))
+            _mask = cv2.bitwise_or(_hsv_mask, _bubble_rgb_mask)
             _mask = cv2.morphologyEx(_mask, cv2.MORPH_CLOSE, kernel)
             _mask = cv2.morphologyEx(_mask, cv2.MORPH_OPEN, kernel)
             _contours, _ = cv2.findContours(_mask, cv2.RETR_EXTERNAL,
