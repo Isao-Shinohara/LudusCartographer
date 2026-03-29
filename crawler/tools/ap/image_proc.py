@@ -2051,8 +2051,8 @@ def detect_tutorial_gold_button_tap(img_path: Path,
 
     条件:
     - アスペクト比 0.5~2.0 (正方形〜縦長のボタン形状)
-    - 面積 8000~150000px² (ボタン相当の大きさ)
-    - 幅 100px以上 (細い軌跡線は除外)
+    - 面積 8000~50000px² (ボタン相当の大きさ)
+    - 幅 80px以上 (細い軌跡線は除外)
     - right_half_only=True の場合: x中心 > W/2 のみ有効 (右側ボタン優先)
     - overlay_mode=True の場合: チュートリアル暗転確定 → 上部除外・右半分フィルタをバイパス
 
@@ -2066,7 +2066,7 @@ def detect_tutorial_gold_button_tap(img_path: Path,
         H_img, W_img = img.shape[:2]
 
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        lower_gold = np.array([15, 60, 180], dtype=np.uint8)
+        lower_gold = np.array([15, 120, 180], dtype=np.uint8)
         upper_gold = np.array([50, 255, 255], dtype=np.uint8)
         mask = cv2.inRange(hsv, lower_gold, upper_gold)
 
@@ -2079,14 +2079,13 @@ def detect_tutorial_gold_button_tap(img_path: Path,
         if not contours:
             return None
 
-        # ボタン候補: アスペクト比0.5~2.0 かつ面積5000~50000 かつ幅80px以上
+        # ボタン候補: アスペクト比0.5~2.0 かつ面積8000~50000 かつ幅80px以上
         # キャラアイコン除外: 金色の充填率 (extent) が高い = アイコン (金色が密)
         #   チュートリアルボタン = 金色の枠線のみ → extent 低め (<0.55)
-        # NOTE: ホーム画面の編成ボタン金枠は area~7800 のため 8000 では漏れる
         candidates = []
         for c in contours:
             area = cv2.contourArea(c)
-            if area < 5000 or area > 50000:
+            if area < 8000 or area > 50000:
                 continue
             x, y, w, h = cv2.boundingRect(c)
             if w < 80:
