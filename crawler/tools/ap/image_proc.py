@@ -1679,10 +1679,10 @@ _POPUP_NEXT_TEMPLATE  = _CRAWLER_ROOT / "assets" / "templates" / "popup_home_nex
 _POPUP_CLOSE_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "popup_home_close.png"
 
 
-def detect_popup(
+def detect_popup_home(
     img_path: Path, W: int = ANALYSIS_W, H: int = ANALYSIS_H,
 ) -> bool:
-    """ポップアップを検出する。
+    """ホームポップアップを検出する。
 
     判定条件 (全て AND):
       1. popup_home_next テンプレ検出 (閾値 0.75)
@@ -1712,15 +1712,15 @@ def detect_popup(
     # 3. 背景ぼかし
     if not detect_background_blur(img, _H, _W):
         return False
-    logger.info("[POPUP] next テンプレ(%.3f)+ドット=%d+背景ぼかし → ポップアップ確定", _mv, _dots)
+    logger.info("[POPUP_HOME] next テンプレ(%.3f)+ドット=%d+背景ぼかし → ホームポップアップ確定", _mv, _dots)
     return True
 
 
-def detect_popup_nav(
+def detect_popup_home_nav(
     img_path: Path, W: int = ANALYSIS_W, H: int = ANALYSIS_H,
     threshold: float = 0.75,
 ) -> Optional[tuple[str, int, int]]:
-    """ポップアップの ▷(次へ) または ×(閉じる) ボタンを検出する。
+    """ホームポップアップの ▷(次へ) または ×(閉じる) ボタンを検出する。
 
     Returns: ("next", cx, cy) | ("close", cx, cy) | None
     """
@@ -1746,14 +1746,14 @@ def detect_popup_nav(
     if _POPUP_CLOSE_TEMPLATE.exists():
         _c = _match(_POPUP_CLOSE_TEMPLATE)
         if _c:
-            logger.debug("[PopupNav] × 検出 (%d,%d) score=%.3f", _c[0], _c[1], _c[2])
+            logger.debug("[PopupHomeNav] × 検出 (%d,%d) score=%.3f", _c[0], _c[1], _c[2])
             return ("close", _c[0], _c[1])
 
     # ▷ ボタン
     if _POPUP_NEXT_TEMPLATE.exists():
         _n = _match(_POPUP_NEXT_TEMPLATE)
         if _n:
-            logger.debug("[PopupNav] ▷ 検出 (%d,%d) score=%.3f", _n[0], _n[1], _n[2])
+            logger.debug("[PopupHomeNav] ▷ 検出 (%d,%d) score=%.3f", _n[0], _n[1], _n[2])
             return ("next", _n[0], _n[1])
 
     return None
