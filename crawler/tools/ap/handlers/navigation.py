@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from tools.ap.constants import ANALYSIS_W, ANALYSIS_H, _BATTLE_CORE_KWS
+from tools.ap.constants import ANALYSIS_W, ANALYSIS_H
 from tools.ap.context import DetectContext
 from tools.ap.device import tap_device
 from tools.ap.helpers import has_any, has_text
@@ -56,7 +56,7 @@ def handle_navigation(ctx: DetectContext, state: PilotState) -> Optional[tuple[s
 
     # ─── ストーリーセリフ進行 (バトル外でセリフが出ている) ───
     # 「画面をタップ」系の指示 or バトルでもホームでもない日本語テキストが複数ある
-    is_battle_now = any(kw in joined for kw in _BATTLE_CORE_KWS)
+    is_battle_now = ctx.in_battle_ctx
     tap_screen_kws = ["画面をタップ", "タップして進む", "タップで進む", "タップしてください",
                       "タップして次へ", "TOUCH TO CONTINUE"]
     tap_screen = has_any(ocr, tap_screen_kws)

@@ -23,7 +23,6 @@ from lc.utils import compute_phash, phash_distance
 from tools.ap.constants import (
     ANALYSIS_W, ANALYSIS_H,
     DOWNLOAD_WAIT, PHASH_THRESHOLD,
-    _BATTLE_CORE_KWS,
     _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS,
     _CURRENCY_SPEND_KWS, _OCR_BBOX_Y_PADDING,
 )
@@ -256,7 +255,7 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
     # ── 【#-2.5】SKIP ボタン汎用ハンドラ — 無効化 (ストーリースキップ禁止) ──
     # ストーリースキップを防止するため、"SKIP"/"スキップ" OCR検出→タップを無効化。
     # ムービーの⏭ボタンは detect_movie_skip_button() (HSV検出) で別途処理される。
-    _in_battle_ctx = any(kw in joined for kw in _BATTLE_CORE_KWS)
+    _in_battle_ctx = ctx.in_battle_ctx
 
     # ── 【#-2.2】Android 権限ダイアログ (単独「許可」ボタン) ──
     # 通知許可等で「許可しない」なしの単独「許可」ダイアログが出ることがある。

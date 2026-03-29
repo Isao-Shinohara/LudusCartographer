@@ -16,7 +16,7 @@ from tools.ap.state import PilotState
 from tools.ap.constants import (
     ANALYSIS_W, ANALYSIS_H,
     BATTLE_WAIT, PHASH_THRESHOLD,
-    _DIALOG_FIRST_KWS, _BATTLE_UI_KWS, _BATTLE_CORE_KWS,
+    _DIALOG_FIRST_KWS, _BATTLE_UI_KWS,
     _CLOSE_BTN_OFFSET,
     count_home_nav_keywords,
 )
@@ -213,7 +213,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     _battle_tut_kws = ["隣接攻撃", "必殺技", "巫殺技", "ATTACKER", "通常攻撃"]
     _is_battle_tut_context = any(kw in joined for kw in _battle_tut_kws)
     # バトルUI確認済みの場合はフッター外GoldBtnをスキップ → Glow SM (フッター) に委ねる
-    if analysis_path is not None and _is_battle_tut_context and not ctx.is_battle_early and not state.download_active:
+    if analysis_path is not None and _is_battle_tut_context and not ctx.in_battle_ctx and not state.download_active:
         _gold_btn = detect_tutorial_gold_button_tap(analysis_path, right_half_only=True)
         if _gold_btn:
             _bx, _by = _gold_btn
@@ -322,7 +322,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                 asset_hit = (_arrow_m[0], _arrow_m[1], "MAP_ARROW_TAP", (0, 0, 0, 0))
 
         # BATTLE_UPPER_GUARD: バトル中は上部テンプレマッチを除外
-        if asset_hit and (ctx.is_battle_early or state.current_scene == "BATTLE"):
+        if asset_hit and ctx.in_battle_ctx:
             _hit_cy = asset_hit[1]
             if _hit_cy < H * 0.4:
                 logger.info("[Asset] '%s' をバトル中の上部マッチとして抑制 (y=%d < %d) (BATTLE_UPPER_GUARD)",
@@ -596,8 +596,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     if state.blob_same_count >= 5:
         tutorial_guide = (has_text(ocr, "てみましょう", min_conf=0.3) or
                           has_text(ocr, "しましょう", min_conf=0.3))
-        is_battle_guide = any(kw in joined for kw in _BATTLE_CORE_KWS)
-        if tutorial_guide and not is_battle_guide:
+        if tutorial_guide and not ctx.in_battle_ctx:
             close_x = W - _CLOSE_BTN_OFFSET  # 右上 × ボタン
             close_y = _CLOSE_BTN_OFFSET
             logger.info(">>> 【チュートリアルガイド スタック】 '%s' → × (%d,%d) タップ",

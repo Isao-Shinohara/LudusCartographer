@@ -12,7 +12,7 @@ from typing import Optional
 
 from lc.ocr import find_best
 from tools.ap.constants import (
-    SCENE_INTERVAL, _BATTLE_CORE_KWS, EVIDENCE_DIR,
+    SCENE_INTERVAL, EVIDENCE_DIR,
     APP_PACKAGE, APP_ACTIVITY,
     WATCHDOG_MAX_TOTAL_RECOVERIES,
 )
@@ -21,10 +21,11 @@ logger = logging.getLogger("auto_pilot")
 
 
 def classify_scene(texts: list[str], last_action: str,
-                    adv_detected: bool = False) -> tuple[str, float]:
+                    adv_detected: bool = False,
+                    current_scene: str = "") -> tuple[str, float]:
     """
     OCR テキストからシーンを分類し (scene_label, poll_interval) を返す。
-    - BATTLE  : バトル画面 — 戦闘固有キーワードあり
+    - BATTLE  : バトル画面 — detect_scene_early のテンプレートマッチで判定済み
     - ADV     : アドベンチャー — スキップボタンあり or 直前に STORY_TAP
     - STORY   : ストーリー送り — スキップなし・会話テキストのみ
     - LOADING : ロード/ダウンロード中
@@ -32,11 +33,12 @@ def classify_scene(texts: list[str], last_action: str,
     - UNKNOWN : 判定不能
 
     adv_detected: True なら ADV シーンを確定で返す (detect_adv_scene 由来)。
+    current_scene: state.current_scene — テンプレートマッチで確定済みのシーン。
     """
     joined = " ".join(texts)
     if any(kw in joined for kw in ["ダウンロード", "Loading", "Now Loading", "ロード中", "通信中"]):
         return "LOADING", SCENE_INTERVAL["LOADING"]
-    if any(kw in joined for kw in _BATTLE_CORE_KWS) or "ENEMY TURN" in joined:
+    if current_scene == "BATTLE":
         return "BATTLE", SCENE_INTERVAL["BATTLE"]
     if any(kw in joined for kw in ["クエスト", "ショップ", "ガシャ", "ガチャ",
                                     "ホーム", "メニュー", "お知らせ", "編成", "光の間"]):

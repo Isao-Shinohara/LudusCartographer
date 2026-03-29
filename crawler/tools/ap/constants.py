@@ -124,12 +124,6 @@ _DIALOG_FIRST_KWS: frozenset = frozenset([
     "マギアボックス", "最大24時間", "素材が溜", "プレイヤーLv",
 ])
 
-# ─── バトル判定キーワード ──────────────────────────────────────────
-_BATTLE_CORE_KWS: frozenset = frozenset([
-    "通常攻撃", "单体攻撃", "単体攻撃", "全体攻撃",
-    "必殺技", "BREAK", "WAVE", "Turn",
-])
-
 # BATTLE 高速パス: OCR 前テンプレートマッチングで使用。
 _BATTLE_UI_KWS: frozenset = frozenset([
     "通常攻撃", "単体攻撃", "单体攻撃",

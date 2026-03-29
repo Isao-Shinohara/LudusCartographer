@@ -133,7 +133,7 @@ from tools.ap.constants import (  # noqa: E402
     _DEBUG_SAVE_IMAGES, _GOLD_UI_ACTIONS, _SCENE_REEVAL_THRESHOLD,
     _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS, _CURRENCY_SPEND_KWS,
     _UI_TEXT_KWS, _SINGLE_ONLY,
-    _DIALOG_FIRST_KWS, _BATTLE_CORE_KWS, _BATTLE_UI_KWS,
+    _DIALOG_FIRST_KWS, _BATTLE_UI_KWS,
     ANALYSIS_W, ANALYSIS_H,
     _OCR_BBOX_Y_PADDING, _GLOW_CENTER_Y_OFFSET,
     _GOLD_BTN_RETRY_Y_OFFSET, _FINGER_TIP_RATIO,
@@ -317,7 +317,7 @@ def detect_and_act(ocr: list, state: PilotState,
     joined = " ".join(texts)
 
     # ─── 事前計算: DetectContext 構築 ───
-    _is_battle_early = any(kw in joined for kw in _BATTLE_CORE_KWS)
+    _is_battle_ctx = state.current_scene == "BATTLE" or getattr(state, "_from_battle", False)
     _confirm_pos = has_any(ocr, _CONFIRM_POS_KWS)
     _confirm_neg = has_any(ocr, _CONFIRM_NEG_KWS)
     _mini_conv_result = detect_mini_conversation(analysis_path, ocr_items=ocr) if analysis_path else None
@@ -331,8 +331,7 @@ def detect_and_act(ocr: list, state: PilotState,
         adv_result=adv_result or AdvSceneResult(),
         confirm_pos=_confirm_pos,
         confirm_neg=_confirm_neg,
-        is_battle_early=_is_battle_early,
-        in_battle_ctx=_is_battle_early,
+        in_battle_ctx=_is_battle_ctx,
         # 以下は dialog_phase ハンドラ内で計算・更新される
         is_notice=False,
         pre_dialog_finger=False,
@@ -3349,7 +3348,8 @@ def main():
 
         # ── シーン分類 ──
         scene, next_interval = classify_scene(
-            texts, state.last_action, adv_detected=_adv_result.is_adv)
+            texts, state.last_action, adv_detected=_adv_result.is_adv,
+            current_scene=state.current_scene)
         # BATTLE 保持: SCENE_EARLY で BATTLE 確定後、OCR 分類が ADV/UNKNOWN でも
         # バトルキーワードが残っていれば BATTLE を維持 (攻撃アニメ中にテンプレ不一致になるため)
         _joined_for_scene = " ".join(texts)
@@ -3567,7 +3567,8 @@ def main():
                 _re_adv = detect_adv_scene(_re_analysis, ocr_items=_re_ocr,
                                             roi=state.game_roi)
                 _re_scene, _ = classify_scene(_re_texts, action,
-                                              adv_detected=_re_adv.is_adv)
+                                              adv_detected=_re_adv.is_adv,
+                                              current_scene=state.current_scene)
                 if _re_scene != state.current_scene:
                     logger.warning(
                         "[SCENE_REEVAL] シーン不一致: %s → %s → 切替+再判定",

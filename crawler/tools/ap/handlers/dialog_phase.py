@@ -21,7 +21,7 @@ from tools.ap.state import PilotState
 from tools.ap.constants import (
     _SPATIAL_MARGIN_TOP, _CLOSE_BTN_OFFSET,
     ANALYSIS_W, ANALYSIS_H,
-    _BATTLE_CORE_KWS, _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS,
+    _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS,
     CLOSE_ACTION_WAIT,
 )
 from tools.ap.helpers import has_any, has_text
@@ -107,7 +107,7 @@ def handle_dialog_screen(
     analysis_path: Optional[Path],
     ocr: list,
     texts: list[str],
-    is_battle_early: bool,
+    in_battle_ctx: bool,
     is_notice_popup: bool = False,
 ) -> Optional[tuple[str, float]]:
     """ダイアログ検出ハンドラ (#0-DIALOG)。
@@ -187,7 +187,7 @@ def handle_dialog_screen(
 
     # ── バトル中 × 誤検出ガード ──────────────────────────────────────────
     if (_dlg is not None and _dlg_type == "close"
-            and is_battle_early and _dlg_y < 100):
+            and in_battle_ctx and _dlg_y < 100):
         logger.info(
             "[BATTLE_DIALOG_GUARD] close(%d,%d) y<100 → バトル上部UI誤検出 スキップ",
             _dlg_x, _dlg_y,
@@ -263,7 +263,7 @@ def handle_dialog_screen(
                 # バトル中はドットだけでは不十分 (UIアイコンの誤検出)
                 # → 四隅テンプレ (dialog_corner) で本物のダイアログか確認
                 # OCR にバトルKW が無くても current_scene が BATTLE なら同様にガード
-                _in_battle = is_battle_early or state.current_scene == "BATTLE" or getattr(state, "_from_battle", False)
+                _in_battle = in_battle_ctx
                 # 背景ぼかしなし + ドット検出: 常にダイアログ四隅テンプレで確認。
                 # バトルUIアイコンがドットに見えるケースが多いため、
                 # _in_battle に関わらず四隅テンプレが無ければスキップする。
@@ -381,9 +381,9 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     # ② P1: 左キャラ発光 (character_selected=False) → GLOW_LEFT_CHAR
     # ③ P2: 右スキル発光 (character_selected=True) → GLOW_RIGHT_SKILL
     # ④ P3: 発光なし + character_selected → 通常攻撃 OCR フォールバック
-    _is_battle_early = ctx.is_battle_early
+    _is_battle_ctx = ctx.in_battle_ctx
     _battle_menu_toast = "メニューが使用できません" in joined
-    if _is_battle_early and _battle_menu_toast:
+    if _is_battle_ctx and _battle_menu_toast:
         # メニューボタン誤タップ → トースト表示中。DIALOG_CLOSE を完全スキップして2秒待機
         logger.info("[#0-PRE] 「メニューが使用できません」トースト検出 → DIALOG_CLOSE スキップ (2s wait)")
         return "BATTLE_MENU_TOAST_WAIT", 2.0
@@ -393,7 +393,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
                            "バトルポイント", "遊び方", "操作方法", "編成について",
                            "SPを消費", "戦闘スキル", "使ってみましょう", "タップしてみましょう"]
     _has_tutorial_popup = any(kw in joined for kw in _tutorial_popup_kws)
-    if _is_battle_early and analysis_path is not None and not _has_tutorial_popup:
+    if _is_battle_ctx and analysis_path is not None and not _has_tutorial_popup:
         _pre_result = _run_battle_glow_sm(analysis_path, W, H, state, ocr, tag="#0-PRE")
         if _pre_result is not None:
             return _pre_result
@@ -461,7 +461,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     # (CLAUDE.md: 指アイコン+金枠が検出できたらシーンに関係なくタップする)
     if not _pre_dialog_finger:
         _dialog_result = handle_dialog_screen(
-            state, analysis_path, ocr, texts, _is_battle_early,
+            state, analysis_path, ocr, texts, _is_battle_ctx,
             is_notice_popup=_is_notice)
         if _dialog_result is not None:
             return _dialog_result

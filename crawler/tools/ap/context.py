@@ -33,7 +33,6 @@ class DetectContext:
     adv_result: AdvSceneResult = field(default_factory=AdvSceneResult)
     confirm_pos: Optional[dict] = None       # has_any(ocr, _CONFIRM_POS_KWS)
     confirm_neg: Optional[dict] = None       # has_any(ocr, _CONFIRM_NEG_KWS)
-    is_battle_early: bool = False             # バトルコアKW検出
     is_notice: bool = False                   # お知らせポップアップ検出
     pre_dialog_finger: bool = False           # 指ブロブによるダイアログガード
     white_hand_pos: Optional[tuple] = None    # 白ハンドポインタ座標
@@ -41,4 +40,4 @@ class DetectContext:
     mini_conv_pos: Optional[tuple] = None    # ミニ会話座標 (cx, cy, side)
     is_result_screen_flag: bool = False       # Result画面テキスト検出
     is_adv_or_movie: bool = False             # ADV/MOVIEシーン判定
-    in_battle_ctx: bool = False               # バトルコンテキスト (== is_battle_early)
+    in_battle_ctx: bool = False               # バトルコンテキスト (state.current_scene == "BATTLE")

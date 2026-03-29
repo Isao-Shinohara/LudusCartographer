@@ -21,7 +21,7 @@ from typing import Optional
 from tools.ap.context import DetectContext
 from tools.ap.state import PilotState
 from tools.ap.constants import (
-    _BATTLE_CORE_KWS, _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS,
+    _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS,
     _OCR_BBOX_Y_PADDING,
     _RIGHT_PANEL_X, _SPATIAL_MARGIN_TOP, _CLOSE_BTN_OFFSET,
     _FINGER_TIP_RATIO, _GLOW_CENTER_Y_OFFSET,
@@ -55,20 +55,19 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
     H = ctx.H
     analysis_path = ctx.analysis_path
     ocr = ctx.ocr
-    _is_battle_early = ctx.is_battle_early
+    _is_battle_ctx = ctx.in_battle_ctx
     _adv_result = ctx.adv_result
     _is_mini_conv = ctx.is_mini_conv
 
     # ─── 【最優先 #1-pre】バトル発光 State Machine (フッター下部30%限定) ─────────
-    if _is_battle_early and analysis_path is not None:
+    if _is_battle_ctx and analysis_path is not None:
         _gsm_result = _run_battle_glow_sm(analysis_path, W, H, state, ocr, tag="GLOW_SM")
         if _gsm_result is not None:
             return _gsm_result
 
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
     if analysis_path is not None:
-        # 「AUTO」のみはストーリー画面にも表示されるため除外、戦闘固有キーワードで判定
-        is_battle_screen = any(kw in joined for kw in _BATTLE_CORE_KWS)
+        is_battle_screen = _is_battle_ctx
         if is_battle_screen:
             log_milestone(state, "FIRST_BATTLE")
         # ── 速度チュートリアル早期検出 (もや検出より前に処理) ──
