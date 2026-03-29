@@ -186,13 +186,21 @@ def handle_dialog_screen(
     #   tutorial.py の Asset Match (DIALOG_NAV_RIGHT) に対してのみ有効。
 
     # ── バトル中 × 誤検出ガード ──────────────────────────────────────────
+    # 四隅テンプレが検出済みなら本物のダイアログ → ガードをバイパス
     if (_dlg is not None and _dlg_type == "close"
             and in_battle_ctx and _dlg_y < 100):
-        logger.info(
-            "[BATTLE_DIALOG_GUARD] close(%d,%d) y<100 → バトル上部UI誤検出 スキップ",
-            _dlg_x, _dlg_y,
-        )
-        _dlg = None
+        _has_corners = detect_dialog_corners(analysis_path)
+        if _has_corners:
+            logger.info(
+                "[BATTLE_DIALOG_GUARD] close(%d,%d) y<100 だが四隅テンプレあり → ガードバイパス",
+                _dlg_x, _dlg_y,
+            )
+        else:
+            logger.info(
+                "[BATTLE_DIALOG_GUARD] close(%d,%d) y<100 → バトル上部UI誤検出 スキップ",
+                _dlg_x, _dlg_y,
+            )
+            _dlg = None
 
     if _dlg is None:
         return None
