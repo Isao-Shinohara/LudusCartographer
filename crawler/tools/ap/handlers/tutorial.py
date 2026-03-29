@@ -22,7 +22,7 @@ from tools.ap.constants import (
 )
 from tools.ap.device import adb, tap_device, swipe_device, take_screenshot
 from tools.ap.helpers import (
-    has_any, has_text, log_milestone, watchdog_recover, text_core_center,
+    has_any, has_text, log_milestone, watchdog_recover,
 )
 from tools.ap.image_proc import (
     ASSET_MANAGER,
@@ -36,7 +36,6 @@ from tools.ap.image_proc import (
     detect_dialog,
     process_paging_dialog,
     count_page_dots,
-    detect_text_input_area,
     detect_movie_scene,
     detect_adv_scene,
     prepare_analysis_image,
@@ -497,55 +496,9 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
 
                 tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
                 return "TAP_HIGHLIGHTED_NAV", 1.0
-            # ── NAME_INPUT_OK_TAP: 名前未入力(0/N)の場合は入力シーケンスへ ──
-            if action == "NAME_INPUT_OK_TAP":
-                _is_empty_field = any(re.match(r"^0/\d+$", t.strip()) for t in texts)
-                if _is_empty_field:
-                    _field_pos = detect_text_input_area(analysis_path, W, H, ocr_items=ocr)
-                    if _field_pos:
-                        _fx, _fy = _field_pos
-                    else:
-                        _fx, _fy = roi_to_device(int(W * 0.46), int(H * 0.58), state.game_roi)
-                    logger.info(
-                        ">>> [TEXT_INPUT_AREA] 空フィールド検出(0/N) → (%d,%d)タップ → adb input text",
-                        _fx, _fy,
-                    )
-                    tap_device(_fx, _fy, state, "TEXT_INPUT_FOCUS")
-                    time.sleep(0.3)
-                    adb("shell input text MadoDora")
-                    time.sleep(0.3)
-                    # IME変換確定 (ENTER) → キーボード閉じる (BACK) → ダイアログOKタップ
-                    adb("shell input keyevent 66")   # KEYCODE_ENTER: IME変換確定
-                    time.sleep(0.2)
-                    adb("shell input keyevent KEYCODE_BACK")  # keyboard dismiss
-                    time.sleep(0.3)
-                    # ダイアログOKボタンを直接タップ (テンプレート位置より下方)
-                    _ok_x = roi_to_device(int(W * 0.50), int(H * 0.77), state.game_roi)
-                    tap_device(_ok_x[0], _ok_x[1], state, "NAME_INPUT_OK_DIRECT")
-                    logger.info(">>> [TEXT_INPUT_AREA] 'MadoDora' 入力 → 確定 → KB閉 → OK(%d,%d)", _ok_x[0], _ok_x[1])
-                    return "TEXT_INPUT_NAME", 2.0
-            # その他のアセットアクション: タップして return (fallthrough なし)
-            # GACHA_OK 入力フリーズ検出: 連続タップで応答がない場合 force-stop 復帰
-            if action == "GACHA_OK":
-                # テンプレートマッチ座標はカード背景で不安定 → OCR "OK" テキスト中心を優先
-                _ocr_ok = has_text(ocr, "OK", min_conf=0.3)
-                if _ocr_ok:
-                    _ok_cx, _ok_cy = _ocr_ok["center"]
-                    logger.info("[GACHA_OK] OCR 'OK' center (%d,%d) 使用 (Template was %d,%d)",
-                                _ok_cx, _ok_cy, cx, cy)
-                    cx, cy = _ok_cx, _ok_cy
-                state.gacha_total.tick()
-                if state.gacha_total.stalled:
-                    logger.warning("[GACHA_FREEZE] %d回タップ応答なし → Unity入力フリーズ → force-stop", state.gacha_total.count)
-                    state.gacha_total.reset()
-                    watchdog_recover(state)
-                    return "GACHA_FREEZE_RECOVER", 3.0
-            else:
-                state.gacha_total.reset()
+            # その他のアセットアクション: タップして return
             tap_device(cx, cy, state, action)
-            # GACHA_OK: テンプレートマッチ成功 = 既に結果一覧画面 → 短め待機で十分
-            _asset_wait = 1.5 if action == "GACHA_OK" else 0.5
-            return action, _asset_wait
+            return action, 0.5
 
     # ─── 【優先 #0】チュートリアルポップアップ セカンダリセーフネット ───
     # #0-DIALOG (形状ベース) が失敗した場合の OCR キーワードによるバックアップ。
