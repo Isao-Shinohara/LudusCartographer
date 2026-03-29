@@ -80,7 +80,7 @@ def handle_popup_home(
     # 最終ページ → × ボタンを検出して閉じる
     time.sleep(0.3)
     # 最終ページのスクリーンショットを取得して × を検出
-    _ss = take_screenshot("/var/folders/3s/fycmyv314lz_fdclk9255h0wg5vskl/T/lc_autopilot_popup_close.png")
+    _ss = take_screenshot()
     if _ss and _ss[0]:
         _close_analysis = prepare_analysis_image(Path(_ss[0]), _ss[1], _ss[2])
         _close_nav = detect_popup_home_nav(_close_analysis)
