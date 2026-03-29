@@ -11,10 +11,7 @@ from typing import Optional
 
 from tools.ap.context import DetectContext
 from tools.ap.state import PilotState
-from tools.ap.constants import (
-    ANALYSIS_W, ANALYSIS_H,
-    count_home_nav_keywords,
-)
+from tools.ap.constants import ANALYSIS_W, ANALYSIS_H
 from tools.ap.device import tap_device
 from tools.ap.image_proc import (
     ASSET_MANAGER,
@@ -55,13 +52,6 @@ def handle_finger_priority(
         _finger_match[0], _finger_match[1], _finger_match[2],
         _finger_match[3] if len(_finger_match) > 3 else "",
     )
-
-    # ホーム画面では偽陽性を抑制
-    _home_kw_hits = count_home_nav_keywords(texts)
-    if _home_kw_hits >= 2:
-        logger.info("[FINGER_PRIORITY] ホーム画面で抑制 (home_kw=%d, score=%.3f)",
-                    _home_kw_hits, _f_score)
-        return None
 
     # プレゼントボックス画面: アイテムありなら一括受取
     if any("プレゼント" in t or "プレセント" in t for t in texts):
