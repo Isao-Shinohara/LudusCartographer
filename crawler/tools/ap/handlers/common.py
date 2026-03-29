@@ -30,7 +30,9 @@ from tools.ap.constants import (
 from tools.ap.context import DetectContext
 from tools.ap.device import adb, tap_device, take_screenshot, check_foreground_app
 from tools.ap.helpers import has_any, has_text, log_milestone
-from tools.ap.image_proc import roi_to_device
+from tools.ap.image_proc import (
+    roi_to_device, detect_dialog_corners, detect_background_blur, imread_cached,
+)
 from tools.ap.state import PilotState
 
 logger = logging.getLogger("auto_pilot")
@@ -141,12 +143,26 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
     # ── 【#-2.9】確認ダイアログ — 肯定ボタン最優先 ──
     # (A) OK/はい + キャンセル/いいえ が共存 → 確認ダイアログ → OK を必ずタップ。
     # (B) 「完了」系テキスト + OK 単独 → 完了通知ダイアログ → OK をタップ。
-    # #0-DIALOG の × ボタンが先に発動する問題を根本解決。
-    # ダウンロードの次、SKIP より先に評価する。
+    # ダイアログ存在の確認: 四隅テンプレまたは背景ぼかしが必須（動画テキスト誤検出防止）。
     _confirm_pos = ctx.confirm_pos
     _confirm_neg = ctx.confirm_neg
     _is_completion_dialog = _confirm_pos and _dl_is_complete
+    _has_dialog_evidence = False
     if (_confirm_pos and _confirm_neg) or _is_completion_dialog:
+        if ctx.analysis_path is None:
+            # analysis_path なし → 画像チェック不可、OCR のみで許可
+            _has_dialog_evidence = True
+        elif detect_dialog_corners(ctx.analysis_path):
+            _has_dialog_evidence = True
+        else:
+            _blur_img = imread_cached(ctx.analysis_path)
+            if _blur_img is not None:
+                _bH, _bW = _blur_img.shape[:2]
+                if detect_background_blur(_blur_img, _bH, _bW):
+                    _has_dialog_evidence = True
+        if not _has_dialog_evidence and not _is_completion_dialog:
+            logger.info("[ConfirmDialog] 四隅テンプレ/背景ぼかし未検出 → スキップ")
+    if ((_confirm_pos and _confirm_neg and _has_dialog_evidence) or _is_completion_dialog):
         # ── 課金保護: 通貨消費キーワード → キャンセル ──
         _is_currency = any(kw in joined for kw in _CURRENCY_SPEND_KWS)
         if _is_currency and _confirm_neg:
