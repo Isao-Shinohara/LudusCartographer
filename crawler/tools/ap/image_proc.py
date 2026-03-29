@@ -1685,7 +1685,7 @@ def detect_popup_home(
     """ホームポップアップを検出する。
 
     判定条件 (全て AND):
-      1. popup_home_next テンプレ検出 (閾値 0.75)
+      1. popup_home_next テンプレ検出 (閾値 0.90)
       2. ページドット ≥ 1
       3. 背景ぼかし
     """
@@ -1703,7 +1703,7 @@ def detect_popup_home(
     _gray_tpl = cv2.cvtColor(_tpl, cv2.COLOR_BGR2GRAY)
     _r = cv2.matchTemplate(_gray_img, _gray_tpl, cv2.TM_CCOEFF_NORMED)
     _, _mv, _, _ = cv2.minMaxLoc(_r)
-    if _mv < 0.75:
+    if _mv < 0.90:
         return False
     # 2. ページドット
     _dots = count_page_dots(img_path)
