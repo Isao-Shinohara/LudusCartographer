@@ -264,99 +264,21 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                                 break
             return "GOLD_BTN_TAP", BATTLE_WAIT
 
-    # ─── 【最優先 #0-a】テンプレートマッチング (Asset Match) — 最速 ~0.1s ───
-    # チュートリアル中は指アイコン検出(TAP_HIGHLIGHTED_NAV/SWIPE_UP)が最高優先。
-    # 指アイコン検出後 → 金色ハイライト要素をタップ。
-    # 次優先: セリフ/ADVテキスト確認 (後続の#0/#3-ADV処理)
+    # ─── 【最優先 #0-a】個別テンプレートマッチング ───
+    # 全テンプレ一括走査 (ASSET_MANAGER.match()) は廃止。
+    # 必要なテンプレを match_single() で個別検出する。
     if analysis_path is not None:
-        asset_hit = ASSET_MANAGER.match(analysis_path, ocr_texts=texts,
-                                        scene=state.current_scene)
-        # BATTLE_UPPER_GUARD: バトル中は上部テンプレマッチを除外
-        # バトル中のタップ対象は画面下部のみ (攻撃ボタン等)
-        if asset_hit and (ctx.is_battle_early or state.current_scene == "BATTLE"):
-            _hit_cy = asset_hit[1]
-            if _hit_cy < H * 0.4:
-                logger.info("[Asset] '%s' をバトル中の上部マッチとして抑制 (y=%d < %d) (BATTLE_UPPER_GUARD)",
-                            asset_hit[2], _hit_cy, int(H * 0.4))
-                asset_hit = None
-        # DIALOG_NAV_RIGHT: ページ送りダイアログの ▷ ボタン
-        # ロジック: ▷ が見える限りタップしてページ送り。
-        # 最終ページに到達すると × ボタンが出現するので、× を検出したら閉じる。
-        if asset_hit and asset_hit[2] == "DIALOG_NAV_RIGHT":
-            # 指ブロブ検出中 → チュートリアルガイダンス中の可能性が高い
-            # バトル速度ボタン等の ⏭ がダイアログ ▷ と誤検出されるためスキップ
-            if ctx.pre_dialog_finger:
-                logger.info("[Asset] DIALOG_NAV_RIGHT を指ブロブ検出中のため抑制 → 指+金枠ハンドラへ")
-                asset_hit = None
-            elif ctx.is_battle_early or state.current_scene == "BATTLE":
-                logger.info("[Asset] DIALOG_NAV_RIGHT をバトル中のため抑制 (BATTLE_GUARD)")
-                asset_hit = None
-            else:
-                # BLUR_GUARD: ダイアログ ▷ は必ず背景ぼかしを伴う
-                # バトル画面等の非ダイアログ画面での誤検出を排除
-                # (Asset Match で DIALOG_NAV_RIGHT 検出済みのため、ぼかしのみ確認で十分)
-                _blur_img = imread_cached(analysis_path) if analysis_path else None
-                if _blur_img is not None:
-                    _bH, _bW = _blur_img.shape[:2]
-                    if not detect_background_blur(_blur_img, _bH, _bW):
-                        logger.info("[Asset] DIALOG_NAV_RIGHT を背景ぼかしなしのため抑制 (BLUR_GUARD)")
-                        asset_hit = None
-            if asset_hit:
-                # ガード通過 → × ボタン検出 → 最終ページなら × をタップして閉じる
-                _nav_close = ASSET_MANAGER.match_single("close_btn", analysis_path)
-                if _nav_close and _nav_close[2] >= 0.60:
-                    logger.info("[DIALOG_NAV] × ボタン検出 (%.2f) → 最終ページ、× タップ (%d,%d)",
-                                _nav_close[2], _nav_close[0], _nav_close[1])
-                    tap_device(_nav_close[0], _nav_close[1], state, "DIALOG_NAV_CLOSE")
-                    return "DIALOG_NAV_CLOSE", 1.0
-                # ▷ タップでページ送り (× が出るまで繰り返す)
-        # 「矢印をタップ」画面では DIALOG_NEXT 誤マッチを無視 → #2-a MAP_ARROW に委譲
-        elif asset_hit and asset_hit[2] == "ASSET_TUTORIAL_DIALOG_NEXT":
-            if any("矢印を" in t for t in texts):
-                logger.info(">>> [Asset Match] DIALOG_NEXT を抑制 (矢印をタップ画面 → #2-a に委譲)")
-                asset_hit = None
-            if asset_hit:
-                # × ボタンが見える場合は最終ページ → × をタップして閉じる (▷ ループ防止)
-                _close = ASSET_MANAGER.match_single("close_btn", analysis_path)
-                _close = _close if (_close and _close[2] >= 0.60) else None
-                if _close:
-                    logger.info("[DIALOG_NEXT] × ボタン検出 (%.2f) → 最終ページ、× タップ (%d,%d)",
-                                _close[2], _close[0], _close[1])
-                    tap_device(_close[0], _close[1], state, "DIALOG_NEXT_CLOSE")
-                    return "DIALOG_NEXT_CLOSE", 1.0
-                # スタック検出: DIALOG_NEXT 発火回数をカウント (アクション種別に依存しない)
-                _cnt = getattr(state, "_dialog_next_stall_count", 0) + 1
-                state._dialog_next_stall_count = _cnt
-                if _cnt >= 3:
-                    # ▷ が反応しないダイアログ → 上端右の × エリアをタップして閉じる
-                    _close_x, _close_y = roi_to_device(int(W * 0.94), int(H * 0.13), state.game_roi)
-                    logger.warning("[DIALOG_NEXT] %d 回連続同一画面 → 上端×エリア (%d,%d) タップ",
-                                   _cnt, _close_x, _close_y)
-                    tap_device(_close_x, _close_y, state, "DIALOG_NEXT_CORNER_CLOSE")
-                    state._dialog_next_stall_count = 0
-                    return "DIALOG_NEXT_CORNER_CLOSE", 1.5
-        # タイトル画面・メニュー画面では MOVIE_SKIP_TEXT が UIに誤マッチ → 抑制
-        # ガチャ画面の「交換所」タブに誤マッチしてガチャ↔交換所ループの原因になる
-        elif asset_hit and asset_hit[2] == "MOVIE_SKIP_TEXT":
-            _title_kws = ["MAGIA", "EXEDRA", "TAP", "START", "サポート"]
-            _menu_kws = ["光の間", "ショップ", "ガチャ", "ガシャ", "交換所",
-                         "パーティ", "クエスト", "クエス", "マップ", "レイヤ"]
-            _menu_hits = sum(1 for kw in _menu_kws if any(kw in t for t in texts))
-            if any(kw in joined for kw in _title_kws):
-                logger.info("[Asset] MOVIE_SKIP_TEXT をタイトル画面で抑制")
-                asset_hit = None
-            elif _menu_hits >= 2:
-                logger.info("[Asset] MOVIE_SKIP_TEXT をメニュー画面で抑制 (menu_kw=%d)", _menu_hits)
-                asset_hit = None
-        # ホーム画面では FINGER_TEMPLATE 偽陽性を抑制 → ホーム検出ハンドラに委譲
-        # ただし指テンプレが実際に検出されている場合は抑制しない
-        # (CLAUDE.md: 指アイコン+金枠が検出できたらシーンに関係なくタップする)
-        elif asset_hit and asset_hit[2] == "FINGER_TEMPLATE":
+        asset_hit = None  # (cx, cy, action, (bx, by, bw, bh)) or None
+
+        # --- 1. 指テンプレ (FINGER_TEMPLATE / TAP_HIGHLIGHTED_NAV) ---
+        _finger_match = ASSET_MANAGER.match_finger_rotated(analysis_path)
+        if _finger_match and _finger_match[2] >= 0.70:
+            _f_cx, _f_cy, _f_score = _finger_match[0], _finger_match[1], _finger_match[2]
+            # ホーム画面では偽陽性を抑制
             _home_kw_hits = count_home_nav_keywords(texts)
             if _home_kw_hits >= 2 and not ctx.pre_dialog_finger:
                 logger.info("[Asset] FINGER_TEMPLATE をホーム画面で抑制 (home_kw=%d)", _home_kw_hits)
-                asset_hit = None
-            # プレゼントボックス画面: アイテムありなら一括受取、なしなら通常の指+金枠フロー
+            # プレゼントボックス画面: アイテムありなら一括受取
             elif any("プレゼント" in t or "プレセント" in t for t in texts):
                 _no_items = any("受け取れるアイテム" in t for t in texts)
                 if not _no_items:
@@ -364,8 +286,75 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                     logger.info("[Asset] FINGER_TEMPLATE をプレゼントボックスで補正 → 一括受取 (%d,%d)", _bulk_x, _bulk_y)
                     tap_device(_bulk_x, _bulk_y, state, "PRESENT_BULK_RECEIVE")
                     return "PRESENT_BULK_RECEIVE", 2.0
-                # アイテムなし → 指は戻るボタンを指している。通常の FINGER_TEMPLATE フローへ
-                logger.info("[Asset] プレゼントボックスだがアイテムなし → 指+金枠フローへ")
+                else:
+                    logger.info("[Asset] プレゼントボックスだがアイテムなし → 指+金枠フローへ")
+                    asset_hit = (_f_cx, _f_cy, "FINGER_TEMPLATE", (0, 0, 0, 0))
+            else:
+                asset_hit = (_f_cx, _f_cy, "FINGER_TEMPLATE", (0, 0, 0, 0))
+
+        # --- 2. スワイプ指テンプレ (SWIPE_UP) ---
+        if not asset_hit:
+            _swipe_m = ASSET_MANAGER.match_single("tutorial_swipe_finger", analysis_path)
+            if _swipe_m and _swipe_m[2] >= 0.82:
+                asset_hit = (_swipe_m[0], _swipe_m[1], "SWIPE_UP", (0, 0, 0, 0))
+
+        # --- 3. チュートリアルダイアログ ▷ (ASSET_TUTORIAL_DIALOG_NEXT) ---
+        if not asset_hit:
+            _dnext_m = ASSET_MANAGER.match_single("tutorial_dialog_next", analysis_path)
+            if _dnext_m and _dnext_m[2] >= 0.91:
+                # 「矢印をタップ」画面では誤マッチ → #2-a MAP_ARROW に委譲
+                if any("矢印を" in t for t in texts):
+                    logger.info(">>> [Asset] DIALOG_NEXT を抑制 (矢印をタップ画面 → #2-a に委譲)")
+                else:
+                    # × ボタンが見える場合は最終ページ → × をタップして閉じる
+                    _close = ASSET_MANAGER.match_single("close_btn", analysis_path)
+                    _close = _close if (_close and _close[2] >= 0.60) else None
+                    if _close:
+                        logger.info("[DIALOG_NEXT] × ボタン検出 (%.2f) → 最終ページ、× タップ (%d,%d)",
+                                    _close[2], _close[0], _close[1])
+                        tap_device(_close[0], _close[1], state, "DIALOG_NEXT_CLOSE")
+                        return "DIALOG_NEXT_CLOSE", 1.0
+                    # スタック検出
+                    _cnt = getattr(state, "_dialog_next_stall_count", 0) + 1
+                    state._dialog_next_stall_count = _cnt
+                    if _cnt >= 3:
+                        _close_x, _close_y = roi_to_device(int(W * 0.94), int(H * 0.13), state.game_roi)
+                        logger.warning("[DIALOG_NEXT] %d 回連続同一画面 → 上端×エリア (%d,%d) タップ",
+                                       _cnt, _close_x, _close_y)
+                        tap_device(_close_x, _close_y, state, "DIALOG_NEXT_CORNER_CLOSE")
+                        state._dialog_next_stall_count = 0
+                        return "DIALOG_NEXT_CORNER_CLOSE", 1.5
+                    asset_hit = (_dnext_m[0], _dnext_m[1], "ASSET_TUTORIAL_DIALOG_NEXT", (0, 0, 0, 0))
+
+        # --- 4. 動画スキップ (MOVIE_SKIP_TEXT) ---
+        if not asset_hit:
+            _skip_m = ASSET_MANAGER.match_single("movie_skip", analysis_path)
+            if _skip_m and _skip_m[2] >= 0.70:
+                _title_kws = ["MAGIA", "EXEDRA", "TAP", "START", "サポート"]
+                _menu_kws = ["光の間", "ショップ", "ガチャ", "ガシャ", "交換所",
+                             "パーティ", "クエスト", "クエス", "マップ", "レイヤ"]
+                _menu_hits = sum(1 for kw in _menu_kws if any(kw in t for t in texts))
+                if any(kw in joined for kw in _title_kws):
+                    logger.info("[Asset] MOVIE_SKIP_TEXT をタイトル画面で抑制")
+                elif _menu_hits >= 2:
+                    logger.info("[Asset] MOVIE_SKIP_TEXT をメニュー画面で抑制 (menu_kw=%d)", _menu_hits)
+                else:
+                    asset_hit = (_skip_m[0], _skip_m[1], "MOVIE_SKIP_TEXT", (0, 0, 0, 0))
+
+        # --- 5. マップ矢印 (MAP_ARROW_TAP) --- require_ocr: 矢印をタップ
+        if not asset_hit and any("矢印をタップ" in t for t in texts):
+            _arrow_m = ASSET_MANAGER.match_single("map_arrow", analysis_path)
+            if _arrow_m and _arrow_m[2] >= 0.65:
+                asset_hit = (_arrow_m[0], _arrow_m[1], "MAP_ARROW_TAP", (0, 0, 0, 0))
+
+        # BATTLE_UPPER_GUARD: バトル中は上部テンプレマッチを除外
+        if asset_hit and (ctx.is_battle_early or state.current_scene == "BATTLE"):
+            _hit_cy = asset_hit[1]
+            if _hit_cy < H * 0.4:
+                logger.info("[Asset] '%s' をバトル中の上部マッチとして抑制 (y=%d < %d) (BATTLE_UPPER_GUARD)",
+                            asset_hit[2], _hit_cy, int(H * 0.4))
+                asset_hit = None
+
         if asset_hit:
             # DIALOG_NEXT 以外のアセットが検出された場合、スタックカウンタリセット
             if asset_hit[2] != "ASSET_TUTORIAL_DIALOG_NEXT":
@@ -382,14 +371,6 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                     cx, cy = _gx, _gy
                     tap_device(cx, cy, state, "FINGER_GOLD_TARGET")
                     return "FINGER_GOLD_TARGET", 1.0
-            # Text-Core: テンプレートマッチ領域 + OCR でテキスト中心優先座標を取得
-            _tc_x, _tc_y = text_core_center(_asset_region, ocr, label=f"Asset:{action}")
-            if (_tc_x, _tc_y) != (cx, cy):
-                logger.info(">>> [Asset Match] '%s' → Template(%d,%d) → TextCore(%d,%d)",
-                            action, cx, cy, _tc_x, _tc_y)
-            else:
-                logger.info(">>> [Asset Match] '%s' → (%d,%d)", action, cx, cy)
-            cx, cy = _tc_x, _tc_y
             # スワイプ系アクションの処理
             if action == "SWIPE_UP":
                 # 安全ネット: ダイアログKWまたは背景ぼかしがあればポップアップ上のスワイプ誤発火を防止
@@ -436,7 +417,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                     logger.info(">>> [SWIPE_UP] ポップアップ上の誤検出 → アセットマッチ破棄")
                     return None  # handle_tutorial を抜けて次ハンドラに委譲
             # チュートリアル指差し: 金色ハイライトされたUI要素を方向非依存で検出→タップ
-            if action == "TAP_HIGHLIGHTED_NAV":
+            if action in ("TAP_HIGHLIGHTED_NAV", "FINGER_TEMPLATE"):
                 # 白ハンドポインタ (テンプレートマッチ) で方向を取得
                 _wh = detect_white_hand_pointer(analysis_path, threshold=0.85)
                 _hand_pos = (cx, cy)

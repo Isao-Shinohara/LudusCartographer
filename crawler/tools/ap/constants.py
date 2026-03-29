@@ -107,6 +107,8 @@ _SINGLE_ONLY: frozenset = frozenset([
     "icon_back",               # 戻るボタン用、match_single 専用
     "dialog_corner_tl",       # ダイアログ検出専用
     "dialog_corner_bl",       # ダイアログ検出専用 (下部角は上部と異なるデザイン)
+    "popup_home_next",        # ホームポップアップ専用 (detect_popup_home で使用)
+    "popup_home_close",       # ホームポップアップ専用 (detect_popup_home_nav で使用)
 ])
 
 # ─── ダイアログ・ファースト: 検知キーワード一覧 ───────────────────────────────
