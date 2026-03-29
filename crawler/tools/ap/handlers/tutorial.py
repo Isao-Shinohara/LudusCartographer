@@ -27,11 +27,9 @@ from tools.ap.helpers import (
 from tools.ap.image_proc import (
     ASSET_MANAGER,
     roi_to_device,
-    find_gold_frame_near,
     is_tutorial_walk_scene,
     detect_tutorial_gold_swipe,
     detect_tutorial_gold_button_tap,
-    detect_white_hand_pointer,
     smart_tap_button,
     detect_dialog,
     process_paging_dialog,
@@ -263,41 +261,18 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                                 break
             return "GOLD_BTN_TAP", BATTLE_WAIT
 
-    # ─── 【最優先 #0-a】個別テンプレートマッチング ───
-    # 全テンプレ一括走査 (ASSET_MANAGER.match()) は廃止。
-    # 必要なテンプレを match_single() で個別検出する。
+    # ─── 【#0-a】個別テンプレートマッチング ───
+    # 指テンプレ+金枠は finger_priority.py (Phase 1.5) に移動済み。
+    # ここではスワイプ、ダイアログ▷、動画スキップ、マップ矢印のみ処理する。
     if analysis_path is not None:
         asset_hit = None  # (cx, cy, action, (bx, by, bw, bh)) or None
 
-        # --- 1. 指テンプレ (FINGER_TEMPLATE / TAP_HIGHLIGHTED_NAV) ---
-        _finger_match = ASSET_MANAGER.match_finger_rotated(analysis_path)
-        if _finger_match and _finger_match[2] >= 0.70:
-            _f_cx, _f_cy, _f_score = _finger_match[0], _finger_match[1], _finger_match[2]
-            # ホーム画面では偽陽性を抑制
-            _home_kw_hits = count_home_nav_keywords(texts)
-            if _home_kw_hits >= 2 and not ctx.pre_dialog_finger:
-                logger.info("[Asset] FINGER_TEMPLATE をホーム画面で抑制 (home_kw=%d)", _home_kw_hits)
-            # プレゼントボックス画面: アイテムありなら一括受取
-            elif any("プレゼント" in t or "プレセント" in t for t in texts):
-                _no_items = any("受け取れるアイテム" in t for t in texts)
-                if not _no_items:
-                    _bulk_x, _bulk_y = roi_to_device(int(W * 0.89), int(H * 0.92), state.game_roi)
-                    logger.info("[Asset] FINGER_TEMPLATE をプレゼントボックスで補正 → 一括受取 (%d,%d)", _bulk_x, _bulk_y)
-                    tap_device(_bulk_x, _bulk_y, state, "PRESENT_BULK_RECEIVE")
-                    return "PRESENT_BULK_RECEIVE", 2.0
-                else:
-                    logger.info("[Asset] プレゼントボックスだがアイテムなし → 指+金枠フローへ")
-                    asset_hit = (_f_cx, _f_cy, "FINGER_TEMPLATE", (0, 0, 0, 0))
-            else:
-                asset_hit = (_f_cx, _f_cy, "FINGER_TEMPLATE", (0, 0, 0, 0))
+        # --- 1. スワイプ指テンプレ (SWIPE_UP) ---
+        _swipe_m = ASSET_MANAGER.match_single("tutorial_swipe_finger", analysis_path)
+        if _swipe_m and _swipe_m[2] >= 0.82:
+            asset_hit = (_swipe_m[0], _swipe_m[1], "SWIPE_UP", (0, 0, 0, 0))
 
-        # --- 2. スワイプ指テンプレ (SWIPE_UP) ---
-        if not asset_hit:
-            _swipe_m = ASSET_MANAGER.match_single("tutorial_swipe_finger", analysis_path)
-            if _swipe_m and _swipe_m[2] >= 0.82:
-                asset_hit = (_swipe_m[0], _swipe_m[1], "SWIPE_UP", (0, 0, 0, 0))
-
-        # --- 3. チュートリアルダイアログ ▷ (ASSET_TUTORIAL_DIALOG_NEXT) ---
+        # --- 2. チュートリアルダイアログ ▷ (ASSET_TUTORIAL_DIALOG_NEXT) ---
         if not asset_hit:
             _dnext_m = ASSET_MANAGER.match_single("tutorial_dialog_next", analysis_path)
             if _dnext_m and _dnext_m[2] >= 0.91:
@@ -359,17 +334,6 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             if asset_hit[2] != "ASSET_TUTORIAL_DIALOG_NEXT":
                 state._dialog_next_stall_count = 0
             cx, cy, action, _asset_region = asset_hit
-            # FINGER_TEMPLATE: 指アイコン自体ではなく、指が指す金枠ボタンをタップ
-            # (CLAUDE.md §0: ガイドが指す対象の座標を叩く)
-            if action == "FINGER_TEMPLATE" and analysis_path is not None:
-                _gold_target = find_gold_frame_near(analysis_path, cx, cy, search_radius=300)
-                if _gold_target:
-                    _gx, _gy, _gw, _gh = _gold_target
-                    logger.info("[Asset] FINGER_TEMPLATE(%d,%d) → 金枠ボタン(%d,%d %dx%d) に補正",
-                                cx, cy, _gx, _gy, _gw, _gh)
-                    cx, cy = _gx, _gy
-                    tap_device(cx, cy, state, "FINGER_GOLD_TARGET")
-                    return "FINGER_GOLD_TARGET", 1.0
             # スワイプ系アクションの処理
             if action == "SWIPE_UP":
                 # 安全ネット: ダイアログKWまたは背景ぼかしがあればポップアップ上のスワイプ誤発火を防止
@@ -415,87 +379,6 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                 else:
                     logger.info(">>> [SWIPE_UP] ポップアップ上の誤検出 → アセットマッチ破棄")
                     return None  # handle_tutorial を抜けて次ハンドラに委譲
-            # チュートリアル指差し: 金色ハイライトされたUI要素を方向非依存で検出→タップ
-            if action in ("TAP_HIGHLIGHTED_NAV", "FINGER_TEMPLATE"):
-                # 白ハンドポインタ (テンプレートマッチ) で方向を取得
-                _wh = detect_white_hand_pointer(analysis_path, threshold=0.85)
-                _hand_pos = (cx, cy)
-                _hand_dir = ""
-                if _wh:
-                    _hand_pos = (_wh[0], _wh[1])
-                    _hand_dir = _wh[3]  # "up" or "down"
-                _hx, _hy = _hand_pos
-                tap_x, tap_y = cx, cy  # デフォルト
-
-                # 【プライマリ】テンプレートマッチで指近傍のアイコンを検索
-                # icon_back のみ。gold_frame_small は大きなアイコンの
-                # 端にマッチして中心を外すため除外。
-                _tmpl_found = False
-                if analysis_path:
-                    _search_r = 200
-                    _aroi = (max(0, _hx - _search_r), max(0, _hy - _search_r),
-                             _search_r * 2, _search_r * 2)
-                    for _btn_name in ("icon_back",):
-                        _m = ASSET_MANAGER.match_single(
-                            _btn_name, analysis_path, roi=_aroi)
-                        if _m and _m[2] >= 0.65:
-                            _ax, _ay = _m[0], _m[1]
-                            # 方向フィルタ
-                            if (_hand_dir == "up" and _ay > _hy + 30) or \
-                               (_hand_dir == "down" and _ay < _hy - 30):
-                                continue
-                            tap_x, tap_y = _ax, _ay
-                            _tmpl_found = True
-                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → Asset '%s'(%d,%d) score=%.3f",
-                                        _hx, _hy, _hand_dir, _btn_name, tap_x, tap_y, _m[2])
-                            break
-
-                # 【セカンダリ】テンプレ未検出 → 指の方向にある最近接OCRテキストをタップ (距離200px以内)
-                if not _tmpl_found:
-                    _MAX_HAND_OCR_DIST = 200
-                    _ocr_found = False
-                    if _hand_dir and ocr:
-                        _dir_items = []
-                        for item in ocr:
-                            _tx, _ty = item["center"]
-                            _dist = abs(_hx - _tx) + abs(_hy - _ty)
-                            if _dist > _MAX_HAND_OCR_DIST:
-                                continue
-                            if _hand_dir == "up" and _ty < _hy:
-                                _dir_items.append((_tx, _ty, _dist, item["text"]))
-                            elif _hand_dir == "down" and _ty > _hy:
-                                _dir_items.append((_tx, _ty, _dist, item["text"]))
-                        if _dir_items:
-                            _dir_items.sort(key=lambda d: d[2])
-                            tap_x, tap_y = _dir_items[0][0], _dir_items[0][1]
-                            _ocr_found = True
-                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → OCR '%s'(%d,%d) dist=%d",
-                                        cx, cy, _hand_dir, _dir_items[0][3], tap_x, tap_y, _dir_items[0][2])
-
-                # 【フォールバック】テンプレもOCRも未検出 → 金枠検出
-                if not _tmpl_found and not _ocr_found:
-                    _gold = find_gold_frame_near(analysis_path, _hx, _hy,
-                                                 search_radius=200) if analysis_path else None
-                    # 方向フィルタ: 指の向きと逆方向の金枠は除外
-                    if _gold:
-                        _gx, _gy = _gold[0], _gold[1]
-                        if (_hand_dir == "up" and _gy > _hy + 30) or \
-                           (_hand_dir == "down" and _gy < _hy - 30):
-                            logger.info(">>> [TAP_HIGHLIGHTED_NAV] 金枠(%d,%d) が指方向(%s)と逆 → 除外",
-                                        _gx, _gy, _hand_dir)
-                            _gold = None
-                    if _gold:
-                        tap_x, tap_y = _gx, _gy
-                        logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → 金枠(%d,%d)",
-                                    _hx, _hy, _hand_dir, tap_x, tap_y)
-                    else:
-                        tap_x, tap_y = smart_tap_button(
-                            analysis_path, _hx, _hy, search_r=160, ocr_items=ocr)
-                        logger.info(">>> [TAP_HIGHLIGHTED_NAV] 指(%d,%d,dir=%s) → smart_tap(%d,%d)",
-                                    _hx, _hy, _hand_dir, tap_x, tap_y)
-
-                tap_device(tap_x, tap_y, state, "TAP_HIGHLIGHTED_NAV")
-                return "TAP_HIGHLIGHTED_NAV", 1.0
             # その他のアセットアクション: タップして return
             tap_device(cx, cy, state, action)
             return action, 0.5

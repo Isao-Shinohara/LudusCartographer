@@ -15,6 +15,7 @@ from tools.ap.state import PilotState
 from tools.ap.device import tap_device
 
 from tools.ap.handlers.common import handle_common_guards
+from tools.ap.handlers.finger_priority import handle_finger_priority
 from tools.ap.handlers.quest import handle_quest_early
 from tools.ap.handlers.dialog_phase import handle_dialog_phase
 from tools.ap.handlers.tutorial import handle_tutorial
@@ -33,6 +34,11 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     """
     # Phase 1: 共通ガード (ブラウザ脱出, MOVIE, DL, Loading, 確認ダイアログ, 権限, 設定, ご注意)
     r = handle_common_guards(ctx, state)
+    if r is not None:
+        return r
+
+    # Phase 1.5: 指アイコン+金枠 最優先 (CLAUDE.md §0 優先度1)
+    r = handle_finger_priority(ctx, state)
     if r is not None:
         return r
 
