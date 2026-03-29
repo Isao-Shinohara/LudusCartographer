@@ -12,6 +12,7 @@ from tools.ap.context import DetectContext
 from tools.ap.state import PilotState
 from tools.ap.device import tap_device
 from tools.ap.helpers import has_any, has_text
+from tools.ap.image_proc import ASSET_MANAGER
 
 logger = logging.getLogger("auto_pilot")
 
@@ -74,6 +75,13 @@ def handle_quest_early(ctx: DetectContext, state: PilotState) -> Optional[tuple[
     _quest_stage = has_any(ocr, ["1-1", "1-2", "1-3", "2-1", "2-2", "2-3",
                                   "3-1", "3-2", "4-1", "4-2"])
     _quest_detail_kw = any(kw in joined for kw in ["推奨", "報酬", "パーティ"])
+    # 指アイコン+金枠表示中はそこしかタップ不可 → handle_tutorial に委譲
+    if _quest_stage and _quest_detail_kw and ctx.analysis_path is not None:
+        _finger = ASSET_MANAGER.match_finger_rotated(ctx.analysis_path)
+        if _finger and _finger[2] >= 0.70:
+            logger.info("[QUEST_DETAIL] 指テンプレ検出(%.3f) → 挑戦ボタン抑制 (指+金枠ハンドラへ)",
+                        _finger[2])
+            return None
     if _quest_stage and _quest_detail_kw:
         # OCR で挑戦テキストが読めた場合はその座標を使う
         _quest_chal = None
