@@ -609,7 +609,7 @@ class TestCoordinateConstants:
     """座標補正定数の存在・型・範囲検証。"""
 
     def test_ocr_bbox_y_padding(self):
-        from tools.auto_pilot import _OCR_BBOX_Y_PADDING
+        from tools.ap.constants import _OCR_BBOX_Y_PADDING
         assert isinstance(_OCR_BBOX_Y_PADDING, int)
         assert 0 <= _OCR_BBOX_Y_PADDING <= 100  # Vision OCR: 0, PaddleOCR: 30
 

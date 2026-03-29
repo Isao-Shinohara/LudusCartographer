@@ -135,7 +135,7 @@ from tools.ap.constants import (  # noqa: E402
     _UI_TEXT_KWS, _SINGLE_ONLY,
     _DIALOG_FIRST_KWS, _BATTLE_UI_KWS,
     ANALYSIS_W, ANALYSIS_H,
-    _OCR_BBOX_Y_PADDING, _GLOW_CENTER_Y_OFFSET,
+    _GLOW_CENTER_Y_OFFSET,
     _GOLD_BTN_RETRY_Y_OFFSET, _FINGER_TIP_RATIO,
     _RIGHT_PANEL_X, _CHAR_HEAD_X1, _CHAR_HEAD_X2,
     _CHAR_HEAD_Y1, _CHAR_HEAD_Y2, _SPATIAL_MARGIN_TOP, _CLOSE_BTN_OFFSET,
@@ -258,41 +258,6 @@ def collect_secondary_candidates(
             candidates.append(TapCandidate(
                 x=gold_btn[0], y=gold_btn[1], action="CAND_GOLD_BTN",
                 priority=20, desc="gold button"))
-
-    # ── 3. OCR 確認ボタン (OK/はい/次へ) (priority=30) ──
-    if not primary_action.startswith("CONFIRM") and primary_action != "ADV_CHOICE":
-        confirm_btn = has_any(ocr, _CONFIRM_POS_KWS)
-        if confirm_btn:
-            _cx, _cy = confirm_btn["center"]
-            _cy = max(0, _cy - _OCR_BBOX_Y_PADDING)
-            candidates.append(TapCandidate(
-                x=_cx, y=_cy, action="CAND_CONFIRM_OK",
-                priority=30, desc=f"confirm '{confirm_btn['text']}'"))
-
-    # ── 4. (removed) テンプレートマッチは1結果のみ → 代替指ブロブ不要 ──
-
-    # ── 5. 閉じるボタン OCR (閉じる/Close) (priority=50) ──
-    if not primary_action.startswith("CLOSE"):
-        close_btn = has_any(ocr, ["閉じる", "Close", "CLOSE"])
-        if close_btn:
-            _clx, _cly = close_btn["center"]
-            _cly = max(0, _cly - _OCR_BBOX_Y_PADDING)
-            candidates.append(TapCandidate(
-                x=_clx, y=_cly, action="CAND_CLOSE",
-                priority=50, desc=f"close '{close_btn['text']}'"))
-
-    # ── 6. ストーリータップ (下部テキスト) (priority=60) ──
-    if primary_action != "STORY_TAP":
-        # 下部1/3にテキストがあればセリフ送りとしてタップ
-        _bottom_texts = [item for item in ocr
-                         if item.get("center", (0, 0))[1] > H * 0.7
-                         and len(item.get("text", "")) >= 3]
-        if _bottom_texts:
-            _st = _bottom_texts[0]
-            candidates.append(TapCandidate(
-                x=_st["center"][0], y=_st["center"][1],
-                action="CAND_STORY_TAP", priority=60,
-                desc=f"story '{_st['text'][:8]}'"))
 
     # ソート & 制限
     candidates.sort(key=lambda c: c.priority)
