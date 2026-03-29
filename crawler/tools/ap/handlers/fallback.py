@@ -48,14 +48,6 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         tap_device(_close_btn_pos[0], _close_btn_pos[1], state, "CLOSE_BTN_SCREEN")
         return "CLOSE_BTN_SCREEN", 1.0
 
-    # ─── 閉じるボタン ───
-    close_match = has_any(ocr, ["閉じる", "Close", "CLOSE", "とじる"])
-    if close_match:
-        cx, cy = close_match["center"]
-        logger.info(">>> 閉じる '%s' (%d,%d)", close_match["text"], cx, cy)
-        tap_device(cx, cy, state, f"CLOSE '{close_match['text']}'")
-        return "CLOSE", 0.5
-
     # ─── ゲーム内システムダイアログ (画質設定・ダウンロード確認 等) ───
     # smart_tap_button で金色ボタン枠の幾何学的中心を取得 (OCR ずれを排除)
     sys_dlg_kws = ["画質を設定", "アセット更新", "ダウンロードを開始", "ダウンロードしますか",
@@ -121,19 +113,19 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             tap_device(cx, cy, state, "AGREE")
         return "AGREE", 1.0
 
-    # ─── 確認ダイアログ ───
-    # ボタンラベルのみ。「クエスト」「バトル」等の汎用ワードは
-    # タイトル画面等で誤マッチするため含めない
-    confirm_match = has_any(ocr, ["OK", "はい", "次へ", "確認", "完了", "決定",
-                                   "受け取る", "受取", "了解", "わかった",
-                                   "進む", "START", "開始",
-                                   "TAP TO START", "TOUCH", "始める"])
-    if confirm_match:
-        cx, cy = confirm_match["center"]
-        text = confirm_match["text"]
-        logger.info(">>> 確認 '%s' (%d,%d)", text, cx, cy)
-        tap_device(cx, cy, state, f"CONFIRM '{text}'")
-        return "CONFIRM", 1.0
+    # ─── 確認ダイアログ (ダイアログ証拠必須) ───
+    # ボタンラベルのみ。四隅テンプレでダイアログが確認できた場合に限りタップ。
+    if _is_dialog:
+        confirm_match = has_any(ocr, ["OK", "はい", "次へ", "確認", "完了", "決定",
+                                       "受け取る", "受取", "了解", "わかった",
+                                       "進む", "START", "開始",
+                                       "TAP TO START", "TOUCH", "始める"])
+        if confirm_match:
+            cx, cy = confirm_match["center"]
+            text = confirm_match["text"]
+            logger.info(">>> 確認 '%s' (%d,%d) [ダイアログ検出済]", text, cx, cy)
+            tap_device(cx, cy, state, f"CONFIRM '{text}'")
+            return "CONFIRM", 1.0
 
     # ─── ストーリー/会話 (下部テキストボックス) ───
     # ADV 構造的証拠 (AUTOボタン・↓送りボタン・ADVツールバー) がある場合のみ
@@ -167,14 +159,6 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         logger.info(">>> 【お知らせ一覧】 タブ%d個検出 → ×クローズ (%d,%d)", _notice_tabs, _nx, _ny)
         tap_device(_nx, _ny, state, "NOTICE_LIST_CLOSE")
         return "NOTICE_LIST_CLOSE", 1.0
-
-    # ─── ログインボーナス等 ───
-    bonus_match = has_any(ocr, ["ログイン", "ボーナス", "プレゼント", "獲得"])
-    if bonus_match:
-        cx, cy = bonus_match["center"]
-        logger.info(">>> ポップアップ '%s' (%d,%d)", bonus_match["text"], cx, cy)
-        tap_device(cx, cy, state, "POPUP_TAP")
-        return "POPUP_TAP", 1.0
 
     # ─── フォールバック: 何も見つからない ───
     logger.info(">>> 画面が安定するまで待機 (OCR %d件)", len(ocr))
