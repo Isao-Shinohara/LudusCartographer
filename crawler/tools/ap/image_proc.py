@@ -1671,6 +1671,94 @@ def detect_notice_popup(
     return False
 
 
+# ═══════════════════════════════════════════════════════════════════
+#  ポップアップ検出 (お知らせポップアップ・ダイアログとは独立)
+# ═══════════════════════════════════════════════════════════════════
+
+_POPUP_NEXT_TEMPLATE  = _CRAWLER_ROOT / "assets" / "templates" / "popup_home_next.png"
+_POPUP_CLOSE_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "popup_home_close.png"
+
+
+def detect_popup(
+    img_path: Path, W: int = ANALYSIS_W, H: int = ANALYSIS_H,
+) -> bool:
+    """ポップアップを検出する。
+
+    判定条件 (全て AND):
+      1. popup_home_next テンプレ検出 (閾値 0.75)
+      2. ページドット ≥ 1
+      3. 背景ぼかし
+    """
+    if not img_path or not _POPUP_NEXT_TEMPLATE.exists():
+        return False
+    img = imread_cached(img_path)
+    if img is None:
+        return False
+    _H, _W = img.shape[:2]
+    # 1. popup_home_next テンプレマッチ
+    _tpl = imread_cached(_POPUP_NEXT_TEMPLATE)
+    if _tpl is None:
+        return False
+    _gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _gray_tpl = cv2.cvtColor(_tpl, cv2.COLOR_BGR2GRAY)
+    _r = cv2.matchTemplate(_gray_img, _gray_tpl, cv2.TM_CCOEFF_NORMED)
+    _, _mv, _, _ = cv2.minMaxLoc(_r)
+    if _mv < 0.75:
+        return False
+    # 2. ページドット
+    _dots = count_page_dots(img_path)
+    if _dots < 1:
+        return False
+    # 3. 背景ぼかし
+    if not detect_background_blur(img, _H, _W):
+        return False
+    logger.info("[POPUP] next テンプレ(%.3f)+ドット=%d+背景ぼかし → ポップアップ確定", _mv, _dots)
+    return True
+
+
+def detect_popup_nav(
+    img_path: Path, W: int = ANALYSIS_W, H: int = ANALYSIS_H,
+    threshold: float = 0.75,
+) -> Optional[tuple[str, int, int]]:
+    """ポップアップの ▷(次へ) または ×(閉じる) ボタンを検出する。
+
+    Returns: ("next", cx, cy) | ("close", cx, cy) | None
+    """
+    img = imread_cached(img_path)
+    if img is None:
+        return None
+    _H, _W = img.shape[:2]
+    _gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    def _match(tmpl_path: Path) -> Optional[tuple[int, int, float]]:
+        _tpl = imread_cached(tmpl_path)
+        if _tpl is None:
+            return None
+        _g = cv2.cvtColor(_tpl, cv2.COLOR_BGR2GRAY)
+        _r = cv2.matchTemplate(_gray, _g, cv2.TM_CCOEFF_NORMED)
+        _, _mv, _, _ml = cv2.minMaxLoc(_r)
+        if _mv >= threshold:
+            _th, _tw = _g.shape[:2]
+            return (_ml[0] + _tw // 2, _ml[1] + _th // 2, _mv)
+        return None
+
+    # × ボタン優先 (最終ページで × が出現すると ▷ は消える)
+    if _POPUP_CLOSE_TEMPLATE.exists():
+        _c = _match(_POPUP_CLOSE_TEMPLATE)
+        if _c:
+            logger.debug("[PopupNav] × 検出 (%d,%d) score=%.3f", _c[0], _c[1], _c[2])
+            return ("close", _c[0], _c[1])
+
+    # ▷ ボタン
+    if _POPUP_NEXT_TEMPLATE.exists():
+        _n = _match(_POPUP_NEXT_TEMPLATE)
+        if _n:
+            logger.debug("[PopupNav] ▷ 検出 (%d,%d) score=%.3f", _n[0], _n[1], _n[2])
+            return ("next", _n[0], _n[1])
+
+    return None
+
+
 def _find_close_by_asset(analysis_path: Path) -> Optional[tuple]:
     """ASSET_MANAGER テンプレートで × ボタンを検出する (枠検出不要)。
 

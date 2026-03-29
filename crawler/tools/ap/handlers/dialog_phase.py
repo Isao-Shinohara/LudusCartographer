@@ -32,12 +32,70 @@ from tools.ap.image_proc import (
     detect_white_hand_pointer,
     detect_dialog_frame_and_nav, process_paging_dialog,
     count_page_dots, detect_dialog, detect_dialog_nav, detect_dialog_corners,
+    detect_popup, detect_popup_nav,
     ASSET_MANAGER, prepare_analysis_image,
     roi_to_device,
 )
 from lc.ocr import run_ocr
 
 logger = logging.getLogger("auto_pilot")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  handle_popup — ポップアップハンドラ (ダイアログ・お知らせポップアップとは独立)
+# ═══════════════════════════════════════════════════════════════════
+
+def handle_popup(
+    state: "PilotState",
+    analysis_path: Optional[Path],
+) -> Optional[tuple[str, float]]:
+    """ポップアップ検出 → ドット数分 ▷ タップ → 最終ページで × 閉じ。
+
+    popup_home_next / popup_home_close テンプレで検出・操作する。
+    ダイアログ・お知らせポップアップの検出ロジックとは完全に独立。
+
+    Returns: (action_name, wait_sec) or None
+    """
+    if analysis_path is None:
+        return None
+    if not detect_popup(analysis_path):
+        return None
+
+    W, H = ANALYSIS_W, ANALYSIS_H
+    _total_pages = count_page_dots(analysis_path)
+    _remaining = max(0, _total_pages - 1)
+    logger.info(">>> 【ポップアップ】ドット=%d → ▷%d回タップ後×閉じ", _total_pages, _remaining)
+
+    # ▷ を検出してページ送り
+    if _remaining > 0:
+        _nav = detect_popup_nav(analysis_path)
+        if _nav and _nav[0] == "next":
+            _nx, _ny = _nav[1], _nav[2]
+            for _i in range(_remaining):
+                _dx, _dy = roi_to_device(_nx, _ny, state.game_roi)
+                tap_device(_dx, _dy, state, "POPUP_PAGING_NEXT")
+                logger.info("[POPUP] ▷タップ (%d/%d)", _i + 1, _remaining)
+                time.sleep(0.5)
+
+    # 最終ページ → × ボタンを検出して閉じる
+    time.sleep(0.3)
+    # 最終ページのスクリーンショットを取得して × を検出
+    _ss = take_screenshot("/var/folders/3s/fycmyv314lz_fdclk9255h0wg5vskl/T/lc_autopilot_popup_close.png")
+    if _ss and _ss[0]:
+        _close_analysis = prepare_analysis_image(Path(_ss[0]), _ss[1], _ss[2])
+        _close_nav = detect_popup_nav(_close_analysis)
+        if _close_nav and _close_nav[0] == "close":
+            _cx, _cy = _close_nav[1], _close_nav[2]
+            _dx, _dy = roi_to_device(_cx, _cy, state.game_roi)
+            tap_device(_dx, _dy, state, "POPUP_CLOSE")
+            logger.info("[POPUP] ×閉じ完了 (total=%d pages)", _total_pages)
+            return "POPUP_CLOSE", CLOSE_ACTION_WAIT
+
+    # × テンプレ未検出 → 右上固定座標フォールバック
+    _fx, _fy = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
+    tap_device(_fx, _fy, state, "POPUP_CLOSE_FALLBACK")
+    logger.info("[POPUP] × 未検出 → 右上固定座標 (%d,%d) で閉じる", _fx, _fy)
+    return "POPUP_CLOSE", CLOSE_ACTION_WAIT
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -341,6 +399,12 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
             return _pre_result
     if _has_tutorial_popup:
         logger.info("[#0-PRE] チュートリアルダイアログ検出 → 発光SM スキップ (ダイアログ処理優先)")
+
+    # ── 【ポップアップ検出】ダイアログ・お知らせポップアップとは独立 ──────────
+    if analysis_path is not None:
+        _popup_result = handle_popup(state, analysis_path)
+        if _popup_result is not None:
+            return _popup_result
 
     # ── 【お知らせポップアップ検出】PRE_DIALOG_GUARD バイパス ──────────
     _is_notice = False
