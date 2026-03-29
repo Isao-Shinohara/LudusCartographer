@@ -171,3 +171,40 @@ class PilotState:
     launch_time: float = field(default_factory=time.time)    # auto_pilot 起動時刻
     is_fresh_start: bool = False     # True: --fresh-install 新規開始, False: 途中再開
     milestone_logged: dict = field(default_factory=dict)  # {milestone_name: logged_time}
+
+    def reset_for_new_cycle(self) -> None:
+        """周回間で状態をリセットする。
+
+        引き継ぐフィールド:
+          - grind_mode, grind_max_cycles, grind_cycles_completed (周回管理)
+          - device_w, device_h (デバイス解像度は変わらない)
+          - launch_time (起動時刻)
+        それ以外は全てデフォルト値に戻す。
+        """
+        # 引き継ぐ値を退避
+        _grind_mode = self.grind_mode
+        _grind_max = self.grind_max_cycles
+        _grind_done = self.grind_cycles_completed
+        _dev_w = self.device_w
+        _dev_h = self.device_h
+        _launch = self.launch_time
+
+        # 全フィールドをデフォルトに戻す
+        fresh = PilotState()
+        for f in self.__dataclass_fields__:
+            setattr(self, f, getattr(fresh, f))
+
+        # 動的属性を全削除
+        _dynamic = [k for k in self.__dict__ if k.startswith("_")
+                     and k not in self.__dataclass_fields__]
+        for k in _dynamic:
+            delattr(self, k)
+
+        # 引き継ぐ値を復元
+        self.grind_mode = _grind_mode
+        self.grind_max_cycles = _grind_max
+        self.grind_cycles_completed = _grind_done
+        self.device_w = _dev_w
+        self.device_h = _dev_h
+        self.launch_time = _launch
+        self.is_fresh_start = True

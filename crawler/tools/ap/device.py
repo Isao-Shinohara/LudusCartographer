@@ -257,6 +257,17 @@ def invalidate_device_resolution_cache() -> None:
     _CACHED_DEVICE_RES = (0, 0)
 
 
+def reset_module_cache() -> None:
+    """周回間でモジュールレベルのキャッシュをリセットする。"""
+    global _SCRCPY_WINDOW_ID, _LAST_SCRCPY_BGR, _SCRCPY_FAIL_COUNT
+    global _SCRCPY_LAST_RESTART, _CACHED_DEVICE_RES
+    _SCRCPY_WINDOW_ID = 0
+    _LAST_SCRCPY_BGR = None
+    _SCRCPY_FAIL_COUNT = 0
+    _SCRCPY_LAST_RESTART = 0.0
+    _CACHED_DEVICE_RES = (0, 0)
+
+
 def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
     """scrcpy ウィンドウキャプチャ (Quartz, ~100ms)。
 

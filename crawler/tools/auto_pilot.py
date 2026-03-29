@@ -169,6 +169,7 @@ from tools.ap.device import (  # noqa: E402
     adb, tap_device, swipe, swipe_device, take_screenshot, manage_scrcpy,
     get_device_resolution, _query_status_bar_height, check_adb_liveness,
     pop_last_scrcpy_bgr, check_foreground_app,
+    reset_module_cache as reset_device_cache,
 )
 # DEVICE_SERIAL / SCRCPY_DEVICE はモジュール変数 — 読取りは _ap_device 経由
 # 後方互換 re-export 用プロパティ代替
@@ -3477,17 +3478,10 @@ def main():
             logger.info("[GRIND] アプリ起動")
             adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
             time.sleep(5)
-            # 周回用状態リセット
-            state.tutorial_cleared = False
-            state.home_reached = False
-            state._home_no_evidence_count = 0
-            state.battle_wait_count = 0
-            state.auto_activated = False
-            state.last_action = ""
-            state.current_scene = "UNKNOWN"
-            state.last_phash = ""
-            state.is_fresh_start = True
-            state.post_download = False
+            # 周回用状態リセット (全フィールド + 動的属性 + デバイスキャッシュ)
+            state.reset_for_new_cycle()
+            reset_device_cache()
+            clear_imread_cache()
             delete_state("post_download")
             logger.info("[GRIND] 状態リセット完了 → 周回 #%d 開始",
                         state.grind_cycles_completed + 1)
