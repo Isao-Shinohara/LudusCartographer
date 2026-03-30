@@ -41,3 +41,4 @@ class DetectContext:
     is_result_screen_flag: bool = False       # Result画面テキスト検出
     is_adv_or_movie: bool = False             # ADV/MOVIEシーン判定
     in_battle_ctx: bool = False               # バトルコンテキスト (state.current_scene == "BATTLE")
+    has_dialog_corners: Optional[bool] = None  # detect_dialog_corners 結果 (Phase 3 で計算、Phase 4 で再利用)

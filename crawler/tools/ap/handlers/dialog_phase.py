@@ -397,6 +397,10 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     H = ctx.H
     analysis_path = ctx.analysis_path
 
+    # ── 四隅テンプレ結果を ctx にキャッシュ (Phase 4 で再利用) ──
+    if ctx.has_dialog_corners is None and analysis_path is not None:
+        ctx.has_dialog_corners = detect_dialog_corners(analysis_path)
+
     # ─── 【最優先 #0-PRE】バトル発光SM ガード ─────────────────────────────────
     # DIALOG_CLOSE が「通常攻撃」等のバトルアクションを踏み越えるのを防ぐ。
     # ① 「メニューが使用できません」トースト → DIALOG 誤検出スキップ (toast 自然消滅)

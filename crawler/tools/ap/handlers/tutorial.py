@@ -391,7 +391,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     pre_popup = None if _in_battle_ctx else has_any(ocr, list(_DIALOG_FIRST_KWS))
     if pre_popup:
         # 四隅テンプレで本物のダイアログか確認 (ホーム画面等の誤検出防止)
-        if analysis_path and not detect_dialog_corners(analysis_path):
+        _corners = ctx.has_dialog_corners if ctx.has_dialog_corners is not None else (detect_dialog_corners(analysis_path) if analysis_path else False)
+        if analysis_path and not _corners:
             logger.info("[PRE_POPUP] 四隅テンプレなし → ダイアログではない、スキップ (kw='%s')",
                         pre_popup["text"][:10])
             pre_popup = None
@@ -561,7 +562,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             return "PRESENT_BOX_BACK", 1.0
 
     close_popup = has_any(ocr, close_popup_kws)
-    if close_popup and analysis_path and not detect_dialog_corners(analysis_path):
+    _corners2 = ctx.has_dialog_corners if ctx.has_dialog_corners is not None else (detect_dialog_corners(analysis_path) if analysis_path else False)
+    if close_popup and analysis_path and not _corners2:
         logger.info("[CLOSE_POPUP] 四隅テンプレなし → ダイアログではない、スキップ (kw='%s')",
                     close_popup["text"][:10])
         close_popup = None
