@@ -603,8 +603,8 @@ def try_mini_conv_tap(img_path, state: PilotState,
 
 # ─── 必殺技演出待機 ─────────────────────────────────
 def _wait_for_special_animation(state: PilotState,
-                                 max_wait: float = 10.0,
-                                 stable_threshold: int = 3) -> None:
+                                 max_wait: float = 5.0,
+                                 stable_threshold: int = 1) -> None:
     """必殺技タップ後、演出が終わるまで phash 安定を待つ。
 
     演出中は phash が激しく変化する。phash が安定 (dist < PHASH_THRESHOLD)
