@@ -12,10 +12,11 @@ import re
 import time
 from typing import Optional
 
-from tools.ap.constants import _CLOSE_BTN_OFFSET, _MENU_SCREEN_KWS
+from lc.utils import compute_phash, phash_distance
+from tools.ap.constants import _CLOSE_BTN_OFFSET, _MENU_SCREEN_KWS, PHASH_THRESHOLD
 from tools.ap.context import DetectContext
-from tools.ap.device import adb, tap_device, swipe_device
-from tools.ap.helpers import has_any, has_text
+from tools.ap.device import adb, tap_device, swipe_device, take_screenshot
+from tools.ap.helpers import has_any, has_text, log_milestone
 from tools.ap.image_proc import (
     smart_tap_button, roi_to_device, ASSET_MANAGER,
     detect_dialog_corners,
@@ -276,6 +277,87 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             tap_device(_tg_x, _tg_y, state, "TUTORIAL_GUIDE_CLOSE")
             state.blob_same_count = 0
             return "CLOSE_POPUP", 1.0
+
+    # ─── 「ご注意」画面 (初回起動時) → 同意ボタンタップ + phash リトライ ───
+    _is_notice_text = any("今日は表示し" in t for t in texts)
+    if not _is_notice_text and (
+        has_text(ocr, "ご注意", min_conf=0.3) or (
+            has_text(ocr, "基本無料", min_conf=0.3) and has_text(ocr, "未成年", min_conf=0.3)
+        )
+    ):
+        agree_btn = (has_text(ocr, "同意してゲーム", min_conf=0.2) or
+                     has_text(ocr, "同意して", min_conf=0.2) or
+                     has_text(ocr, "ゲームを始める", min_conf=0.2))
+        if agree_btn:
+            cx, cy = agree_btn["center"]
+            logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d)", cx, cy)
+        else:
+            cx, cy = roi_to_device(int(W * 0.66), int(H * 0.79), state.game_roi)
+            logger.info(">>> 【ご注意画面】 同意ボタン未検出 → ROI補正フォールバック (%d,%d)", cx, cy)
+        _base_ph = compute_phash(analysis_path) if analysis_path else ""
+        _agree_changed = False
+        for _retry_i in range(5):
+            _tap_x = cx + _retry_i * 20
+            _tap_y = cy
+            tap_device(_tap_x, _tap_y, state,
+                       f"GO_CHUI_AGREE_R{_retry_i}({'OCR' if agree_btn else 'FB'})")
+            logger.info(">>> 【ご注意→phash監視】 #%d タップ(%d,%d) → 待機",
+                        _retry_i + 1, _tap_x, _tap_y)
+            time.sleep(0.3)
+            _new_ss, _, _, _ = take_screenshot()
+            _new_ph = compute_phash(_new_ss)
+            if _base_ph and _new_ph:
+                _dist = phash_distance(_base_ph, _new_ph)
+                if _dist >= PHASH_THRESHOLD:
+                    logger.info(">>> 【ご注意→変化検知!】 #%d phash_dist=%d → 画面安定待ち",
+                                _retry_i + 1, _dist)
+                    _agree_changed = True
+                    break
+                logger.info(">>> 【ご注意→変化なし】 #%d phash_dist=%d → +20px再試行",
+                            _retry_i + 1, _dist)
+                _base_ph = _new_ph
+        if _agree_changed:
+            _poll_ph = _new_ph
+            for _poll_i in range(20):
+                time.sleep(0.5)
+                _poll_ss, _, _, _ = take_screenshot()
+                _poll_new = compute_phash(_poll_ss)
+                if _poll_ph and _poll_new:
+                    _poll_dist = phash_distance(_poll_ph, _poll_new)
+                    if _poll_dist < PHASH_THRESHOLD:
+                        logger.info(">>> 【NOTICE_DISMISS】 画面安定検知 (poll=%d, dist=%d)",
+                                    _poll_i + 1, _poll_dist)
+                        break
+                    _poll_ph = _poll_new
+            else:
+                logger.info(">>> 【NOTICE_DISMISS】 10秒経過 → 続行")
+            log_milestone(state, "NOTICE_DISMISS")
+            return "NOTICE_DISMISS", 0.5
+        else:
+            return "NOTICE_DISMISS", 3.0
+
+    # ─── タイトル画面 (TAP TO START) ───
+    _is_tos_screen = "利用規約" in joined or "同意してゲームを始める" in joined
+    _title_kws_game = ["魔法", "少女", "まどか", "マギカ", "まどかハ", "MADOKA", "MAGICA"]
+    _is_title_screen = (
+        not state.home_reached and not _is_tos_screen and (
+            any(kw in joined for kw in ["TAP TO START", "TAPTOSTART"]) or
+            (any(kw in joined for kw in ["動画配信", "勤画配信", "Ver.2", "Ver.2."])
+             and any(kw in joined for kw in _title_kws_game + ["PUELLA"])) or
+            ("VID" in joined and any(kw in joined for kw in _title_kws_game)) or
+            (any(kw in joined for kw in ["PUELLA MAGI", "PUELLAHAGI", "PUELLAMAGI",
+                                           "PUELLA MAGIMADOKA"])
+             and any(kw in joined for kw in _title_kws_game)
+             and not any(kw in joined for kw in ["クエスト", "ショップ", "ガチャ",
+                                                   "Rank", "Main", "推奨"]))
+        )
+    )
+    if _is_title_screen:
+        logger.info("  タイトル画面検出 → TAP TO START タップ")
+        log_milestone(state, "TITLE_TAP")
+        _tt_x, _tt_y = roi_to_device(int(W * 0.5), int(H * 0.87), state.game_roi)
+        tap_device(_tt_x, _tt_y, state, "TITLE_TAP_START")
+        return "TITLE_TAP", 2.0
 
     # ─── フォールバック: 何も見つからない ───
     logger.info(">>> 画面が安定するまで待機 (OCR %d件)", len(ocr))

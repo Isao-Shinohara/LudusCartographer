@@ -436,6 +436,50 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
         if _popup_home_result is not None:
             return _popup_home_result
 
+    # ── 【お知らせ一覧画面】タブ3つ全て検出 → × で閉じ ──────────
+    _notice_list_tabs = ["お知らせ", "情報", "不具合"]
+    _notice_list_hits = sum(1 for kw in _notice_list_tabs if has_text(ocr, kw, min_conf=0.3))
+    if _notice_list_hits >= 3:
+        _close_m = ASSET_MANAGER.match_single("close_btn", analysis_path)
+        if _close_m and _close_m[2] >= 0.50:
+            tap_device(_close_m[0], _close_m[1], state, "NOTICE_LIST_CLOSE")
+            logger.info(">>> 【お知らせ一覧】 ×テンプレート(%d,%d score=%.2f) で閉じる",
+                        _close_m[0], _close_m[1], _close_m[2])
+            return "NOTICE_LIST_CLOSE", 1.0
+        _nx, _ny = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
+        tap_device(_nx, _ny, state, "NOTICE_LIST_CLOSE_FB")
+        logger.info(">>> 【お知らせ一覧】 × 固定座標(%d,%d) で閉じる", _nx, _ny)
+        return "NOTICE_LIST_CLOSE", 1.0
+
+    # ── 【Android 権限ダイアログ】単独「許可」ボタン ──────────
+    if not ctx.confirm_pos and not _is_battle_ctx:
+        _perm_btn = has_any(ocr, ["許可", "Allow", "ALLOW"])
+        _perm_ctx = has_any(ocr, ["通知", "位置情報", "ストレージ", "カメラ",
+                                   "notification", "permission"])
+        if _perm_btn and _perm_ctx:
+            _pm_x, _pm_y = _perm_btn["center"]
+            logger.info(">>> [PERMISSION] Android権限ダイアログ '%s' (%d,%d) タップ",
+                        _perm_btn["text"], _pm_x, _pm_y)
+            tap_device(_pm_x, _pm_y, state, f"PERMISSION_ALLOW '{_perm_btn['text']}'")
+            return "PERMISSION_ALLOW", 1.0
+
+    # ── 【設定メニュー誤起動】BACK キーで閉じる ──────────
+    _settings_menu_kws = ["サポート", "データ引き継ぎ", "キャッシュクリア", "お問い合わせ"]
+    _story_context_kws = ["1-1", "1-2", "第1幕", "第1階層", "第2幕", "WAVE", "AUTO", "1-3", "2-1"]
+    _in_story_ctx = any(kw in joined for kw in _story_context_kws)
+    _settings_hits = sum(1 for kw in _settings_menu_kws
+                         if has_text(ocr, kw, min_conf=0.3) is not None)
+    if not _in_story_ctx and _settings_hits >= 2:
+        logger.info(">>> 【設定メニュー誤起動】 BACK キーで閉じる")
+        adb("shell input keyevent 4")
+        return "SETTINGS_BACK", 1.5
+
+    # ── 【Play Games ポップアップ】BACK キーで閉じる ──────────
+    if has_text(ocr, "Play Games", min_conf=0.3) or has_text(ocr, "Play ゲーム", min_conf=0.3):
+        logger.info(">>> 【Play Games ポップアップ】 BACK キーで閉じる")
+        adb("shell input keyevent 4")
+        return "PLAY_GAMES_BACK", 1.0
+
     # ── 【確認ダイアログ】OK+Cancel 共存 or 完了通知 → OK タップ ──────────
     # ダイアログ証拠 (四隅テンプレ or 背景ぼかし) を確認してから処理する。
     # 課金保護: 通貨消費KW → キャンセル。スキップ確認 → キャンセル。
