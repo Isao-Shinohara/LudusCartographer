@@ -1104,7 +1104,7 @@ class TestCurrencyDialogProtection:
         s.game_roi = (0, 0, 1520, 720)
         return s
 
-    @patch("tools.ap.handlers.common.tap_device")
+    @patch("tools.ap.handlers.dialog_phase.tap_device")
     def test_currency_dialog_taps_cancel(self, mock_tap, state):
         """OCR に 'マギカストーン50個消費' + OK + キャンセル → Cancel タップ。"""
         from tools.auto_pilot import detect_and_act
@@ -1117,7 +1117,7 @@ class TestCurrencyDialogProtection:
         assert action == "CURRENCY_CANCEL"
         assert mock_tap.called
 
-    @patch("tools.ap.handlers.common.tap_device")
+    @patch("tools.ap.handlers.dialog_phase.tap_device")
     def test_normal_dialog_taps_ok(self, mock_tap, state):
         """OCR に 'データをダウンロード' + OK + キャンセル → OK タップ。"""
         from tools.auto_pilot import detect_and_act

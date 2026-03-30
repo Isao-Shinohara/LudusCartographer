@@ -15,23 +15,17 @@ from __future__ import annotations
 import logging
 import re
 import time
-from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from lc.utils import compute_phash, phash_distance
 from tools.ap.constants import (
     ANALYSIS_W, ANALYSIS_H,
     DOWNLOAD_WAIT, PHASH_THRESHOLD,
-    _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS,
-    _CURRENCY_SPEND_KWS, _OCR_BBOX_Y_PADDING,
 )
 from tools.ap.context import DetectContext
 from tools.ap.device import adb, tap_device, take_screenshot, check_foreground_app
 from tools.ap.helpers import has_any, has_text, log_milestone
-from tools.ap.image_proc import (
-    roi_to_device, detect_dialog_corners, detect_background_blur, imread_cached,
-)
+from tools.ap.image_proc import roi_to_device
 from tools.ap.state import PilotState
 
 logger = logging.getLogger("auto_pilot")
@@ -139,128 +133,14 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
         tap_device(_ok_x, _ok_y, state, "DL_FAIL_RETRY_OK")
         return "DL_FAIL_RETRY", 2.0
 
-    # ── 【#-2.9】確認ダイアログ — 肯定ボタン最優先 ──
-    # (A) OK/はい + キャンセル/いいえ が共存 → 確認ダイアログ → OK を必ずタップ。
-    # (B) 「完了」系テキスト + OK 単独 → 完了通知ダイアログ → OK をタップ。
-    # ダイアログ存在の確認: 四隅テンプレまたは背景ぼかしが必須（動画テキスト誤検出防止）。
-    _confirm_pos = ctx.confirm_pos
-    _confirm_neg = ctx.confirm_neg
-    _is_completion_dialog = _confirm_pos and _dl_is_complete
-    _has_dialog_evidence = False
-    if (_confirm_pos and _confirm_neg) or _is_completion_dialog:
-        if ctx.analysis_path is None:
-            # analysis_path なし → 画像チェック不可、OCR のみで許可
-            _has_dialog_evidence = True
-        elif detect_dialog_corners(ctx.analysis_path):
-            _has_dialog_evidence = True
-        else:
-            _blur_img = imread_cached(ctx.analysis_path)
-            if _blur_img is not None:
-                _bH, _bW = _blur_img.shape[:2]
-                if detect_background_blur(_blur_img, _bH, _bW):
-                    _has_dialog_evidence = True
-        if not _has_dialog_evidence and not _is_completion_dialog:
-            logger.info("[ConfirmDialog] 四隅テンプレ/背景ぼかし未検出 → スキップ")
-    if ((_confirm_pos and _confirm_neg and _has_dialog_evidence) or _is_completion_dialog):
-        # ── 課金保護: 通貨消費キーワード → キャンセル ──
-        _is_currency = any(kw in joined for kw in _CURRENCY_SPEND_KWS)
-        if _is_currency and _confirm_neg:
-            _cn_x, _cn_y = _confirm_neg["center"]
-            _cn_y_adj = max(0, _cn_y - _OCR_BBOX_Y_PADDING)
-            logger.info("[ConfirmDialog] 課金保護: → キャンセル '%s' タップ",
-                        _confirm_neg["text"])
-            tap_device(_cn_x, _cn_y_adj, state,
-                       f"CURRENCY_CANCEL '{_confirm_neg['text']}'")
-            return "CURRENCY_CANCEL", 1.0
-        # ── スキップ確認ダイアログ → キャンセルをタップ (スキップ禁止) ──
-        _is_story_skip_dialog = any("スキップ" in t for t in texts)
-        if _is_story_skip_dialog and _confirm_neg:
-            _cn_x, _cn_y = _confirm_neg["center"]
-            _cn_y_adj = max(0, _cn_y - _OCR_BBOX_Y_PADDING)
-            logger.info(
-                "[ConfirmDialog] スキップ検出 → キャンセル '%s' (%d,%d→Y%d) タップ",
-                _confirm_neg["text"], _cn_x, _cn_y, _cn_y_adj,
-            )
-            tap_device(_cn_x, _cn_y_adj, state, f"STORY_SKIP_CANCEL '{_confirm_neg['text']}'")
-            return "STORY_SKIP_CANCEL", 1.0
-        _cp_x, _cp_y = _confirm_pos["center"]
-        # OCR bbox はテキスト下部パディングを含むため Y を上方補正
-        _cp_y_adj = max(0, _cp_y - _OCR_BBOX_Y_PADDING)
-        _neg_label = _confirm_neg["text"] if _confirm_neg else "(なし)"
-        logger.info(
-            "[ConfirmDialog] '%s' (%d,%d→Y%d) タップ (否定='%s'無視)",
-            _confirm_pos["text"], _cp_x, _cp_y, _cp_y_adj, _neg_label,
-        )
-        # ── デバッグ: ConfirmDialog のスクリーンショットにタップ座標を描画して保存 ──
-        try:
-            import cv2 as _cv2_dbg
-            _dbg_img = _cv2_dbg.imread(str(analysis_path))
-            if _dbg_img is not None:
-                # 肯定ボタン (タップ先) を赤丸で描画
-                _cv2_dbg.circle(_dbg_img, (_cp_x, _cp_y_adj), 15, (0, 0, 255), 3)
-                _cv2_dbg.putText(_dbg_img, f"OK({_cp_x},{_cp_y_adj})",
-                                 (_cp_x - 60, _cp_y_adj - 20),
-                                 _cv2_dbg.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                # 否定ボタンを青丸で描画
-                if _confirm_neg:
-                    _cn_cx, _cn_cy = _confirm_neg["center"]
-                    _cv2_dbg.circle(_dbg_img, (_cn_cx, _cn_cy), 15, (255, 0, 0), 3)
-                    _cv2_dbg.putText(_dbg_img, f"Cancel({_cn_cx},{_cn_cy})",
-                                     (_cn_cx - 80, _cn_cy - 20),
-                                     _cv2_dbg.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
-                # 全OCR結果のbboxも描画
-                for _ocr_item in ocr:
-                    _oc = _ocr_item.get("center")
-                    if _oc:
-                        _cv2_dbg.circle(_dbg_img, (_oc[0], _oc[1]), 5, (0, 255, 0), -1)
-                _dbg_ts = datetime.now().strftime("%H%M%S")
-                _dbg_path = Path("storage/evidence") / f"confirm_dialog_{_dbg_ts}.png"
-                _dbg_path.parent.mkdir(parents=True, exist_ok=True)
-                _cv2_dbg.imwrite(str(_dbg_path), _dbg_img)
-                logger.info("[ConfirmDialog][DEBUG] 座標可視化保存: %s", _dbg_path)
-        except Exception as _dbg_e:
-            logger.debug("[ConfirmDialog][DEBUG] 座標可視化失敗: %s", _dbg_e)
-        # ── DL完了ダイアログ: OCR座標でOKタップ + phash検証 ──
-        if _is_completion_dialog:
-            _base_ph_cd = compute_phash(analysis_path)
-            _tap_variants = [
-                (_cp_x, _cp_y_adj, "OCR"),
-                (_cp_x, max(0, _cp_y_adj - 20), "OCR_UP"),
-                (_cp_x + 30, _cp_y_adj, "OCR_RIGHT"),
-            ]
-            for _tv_i, (_tv_x, _tv_y, _tv_label) in enumerate(_tap_variants):
-                tap_device(_tv_x, _tv_y, state,
-                           f"DL_COMPLETE_OK_R{_tv_i}({_tv_label})")
-                logger.info("[DL_COMPLETE] タップ #%d (%d,%d) [%s] → phash検証",
-                            _tv_i + 1, _tv_x, _tv_y, _tv_label)
-                time.sleep(0.5)
-                _new_ss_cd, _, _, _ = take_screenshot()
-                _new_ph_cd = compute_phash(_new_ss_cd)
-                if _base_ph_cd and _new_ph_cd:
-                    _cd_dist = phash_distance(_base_ph_cd, _new_ph_cd)
-                    if _cd_dist >= PHASH_THRESHOLD:
-                        logger.info("[DL_COMPLETE] 変化検知 (dist=%d) #%d [%s] → 成功",
-                                    _cd_dist, _tv_i + 1, _tv_label)
-                        break
-                    logger.info("[DL_COMPLETE] 変化なし (dist=%d) #%d [%s] → 次座標",
-                                _cd_dist, _tv_i + 1, _tv_label)
-                    _base_ph_cd = _new_ph_cd
-            state.download_active = False
-            logger.info("[DL_PROTECT] DL完了ダイアログOK → download_active 解除")
-            log_milestone(state, "DL_END")
-            return "DL_COMPLETE_OK", 1.0
-        tap_device(_cp_x, _cp_y_adj, state, f"CONFIRM_DIALOG_OK '{_confirm_pos['text']}'")
-        return "ADV_CHOICE", 1.0
+    # 確認ダイアログ (OK+Cancel) は dialog_phase.py に移動済み
 
-    # ── 【#-2.5】SKIP ボタン汎用ハンドラ — 無効化 (ストーリースキップ禁止) ──
-    # ストーリースキップを防止するため、"SKIP"/"スキップ" OCR検出→タップを無効化。
-    # ムービーの⏭ボタンは detect_movie_skip_button() (HSV検出) で別途処理される。
     _in_battle_ctx = ctx.in_battle_ctx
 
     # ── 【#-2.2】Android 権限ダイアログ (単独「許可」ボタン) ──
     # 通知許可等で「許可しない」なしの単独「許可」ダイアログが出ることがある。
     # 確認ダイアログ(#-2.9)は肯定+否定の共存が条件なので、ここで補完する。
-    if not _confirm_pos and not _in_battle_ctx:
+    if not ctx.confirm_pos and not _in_battle_ctx:
         _perm_btn = has_any(ocr, ["許可", "Allow", "ALLOW"])
         _perm_ctx = has_any(ocr, ["通知", "位置情報", "ストレージ", "カメラ",
                                    "notification", "permission"])

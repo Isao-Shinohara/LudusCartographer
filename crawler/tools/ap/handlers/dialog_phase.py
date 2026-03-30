@@ -22,8 +22,9 @@ from tools.ap.constants import (
     _SPATIAL_MARGIN_TOP, _CLOSE_BTN_OFFSET,
     ANALYSIS_W, ANALYSIS_H,
     _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS,
+    _CURRENCY_SPEND_KWS, _OCR_BBOX_Y_PADDING,
     _DIALOG_FIRST_KWS,
-    CLOSE_ACTION_WAIT,
+    CLOSE_ACTION_WAIT, PHASH_THRESHOLD,
 )
 from tools.ap.helpers import has_any, has_text
 from tools.ap.device import adb, tap_device, take_screenshot
@@ -36,8 +37,10 @@ from tools.ap.image_proc import (
     detect_popup_home, detect_popup_home_nav,
     ASSET_MANAGER, prepare_analysis_image,
     roi_to_device, smart_tap_button,
+    detect_background_blur, imread_cached,
 )
 from lc.ocr import run_ocr
+from lc.utils import compute_phash, phash_distance
 
 logger = logging.getLogger("auto_pilot")
 
@@ -432,6 +435,88 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
         _popup_home_result = handle_popup_home(state, analysis_path, ocr_count=len(ocr))
         if _popup_home_result is not None:
             return _popup_home_result
+
+    # ── 【確認ダイアログ】OK+Cancel 共存 or 完了通知 → OK タップ ──────────
+    # ダイアログ証拠 (四隅テンプレ or 背景ぼかし) を確認してから処理する。
+    # 課金保護: 通貨消費KW → キャンセル。スキップ確認 → キャンセル。
+    _confirm_pos = ctx.confirm_pos
+    _confirm_neg = ctx.confirm_neg
+    _dl_is_complete = any("完了" in t or "Complete" in t for t in texts)
+    _is_completion_dialog = _confirm_pos and _dl_is_complete
+    _has_dialog_evidence = False
+    if (_confirm_pos and _confirm_neg) or _is_completion_dialog:
+        if analysis_path is None:
+            _has_dialog_evidence = True
+        elif detect_dialog_corners(analysis_path):
+            _has_dialog_evidence = True
+        else:
+            _blur_img = imread_cached(analysis_path)
+            if _blur_img is not None:
+                _bH, _bW = _blur_img.shape[:2]
+                if detect_background_blur(_blur_img, _bH, _bW):
+                    _has_dialog_evidence = True
+        if not _has_dialog_evidence and not _is_completion_dialog:
+            logger.info("[ConfirmDialog] 四隅テンプレ/背景ぼかし未検出 → スキップ")
+    if ((_confirm_pos and _confirm_neg and _has_dialog_evidence) or _is_completion_dialog):
+        # 課金保護: 通貨消費キーワード → キャンセル
+        _is_currency = any(kw in joined for kw in _CURRENCY_SPEND_KWS)
+        if _is_currency and _confirm_neg:
+            _cn_x, _cn_y = _confirm_neg["center"]
+            _cn_y_adj = max(0, _cn_y - _OCR_BBOX_Y_PADDING)
+            logger.info("[ConfirmDialog] 課金保護: → キャンセル '%s' タップ",
+                        _confirm_neg["text"])
+            tap_device(_cn_x, _cn_y_adj, state,
+                       f"CURRENCY_CANCEL '{_confirm_neg['text']}'")
+            return "CURRENCY_CANCEL", 1.0
+        # スキップ確認ダイアログ → キャンセル (スキップ禁止)
+        _is_story_skip_dialog = any("スキップ" in t for t in texts)
+        if _is_story_skip_dialog and _confirm_neg:
+            _cn_x, _cn_y = _confirm_neg["center"]
+            _cn_y_adj = max(0, _cn_y - _OCR_BBOX_Y_PADDING)
+            logger.info(
+                "[ConfirmDialog] スキップ検出 → キャンセル '%s' (%d,%d→Y%d) タップ",
+                _confirm_neg["text"], _cn_x, _cn_y, _cn_y_adj,
+            )
+            tap_device(_cn_x, _cn_y_adj, state, f"STORY_SKIP_CANCEL '{_confirm_neg['text']}'")
+            return "STORY_SKIP_CANCEL", 1.0
+        _cp_x, _cp_y = _confirm_pos["center"]
+        _cp_y_adj = max(0, _cp_y - _OCR_BBOX_Y_PADDING)
+        _neg_label = _confirm_neg["text"] if _confirm_neg else "(なし)"
+        logger.info(
+            "[ConfirmDialog] '%s' (%d,%d→Y%d) タップ (否定='%s'無視)",
+            _confirm_pos["text"], _cp_x, _cp_y, _cp_y_adj, _neg_label,
+        )
+        # DL完了ダイアログ: phash 検証付きリトライ
+        if _is_completion_dialog:
+            _base_ph_cd = compute_phash(analysis_path)
+            _tap_variants = [
+                (_cp_x, _cp_y_adj, "OCR"),
+                (_cp_x, max(0, _cp_y_adj - 20), "OCR_UP"),
+                (_cp_x + 30, _cp_y_adj, "OCR_RIGHT"),
+            ]
+            for _tv_i, (_tv_x, _tv_y, _tv_label) in enumerate(_tap_variants):
+                tap_device(_tv_x, _tv_y, state,
+                           f"DL_COMPLETE_OK_R{_tv_i}({_tv_label})")
+                logger.info("[DL_COMPLETE] タップ #%d (%d,%d) [%s] → phash検証",
+                            _tv_i + 1, _tv_x, _tv_y, _tv_label)
+                time.sleep(0.5)
+                _new_ss_cd, _, _, _ = take_screenshot()
+                _new_ph_cd = compute_phash(_new_ss_cd)
+                if _base_ph_cd and _new_ph_cd:
+                    _cd_dist = phash_distance(_base_ph_cd, _new_ph_cd)
+                    if _cd_dist >= PHASH_THRESHOLD:
+                        logger.info("[DL_COMPLETE] 変化検知 (dist=%d) #%d [%s] → 成功",
+                                    _cd_dist, _tv_i + 1, _tv_label)
+                        break
+                    logger.info("[DL_COMPLETE] 変化なし (dist=%d) #%d [%s] → 次座標",
+                                _cd_dist, _tv_i + 1, _tv_label)
+                    _base_ph_cd = _new_ph_cd
+            state.download_active = False
+            from tools.ap.helpers import log_milestone as _lm
+            _lm(state, "DL_END")
+            return "DL_COMPLETE_OK", 1.0
+        tap_device(_cp_x, _cp_y_adj, state, f"CONFIRM_DIALOG_OK '{_confirm_pos['text']}'")
+        return "ADV_CHOICE", 1.0
 
     # ── 【お知らせポップアップ検出】PRE_DIALOG_GUARD バイパス ──────────
     _is_notice = False
