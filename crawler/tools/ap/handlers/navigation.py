@@ -88,10 +88,10 @@ def handle_menu_stall_recovery(
 ) -> Optional[tuple[str, float]]:
     """メニュー画面でスタックした際の救済処理。
 
-    アクションを実行しても phash/OCR に変化がない場合、
+    タップしても phash/OCR に変化がない状態が続いた場合、
     左上にメニューキーワード + icon_back テンプレがあれば戻るボタンを押す。
     """
-    if state.action_repeat_count < _MENU_STALL_THRESHOLD:
+    if state.ineffective_tap_count < _MENU_STALL_THRESHOLD:
         return None
     if ctx.in_battle_ctx:
         return None

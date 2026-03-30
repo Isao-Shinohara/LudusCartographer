@@ -71,6 +71,9 @@ class PilotState:
     home_reached: bool = False
     tutorial_cleared: bool = False  # True: ホームチュートリアル完了確認済み (指/金枠検出スキップ)
     total_taps: int = 0
+    ineffective_tap_count: int = 0  # タップしたのに画面変化なしの連続回数 (メニュースタック救済用)
+    _prev_taps_snapshot: int = 0    # 前回イテレーション開始時の total_taps (変化検出用)
+    _prev_ocr_texts: list = field(default_factory=list)  # 前回の OCR テキスト (変化検出用)
     total_ocr_calls: int = 0
     total_ocr_skipped: int = 0
     total_blackout_skipped: int = 0

@@ -250,15 +250,6 @@ def collect_secondary_candidates(
                 x=_nx, y=_ny, action=f"CAND_DIALOG_{_nav_type.upper()}",
                 priority=10, desc=f"dialog {_nav_type}"))
 
-    # ── 2. 金枠ボタン (priority=20) ──
-    if primary_action != "GOLD_BTN_TAP" and analysis_path is not None:
-        gold_btn = detect_tutorial_gold_button_tap(
-            analysis_path, right_half_only=False)
-        if gold_btn:
-            candidates.append(TapCandidate(
-                x=gold_btn[0], y=gold_btn[1], action="CAND_GOLD_BTN",
-                priority=20, desc="gold button"))
-
     # ソート & 制限
     candidates.sort(key=lambda c: c.priority)
     return candidates[:_MAX_CANDIDATES]
@@ -2736,6 +2727,17 @@ def main():
                     logger.info("[MINI_CONV_RAPID] リトライ %d 回超 → OCR フォールスルー", _retry)
                     state._mini_conv_retry_count = 0
 
+        # ── ineffective_tap_count 更新 (メニュースタック救済用) ──
+        # 前回イテレーションでタップしたのに phash/OCR が変化なし → カウントアップ
+        _prev_tapped = state.total_taps > state._prev_taps_snapshot
+        _ocr_changed = texts != state._prev_ocr_texts
+        state._prev_taps_snapshot = state.total_taps
+        state._prev_ocr_texts = texts
+        if screen_changed or _ocr_changed:
+            state.ineffective_tap_count = 0
+        elif _prev_tapped:
+            state.ineffective_tap_count += 1
+
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
             state.same_phash_count = 0
@@ -3409,8 +3411,11 @@ def main():
                 logger.info("[MOVIE→UNKNOWN] テンプレタップ抑制 → MOVIE再判定待ち")
                 action, wait_sec = "MOVIE_WAIT", 1.0
         else:
+            _taps_before = state.total_taps
             action, wait_sec = detect_and_act(ocr_results, state, analysis_path,
                                                   adv_result=_adv_result)
+            _taps_after = state.total_taps
+            _did_tap = _taps_after > _taps_before
         state.last_action = action
         # ── ホーム画面到達 ──
         if action == "GOAL_HOME_REACHED":
