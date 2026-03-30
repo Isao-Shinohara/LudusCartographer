@@ -949,6 +949,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 _tip_x, _tip_y = _fm[0], _fm[1]
                 state._tutorial_tap_target = (_tip_x, _tip_y)
                 state._tutorial_tap_dir = _fm[3]
+                state._tutorial_tap_gold_center = _gf_hsv  # 金枠中心座標
                 # 新しい指検出 → カウンタリセット (前回と大きく異なる位置なら再試行)
                 # ±10px 以内は同一位置とみなす (指アイコンのアニメーション揺れ対策)
                 _prev_tt = getattr(state, "_prev_tutorial_tap_target", None)
@@ -2561,14 +2562,22 @@ def main():
             continue
 
         if _early_scene == "TUTORIAL_TAP":
-            # 指+金枠シーン: 指先位置を段階的にタップ (30→60→90px)
+            # 指+金枠シーン: 金枠中心 → 指先オフセット の順でタップ
             # 画面変化なし → 次の候補にエスカレーション → 全失敗で OCR フォールバック
             state.current_scene = "UNKNOWN"
             _tt = getattr(state, "_tutorial_tap_target", None)
+            _tt_gold = getattr(state, "_tutorial_tap_gold_center", None)
             _tt_attempt = getattr(state, "_tutorial_tap_attempt", 0)
             _TT_OFFSETS = [0, 30, 60, 90, 120, 150]  # 追加オフセット (指先からさらに先)
-            if _tt and _tt_attempt < len(_TT_OFFSETS):
-                _extra = _TT_OFFSETS[_tt_attempt]
+            # 試行0: 金枠中心を最優先タップ
+            if _tt and _tt_attempt == 0 and _tt_gold:
+                _tap_x, _tap_y = _tt_gold
+                tap_device(_tap_x, _tap_y, state, "TUTORIAL_TAP_EARLY")
+                logger.info("[TUTORIAL_TAP] 金枠中心(%d,%d) タップ (試行1/%d)",
+                            _tap_x, _tap_y, len(_TT_OFFSETS) + 1)
+                state._tutorial_tap_attempt = 1
+            elif _tt and _tt_attempt > 0 and (_tt_attempt - 1) < len(_TT_OFFSETS):
+                _extra = _TT_OFFSETS[_tt_attempt - 1]
                 _tap_x, _tap_y = _tt[0], _tt[1]
                 # 指の方向に追加オフセット
                 _tt_dir = getattr(state, "_tutorial_tap_dir", "")
@@ -2582,11 +2591,11 @@ def main():
                     _tap_x += _extra
                 tap_device(_tap_x, _tap_y, state, "TUTORIAL_TAP_EARLY")
                 logger.info("[TUTORIAL_TAP] 指先(%d,%d) +%dpx タップ (試行%d/%d)",
-                            _tap_x, _tap_y, _extra, _tt_attempt + 1, len(_TT_OFFSETS))
+                            _tap_x, _tap_y, _extra, _tt_attempt + 1, len(_TT_OFFSETS) + 1)
                 state._tutorial_tap_attempt = _tt_attempt + 1
             else:
                 # 全候補失敗 → OCR フォールバック
-                logger.info("[TUTORIAL_TAP] 3候補全失敗 → OCR フォールバック")
+                logger.info("[TUTORIAL_TAP] 全候補失敗 → OCR フォールバック")
                 state._tutorial_tap_attempt = 0
                 # UNKNOWN のまま OCR パスに落ちる (continue しない)
                 _fms = (time.time() - _loop_t0) * 1000
@@ -2595,7 +2604,8 @@ def main():
                 screen_changed = True  # OCR パスに進む
                 # continue しない → OCR パスにフォールスルー
                 pass
-            if _tt and _tt_attempt < len(_TT_OFFSETS):
+            _tt_total = len(_TT_OFFSETS) + (1 if _tt_gold else 0)
+            if _tt and state._tutorial_tap_attempt < _tt_total:
                 state.last_phash = ""
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
