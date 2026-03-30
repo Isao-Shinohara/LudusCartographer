@@ -214,7 +214,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     _is_battle_tut_context = any(kw in joined for kw in _battle_tut_kws)
     # バトルUI確認済みの場合はフッター外GoldBtnをスキップ → Glow SM (フッター) に委ねる
     if analysis_path is not None and _is_battle_tut_context and not ctx.in_battle_ctx and not state.download_active:
-        _gold_btn = find_gold_button(analysis_path, right_half_only=True)
+        _gold_btn = find_gold_button(analysis_path)
         if _gold_btn:
             _bx, _by = _gold_btn
             logger.info(">>> [GoldBtn] 金枠ボタン検出 → tap(%d,%d)", _bx, _by)

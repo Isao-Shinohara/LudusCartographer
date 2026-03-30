@@ -486,7 +486,7 @@ def _battle_fast_check(analysis_path: Path,
     if _confirmed_battle_ui:
         logger.debug("[FAST] バトルUI確認済み → GoldBtn スキップ (フッター発光SMへ委譲)")
     else:
-        gb = find_gold_button(analysis_path, right_half_only=True)
+        gb = find_gold_button(analysis_path)
         if gb:
             gx, gy = gb
             logger.info("[FAST] GoldBtn → tap(%d,%d)", gx, gy)
@@ -932,7 +932,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # 金枠単独だと動画装飾で偽陽性 → 指テンプレとの共検出を必須化
     # ただしガチャ演出 (SKIP + 暗背景) は金枠装飾があっても GACHA として通す
     if img_path and not state.download_active:
-        _gf_hsv = find_gold_button(img_path, right_half_only=False)
+        _gf_hsv = find_gold_button(img_path)
         if _gf_hsv:
             # ガチャ演出チェック: SKIP + 暗背景 + 光の玉 → GACHA (金枠スキップしない)
             if is_gacha_scene(img_path):
@@ -1252,20 +1252,16 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     # BATTLE: 右半分のみ (左側キャラアイコンの菱形装飾を金枠と誤検出するため)
     # ただしチュートリアル指テンプレが左側で検出された場合は全画面探索を許可
     # (必殺技チュートリアル等で左側キャラカードをタップさせるケース)
-    _battle_rho = True  # right_half_only default
     _fm = _rapid_finger_rot  # 指テンプレマッチ結果 (cx, cy, score, direction)
-    if _fm and _fm[2] >= 0.70 and _fm[0] < ANALYSIS_W * 0.5:
-        _battle_rho = False
-        logger.info("[BATTLE] 指テンプレ左側検出 (x=%d) → 金枠全画面探索", _fm[0])
     _gold_tap = find_gold_button(
-        analysis_path, right_half_only=_battle_rho, overlay_mode=False,
+        analysis_path, overlay_mode=False,
         skip_upper_filter=True)
     if _gold_tap:
         _rapid_tx, _rapid_ty = _gold_tap
         _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
     # 指テンプレ検出済み + gold_button未検出 → 指テンプレ位置から金枠を探索
     # 指テンプレ名から方向を取得し、指の指す先の金枠のみ採用
-    if not _rapid_action and not _battle_rho and _fm is not None:
+    if not _rapid_action and _fm is not None:
         _finger_dir = _fm[3]
         _gf_from_finger = find_gold_frame_near(
             analysis_path, _fm[0], _fm[1], search_radius=400, direction=_finger_dir)
@@ -1281,9 +1277,8 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
         _rb = _rapid_blobs[0]
         _gf = find_gold_frame_near(analysis_path, _rb[0], _rb[1], search_radius=200)
         if _gf is not None:
-            # バトル中: 右半分・下部のみ有効 (上部UI・左キャラ排除)
-            # 左側指テンプレ検出時 (_battle_rho=False) はバイパス
-            if not _battle_rho or (_gf[0] >= ANALYSIS_W * 0.5 and _gf[1] >= ANALYSIS_H * 0.35):
+            # 上部UI排除 (y > 35%)
+            if _gf[1] >= ANALYSIS_H * 0.35:
                 _rapid_tx, _rapid_ty = _gf[0], _gf[1]
                 _rapid_action = "BATTLE_RAPID_GOLD_FRAME_FALLBACK"
                 logger.info("[BATTLE_RAPID] 金枠フォールバック: finger(%d,%d) → gold(%d,%d)",
@@ -3138,14 +3133,12 @@ def main():
                     _rapid_blobs = [(_rf_cx, _rf_cy, _rapid_finger_rot[2])]
 
             # ── Phase 0: チュートリアル金枠 → 最優先タップ ──
-            # 指ブロブ有無に関わらず金枠を常時チェック (extent<0.55 で通常ボタンと区別)
-            # バトル中: 右半分のみ + overlay_mode=False (暗い背景で誤判定するため)
-            # 非バトル: 全画面 + overlay 判定あり
-            _gold_rho2 = state.current_scene == "BATTLE"
-            _is_overlay2 = False if _gold_rho2 else detect_tutorial_overlay(analysis_path)
+            # 金枠を常時チェック (暗転オーバーレイ判定で誤検出防止)
+            _is_battle2 = state.current_scene == "BATTLE"
+            _is_overlay2 = False if _is_battle2 else detect_tutorial_overlay(analysis_path)
             _gold_tap = find_gold_button(
-                analysis_path, right_half_only=_gold_rho2, overlay_mode=_is_overlay2,
-                skip_upper_filter=_gold_rho2)
+                analysis_path, overlay_mode=_is_overlay2,
+                skip_upper_filter=_is_battle2)
             if _gold_tap:
                 _rapid_tx, _rapid_ty = _gold_tap
                 _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
