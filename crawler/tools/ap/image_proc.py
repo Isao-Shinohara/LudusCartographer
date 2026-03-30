@@ -1778,8 +1778,8 @@ def detect_popup_home(
         return False
     _H, _W = img.shape[:2]
     # 1. popup_home_next テンプレマッチ (ROI制限 + 2テンプレ)
-    _mv = _match_popup_next_roi(img, _H, _W, threshold=0.89)
-    if _mv < 0.89:
+    _mv = _match_popup_next_roi(img, _H, _W, threshold=0.85)
+    if _mv < 0.85:
         return False
     # 2. ページドット
     _dots = count_page_dots(img_path)
