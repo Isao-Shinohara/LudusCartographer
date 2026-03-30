@@ -3295,7 +3295,8 @@ def main():
         _prev_tapped = state.total_taps > state._prev_taps_snapshot
         _ocr_changed = True  # デフォルト: 変化あり
         _prev_txts = state._prev_ocr_texts
-        if len(_prev_txts) == len(texts) and len(texts) > 0:
+        _max_len = max(len(_prev_txts), len(texts))
+        if _max_len > 0:
             _used: set[int] = set()
             _matched = 0
             for _t1 in _prev_txts:
@@ -3310,9 +3311,9 @@ def main():
                 if _best_sim >= 0.7 and _best_j >= 0:
                     _matched += 1
                     _used.add(_best_j)
-            _ocr_changed = (_matched / len(texts)) < 0.8
-        elif len(_prev_txts) == 0 and len(texts) == 0:
-            _ocr_changed = False
+            _ocr_changed = (_matched / _max_len) < 0.8
+        else:
+            _ocr_changed = False  # 両方空
         state._prev_taps_snapshot = state.total_taps
         state._prev_ocr_texts = texts
         # phash が実際に変化した場合のみリセット (強制OCR の screen_changed=True は除外)
