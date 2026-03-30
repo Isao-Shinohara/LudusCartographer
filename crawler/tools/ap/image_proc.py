@@ -2133,104 +2133,48 @@ def detect_tutorial_gold_button_tap(img_path: Path,
                                     has_finger: bool = False,
                                     ) -> Optional[tuple[int, int]]:
     """
-    チュートリアルバトルで指アイコンが指し示す「金枠ハイライトボタン」を検出し
-    タップ座標（ボタン中心）を返す。
+    チュートリアルの「金枠ハイライトボタン」を検出しタップ座標を返す。
 
-    条件:
-    - アスペクト比 0.5~2.0 (正方形〜縦長のボタン形状)
-    - 面積 8000~50000px² (ボタン相当の大きさ)
-    - 幅 80px以上 (細い軌跡線は除外)
-    - right_half_only=True の場合: x中心 > W/2 のみ有効 (右側ボタン優先)
-    - overlay_mode=True の場合: チュートリアル暗転確定 → 上部除外・右半分フィルタをバイパス
+    内部で find_gold_frame_near を使用し、HSV 検出ロジックを共通化。
+    フィルタ条件 (right_half_only, 上部除外等) は維持。
 
-    デバッグ画像: crawler/templates/tutorial/gold_btn_HHMMSS.png に自動保存。
     Returns: (tap_x, tap_y) or None
     """
     try:
-        img = imread_cached(img_path)
-        if img is None:
-            return None
-        H_img, W_img = img.shape[:2]
+        W_img, H_img = ANALYSIS_W, ANALYSIS_H
 
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        lower_gold = np.array([15, 120, 180], dtype=np.uint8)
-        upper_gold = np.array([50, 255, 255], dtype=np.uint8)
-        mask = cv2.inRange(hsv, lower_gold, upper_gold)
-
-        # モルフォロジー: 枠線の隙間を埋めて矩形を繋ぐ (膨張は1回に抑制→bbox下方ズレ防止)
-        k7 = np.ones((7, 7), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k7)
-        mask = cv2.dilate(mask, k7, iterations=1)
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
+        # 画面中央を起点に広範囲で金枠を探索
+        _search_cx = int(W_img * 0.75) if right_half_only else int(W_img * 0.5)
+        _search_cy = int(H_img * 0.6)
+        _result = find_gold_frame_near(
+            img_path, _search_cx, _search_cy, search_radius=max(W_img, H_img))
+        if _result is None:
             return None
 
-        # ボタン候補: アスペクト比0.5~2.0 かつ面積8000~50000 かつ幅80px以上
-        # キャラアイコン除外: 金色の充填率 (extent) が高い = アイコン (金色が密)
-        #   チュートリアルボタン = 金色の枠線のみ → extent 低め (<0.55)
-        candidates = []
-        for c in contours:
-            area = cv2.contourArea(c)
-            if area < 8000 or area > 50000:
-                continue
-            x, y, w, h = cv2.boundingRect(c)
-            if w < 80:
-                continue
-            # 充填率: 金色ピクセル密度 (キャラアイコンは金色が密集、ボタン枠は枠線のみ)
-            bbox_area = w * h
-            extent = area / max(bbox_area, 1)
-            # right_half_only (バトル) では右半分にキャラアイコンがないため閾値を緩和
-            # 戦闘スキルボタンは morphology 後に extent=0.7-0.8 になるため 0.55 では弾かれる
-            _extent_limit = 0.85 if right_half_only else 0.55
-            if extent > _extent_limit:
-                logger.debug("[GoldBtn] 充填率排除: bbox=(%d,%d,%d,%d) extent=%.2f > %.2f (キャラアイコン疑い)",
-                             x, y, w, h, extent, _extent_limit)
-                continue
-            aspect = h / max(w, 1)
-            if 0.5 <= aspect <= 2.0:
-                cx = x + w // 2
-                # bbox 中心ではなく下寄り (60%) を使用
-                # 指ポインタの金色が bbox 上端を押し上げるため、中心では上にずれる
-                cy = y + int(h * 0.6)
-                # 画面上部 (y<35%) は除外 — ホーム画面装飾の誤検出防止
-                # overlay_mode / skip_upper_filter 時はバイパス
-                if not overlay_mode and not skip_upper_filter and cy < H_img * 0.35:
-                    logger.debug("[GoldBtn] 上部除外: bbox=(%d,%d,%d,%d) cy=%d", x, y, w, h, cy)
-                    continue
-                # 右半分のみフィルタ (overlay_mode 時はバイパス)
-                if right_half_only and not overlay_mode and cx < W_img * 0.5:
-                    continue
-                candidates.append((cx, cy, area, x, y, w, h))
+        cx, cy, w, h = _result
+        area = w * h
+        x, y = cx - w // 2, cy - h // 2
 
-        if not candidates:
+        # アスペクト比フィルタ (0.5~2.0)
+        aspect = h / max(w, 1)
+        if aspect < 0.5 or aspect > 2.0:
+            logger.debug("[GoldBtn] アスペクト比除外: (%d,%d) %dx%d asp=%.2f", x, y, w, h, aspect)
             return None
 
-        # 最大面積のボタン候補を選択
-        best = max(candidates, key=lambda c: c[2])
-        tap_x, tap_y, area_b, x_b, y_b, w_b, h_b = best
+        # 画面上部 (y<35%) は除外 — ホーム画面装飾の誤検出防止
+        if not overlay_mode and not skip_upper_filter and cy < H_img * 0.35:
+            logger.debug("[GoldBtn] 上部除外: (%d,%d) %dx%d cy=%d", x, y, w, h, cy)
+            return None
 
-        # ── デバッグ/テンプレート保存 (--verbose 時のみ) ──
-        if _DEBUG_SAVE_IMAGES:
-            tut_dir = _CRAWLER_ROOT / "templates" / "tutorial"
-            tut_dir.mkdir(parents=True, exist_ok=True)
-            ts = datetime.now().strftime("%H%M%S")
-            vis = img.copy()
-            cv2.rectangle(vis, (x_b, y_b), (x_b + w_b, y_b + h_b), (255, 0, 0), 3)
-            cv2.circle(vis, (tap_x, tap_y), 12, (0, 255, 255), -1)
-            cv2.putText(vis, f"GoldBtn area={int(area_b)} asp={h_b/max(w_b,1):.1f}",
-                        (x_b, max(0, y_b - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-            cv2.imwrite(str(tut_dir / f"gold_btn_{ts}.png"), vis)
-            roi = img[y_b:y_b + h_b, x_b:x_b + w_b]
-            if roi.size > 0:
-                cv2.imwrite(str(tut_dir / f"gold_btn_roi_{ts}.png"), roi)
+        # 右半分のみフィルタ (overlay_mode 時はバイパス)
+        if right_half_only and not overlay_mode and cx < W_img * 0.5:
+            logger.debug("[GoldBtn] 左半分除外: (%d,%d) %dx%d cx=%d", x, y, w, h, cx)
+            return None
 
         logger.info("[GoldBtn] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f → tap(%d,%d)",
-                    area_b, x_b, y_b, w_b, h_b, h_b / max(w_b, 1), tap_x, tap_y)
-        return tap_x, tap_y
+                    area, x, y, w, h, aspect, cx, cy)
+        return cx, cy
 
-    except ImportError:
-        return None
     except Exception as e:
         logger.debug("detect_tutorial_gold_button_tap error: %s", e)
         return None
