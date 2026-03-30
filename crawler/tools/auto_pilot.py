@@ -3428,8 +3428,8 @@ def main():
         _from_movie_ttl = getattr(state, "_from_movie_ttl", 0)
         # タイトル画面・ホーム画面はTTL抑制の例外
         _is_title = any("Ver." in t or "Ver.2" in t for t in texts) and any("プレイヤーID" in t for t in texts)
-        from tools.ap.constants import count_home_nav_keywords
-        _is_home = count_home_nav_keywords(texts) >= 3
+        from tools.ap.image_proc import count_home_nav_templates
+        _is_home = count_home_nav_templates(analysis_path) >= 3 if analysis_path else False
         _is_battle = state.current_scene == "BATTLE"
         if (_is_title or _is_home or _is_battle) and _from_movie_ttl > 0:
             _reason = "タイトル画面" if _is_title else "ホーム画面" if _is_home else "バトル中"

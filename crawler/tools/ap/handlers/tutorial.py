@@ -18,7 +18,6 @@ from tools.ap.constants import (
     BATTLE_WAIT, PHASH_THRESHOLD,
     _DIALOG_FIRST_KWS, _BATTLE_UI_KWS,
     _CLOSE_BTN_OFFSET,
-    count_home_nav_keywords,
 )
 from tools.ap.device import adb, tap_device, swipe_device, take_screenshot
 from tools.ap.helpers import (
@@ -166,7 +165,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     # バトルUI（通常攻撃・単体攻撃・WAVE・Turn）が見えるとき はバトル中なのでスキップ
     _is_battle_ui = any(kw in joined for kw in _BATTLE_UI_KWS)
     _has_dialog_kw = any(kw in joined for kw in _DIALOG_FIRST_KWS)
-    _is_home_screen = count_home_nav_keywords(texts) >= 3
+    from tools.ap.image_proc import count_home_nav_templates
+    _is_home_screen = count_home_nav_templates(analysis_path) >= 3 if analysis_path else False
     if analysis_path is not None and not _is_battle_ui and not ctx.adv_result.is_adv and not _has_dialog_kw and not _is_home_screen and not state.post_download:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:

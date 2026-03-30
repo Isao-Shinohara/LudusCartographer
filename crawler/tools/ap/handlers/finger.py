@@ -107,12 +107,8 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
             return "TITLE_TAP", 2.0
         # ホーム画面検出: フッターエリア (y > H*0.85) のナビキーワードが2個以上
         # フッター以外 (編成メニュー内の「パーティ」等) は誤検出になるため除外
-        from tools.ap.constants import count_home_nav_keywords
-        _footer_y_min = int(H * 0.85)
-        _footer_ocr = [item for item in ocr
-                       if item.get("center", (0, 0))[1] >= _footer_y_min]
-        _footer_texts = [item.get("text", "") for item in _footer_ocr]
-        _home_kw_count = count_home_nav_keywords(_footer_texts)
+        from tools.ap.image_proc import count_home_nav_templates
+        _home_kw_count = count_home_nav_templates(analysis_path) if analysis_path else 0
         # ── Result画面ハンドラ (OCR mode) ──
         if not is_battle_screen:
             _result_ocr = handle_result_screen(state, analysis_path, ocr, state.last_phash_dist, mode="OCR")

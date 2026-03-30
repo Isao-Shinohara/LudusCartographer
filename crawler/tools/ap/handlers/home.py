@@ -69,11 +69,8 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     # フッター領域 (y > 80%) の OCR テキストのみ対象
     # OCR が文字を途中で切る場合がある ("クエスト"→"クエス", "パーティ"→"パーテ")
     # → 短いプレフィックスで双方向部分一致: keyword in text OR text in keyword
-    _footer_y_min = int(H * 0.80)
-    _footer_texts = [item.get("text", "") for item in ocr
-                     if item.get("center", (0, 0))[1] >= _footer_y_min]
-    from tools.ap.constants import count_home_nav_keywords
-    home_count = count_home_nav_keywords(_footer_texts)
+    from tools.ap.image_proc import count_home_nav_templates
+    home_count = count_home_nav_templates(analysis_path) if analysis_path else 0
     if home_count < 3:
         return None
 

@@ -76,6 +76,7 @@ def count_home_nav_keywords(texts: list[str]) -> int:
 
     texts: OCR テキストのリスト。
     プレフィックス部分一致 + 双方向部分一致で判定。
+    ※ テンプレマッチ版 count_home_nav_templates を優先使用。
     """
     matched: set[int] = set()
     for t in texts:
@@ -83,6 +84,11 @@ def count_home_nav_keywords(texts: list[str]) -> int:
             if idx not in matched and (kw in t or prefix in t or t in kw):
                 matched.add(idx)
     return len(matched)
+
+
+# ─── フッターナビ テンプレート名プレフィクス ───
+# footer_home_xxx.png, footer_home_xxx_2.png 等をグロブで自動収集
+FOOTER_HOME_TEMPLATE_PREFIX = "footer_home_"
 
 # ─── 確認ダイアログ キーワード (複数箇所で共有) ───
 _CONFIRM_POS_KWS: list[str] = ["OK", "はい", "わかった", "了解", "決定", "許可", "Allow", "ALLOW", "リトライ", "Retry", "挑戦"]
@@ -118,6 +124,9 @@ _SINGLE_ONLY: frozenset = frozenset([
     "popup_home_next",        # ホームポップアップ専用 (detect_popup_home で使用)
     "popup_home_next_dark",   # ホームポップアップ専用 (暗背景用)
     "popup_home_close",       # ホームポップアップ専用 (detect_popup_home_nav で使用)
+    # フッターナビ (ホーム画面検出専用)
+    "footer_home_hikari", "footer_home_gacha", "footer_home_party",
+    "footer_home_pmatch", "footer_home_quest", "footer_home_union", "footer_home_shop",
 ])
 
 # ─── ダイアログ・ファースト: 検知キーワード一覧 ───────────────────────────────

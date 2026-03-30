@@ -68,6 +68,73 @@ def imread_analysis(path, flags: int = cv2.IMREAD_COLOR) -> Optional[np.ndarray]
     return resized
 
 
+# ─── フッターナビ テンプレマッチ (ホーム画面検出) ─────────────────────
+# footer_home_*.png を自動収集し、下部20%の ROI でマッチング。
+# 同一グループ (例: footer_home_quest, footer_home_quest_2) は最高スコアを採用。
+_FOOTER_HOME_TEMPLATES: dict[str, list[np.ndarray]] = {}  # group_name → [gray_template, ...]
+_FOOTER_HOME_LOADED = False
+
+
+def _load_footer_home_templates() -> None:
+    """footer_home_*.png テンプレートを自動収集して _FOOTER_HOME_TEMPLATES に格納。"""
+    global _FOOTER_HOME_LOADED
+    if _FOOTER_HOME_LOADED:
+        return
+    _FOOTER_HOME_LOADED = True
+    from tools.ap.constants import FOOTER_HOME_TEMPLATE_PREFIX
+    _tpl_dir = _CRAWLER_ROOT / "assets" / "templates"
+    for _p in sorted(_tpl_dir.glob(f"{FOOTER_HOME_TEMPLATE_PREFIX}*.png")):
+        _name = _p.stem  # e.g. "footer_home_quest" or "footer_home_quest_2"
+        # グループ名: 末尾の _N を除去 (footer_home_quest_2 → footer_home_quest)
+        _parts = _name.split("_")
+        if _parts[-1].isdigit():
+            _group = "_".join(_parts[:-1])
+        else:
+            _group = _name
+        _img = cv2.imread(str(_p), cv2.IMREAD_GRAYSCALE)
+        if _img is not None:
+            _FOOTER_HOME_TEMPLATES.setdefault(_group, []).append(_img)
+    if _FOOTER_HOME_TEMPLATES:
+        logger.info("[FooterHome] %d グループ, %d テンプレ読込",
+                    len(_FOOTER_HOME_TEMPLATES),
+                    sum(len(v) for v in _FOOTER_HOME_TEMPLATES.values()))
+
+
+def count_home_nav_templates(img_path: Path, threshold: float = 0.75) -> int:
+    """フッターナビ テンプレマッチでホーム画面のナビアイコン数を返す。
+
+    下部20%の ROI で各テンプレをマッチし、閾値以上のグループ数を返す。
+    同一グループに複数バリアントがある場合、最高スコアを採用。
+    """
+    _load_footer_home_templates()
+    if not _FOOTER_HOME_TEMPLATES:
+        return 0
+    img = imread_analysis(img_path)
+    if img is None:
+        return 0
+    _H, _W = img.shape[:2]
+    # ROI: 下部25% (フッターナビ領域 — テンプレ高さのマージン確保)
+    _y1 = int(_H * 0.75)
+    _roi = img[_y1:_H, :]
+    if _roi.size == 0:
+        return 0
+    _gray_roi = cv2.cvtColor(_roi, cv2.COLOR_BGR2GRAY)
+
+    _matched = 0
+    for _group, _templates in _FOOTER_HOME_TEMPLATES.items():
+        _best_score = 0.0
+        for _tpl in _templates:
+            if _tpl.shape[0] > _gray_roi.shape[0] or _tpl.shape[1] > _gray_roi.shape[1]:
+                continue
+            _r = cv2.matchTemplate(_gray_roi, _tpl, cv2.TM_CCOEFF_NORMED)
+            _, _mv, _, _ = cv2.minMaxLoc(_r)
+            if _mv > _best_score:
+                _best_score = _mv
+        if _best_score >= threshold:
+            _matched += 1
+    return _matched
+
+
 def detect_game_roi(img) -> tuple[int, int, int, int]:
     """
     スクリーンショットの黒帯（レターボックス）を検出し、純粋なゲーム描画領域を返す。

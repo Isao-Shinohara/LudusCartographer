@@ -178,8 +178,8 @@ def main():
         texts_str = " ".join(texts)
 
         # ホーム画面チェック
-        from tools.ap.constants import count_home_nav_keywords
-        home_count = count_home_nav_keywords(texts)
+        from tools.ap.image_proc import count_home_nav_templates
+        home_count = count_home_nav_templates(ss) if ss else 0
         if home_count >= 3:
             logger.info(">>> ホーム画面到達！ (%d indicators)", home_count)
             return
