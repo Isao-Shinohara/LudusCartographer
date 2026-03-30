@@ -698,6 +698,16 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
                 logger.debug("[find_gold_frame_near] solidity=%.2f < 0.5 → 非矩形、スキップ (area=%d)",
                              _solidity, int(_a))
                 continue
+            # 発光チェック: 金枠は発光して高輝度、地面テクスチャはくすんだ金色
+            _cbx, _cby, _cbw, _cbh = cv2.boundingRect(_c)
+            _bbox_region = _roi[_cby:_cby + _cbh, _cbx:_cbx + _cbw]
+            if _bbox_region.size > 0:
+                _gray_region = cv2.cvtColor(_bbox_region, cv2.COLOR_BGR2GRAY)
+                _p90 = float(np.percentile(_gray_region, 90))
+                if _p90 < 180:
+                    logger.debug("[find_gold_frame_near] p90=%.0f < 180 → 発光なし、スキップ (area=%d)",
+                                 _p90, int(_a))
+                    continue
             _best = _c
             break
         if _best is None:
