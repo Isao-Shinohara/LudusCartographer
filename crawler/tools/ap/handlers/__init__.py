@@ -42,11 +42,6 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     if r is not None:
         return r
 
-    # Phase 2: クエスト/UI 早期検出 (MAIN STORY, Result早期, クエスト詳細)
-    r = handle_quest_early(ctx, state)
-    if r is not None:
-        return r
-
     # Phase 3: バトル前ガード + ダイアログハンドラ
     r = handle_dialog_phase(ctx, state)
     if r is not None:
@@ -74,6 +69,11 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
 
     # Phase 8: シーン固有 (DL二次, クエストマップ, バトルOCR, バトル結果, ADV)
     r = handle_scene_specific(ctx, state)
+    if r is not None:
+        return r
+
+    # Phase 8.2: クエスト/UI 検出 (MAIN STORY, Result, クエスト詳細)
+    r = handle_quest_early(ctx, state)
     if r is not None:
         return r
 
