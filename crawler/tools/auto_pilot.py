@@ -3287,8 +3287,14 @@ def main():
 
         # ── ineffective_tap_count 更新 (メニュースタック救済用) ──
         # 前回イテレーションでタップしたのに phash/OCR が変化なし → カウントアップ
+        # OCR 変化判定: OCRノイズ (1文字の誤読差分) を吸収するため、
+        # 共通テキスト数が全体の80%以上なら「変化なし」とみなす
         _prev_tapped = state.total_taps > state._prev_taps_snapshot
-        _ocr_changed = texts != state._prev_ocr_texts
+        _prev_texts_set = set(state._prev_ocr_texts)
+        _curr_texts_set = set(texts)
+        _common = len(_prev_texts_set & _curr_texts_set)
+        _total = max(len(_prev_texts_set), len(_curr_texts_set), 1)
+        _ocr_changed = (_common / _total) < 0.8
         state._prev_taps_snapshot = state.total_taps
         state._prev_ocr_texts = texts
         if screen_changed or _ocr_changed:
