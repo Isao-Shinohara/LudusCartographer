@@ -2232,16 +2232,14 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
 
 # ─── Type B: 金枠ハイライトボタン検出 → 中心タップ ─────────────────────
 def find_gold_button(img_path: Path,
-                                    right_half_only: bool = True,
-                                    overlay_mode: bool = False,
-                                    skip_upper_filter: bool = False,
-                                    has_finger: bool = False,
-                                    ) -> Optional[tuple[int, int]]:
+                     overlay_mode: bool = False,
+                     skip_upper_filter: bool = False,
+                     ) -> Optional[tuple[int, int]]:
     """
     チュートリアルの「金枠ハイライトボタン」を検出しタップ座標を返す。
 
     内部で find_gold_frame_near を使用し、HSV 検出ロジックを共通化。
-    フィルタ条件 (right_half_only, 上部除外等) は維持。
+    矩形度 (solidity >= 0.5) で菱形装飾を排除済みのため左右制限なし。
 
     Returns: (tap_x, tap_y) or None
     """
@@ -2249,7 +2247,7 @@ def find_gold_button(img_path: Path,
         W_img, H_img = ANALYSIS_W, ANALYSIS_H
 
         # 画面中央を起点に広範囲で金枠を探索
-        _search_cx = int(W_img * 0.75) if right_half_only else int(W_img * 0.5)
+        _search_cx = int(W_img * 0.5)
         _search_cy = int(H_img * 0.6)
         _result = find_gold_frame_near(
             img_path, _search_cx, _search_cy, search_radius=max(W_img, H_img))
@@ -2269,11 +2267,6 @@ def find_gold_button(img_path: Path,
         # 画面上部 (y<35%) は除外 — ホーム画面装飾の誤検出防止
         if not overlay_mode and not skip_upper_filter and cy < H_img * 0.35:
             logger.debug("[GoldBtn] 上部除外: (%d,%d) %dx%d cy=%d", x, y, w, h, cy)
-            return None
-
-        # 右半分のみフィルタ (overlay_mode 時はバイパス)
-        if right_half_only and not overlay_mode and cx < W_img * 0.5:
-            logger.debug("[GoldBtn] 左半分除外: (%d,%d) %dx%d cx=%d", x, y, w, h, cx)
             return None
 
         logger.info("[GoldBtn] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f → tap(%d,%d)",
