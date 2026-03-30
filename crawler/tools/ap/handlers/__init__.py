@@ -15,7 +15,7 @@ from tools.ap.state import PilotState
 from tools.ap.device import tap_device
 
 from tools.ap.handlers.common import handle_common_guards
-from tools.ap.handlers.finger_priority import handle_finger_priority, handle_gold_overlay
+from tools.ap.handlers.finger_priority import handle_finger_priority
 from tools.ap.handlers.quest import handle_quest_early
 from tools.ap.handlers.dialog_phase import handle_dialog_phase
 from tools.ap.handlers.tutorial import handle_tutorial
@@ -53,11 +53,6 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
         state.last_action = "MINI_CONV_TAP"
         return "MINI_CONV_TAP", 0.3
-
-    # Phase 3.7: 金枠+暗転オーバーレイ (指なし) → チュートリアルガイド金枠タップ
-    r = handle_gold_overlay(ctx, state)
-    if r is not None:
-        return r
 
     # Phase 4: チュートリアル (名前入力, 指+金枠, スワイプ, アセットマッチ, ポップアップ)
     r = handle_tutorial(ctx, state)
