@@ -125,7 +125,7 @@ _ensure_state_table()
 # ─── 定数: ap/constants.py から一括 import ───
 from tools.ap.constants import (  # noqa: E402
     _CRAWLER_ROOT, SCREENSHOT_PATH, ANALYSIS_PATH, REMOTE_PATH, EVIDENCE_DIR,
-    POLL_INTERVAL, PHASH_THRESHOLD, FORCE_ANALYZE_AFTER,
+    POLL_INTERVAL, PHASH_THRESHOLD, FORCE_ANALYZE_AFTER, FORCE_ANALYZE_AFTER_FAST,
     STALL_TIMEOUT, BATTLE_WAIT, DOWNLOAD_WAIT, MIN_TAP_INTERVAL, MIN_CAPTURE_INTERVAL,
     WATCHDOG_DEADLOCK_THRESHOLD, WATCHDOG_MAX_SOFT_RECOVERIES,
     WATCHDOG_MAX_TOTAL_RECOVERIES, APP_PACKAGE, APP_ACTIVITY,
@@ -1194,7 +1194,7 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     Returns: True if handled, False for fallthrough to OCR.
     """
     # ── force OCR override: phash 静止 → ダイアログ可能性 ──
-    if dist <= 2 and state.same_phash_count >= FORCE_ANALYZE_AFTER:
+    if dist <= 2 and state.same_phash_count >= FORCE_ANALYZE_AFTER_FAST:
         logger.info("[BATTLE] force_ocr (dist=%d, same=%d) → OCR フォールスルー",
                     dist, state.same_phash_count)
         return False
@@ -2913,7 +2913,9 @@ def main():
                     continue
 
             # N 回変化なし → 強制 OCR (デッドロック防止の核心)
-            if state.same_phash_count >= FORCE_ANALYZE_AFTER:
+            # MOVIE は慎重に (3回)、それ以外は高速 (2回)
+            _force_threshold = FORCE_ANALYZE_AFTER if state.current_scene == "MOVIE" else FORCE_ANALYZE_AFTER_FAST
+            if state.same_phash_count >= _force_threshold:
                 logger.info("[iter %d] phash_dist=%d same=%d → 強制 OCR",
                             i, dist, state.same_phash_count)
                 screen_changed = True  # OCR ブロックへ進む
@@ -3081,7 +3083,7 @@ def main():
         #   左側キャラにモヤ（選択待ち発光）がある → キャラをタップ
         #   左側キャラにモヤがない → 右側の通常攻撃 or 戦闘スキルをタップ
         #   キャラ肖像の王冠/ロール装飾 (area<5000) は偽モヤ → 無視
-        _force_ocr_override = (dist <= 2 and state.same_phash_count >= FORCE_ANALYZE_AFTER)
+        _force_ocr_override = (dist <= 2 and state.same_phash_count >= FORCE_ANALYZE_AFTER_FAST)
         # 速度チュートリアル表示中は BATTLE_RAPID をスキップして OCR で処理
         _last_texts_br = state.last_ocr_texts
         _speed_tip_in_last = any(

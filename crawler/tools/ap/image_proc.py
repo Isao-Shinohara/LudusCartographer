@@ -142,7 +142,6 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         mean_sat = float(hsv[:, :, 1].mean())
         if mean_sat >= 25:
-            logger.info("[DEBG][WalkScene] sat=%.1f >= 25 → False", mean_sat)
             return False
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         val_std = float(gray.std())
