@@ -9,11 +9,18 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from tools.ap.constants import ANALYSIS_W, ANALYSIS_H, BATTLE_WAIT, DOWNLOAD_WAIT
+from tools.ap.constants import (
+    ANALYSIS_W, ANALYSIS_H, BATTLE_WAIT, DOWNLOAD_WAIT,
+    _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS, _OCR_BBOX_Y_PADDING,
+)
 from tools.ap.context import DetectContext
 from tools.ap.device import tap_device
 from tools.ap.helpers import has_any, has_text
-from tools.ap.image_proc import detect_dialog, detect_dialog_corners, roi_to_device
+from tools.ap.image_proc import (
+    detect_dialog, detect_dialog_corners, roi_to_device,
+    _run_battle_glow_sm,
+)
+from tools.ap.handlers.result import handle_result_screen
 from tools.ap.state import PilotState
 
 logger = logging.getLogger("auto_pilot")
@@ -27,6 +34,36 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
     W = ctx.W
     H = ctx.H
     analysis_path = ctx.analysis_path
+
+    # ─── バトル発光 State Machine (Phase 5 から移動) ───
+    # dialog_phase (#0-PRE) はチュートリアルポップアップ時にスキップするため、
+    # ここで補完する。
+    _is_battle_ctx = ctx.in_battle_ctx
+    if _is_battle_ctx and analysis_path is not None:
+        _gsm_result = _run_battle_glow_sm(analysis_path, W, H, state, ocr, tag="GLOW_SM")
+        if _gsm_result is not None:
+            return _gsm_result
+
+    # ─── Result画面ハンドラ (OCR mode) ───
+    if not _is_battle_ctx and analysis_path is not None:
+        _result_ocr = handle_result_screen(state, analysis_path, ocr, state.last_phash_dist, mode="OCR")
+        if _result_ocr:
+            return _result_ocr
+
+    # ─── ADV選択肢 — 肯定ボタン絶対優先 ───
+    # OK / はい / 了解 を最優先。キャンセル / いいえ は選択禁止。
+    _adv_pos = has_any(ocr, _CONFIRM_POS_KWS, exact=True)
+    _adv_neg = has_any(ocr, _CONFIRM_NEG_KWS, exact=True)
+    if _adv_pos:
+        _ac_x, _ac_y = _adv_pos["center"]
+        _ac_y_adj = max(0, _ac_y - _OCR_BBOX_Y_PADDING)
+        logger.info(
+            "[ADV-Choice] '%s' (%d,%d→Y%d) タップ (否定='%s'無視)",
+            _adv_pos["text"], _ac_x, _ac_y, _ac_y_adj,
+            _adv_neg["text"] if _adv_neg else "なし",
+        )
+        tap_device(_ac_x, _ac_y_adj, state, f"ADV_CHOICE '{_adv_pos['text']}'")
+        return "ADV_CHOICE", 1.0
 
     # ─── ダウンロード/ロード中 (セカンダリチェック) ───
     # ※ メインの厳格判定は関数冒頭の【絶対最優先 #-3】で実施済み。

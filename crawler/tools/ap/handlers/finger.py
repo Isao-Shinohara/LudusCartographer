@@ -1,14 +1,15 @@
 """
 ap/handlers/finger.py — 指差しアイコン (肌色ブロブ) 検出ハンドラ
 
-バトル発光 State Machine (#1-pre) + 指ブロブ mega-block (#1):
-- バトル画面判定、速度チュートリアル早期検出
-- タイトル画面 / ホーム画面検出 (指+金枠)
+指ブロブ検出 + タップ決定:
+- ホーム画面チュートリアル (指+金枠+暗転オーバーレイ)
 - ADV/システムダイアログのブロブ除外
 - バトル中ブロブフィルタリング (左キャラ, 右パネル, 下部UI)
 - Hard Masking, 2段階ターゲット選択, スタック回復
 - SWIPE_AUTO (チュートリアル移動シーン)
 - 最終タップ決定 (金枠 or 指先端)
+
+バトル発光SM, タイトル画面, Result, ADV選択肢は各フェーズに移動済み。
 """
 from __future__ import annotations
 
@@ -21,14 +22,12 @@ from typing import Optional
 from tools.ap.context import DetectContext
 from tools.ap.state import PilotState
 from tools.ap.constants import (
-    _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS,
-    _OCR_BBOX_Y_PADDING,
     _RIGHT_PANEL_X, _SPATIAL_MARGIN_TOP, _CLOSE_BTN_OFFSET,
     _FINGER_TIP_RATIO, _GLOW_CENTER_Y_OFFSET,
     ANALYSIS_W, ANALYSIS_H, BATTLE_WAIT, PHASH_THRESHOLD,
 )
 from tools.ap.image_proc import (
-    _run_battle_glow_sm, find_gold_frame_near,
+    find_gold_frame_near,
     create_finger_mask_image, find_gold_button,
     detect_tutorial_overlay, roi_to_device, ASSET_MANAGER,
     detect_adv_scene, prepare_analysis_image,
@@ -36,9 +35,6 @@ from tools.ap.image_proc import (
 from tools.ap.helpers import has_any, has_text, log_milestone
 from tools.ap.device import adb, tap_device, swipe_device, take_screenshot
 from lc.utils import compute_phash, phash_distance
-
-# Result画面ハンドラ (auto_pilot.py から分離予定)
-from tools.ap.handlers.result import handle_result_screen
 
 logger = logging.getLogger("auto_pilot")
 
@@ -59,77 +55,17 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
     _adv_result = ctx.adv_result
     _is_mini_conv = ctx.is_mini_conv
 
-    # ─── 【最優先 #1-pre】バトル発光 State Machine (フッター下部30%限定) ─────────
-    if _is_battle_ctx and analysis_path is not None:
-        _gsm_result = _run_battle_glow_sm(analysis_path, W, H, state, ocr, tag="GLOW_SM")
-        if _gsm_result is not None:
-            return _gsm_result
-
     # ─── 【最優先 #1】指差しアイコン (肌色ブロブ) 検出 ───
+    # バトル発光SM, タイトル画面, Result, ADV選択肢は各フェーズに移動済み
     if analysis_path is not None:
         is_battle_screen = _is_battle_ctx
         if is_battle_screen:
             log_milestone(state, "FIRST_BATTLE")
-        # ── 速度チュートリアル早期検出 (もや検出より前に処理) ──
-        _speed_tip_early = has_any(ocr, ["このボタンでバトル", "進行速度を変更"])
-        if _speed_tip_early and is_battle_screen:
-            _sp_x, _sp_y = roi_to_device(int(W * 0.927), int(H * 0.026), state.game_roi)
-            logger.info(">>> [EARLY] 速度ツールチップ → 速度ボタン (%d,%d) タップ", _sp_x, _sp_y)
-            tap_device(_sp_x, _sp_y, state, "SPEED_BUTTON_TAP")
-            return "BATTLE_TUTORIAL", 0.5
-        # タイトル画面 / ホーム画面検出: ブロブ誤検出を防ぐ
+        # ブロブ誤検出を防ぐためのシーン判定
         _nav_joined = joined
-        # 利用規約画面・同意ダイアログが存在する場合はタイトル画面と区別する
         _is_tos_screen = "利用規約" in _nav_joined or "同意してゲームを始める" in _nav_joined
-        _title_kws_game = ["魔法", "少女", "まどか", "マギカ", "まどかハ", "MADOKA", "MAGICA"]
-        is_title_screen = (
-            not state.home_reached and not _is_tos_screen and (
-                # 条件A: TAP TO START は確実にタイトル (Magia Exedra 単独は除外)
-                any(kw in _nav_joined for kw in ["TAP TO START", "TAPTOSTART"]) or
-                # 「動画配信設定」「Ver.」はタイトル画面固有の上部 UI
-                (any(kw in _nav_joined for kw in ["動画配信", "勤画配信", "Ver.2", "Ver.2."])
-                 and any(kw in _nav_joined for kw in _title_kws_game + ["PUELLA"])) or
-                ("VID" in _nav_joined and any(kw in _nav_joined for kw in _title_kws_game)) or
-                # フォールバック: ゲームタイトルロゴ文字 + Rank がない + ホームナビがない
-                # "Rank" "Main" "推奨" は MAIN STORY 選択画面なのでタイトルと区別する
-                (any(kw in _nav_joined for kw in ["PUELLA MAGI", "PUELLAHAGI", "PUELLAMAGI",
-                                                   "PUELLA MAGIMADOKA"])
-                 and any(kw in _nav_joined for kw in _title_kws_game)
-                 and not any(kw in _nav_joined for kw in ["クエスト", "ショップ", "ガチャ",
-                                                           "Rank", "Main", "推奨"]))
-            )
-        )
-        if is_title_screen:
-            logger.info("  タイトル画面検出 → TAP TO START (760,628) タップ")
-            log_milestone(state, "TITLE_TAP")
-            _tt_x, _tt_y = roi_to_device(int(W * 0.5), int(H * 0.87), state.game_roi)
-            tap_device(_tt_x, _tt_y, state, "TITLE_TAP_START")
-            return "TITLE_TAP", 2.0
-        # ホーム画面検出: フッターエリア (y > H*0.85) のナビキーワードが2個以上
-        # フッター以外 (編成メニュー内の「パーティ」等) は誤検出になるため除外
         from tools.ap.image_proc import count_home_nav_templates
         _home_kw_count = count_home_nav_templates(analysis_path) if analysis_path else 0
-        # ── Result画面ハンドラ (OCR mode) ──
-        if not is_battle_screen:
-            _result_ocr = handle_result_screen(state, analysis_path, ocr, state.last_phash_dist, mode="OCR")
-            if _result_ocr:
-                return _result_ocr
-        # ─── ADV選択肢 — 肯定ボタン絶対優先 ───────────────────────────
-        # OK / はい / 了解 を最優先。キャンセル / いいえ は選択禁止。
-        _adv_pos = has_any(ocr, _CONFIRM_POS_KWS, exact=True)
-        _adv_neg = has_any(ocr, _CONFIRM_NEG_KWS, exact=True)
-        if _adv_pos:
-            _ac_x, _ac_y = _adv_pos["center"]
-            # OCR bbox はテキスト下部パディングを含むため Y を上方補正
-            # ボタンの上半分を狙い、空振りを防止 (画質設定OK等)
-            _ac_y_adj = max(0, _ac_y - _OCR_BBOX_Y_PADDING)
-            logger.info(
-                "[ADV-Choice] '%s' (%d,%d→Y%d) タップ (否定='%s'無視)",
-                _adv_pos["text"], _ac_x, _ac_y, _ac_y_adj,
-                _adv_neg["text"] if _adv_neg else "なし",
-            )
-            tap_device(_ac_x, _ac_y_adj, state, f"ADV_CHOICE '{_adv_pos['text']}'")
-            return "ADV_CHOICE", 1.0
 
         # バトル時は dark_mode=True で輝度閾値を緩和し min_area=200 に下げる（暗背景対応）
         # ホーム画面 / 利用規約ダイアログ / システムダイアログはブロブ誤検出になるためスキップ

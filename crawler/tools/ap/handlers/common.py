@@ -389,4 +389,28 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
             logger.info(">>> 【ご注意→リトライ上限(5回)】 次ループで再検出")
             return "NOTICE_DISMISS", 3.0
 
+    # ─── 【#-0.5】タイトル画面 (TAP TO START) ───
+    # ホーム未到達 + 利用規約でない + タイトル固有キーワード → 画面下部タップ
+    _is_tos_screen = "利用規約" in joined or "同意してゲームを始める" in joined
+    _title_kws_game = ["魔法", "少女", "まどか", "マギカ", "まどかハ", "MADOKA", "MAGICA"]
+    _is_title_screen = (
+        not state.home_reached and not _is_tos_screen and (
+            any(kw in joined for kw in ["TAP TO START", "TAPTOSTART"]) or
+            (any(kw in joined for kw in ["動画配信", "勤画配信", "Ver.2", "Ver.2."])
+             and any(kw in joined for kw in _title_kws_game + ["PUELLA"])) or
+            ("VID" in joined and any(kw in joined for kw in _title_kws_game)) or
+            (any(kw in joined for kw in ["PUELLA MAGI", "PUELLAHAGI", "PUELLAMAGI",
+                                           "PUELLA MAGIMADOKA"])
+             and any(kw in joined for kw in _title_kws_game)
+             and not any(kw in joined for kw in ["クエスト", "ショップ", "ガチャ",
+                                                   "Rank", "Main", "推奨"]))
+        )
+    )
+    if _is_title_screen:
+        logger.info("  タイトル画面検出 → TAP TO START タップ")
+        log_milestone(state, "TITLE_TAP")
+        _tt_x, _tt_y = roi_to_device(int(W * 0.5), int(H * 0.87), state.game_roi)
+        tap_device(_tt_x, _tt_y, state, "TITLE_TAP_START")
+        return "TITLE_TAP", 2.0
+
     return None
