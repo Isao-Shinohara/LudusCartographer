@@ -548,12 +548,12 @@ def _to_device(x: int, y: int, state=None) -> tuple[int, int]:
     if dev_w > 0 and dev_h > 0:
         rx = int(x * dev_w / ANALYSIS_W)
         ry = int(y * dev_h / ANALYSIS_H)
-        # orientation=3 (逆ランドスケープ): 座標反転
+        # orientation 検出 (初回のみ)
         if _CACHED_ORIENTATION < 0:
             _CACHED_ORIENTATION = _get_orientation()
-        if _CACHED_ORIENTATION == 3:
-            rx = dev_w - rx
-            ry = dev_h - ry
+            if _CACHED_ORIENTATION == 3:
+                logger.warning("[ORIENTATION] 逆ランドスケープ (orientation=3) 検出。"
+                               "端末を反対向きにしてください。")
         return (rx, ry)
     return x, y
 

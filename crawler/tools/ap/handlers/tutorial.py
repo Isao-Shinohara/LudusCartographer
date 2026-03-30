@@ -152,8 +152,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     _walk_check = is_tutorial_walk_scene(analysis_path) if (_walk_ap and _walk_texts and _walk_scene) else False
     if _walk_ap and _walk_texts and _walk_scene and _walk_check:
         _sx = int(ANALYSIS_W * 0.5)
-        _fy = ANALYSIS_H - 80   # ナビゲーションバー回避マージン
-        _ty = 50                 # ステータスバー回避マージン
+        _fy = ANALYSIS_H - 20   # 下端ギリギリ (より大きなスワイプ)
+        _ty = 20                 # 上端ギリギリ
         _dur = 10000
         logger.info(">>> [TutorialWalk] 白黒背景検出 (OCR %d件) → 上ホールドスワイプ (全画面)", len(texts))
         swipe_device(_sx, _fy, _sx, _ty, _dur, state=state, desc="TutorialWalk_UP")
