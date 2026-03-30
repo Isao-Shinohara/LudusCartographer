@@ -29,7 +29,7 @@ from tools.ap.constants import (
 )
 from tools.ap.image_proc import (
     _run_battle_glow_sm, find_gold_frame_near,
-    create_finger_mask_image, detect_tutorial_gold_button_tap,
+    create_finger_mask_image, find_gold_button,
     detect_tutorial_overlay, roi_to_device, ASSET_MANAGER,
     detect_adv_scene, prepare_analysis_image,
 )
@@ -162,7 +162,7 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
             _ht_match = (_ht_rot[0], _ht_rot[1], _ht_rot[2]) if _ht_rot else None
             _ht_finger_dir = _ht_rot[3] if _ht_rot else "down"
             _ht_blobs = [(_ht_match[0], _ht_match[1], _ht_match[2], _ht_match[0] - 20, _ht_match[1] - 40, 40, 80)] if (_ht_match and _ht_match[2] >= 0.70) else []
-            _ht_gold = detect_tutorial_gold_button_tap(analysis_path, right_half_only=False) if analysis_path else None
+            _ht_gold = find_gold_button(analysis_path, right_half_only=False) if analysis_path else None
             # 暗転オーバーレイ検出 (チュートリアル中は非ハイライト部分が暗い)
             _ht_dimmed = detect_tutorial_overlay(analysis_path) if analysis_path else False
             if _ht_blobs or _ht_gold:

@@ -2126,7 +2126,7 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
 
 
 # ─── Type B: 金枠ハイライトボタン検出 → 中心タップ ─────────────────────
-def detect_tutorial_gold_button_tap(img_path: Path,
+def find_gold_button(img_path: Path,
                                     right_half_only: bool = True,
                                     overlay_mode: bool = False,
                                     skip_upper_filter: bool = False,
@@ -2176,7 +2176,7 @@ def detect_tutorial_gold_button_tap(img_path: Path,
         return cx, cy
 
     except Exception as e:
-        logger.debug("detect_tutorial_gold_button_tap error: %s", e)
+        logger.debug("find_gold_button error: %s", e)
         return None
 
 

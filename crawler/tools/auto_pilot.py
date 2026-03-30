@@ -201,7 +201,7 @@ from tools.ap.image_proc import (  # noqa: E402
     detect_dialog, detect_dialog_nav, detect_dialog_frame_and_nav,
     process_paging_dialog, detect_notice_popup, count_page_dots, detect_background_blur,
     detect_text_input_area,
-    detect_tutorial_gold_swipe, detect_tutorial_gold_button_tap, detect_tutorial_overlay,
+    detect_tutorial_gold_swipe, find_gold_button, detect_tutorial_overlay,
     smart_tap_button, find_3d_arrow,
     AssetManager, ASSET_MANAGER,
     detect_adv_scene, AdvSceneResult,
@@ -486,7 +486,7 @@ def _battle_fast_check(analysis_path: Path,
     if _confirmed_battle_ui:
         logger.debug("[FAST] バトルUI確認済み → GoldBtn スキップ (フッター発光SMへ委譲)")
     else:
-        gb = detect_tutorial_gold_button_tap(analysis_path, right_half_only=True)
+        gb = find_gold_button(analysis_path, right_half_only=True)
         if gb:
             gx, gy = gb
             logger.info("[FAST] GoldBtn → tap(%d,%d)", gx, gy)
@@ -932,7 +932,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # 金枠単独だと動画装飾で偽陽性 → 指テンプレとの共検出を必須化
     # ただしガチャ演出 (SKIP + 暗背景) は金枠装飾があっても GACHA として通す
     if img_path and not state.download_active:
-        _gf_hsv = detect_tutorial_gold_button_tap(img_path, right_half_only=False)
+        _gf_hsv = find_gold_button(img_path, right_half_only=False)
         if _gf_hsv:
             # ガチャ演出チェック: SKIP + 暗背景 + 光の玉 → GACHA (金枠スキップしない)
             if is_gacha_scene(img_path):
@@ -1256,7 +1256,7 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     if _fm and _fm[2] >= 0.70 and _fm[0] < ANALYSIS_W * 0.5:
         _battle_rho = False
         logger.info("[BATTLE] 指テンプレ左側検出 (x=%d) → 金枠全画面探索", _fm[0])
-    _gold_tap = detect_tutorial_gold_button_tap(
+    _gold_tap = find_gold_button(
         analysis_path, right_half_only=_battle_rho, overlay_mode=False,
         skip_upper_filter=True)
     if _gold_tap:
@@ -3133,7 +3133,7 @@ def main():
             # 非バトル: 全画面 + overlay 判定あり
             _gold_rho2 = state.current_scene == "BATTLE"
             _is_overlay2 = False if _gold_rho2 else detect_tutorial_overlay(analysis_path)
-            _gold_tap = detect_tutorial_gold_button_tap(
+            _gold_tap = find_gold_button(
                 analysis_path, right_half_only=_gold_rho2, overlay_mode=_is_overlay2,
                 skip_upper_filter=_gold_rho2)
             if _gold_tap:
