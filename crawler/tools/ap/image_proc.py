@@ -1708,7 +1708,7 @@ def detect_popup_home(
     _gray_tpl = cv2.cvtColor(_tpl, cv2.COLOR_BGR2GRAY)
     _r = cv2.matchTemplate(_gray_img, _gray_tpl, cv2.TM_CCOEFF_NORMED)
     _, _mv, _, _ = cv2.minMaxLoc(_r)
-    if _mv < 0.90:
+    if _mv < 0.89:
         return False
     # 2. ページドット
     _dots = count_page_dots(img_path)
