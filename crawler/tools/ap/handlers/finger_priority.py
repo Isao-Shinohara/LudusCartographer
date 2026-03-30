@@ -17,8 +17,6 @@ from tools.ap.image_proc import (
     ASSET_MANAGER,
     roi_to_device,
     find_gold_frame_near,
-    find_gold_button,
-    detect_tutorial_overlay,
     detect_white_hand_pointer,
     smart_tap_button,
 )
@@ -48,13 +46,6 @@ def handle_finger_priority(
     # 指テンプレ回転マッチ
     _finger_match = ASSET_MANAGER.match_finger_rotated(analysis_path)
     if not _finger_match or _finger_match[2] < 0.70:
-        # 指なし → 金枠+暗転オーバーレイならチュートリアルガイド
-        _gold_btn = find_gold_button(analysis_path)
-        if _gold_btn and detect_tutorial_overlay(analysis_path):
-            _gx, _gy = _gold_btn
-            logger.info("[FINGER_PRIORITY] 指なし+金枠(%d,%d)+暗転あり → 金枠タップ", _gx, _gy)
-            tap_device(_gx, _gy, state, "GOLD_OVERLAY_TAP")
-            return "GOLD_OVERLAY_TAP", 1.0
         return None
 
     _f_cx, _f_cy, _f_score, _f_dir = (
