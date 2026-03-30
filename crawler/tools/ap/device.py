@@ -512,20 +512,49 @@ def manage_scrcpy() -> Optional[subprocess.Popen]:
     return None
 
 
+def _get_orientation() -> int:
+    """現在の画面 orientation を取得。0=portrait, 1=landscape, 3=reverse landscape。"""
+    try:
+        _r = subprocess.run(
+            ["adb"] + (["-s", DEVICE_SERIAL] if DEVICE_SERIAL else []) +
+            ["shell", "dumpsys", "display"],
+            capture_output=True, timeout=5, text=True,
+        )
+        for _line in _r.stdout.splitlines():
+            if "mCurrentOrientation=" in _line:
+                _val = _line.strip().split("=")[-1]
+                return int(_val)
+    except Exception:
+        pass
+    return 1  # デフォルト: 通常ランドスケープ
+
+
+_CACHED_ORIENTATION: int = -1
+
+
 def _to_device(x: int, y: int, state=None) -> tuple[int, int]:
     """解析座標 (ANALYSIS_W×ANALYSIS_H) → デバイス実座標。
 
     キャッシュ済みデバイス解像度を優先使用。state.device_w/h はフォールバック。
     adb input はランドスケープ座標系 (長辺×短辺) で動作する。
+    orientation=3 (逆ランドスケープ) の場合は座標を反転。
     """
+    global _CACHED_ORIENTATION
     # 優先: モジュールキャッシュ (wm size ベース、ランドスケープ正規化済み)
     dev_w, dev_h = _CACHED_DEVICE_RES
     # フォールバック: state 経由
     if dev_w <= 0 and state and state.device_w and state.device_h:
         dev_w, dev_h = state.device_w, state.device_h
     if dev_w > 0 and dev_h > 0:
-        return (int(x * dev_w / ANALYSIS_W),
-                int(y * dev_h / ANALYSIS_H))
+        rx = int(x * dev_w / ANALYSIS_W)
+        ry = int(y * dev_h / ANALYSIS_H)
+        # orientation=3 (逆ランドスケープ): 座標反転
+        if _CACHED_ORIENTATION < 0:
+            _CACHED_ORIENTATION = _get_orientation()
+        if _CACHED_ORIENTATION == 3:
+            rx = dev_w - rx
+            ry = dev_h - ry
+        return (rx, ry)
     return x, y
 
 
