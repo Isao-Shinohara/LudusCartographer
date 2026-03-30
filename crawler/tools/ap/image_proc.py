@@ -109,7 +109,9 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
 
     判定:
       1. 平均彩度が非常に低い (< 25) → ほぼモノクロ
-      2. 明度の標準偏差が高い (>= 60) → 市松模様の高コントラスト
+      2. 明度の標準偏差が高い → 市松模様の高コントラスト
+         彩度が低いほど市松模様の確信度が高いため、val_std 閾値を緩和:
+         adjusted_threshold = max(55, 60 - (25 - mean_sat) * 0.5)
          (タイトル画面・利用規約・パーティ編成等の暗い画面は std < 56)
     """
     try:
@@ -122,7 +124,9 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
             return False
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         val_std = float(gray.std())
-        if val_std < 60:
+        # 彩度が低いほど閾値を緩和 (下限55)
+        _std_threshold = max(55.0, 60.0 - (25.0 - mean_sat) * 0.5)
+        if val_std < _std_threshold:
             return False
         return True
     except Exception:
