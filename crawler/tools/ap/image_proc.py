@@ -1773,7 +1773,7 @@ def detect_popup_home(
         return False
     if not _POPUP_NEXT_TEMPLATE.exists() and not _POPUP_NEXT_DARK_TEMPLATE.exists():
         return False
-    img = imread_cached(img_path)
+    img = imread_analysis(img_path)
     if img is None:
         return False
     _H, _W = img.shape[:2]
@@ -1803,7 +1803,7 @@ def detect_popup_home_nav(
 
     Returns: ("next", cx, cy) | ("close", cx, cy) | None
     """
-    img = imread_cached(img_path)
+    img = imread_analysis(img_path)
     if img is None:
         return None
     _H, _W = img.shape[:2]
