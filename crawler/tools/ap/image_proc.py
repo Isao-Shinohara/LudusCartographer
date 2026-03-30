@@ -47,6 +47,27 @@ def clear_imread_cache() -> None:
     _IMREAD_CACHE.clear()
 
 
+def imread_analysis(path, flags: int = cv2.IMREAD_COLOR) -> Optional[np.ndarray]:
+    """ANALYSIS_W x ANALYSIS_H にリサイズした画像を返す。
+
+    Retina (2880x1440) 等の高解像度スクショでも ANALYSIS 座標系と一致する。
+    imread_cached + リサイズのキャッシュ付き。
+    """
+    img = imread_cached(path, flags)
+    if img is None:
+        return None
+    _h, _w = img.shape[:2]
+    if (_w, _h) == (ANALYSIS_W, ANALYSIS_H):
+        return img
+    _key = (str(path), flags, "analysis")
+    _cached = _IMREAD_CACHE.get(_key)
+    if _cached is not None:
+        return _cached
+    resized = cv2.resize(img, (ANALYSIS_W, ANALYSIS_H))
+    _IMREAD_CACHE[_key] = resized
+    return resized
+
+
 def detect_game_roi(img) -> tuple[int, int, int, int]:
     """
     スクリーンショットの黒帯（レターボックス）を検出し、純粋なゲーム描画領域を返す。
@@ -549,7 +570,7 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
     Returns: (frame_cx, frame_cy, frame_w, frame_h) or None
     """
     try:
-        _img = imread_cached(img_path)
+        _img = imread_analysis(img_path)
         if _img is None:
             return None
         _H, _W = _img.shape[:2]
@@ -794,7 +815,7 @@ def detect_movie_skip_button(img_path: Path) -> Optional[tuple]:
               "movie_text" = 動画固有のSKIPテキスト
     """
     try:
-        _img = imread_cached(img_path)
+        _img = imread_analysis(img_path)
         if _img is None:
             return None
         _H, _W = _img.shape[:2]
@@ -2313,10 +2334,10 @@ def find_3d_arrow(img_path: Path) -> Optional[tuple[int, int]]:
     Returns: (cx, cy) or None
     """
     try:
-        img = imread_cached(img_path)
+        img = imread_analysis(img_path)
         if img is None:
             return None
-        # キャラ頭上エリア
+        # キャラ頭上エリア (ANALYSIS 座標)
         roi_y1, roi_y2 = _CHAR_HEAD_Y1, _CHAR_HEAD_Y2
         roi_x1, roi_x2 = _CHAR_HEAD_X1, _CHAR_HEAD_X2
         roi = img[roi_y1:roi_y2, roi_x1:roi_x2]
@@ -2429,9 +2450,10 @@ class AssetManager:
         """
         if not self._templates:
             return None
-        img = imread_cached(screenshot_path, cv2.IMREAD_GRAYSCALE)
-        if img is None:
+        _color = imread_analysis(screenshot_path)
+        if _color is None:
             return None
+        img = cv2.cvtColor(_color, cv2.COLOR_BGR2GRAY)
         best_score = 0.0
         best_result: Optional[tuple[int, int, str, tuple[int, int, int, int]]] = None
         for name, data in self._templates.items():
@@ -2494,12 +2516,16 @@ class AssetManager:
                      ) -> Optional[tuple[int, int, float]]:
         """指定テンプレート1枚だけをマッチング。Returns (cx, cy, score) or None.
 
-        roi: (x, y, w, h) — 検索領域を制限。座標は元画像基準で返す。
+        roi: (x, y, w, h) — 検索領域を制限。座標は ANALYSIS_W x ANALYSIS_H 基準で返す。
+        画像は ANALYSIS サイズにリサイズしてからマッチング (テンプレートと解像度を統一)。
         """
         data = self._templates.get(name)
         if data is None:
             return None
-        img = imread_cached(screenshot_path, cv2.IMREAD_GRAYSCALE)
+        _color = imread_analysis(screenshot_path)
+        if _color is None:
+            return None
+        img = cv2.cvtColor(_color, cv2.COLOR_BGR2GRAY)
         if img is None:
             return None
         # ROI 切り出し (指定時)
@@ -2556,9 +2582,10 @@ class AssetManager:
         data = self._templates.get("tutorial_hand_pointer")
         if data is None:
             return None
-        img = imread_cached(screenshot_path, cv2.IMREAD_GRAYSCALE)
-        if img is None:
+        _color = imread_analysis(screenshot_path)
+        if _color is None:
             return None
+        img = cv2.cvtColor(_color, cv2.COLOR_BGR2GRAY)
         base_tmpl = data["img"]
         best: Optional[tuple[int, int, float, str]] = None
         for direction, rot_code in self._FINGER_ROTATIONS:
@@ -2586,9 +2613,10 @@ class AssetManager:
         Returns: (cx, cy, score, template_name) or None
             座標は元画像基準。
         """
-        img = imread_cached(screenshot_path, cv2.IMREAD_GRAYSCALE)
-        if img is None:
+        _color = imread_analysis(screenshot_path)
+        if _color is None:
             return None
+        img = cv2.cvtColor(_color, cv2.COLOR_BGR2GRAY)
         _rx, _ry, _rw, _rh = roi
         _roi_img = img[max(0, _ry):min(img.shape[0], _ry + _rh),
                        max(0, _rx):min(img.shape[1], _rx + _rw)]
