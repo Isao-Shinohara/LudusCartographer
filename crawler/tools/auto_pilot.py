@@ -3315,7 +3315,9 @@ def main():
             _ocr_changed = False
         state._prev_taps_snapshot = state.total_taps
         state._prev_ocr_texts = texts
-        if screen_changed or _ocr_changed:
+        # phash が実際に変化した場合のみリセット (強制OCR の screen_changed=True は除外)
+        _real_screen_changed = dist >= PHASH_THRESHOLD
+        if _real_screen_changed or _ocr_changed:
             state.ineffective_tap_count = 0
         elif _prev_tapped:
             state.ineffective_tap_count += 1
