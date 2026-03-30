@@ -252,11 +252,21 @@ def handle_dialog_screen(
             state.pre_popup_tap_count = 0
             return "DIALOG_OK_DIRECT", CLOSE_ACTION_WAIT
         # ── ダイアログ再確認ガード ──
-        # 1. 四隅テンプレ必須
+        # 1. 四隅テンプレ優先。失敗時はページドット+背景ぼかしでフォールバック
         _has_dialog_frame = detect_dialog_corners(analysis_path) if analysis_path else False
         if not _has_dialog_frame:
-            logger.info("[DIALOG_FRAME_GUARD] 四隅テンプレなし → PAGING スキップ (dlg_type=%s)", _dlg_type)
-            return None
+            # フォールバック: ページドット≥1 + 背景ぼかし → 本物のダイアログとみなす
+            _fb_dots = count_page_dots(analysis_path) if analysis_path else 0
+            _fb_blur = detect_dialog(analysis_path, W, H, require_blur=True) if analysis_path else None
+            if _fb_dots >= 1 and _fb_blur:
+                logger.info("[DIALOG_FRAME_GUARD] 四隅テンプレなし → ドット=%d+背景ぼかしあり → PAGING フォールバック続行",
+                            _fb_dots)
+            else:
+                logger.info("[DIALOG_FRAME_GUARD] 四隅テンプレなし (dots=%d, blur=%s) → PAGING スキップ (dlg_type=%s)",
+                            _fb_dots, _fb_blur is not None, _dlg_type)
+                # ガードでスキップ → 未処理なのでカウンタを戻す
+                state.pre_popup_tap_count = max(0, state.pre_popup_tap_count - 1)
+                return None
         # 2. "next" でページドット=0 は誤検出 (▷がある=ページ複数=ドット≥1)
         if _dlg_type == "next":
             _next_dots = count_page_dots(analysis_path) if analysis_path else 0

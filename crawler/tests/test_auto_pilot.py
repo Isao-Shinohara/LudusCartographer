@@ -468,10 +468,10 @@ class TestHandleDialogScreen:
         analysis = tmp_path / "test.png"
         analysis.touch()
         result = handle_dialog_screen(state, analysis, [], [], True)
-        # 四隅テンプレなし → None (PAGING スキップ)
+        # 四隅テンプレなし + フォールバック(dots=3, blur=False) → None (PAGING スキップ)
         assert result is None
-        # detect_dialog_corners=False → 即 return None (detect_dialog は呼ばれない)
-        assert mock_detect_dialog.call_count == 0
+        # フォールバックで detect_dialog(require_blur=True) が呼ばれる
+        assert mock_detect_dialog.call_count >= 1
 
     @patch("tools.ap.handlers.dialog_phase.process_paging_dialog", return_value="DIALOG_CLOSED")
     @patch("tools.ap.handlers.dialog_phase.detect_dialog_nav", return_value=None)
