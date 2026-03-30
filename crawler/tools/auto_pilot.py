@@ -3443,6 +3443,25 @@ def main():
                                                   adv_result=_adv_result)
             _taps_after = state.total_taps
             _did_tap = _taps_after > _taps_before
+
+            # ── メニュースタック救済: dispatch結果の後付け上書き ──
+            # タップしても画面が変わらない状態が続いた場合のみ発火
+            if state.ineffective_tap_count >= 5:
+                from tools.ap.handlers.navigation import handle_menu_stall_recovery
+                from tools.ap.context import DetectContext
+                _stall_ctx = DetectContext(
+                    ocr=ocr_results,
+                    texts=texts,
+                    joined=" ".join(texts),
+                    W=ANALYSIS_W, H=ANALYSIS_H,
+                    analysis_path=analysis_path,
+                    in_battle_ctx=(state.current_scene == "BATTLE"),
+                )
+                _stall_result = handle_menu_stall_recovery(_stall_ctx, state)
+                if _stall_result:
+                    action, wait_sec = _stall_result
+                    state.ineffective_tap_count = 0
+
         state.last_action = action
         # ── ホーム画面到達 ──
         if action == "GOAL_HOME_REACHED":
