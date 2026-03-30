@@ -148,9 +148,8 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
         # 彩度が低いほど閾値を緩和 (下限55)
         _std_threshold = max(55.0, 60.0 - (25.0 - mean_sat) * 0.5)
         if val_std < _std_threshold:
-            logger.info("[DEBG][WalkScene] sat=%.1f std=%.1f < th=%.1f → False", mean_sat, val_std, _std_threshold)
             return False
-        logger.debug("[DEBG][WalkScene] sat=%.1f std=%.1f >= th=%.1f → True", mean_sat, val_std, _std_threshold)
+        logger.info("[DEBG][WalkScene] sat=%.1f std=%.1f >= th=%.1f → True", mean_sat, val_std, _std_threshold)
         return True
     except Exception:
         return False
