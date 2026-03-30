@@ -1,11 +1,13 @@
 """
 ap/handlers/quest.py — クエスト早期検出ハンドラ
 
-MAIN STORY 画面、Result 画面早期検出、クエスト詳細画面(挑戦ボタン)を処理する。
+MAIN STORY 画面、メインクエスト選択、クエストマップノード、
+Result 画面早期検出、クエスト詳細画面(挑戦ボタン)を処理する。
 """
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 from tools.ap.context import DetectContext
@@ -19,6 +21,8 @@ logger = logging.getLogger("auto_pilot")
 def handle_quest_early(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, float]]:
     """クエスト関連 UI の早期検出。
 
+    - メインクエスト選択画面: 「Main」ボタンタップ
+    - クエストマップ画面: ノード選択 + 挑戦ボタン
     - MAIN STORY 画面: クエストカードタップ
     - Result 画面: 「次へ」ボタンタップ
     - クエスト詳細画面: 「挑戦」ボタンタップ
@@ -28,6 +32,43 @@ def handle_quest_early(ctx: DetectContext, state: PilotState) -> Optional[tuple[
     ocr = ctx.ocr
     W = ctx.W
     H = ctx.H
+
+    # ─── メインクエスト選択画面: 「Main」ボタンを直接タップ ───
+    # 金枠がバナー装飾を拾って空振りするため、OCRの「Main」テキスト位置をタップ
+    # 白ハンドポインタがある場合は指差しガイドが優先 (Upgrade等を指す場合がある)
+    if any("メインクエスト" in t for t in texts) and ctx.white_hand_pos is None:
+        _main_btn = has_text(ocr, "Main", min_conf=0.3)
+        if _main_btn:
+            _mx, _my = _main_btn["center"]
+            logger.info(">>> 【メインクエスト】 Main ボタン (%d,%d) タップ", _mx, _my)
+            tap_device(_mx, _my, state, "MAIN_QUEST_TAP")
+            return "MAIN_QUEST_TAP", 2.0
+
+    # ─── クエストマップ画面: ノード選択 + 挑戦ボタン ───
+    _has_main = has_text(ocr, "Main", min_conf=0.3)
+    _has_floor = any("階層" in t for t in texts)
+    _challenge_btn = has_text(ocr, "挑戦", min_conf=0.3)
+    # 挑戦ボタンが見えていればクエスト詳細パネルが開いている → 挑戦タップ
+    if _has_main and _challenge_btn:
+        _cx, _cy = _challenge_btn["center"]
+        logger.info(">>> 【クエストマップ】 挑戦ボタン (%d,%d) タップ", _cx, _cy)
+        tap_device(_cx, _cy, state, "QUEST_CHALLENGE_TAP")
+        return "QUEST_CHALLENGE_TAP", 3.0
+    if _has_main and _has_floor:
+        # ノードラベル "X-Y" パターンを探す
+        _quest_node = None
+        for _r in ocr:
+            if _r.get("confidence", 0) < 0.3:
+                continue
+            if re.fullmatch(r"\d+-\d+", _r["text"].strip()):
+                _quest_node = _r
+                break
+        if _quest_node:
+            _qx, _qy = _quest_node["center"]
+            logger.info(">>> 【クエストマップ】 ノード '%s' (%d,%d) タップ",
+                        _quest_node["text"], _qx, _qy)
+            tap_device(_qx, _qy, state, "QUEST_NODE_TAP")
+            return "QUEST_NODE_TAP", 2.0
 
     # ─── 【最優先 #-1b】MAIN STORY 画面 ───
     # (A) クエスト選択画面: 「NEW」+「推奨」+「Main」→ クエストカードをタップ

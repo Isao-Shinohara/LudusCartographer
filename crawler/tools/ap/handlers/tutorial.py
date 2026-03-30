@@ -7,7 +7,6 @@ ap/handlers/tutorial.py — チュートリアル系ハンドラ
 from __future__ import annotations
 
 import logging
-import re
 import time
 from typing import Optional
 
@@ -105,42 +104,6 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             logger.info(">>> 【名前入力】 'MadoDora' 入力完了 → OK タップ待ち")
             return "NAME_INPUT_TEXT", 1.5
 
-    # ─── メインクエスト選択画面: 「Main」ボタンを直接タップ ───
-    # 金枠がバナー装飾を拾って空振りするため、OCRの「Main」テキスト位置をタップ
-    # 白ハンドポインタがある場合は指差しガイドが優先 (Upgrade等を指す場合がある)
-    if any("メインクエスト" in t for t in texts) and ctx.white_hand_pos is None:
-        _main_btn = has_text(ocr, "Main", min_conf=0.3)
-        if _main_btn:
-            _mx, _my = _main_btn["center"]
-            logger.info(">>> 【メインクエスト】 Main ボタン (%d,%d) タップ", _mx, _my)
-            tap_device(_mx, _my, state, "MAIN_QUEST_TAP")
-            return "MAIN_QUEST_TAP", 2.0
-    # ─── クエストマップ画面: ノード選択 + 挑戦ボタン ───
-    _has_main = has_text(ocr, "Main", min_conf=0.3)
-    _has_floor = any("階層" in t for t in texts)
-    _challenge_btn = has_text(ocr, "挑戦", min_conf=0.3)
-    # 挑戦ボタンが見えていればクエスト詳細パネルが開いている → 挑戦タップ
-    if _has_main and _challenge_btn:
-        _cx, _cy = _challenge_btn["center"]
-        logger.info(">>> 【クエストマップ】 挑戦ボタン (%d,%d) タップ", _cx, _cy)
-        tap_device(_cx, _cy, state, "QUEST_CHALLENGE_TAP")
-        return "QUEST_CHALLENGE_TAP", 3.0
-    if _has_main and _has_floor:
-        # ノードラベル "X-Y" パターンを探す
-        _quest_node = None
-        for _r in ocr:
-            if _r.get("confidence", 0) < 0.3:
-                continue
-            if re.fullmatch(r"\d+-\d+", _r["text"].strip()):
-                _quest_node = _r
-                break
-        if _quest_node:
-            _qx, _qy = _quest_node["center"]
-            # テキストラベルの中心をそのままタップ (ノードのヒットボックスはラベル領域も含む)
-            logger.info(">>> 【クエストマップ】 ノード '%s' (%d,%d) タップ",
-                        _quest_node["text"], _qx, _qy)
-            tap_device(_qx, _qy, state, "QUEST_NODE_TAP")
-            return "QUEST_NODE_TAP", 2.0
     # ─── 【最優先 #0-aa】HSV金色ポインター検出 → ホールドスワイプ (Type A) ───
     # 縦長金色領域 h/w>=3.5 かつ幅<=100px のみ有効 (ボタン/カード誤検出防止)。
     # ─── 【最優先 #0-walk】チュートリアル歩行シーン (白黒背景) → 上ホールドスワイプ ───
@@ -315,11 +278,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                 else:
                     asset_hit = (_skip_m[0], _skip_m[1], "MOVIE_SKIP_TEXT", (0, 0, 0, 0))
 
-        # --- 5. マップ矢印 (MAP_ARROW_TAP) --- require_ocr: 矢印をタップ
-        if not asset_hit and any("矢印をタップ" in t for t in texts):
-            _arrow_m = ASSET_MANAGER.match_single("map_arrow", analysis_path)
-            if _arrow_m and _arrow_m[2] >= 0.65:
-                asset_hit = (_arrow_m[0], _arrow_m[1], "MAP_ARROW_TAP", (0, 0, 0, 0))
+        # --- 5. マップ矢印 → navigation.py (Phase 6) に統合済み ---
 
         # BATTLE_UPPER_GUARD: バトル中は上部テンプレマッチを除外
         if asset_hit and ctx.in_battle_ctx:
@@ -447,43 +406,6 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
         )
         state.pre_popup_tap_count = 0
         return _pg_result, 1.0
-
-    # ─── 【最優先 #0-b-extra】プレイヤー名入力ダイアログ ───
-    # 「プレイヤー名を入力してください」→ 名前入力 → OKタップ
-    # 注意: OCR で "OK" の center が y≈593 と検出されるが、
-    #        実際のボタンヒットゾーンはゴールデンエリア y≈555-575 (実測)
-    name_input = has_text(ocr, "プレイヤー名を入力", min_conf=0.3)
-    if name_input:
-        # 入力済みテキストを確認 (プレースホルダー・UI テキスト以外のひらがな/英字)
-        ui_words = {"プレイヤー名を入力してください", "プレイヤー名は", "変更後3日間", "名前入力", "OK"}
-        name_texts = [t for t in texts if t not in ui_words and len(t) >= 2
-                      and not t.startswith("プレイヤー") and "/" not in t]
-        ok_item = next(
-            (item for item in ocr if "OK" in item.get("text", "") and item["center"][1] > H * 0.5),
-            None
-        )
-        if name_texts and ok_item:
-            # 名前入力済み → OKタップ (ROI補正: OCR-X + 比率Y=H*0.78)
-            cx, cy = roi_to_device(ok_item["center"][0], int(H * 0.78), state.game_roi)
-            logger.info(">>> 【名前入力 OK】 入力済み='%s' → ROI補正(%d,%d) タップ", name_texts[0], cx, cy)
-            tap_device(cx, cy, state, "NAME_INPUT_OK")
-            return "NAME_INPUT_OK", 2.0
-        elif ok_item:
-            # テキストフィールドのプレースホルダー「プレイヤー名を入力」を探す
-            _field_item = next(
-                (item for item in ocr
-                 if item.get("text", "").strip() == "プレイヤー名を入力"),
-                name_input
-            )
-            _nf_ocr_x, _nf_ocr_y = _field_item["center"]
-            _nf_x, _nf_y = roi_to_device(_nf_ocr_x, _nf_ocr_y, state.game_roi)
-            logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d) [OCR座標]", _nf_x, _nf_y)
-            tap_device(_nf_x, _nf_y, state, "NAME_INPUT_FOCUS")
-            adb("shell input text MadoDora")
-            time.sleep(0.2)
-            adb("shell input keyevent 66")
-            logger.info(">>> 【名前入力】 'MadoDora' 入力完了 → OK タップ待ち")
-            return "NAME_INPUT_TEXT", 1.5
 
     # ─── 【最優先 #0-b】報酬/強化結果ポップアップを即時処理 (ブロブ誤検出防止) ───
     # 「以下の内容でよろしいですか」確認ダイアログ → SmartTap で OK 物理中心をタップ
