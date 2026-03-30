@@ -121,13 +121,16 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         mean_sat = float(hsv[:, :, 1].mean())
         if mean_sat >= 25:
+            logger.info("[DEBG][WalkScene] sat=%.1f >= 25 → False", mean_sat)
             return False
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         val_std = float(gray.std())
         # 彩度が低いほど閾値を緩和 (下限55)
         _std_threshold = max(55.0, 60.0 - (25.0 - mean_sat) * 0.5)
         if val_std < _std_threshold:
+            logger.info("[DEBG][WalkScene] sat=%.1f std=%.1f < th=%.1f → False", mean_sat, val_std, _std_threshold)
             return False
+        logger.debug("[DEBG][WalkScene] sat=%.1f std=%.1f >= th=%.1f → True", mean_sat, val_std, _std_threshold)
         return True
     except Exception:
         return False
@@ -1151,18 +1154,28 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
 
         best = max(candidates, key=lambda c: c["ratio"])
 
-        # OCR 検証: 吹き出し BBox 内にテキストが存在するか (必須)
+        # OCR 検証: 吹き出しのY範囲 + 左右半分にテキストが存在するか (必須)
+        # 吹き出し幅はセリフ長で可変するため、X方向は左半分/右半分のみで判定
         if ocr_items is None:
             logger.debug("[MINI_CONV] ocr_items=None → テキスト検証不可、スキップ")
             return None
-        bx1, by1 = best["x"], best["y"]
-        bx2, by2 = bx1 + best["w"], by1 + best["h"]
+        # OCR座標を ANALYSIS_W x ANALYSIS_H にスケーリング (Retina等の高解像度対応)
+        _H_orig, _W_orig = img.shape[:2]
+        _sx = ANALYSIS_W / _W_orig if _W_orig > 0 else 1.0
+        _sy = ANALYSIS_H / _H_orig if _H_orig > 0 else 1.0
+        by1, by2 = best["y"], best["y"] + best["h"]
+        if best["side"] == "left":
+            bx1, bx2 = 0, ANALYSIS_W // 2
+        else:
+            bx1, bx2 = ANALYSIS_W // 2, ANALYSIS_W
         has_text_inside = any(
-            bx1 <= r["center"][0] <= bx2 and by1 <= r["center"][1] <= by2
+            bx1 <= r["center"][0] * _sx <= bx2 and by1 <= r["center"][1] * _sy <= by2
             for r in ocr_items
             if r["text"] not in ("AUTO", ">>", ">|", "D1", "×")
         )
         if not has_text_inside:
+            logger.debug("[MINI_CONV] %s: テキスト未検出 (bbox=(%d,%d)-(%d,%d) scale=%.2f,%.2f)",
+                         best["side"], bx1, by1, bx2, by2, _sx, _sy)
             return None
 
         logger.debug("[MINI_CONV] bubble (%d,%d) side=%s ratio=%.2f",
