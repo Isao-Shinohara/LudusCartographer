@@ -35,17 +35,12 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     if r is not None:
         return r
 
-    # Phase 1.5: 指アイコン+金枠 最優先 (CLAUDE.md §0 優先度1)
-    r = handle_finger_priority(ctx, state)
-    if r is not None:
-        return r
-
-    # Phase 3: バトル前ガード + ダイアログハンドラ
+    # Phase 2: ダイアログハンドラ
     r = handle_dialog_phase(ctx, state)
     if r is not None:
         return r
 
-    # Phase 3.5: ミニ会話タップ (OCR パスで検出済みの座標を使用)
+    # Phase 2.5: ミニ会話タップ (OCR パスで検出済みの座標を使用)
     if ctx.mini_conv_pos is not None:
         _mc_cx, _mc_cy, _mc_side = ctx.mini_conv_pos
         logging.getLogger(__name__).info(
@@ -53,6 +48,11 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
         state.last_action = "MINI_CONV_TAP"
         return "MINI_CONV_TAP", 0.3
+
+    # Phase 3: 指アイコン+金枠 (CLAUDE.md §0 優先度1)
+    r = handle_finger_priority(ctx, state)
+    if r is not None:
+        return r
 
     # Phase 4: チュートリアル (名前入力, 指+金枠, スワイプ, アセットマッチ, ポップアップ)
     r = handle_tutorial(ctx, state)
