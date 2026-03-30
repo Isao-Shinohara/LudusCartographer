@@ -754,8 +754,8 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                                         _adv_auto_m[2], _adv_evidence)
             # MOVIE 長期滞留脱出: recheck が 8 回 (約5秒) 超えたら MOVIE 誤判定の可能性
             # → UNKNOWN に遷移して OCR で正確なシーン判定を行う
-            # ガチャ演出中は脱出しない
-            if state._movie_recheck_count >= 8:
+            # ガチャ演出中・phash大変化中 (dist >= 15: 動画再生中) は脱出しない
+            if state._movie_recheck_count >= 8 and dist < 15:
                 if is_gacha_scene(img_path):
                     logger.info("[SCENE_EARLY] MOVIE長期滞留 (%d回) だがガチャ演出中 → MOVIE継続",
                                 state._movie_recheck_count)
@@ -779,9 +779,12 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         # MINI_CONV/TutorialWalk は state.current_scene=="MOVIE" ガードで防止済み。
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
-    # 10回に1回テンプレートで実在確認 (Result画面等での誤BATTLE継続を防止)
+    # 画面安定時のみテンプレートで実在確認 (Result画面等での誤BATTLE継続を防止)
+    # アニメーション中 (dist >= PHASH_THRESHOLD) はテンプレ確認をスキップし BATTLE 維持
     if state.current_scene == "BATTLE" and dist < 30:
-        if state.battle_rapid_consecutive.count > 0 and state.battle_rapid_consecutive.count % 3 == 0:
+        if (dist < PHASH_THRESHOLD
+                and state.battle_rapid_consecutive.count > 0
+                and state.battle_rapid_consecutive.count % 3 == 0):
             from tools.ap.image_proc import ASSET_MANAGER as _AM_verify
             _verify_roi = BATTLE_BTN_ROI
             _v_atk = _AM_verify.match_single("battle_normal_attack", img_path, roi=_verify_roi)
