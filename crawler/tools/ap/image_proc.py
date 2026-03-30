@@ -2165,9 +2165,9 @@ def find_gold_button(img_path: Path,
         area = w * h
         x, y = cx - w // 2, cy - h // 2
 
-        # アスペクト比フィルタ (0.5~2.0)
+        # アスペクト比フィルタ — 上限のみ (横長のHPバー金枠等も許容)
         aspect = h / max(w, 1)
-        if aspect < 0.5 or aspect > 2.0:
+        if aspect > 3.0:
             logger.debug("[GoldBtn] アスペクト比除外: (%d,%d) %dx%d asp=%.2f", x, y, w, h, aspect)
             return None
 
