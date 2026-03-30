@@ -237,7 +237,7 @@ def _get_cached_device_resolution() -> tuple[int, int]:
     """wm size の結果をランドスケープ正規化してキャッシュ。
 
     wm size はポートレート値 (1080x2160) を返すが、ゲームはランドスケープ。
-    adb input tap はカレント座標系を使うため、長辺=width, 短辺=height に正規化する。
+    adb input はランドスケープ座標系で動作するため、長辺=width, 短辺=height に正規化。
     """
     global _CACHED_DEVICE_RES
     if _CACHED_DEVICE_RES[0] > 0:
@@ -516,7 +516,7 @@ def _to_device(x: int, y: int, state=None) -> tuple[int, int]:
     """解析座標 (ANALYSIS_W×ANALYSIS_H) → デバイス実座標。
 
     キャッシュ済みデバイス解像度を優先使用。state.device_w/h はフォールバック。
-    scrcpy/adb どちらの取得方法でも同じ変換結果を保証する。
+    adb input はランドスケープ座標系 (長辺×短辺) で動作する。
     """
     # 優先: モジュールキャッシュ (wm size ベース、ランドスケープ正規化済み)
     dev_w, dev_h = _CACHED_DEVICE_RES
