@@ -1172,8 +1172,10 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
                     state.movie_wait_consecutive)
 
     # ── 通常待機 (動画は自動終了するのでタップせず待つ) ──
-    logger.info("[MOVIE] 待機 (%d) dist=%d static=%d",
-                state.movie_wait_consecutive, dist,
+    _from = getattr(state, "_movie_from_scene", "")
+    _from_tag = f"←{_from}" if _from and _from != "MOVIE" else ""
+    logger.info("[MOVIE%s] 待機 (%d) dist=%d static=%d",
+                _from_tag, state.movie_wait_consecutive, dist,
                 state.movie_static_count)
     state.last_action = "MOVIE_WAIT"
     state.stall_start = 0.0
@@ -2605,6 +2607,7 @@ def main():
                 state.character_selected = False
                 state.battle_rapid_consecutive.reset()
                 logger.debug("[SCENE_CHANGE_EARLY] BATTLE→MOVIE: バトルフラグリセット")
+            state._movie_from_scene = state.current_scene
             state.current_scene = "MOVIE"
             if handle_movie(img_path, state, dist, cur_phash):
                 _fms = (time.time() - _loop_t0) * 1000
