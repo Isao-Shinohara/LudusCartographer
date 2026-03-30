@@ -1680,8 +1680,37 @@ def detect_notice_popup(
 #  ポップアップ検出 (お知らせポップアップ・ダイアログとは独立)
 # ═══════════════════════════════════════════════════════════════════
 
-_POPUP_NEXT_TEMPLATE  = _CRAWLER_ROOT / "assets" / "templates" / "popup_home_next.png"
-_POPUP_CLOSE_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "popup_home_close.png"
+_POPUP_NEXT_TEMPLATE      = _CRAWLER_ROOT / "assets" / "templates" / "popup_home_next.png"
+_POPUP_NEXT_DARK_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "popup_home_next_dark.png"
+_POPUP_CLOSE_TEMPLATE     = _CRAWLER_ROOT / "assets" / "templates" / "popup_home_close.png"
+
+
+def _match_popup_next_roi(img, _H: int, _W: int, threshold: float = 0.89) -> float:
+    """popup_home_next テンプレ (light/dark 2種) を ROI 制限付きでマッチし最高スコアを返す。
+
+    ROI: x=W*0.70〜W, y=H*0.25〜H*0.75 (ポップアップ枠右側・縦中央)
+    """
+    _x1, _x2 = int(_W * 0.70), _W
+    _y1, _y2 = int(_H * 0.25), int(_H * 0.75)
+    _roi = img[_y1:_y2, _x1:_x2]
+    if _roi.size == 0:
+        return 0.0
+    _gray_roi = cv2.cvtColor(_roi, cv2.COLOR_BGR2GRAY)
+    _best = 0.0
+    for _tpl_path in (_POPUP_NEXT_TEMPLATE, _POPUP_NEXT_DARK_TEMPLATE):
+        if not _tpl_path.exists():
+            continue
+        _tpl = imread_cached(_tpl_path)
+        if _tpl is None:
+            continue
+        _g = cv2.cvtColor(_tpl, cv2.COLOR_BGR2GRAY)
+        if _gray_roi.shape[0] < _g.shape[0] or _gray_roi.shape[1] < _g.shape[1]:
+            continue
+        _r = cv2.matchTemplate(_gray_roi, _g, cv2.TM_CCOEFF_NORMED)
+        _, _mv, _, _ = cv2.minMaxLoc(_r)
+        if _mv > _best:
+            _best = _mv
+    return _best
 
 
 def detect_popup_home(
@@ -1690,24 +1719,20 @@ def detect_popup_home(
     """ホームポップアップを検出する。
 
     判定条件 (全て AND):
-      1. popup_home_next テンプレ検出 (閾値 0.90)
+      1. popup_home_next テンプレ検出 (閾値 0.89, ROI: 右側縦中央, light/dark 2種)
       2. ページドット ≥ 1
       3. 背景ぼかし
     """
-    if not img_path or not _POPUP_NEXT_TEMPLATE.exists():
+    if not img_path:
+        return False
+    if not _POPUP_NEXT_TEMPLATE.exists() and not _POPUP_NEXT_DARK_TEMPLATE.exists():
         return False
     img = imread_cached(img_path)
     if img is None:
         return False
     _H, _W = img.shape[:2]
-    # 1. popup_home_next テンプレマッチ
-    _tpl = imread_cached(_POPUP_NEXT_TEMPLATE)
-    if _tpl is None:
-        return False
-    _gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _gray_tpl = cv2.cvtColor(_tpl, cv2.COLOR_BGR2GRAY)
-    _r = cv2.matchTemplate(_gray_img, _gray_tpl, cv2.TM_CCOEFF_NORMED)
-    _, _mv, _, _ = cv2.minMaxLoc(_r)
+    # 1. popup_home_next テンプレマッチ (ROI制限 + 2テンプレ)
+    _mv = _match_popup_next_roi(img, _H, _W, threshold=0.89)
     if _mv < 0.89:
         return False
     # 2. ページドット
@@ -1727,6 +1752,9 @@ def detect_popup_home_nav(
 ) -> Optional[tuple[str, int, int]]:
     """ホームポップアップの ▷(次へ) または ×(閉じる) ボタンを検出する。
 
+    ▷ 検出は ROI (右側70%〜, 縦中央25%〜75%) + light/dark 2テンプレで行う。
+    × 検出は全画面で行う (最終ページでは × がポップアップ右上に出現)。
+
     Returns: ("next", cx, cy) | ("close", cx, cy) | None
     """
     img = imread_cached(img_path)
@@ -1735,31 +1763,49 @@ def detect_popup_home_nav(
     _H, _W = img.shape[:2]
     _gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    def _match(tmpl_path: Path) -> Optional[tuple[int, int, float]]:
-        _tpl = imread_cached(tmpl_path)
-        if _tpl is None:
-            return None
-        _g = cv2.cvtColor(_tpl, cv2.COLOR_BGR2GRAY)
-        _r = cv2.matchTemplate(_gray, _g, cv2.TM_CCOEFF_NORMED)
-        _, _mv, _, _ml = cv2.minMaxLoc(_r)
-        if _mv >= threshold:
-            _th, _tw = _g.shape[:2]
-            return (_ml[0] + _tw // 2, _ml[1] + _th // 2, _mv)
+    # × ボタン優先 (最終ページで × が出現すると ▷ は消える) — 全画面検索
+    if _POPUP_CLOSE_TEMPLATE.exists():
+        _tpl_c = imread_cached(_POPUP_CLOSE_TEMPLATE)
+        if _tpl_c is not None:
+            _g_c = cv2.cvtColor(_tpl_c, cv2.COLOR_BGR2GRAY)
+            _r_c = cv2.matchTemplate(_gray, _g_c, cv2.TM_CCOEFF_NORMED)
+            _, _mv_c, _, _ml_c = cv2.minMaxLoc(_r_c)
+            if _mv_c >= threshold:
+                _th_c, _tw_c = _g_c.shape[:2]
+                _cx = _ml_c[0] + _tw_c // 2
+                _cy = _ml_c[1] + _th_c // 2
+                logger.debug("[PopupHomeNav] × 検出 (%d,%d) score=%.3f", _cx, _cy, _mv_c)
+                return ("close", _cx, _cy)
+
+    # ▷ ボタン — ROI 制限 (右側70%〜, 縦中央25%〜75%) + light/dark 2テンプレ
+    _rx1, _ry1 = int(_W * 0.70), int(_H * 0.25)
+    _rx2, _ry2 = _W, int(_H * 0.75)
+    _roi = _gray[_ry1:_ry2, _rx1:_rx2]
+    if _roi.size == 0:
         return None
 
-    # × ボタン優先 (最終ページで × が出現すると ▷ は消える)
-    if _POPUP_CLOSE_TEMPLATE.exists():
-        _c = _match(_POPUP_CLOSE_TEMPLATE)
-        if _c:
-            logger.debug("[PopupHomeNav] × 検出 (%d,%d) score=%.3f", _c[0], _c[1], _c[2])
-            return ("close", _c[0], _c[1])
+    _best_n: Optional[tuple[int, int, float]] = None
+    for _tpl_path in (_POPUP_NEXT_TEMPLATE, _POPUP_NEXT_DARK_TEMPLATE):
+        if not _tpl_path.exists():
+            continue
+        _tpl_n = imread_cached(_tpl_path)
+        if _tpl_n is None:
+            continue
+        _g_n = cv2.cvtColor(_tpl_n, cv2.COLOR_BGR2GRAY)
+        if _roi.shape[0] < _g_n.shape[0] or _roi.shape[1] < _g_n.shape[1]:
+            continue
+        _r_n = cv2.matchTemplate(_roi, _g_n, cv2.TM_CCOEFF_NORMED)
+        _, _mv_n, _, _ml_n = cv2.minMaxLoc(_r_n)
+        if _mv_n >= threshold:
+            _th_n, _tw_n = _g_n.shape[:2]
+            _cx_n = _ml_n[0] + _rx1 + _tw_n // 2
+            _cy_n = _ml_n[1] + _ry1 + _th_n // 2
+            if _best_n is None or _mv_n > _best_n[2]:
+                _best_n = (_cx_n, _cy_n, _mv_n)
 
-    # ▷ ボタン
-    if _POPUP_NEXT_TEMPLATE.exists():
-        _n = _match(_POPUP_NEXT_TEMPLATE)
-        if _n:
-            logger.debug("[PopupHomeNav] ▷ 検出 (%d,%d) score=%.3f", _n[0], _n[1], _n[2])
-            return ("next", _n[0], _n[1])
+    if _best_n:
+        logger.debug("[PopupHomeNav] ▷ 検出 (%d,%d) score=%.3f", _best_n[0], _best_n[1], _best_n[2])
+        return ("next", _best_n[0], _best_n[1])
 
     return None
 

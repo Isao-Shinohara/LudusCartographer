@@ -108,6 +108,7 @@ _SINGLE_ONLY: frozenset = frozenset([
     "dialog_corner_tl",       # ダイアログ検出専用
     "dialog_corner_bl",       # ダイアログ検出専用 (下部角は上部と異なるデザイン)
     "popup_home_next",        # ホームポップアップ専用 (detect_popup_home で使用)
+    "popup_home_next_dark",   # ホームポップアップ専用 (暗背景用)
     "popup_home_close",       # ホームポップアップ専用 (detect_popup_home_nav で使用)
 ])
 
