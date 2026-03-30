@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from difflib import SequenceMatcher
 
 # ─── SIGSEGV 防止: OpenMP / cv2 スレッド競合対策 ─────────────────
 # OpenMP スレッドの重複を許可 (PaddlePaddle + OpenCV 共存時のSIGSEGV防止)
@@ -3287,14 +3288,31 @@ def main():
 
         # ── ineffective_tap_count 更新 (メニュースタック救済用) ──
         # 前回イテレーションでタップしたのに phash/OCR が変化なし → カウントアップ
-        # OCR 変化判定: OCRノイズ (1文字の誤読差分) を吸収するため、
-        # 共通テキスト数が全体の80%以上なら「変化なし」とみなす
+        # OCR 変化判定:
+        #   1. テキスト総数が不一致 → 変化あり
+        #   2. 総数一致 → 各テキストを最良マッチ (SequenceMatcher, 閾値0.7) で比較
+        #      マッチ率80%以上なら「変化なし」(OCRノイズ吸収)
         _prev_tapped = state.total_taps > state._prev_taps_snapshot
-        _prev_texts_set = set(state._prev_ocr_texts)
-        _curr_texts_set = set(texts)
-        _common = len(_prev_texts_set & _curr_texts_set)
-        _total = max(len(_prev_texts_set), len(_curr_texts_set), 1)
-        _ocr_changed = (_common / _total) < 0.8
+        _ocr_changed = True  # デフォルト: 変化あり
+        _prev_txts = state._prev_ocr_texts
+        if len(_prev_txts) == len(texts) and len(texts) > 0:
+            _used: set[int] = set()
+            _matched = 0
+            for _t1 in _prev_txts:
+                _best_sim, _best_j = 0.0, -1
+                for _j2, _t2 in enumerate(texts):
+                    if _j2 in _used:
+                        continue
+                    _sim = SequenceMatcher(None, _t1, _t2).ratio()
+                    if _sim > _best_sim:
+                        _best_sim = _sim
+                        _best_j = _j2
+                if _best_sim >= 0.7 and _best_j >= 0:
+                    _matched += 1
+                    _used.add(_best_j)
+            _ocr_changed = (_matched / len(texts)) < 0.8
+        elif len(_prev_txts) == 0 and len(texts) == 0:
+            _ocr_changed = False
         state._prev_taps_snapshot = state.total_taps
         state._prev_ocr_texts = texts
         if screen_changed or _ocr_changed:
