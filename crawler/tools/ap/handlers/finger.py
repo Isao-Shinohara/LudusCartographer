@@ -137,8 +137,8 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
                                 ["画質を設定", "高画質", "省エネ", "省工ネ", "データ引き継ぎ",
                                  "サポート", "お問い合わせ", "キャッシュクリア"])
         if _home_kw_count >= 2:
-            logger.info("  ホーム画面検出 (footer nav×%d: %s) → MOYA_TAP スキップ",
-                        _home_kw_count, _footer_texts)
+            logger.info("  ホーム画面検出 (footer nav×%d) → MOYA_TAP スキップ",
+                        _home_kw_count)
             # ── 【最優先】ダンジョン挑戦ボタン: 「挑戦」OCR検出 → 直接タップ (ホーム誤検出突破) ──
             _chal_btn = has_text(ocr, "挑戦", min_conf=0.3)
             if _chal_btn:
