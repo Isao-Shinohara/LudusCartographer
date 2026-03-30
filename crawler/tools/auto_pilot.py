@@ -275,8 +275,8 @@ def detect_and_act(ocr: list, state: PilotState,
 
     # ─── 事前計算: DetectContext 構築 ───
     _is_battle_ctx = state.current_scene == "BATTLE" or getattr(state, "_from_battle", False)
-    _confirm_pos = has_any(ocr, _CONFIRM_POS_KWS)
-    _confirm_neg = has_any(ocr, _CONFIRM_NEG_KWS)
+    _confirm_pos = has_any(ocr, _CONFIRM_POS_KWS, exact=True)
+    _confirm_neg = has_any(ocr, _CONFIRM_NEG_KWS, exact=True)
     _mini_conv_result = detect_mini_conversation(analysis_path, ocr_items=ocr) if analysis_path else None
 
     ctx = DetectContext(

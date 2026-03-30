@@ -120,8 +120,8 @@ def handle_finger_detection(ctx: DetectContext, state: PilotState) -> Optional[t
                 return _result_ocr
         # ─── ADV選択肢 — 肯定ボタン絶対優先 ───────────────────────────
         # OK / はい / 了解 を最優先。キャンセル / いいえ は選択禁止。
-        _adv_pos = has_any(ocr, _CONFIRM_POS_KWS)
-        _adv_neg = has_any(ocr, _CONFIRM_NEG_KWS)
+        _adv_pos = has_any(ocr, _CONFIRM_POS_KWS, exact=True)
+        _adv_neg = has_any(ocr, _CONFIRM_NEG_KWS, exact=True)
         if _adv_pos:
             _ac_x, _ac_y = _adv_pos["center"]
             # OCR bbox はテキスト下部パディングを含むため Y を上方補正

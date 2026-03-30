@@ -113,7 +113,14 @@ def save_evidence(img_path: Path, ocr_results: list, action: str, state) -> None
         logger.warning("Evidence save failed: %s", e)
 
 
-def has_any(ocr: list, keywords: list[str], min_conf: float = 0.3) -> Optional[dict]:
+def has_any(ocr: list, keywords: list[str], min_conf: float = 0.3,
+            exact: bool = False) -> Optional[dict]:
+    if exact:
+        for kw in keywords:
+            for r in ocr:
+                if r.get("text", "").strip() == kw and r.get("confidence", 0) >= min_conf:
+                    return r
+        return None
     for kw in keywords:
         match = find_best(ocr, kw, min_confidence=min_conf)
         if match:

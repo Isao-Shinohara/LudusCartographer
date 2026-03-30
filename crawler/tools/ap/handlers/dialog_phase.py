@@ -240,8 +240,8 @@ def handle_dialog_screen(
     if _dlg_type in ("next", "bottom"):
         # ── OK のみダイアログ優先: ▷/bottom 検出でも OK ボタンがあれば OK タップ ──
         # 「魔法少女解放」等の通知ダイアログは ▷ ではなく OK で閉じる
-        _ok_btn = has_any(ocr, _CONFIRM_POS_KWS)
-        _cancel_btn = has_any(ocr, _CONFIRM_NEG_KWS)
+        _ok_btn = has_any(ocr, _CONFIRM_POS_KWS, exact=True)
+        _cancel_btn = has_any(ocr, _CONFIRM_NEG_KWS, exact=True)
         # 名前入力画面: OK があるが先に名前を入力する必要がある → tutorial ハンドラに委譲
         _is_name_input = any("名前" in t or "プレイヤー名" in t for t in texts)
         if _ok_btn and not _cancel_btn and not _is_name_input:
@@ -321,8 +321,8 @@ def handle_dialog_screen(
     else:
         # "close": × ボタンを即タップ
         # ── 確認ダイアログ (OK+キャンセル共存) → × ではなく OK 優先 ──
-        _dlg_pos = has_any(ocr, _CONFIRM_POS_KWS)
-        _dlg_neg = has_any(ocr, _CONFIRM_NEG_KWS)
+        _dlg_pos = has_any(ocr, _CONFIRM_POS_KWS, exact=True)
+        _dlg_neg = has_any(ocr, _CONFIRM_NEG_KWS, exact=True)
         if _dlg_pos and _dlg_neg:
             _dp_x, _dp_y = _dlg_pos["center"]
             logger.info(
