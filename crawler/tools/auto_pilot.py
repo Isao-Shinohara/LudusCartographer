@@ -1173,9 +1173,9 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
 
     # ── 通常待機 (動画は自動終了するのでタップせず待つ) ──
     _from = getattr(state, "_movie_from_scene", "")
-    _from_tag = f"←{_from}" if _from and _from != "MOVIE" else ""
-    logger.info("[MOVIE%s] 待機 (%d) dist=%d static=%d",
-                _from_tag, state.movie_wait_consecutive, dist,
+    _scene_tag = f"{_from}_ANIM" if _from and _from != "MOVIE" else "MOVIE"
+    logger.info("[%s] 待機 (%d) dist=%d static=%d",
+                _scene_tag, state.movie_wait_consecutive, dist,
                 state.movie_static_count)
     state.last_action = "MOVIE_WAIT"
     state.stall_start = 0.0
