@@ -218,6 +218,9 @@ def is_dark_screen(img_path: Path) -> bool:
 
     黒帯除外のため中央領域のみ使用。平均値ではなく 90th percentile を
     使うことで、暗い背景+UIの画面 (p90≈58) と真の暗転 (p90≈2) を区別する。
+
+    完全暗転 (p90 <= 5) → True
+    暗背景+テキスト (p90 = 6〜BLACKOUT_BRIGHTNESS) → False (OCR で処理すべき)
     """
     try:
         from PIL import Image
@@ -226,7 +229,14 @@ def is_dark_screen(img_path: Path) -> bool:
             h, w = gray.shape
             y0, y1 = int(h * 0.2), int(h * 0.8)
             x0, x1 = int(w * 0.2), int(w * 0.8)
-            return float(np.percentile(gray[y0:y1, x0:x1], 90)) <= BLACKOUT_BRIGHTNESS
+            _p90 = float(np.percentile(gray[y0:y1, x0:x1], 90))
+            # 完全暗転のみ True (名前表示等の暗背景+白テキスト画面を除外)
+            _is_dark = _p90 <= 5
+            if _p90 <= BLACKOUT_BRIGHTNESS:
+                logger.info("[DEBG][DarkScreen] p90=%.1f → %s (threshold=5/blackout=%d)",
+                            _p90, "暗転" if _is_dark else "暗背景+テキスト→OCRへ",
+                            BLACKOUT_BRIGHTNESS)
+            return _is_dark
     except Exception:
         return False
 
