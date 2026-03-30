@@ -1638,32 +1638,45 @@ def count_page_dots(img_or_path, H: int = 720, W: int = 1520) -> int:
     _scale = (W * H) / (1520 * 720)
     _min_area = 15 * _scale
     _max_area = 800 * _scale
-    _dots = []  # (cx, cy) リスト — 水平整列チェック用
+    _dots = []       # (cx, cy) — 面積フィルタ通過
+    _oversized = []  # (cx, cy) — 面積オーバー (アクティブドット膨張の可能性)
     for _c in _cnts:
         _a = cv2.contourArea(_c)
-        if _a < _min_area or _a > _max_area:
+        if _a < _min_area:
             continue
         _x, _y, _w, _h = cv2.boundingRect(_c)
         _asp = _w / max(_h, 1)
-        if 0.5 < _asp < 2.0:  # roughly circular
-            _dots.append((_x + _w // 2, _y + _h // 2))
-    if len(_dots) < 2:
+        if not (0.5 < _asp < 2.0):  # roughly circular
+            continue
+        _cx, _cy = _x + _w // 2, _y + _h // 2
+        if _a <= _max_area:
+            _dots.append((_cx, _cy))
+        elif _a <= _max_area * 3:
+            # 面積オーバーだが極端に大きくない → アクティブドット候補として保持
+            _oversized.append((_cx, _cy))
+    if len(_dots) < 2 and not _oversized:
         return len(_dots)
     # 水平整列チェック: 実際のページドットは同一Y座標に並ぶ
     # 最頻Y座標 ±5px 以内のドットだけカウント (装飾散乱を除外)
     _roi_w = _x2 - _x1
     _best_count = 0
+    _best_y = None
     for _ref_y in set(d[1] for d in _dots):
         _row = [d for d in _dots if abs(d[1] - _ref_y) <= 5]
         if len(_row) < 2:
             continue
-        # x方向クラスタリング: ドットが中央に集中しているか確認
-        # 実際のページドットは ROI幅の40%以内に収まる (6ドットでも ~200px/1216px ≈ 16%)
         _xs = [d[0] for d in _row]
         _x_span = max(_xs) - min(_xs)
         if _x_span > _roi_w * 0.30:
             continue  # 散らばりすぎ → 装飾要素
-        _best_count = max(_best_count, len(_row))
+        if len(_row) > _best_count:
+            _best_count = len(_row)
+            _best_y = _ref_y
+    # 面積オーバーの候補を同じ行に追加 (アクティブドットの膨張を救済)
+    if _best_y is not None and _oversized:
+        for _ocx, _ocy in _oversized:
+            if abs(_ocy - _best_y) <= 5:
+                _best_count += 1
     return _best_count
 
 
