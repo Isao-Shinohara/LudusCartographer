@@ -18,7 +18,7 @@ from tools.ap.device import tap_device
 from tools.ap.helpers import has_any, has_text, log_milestone
 from tools.ap.image_proc import (
     detect_dialog, detect_dialog_corners, roi_to_device,
-    _run_battle_glow_sm,
+    _run_battle_glow_sm, ASSET_MANAGER, find_3d_arrow,
 )
 from tools.ap.handlers.result import handle_result_screen
 from tools.ap.state import PilotState
@@ -66,6 +66,30 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
         )
         tap_device(_ac_x, _ac_y_adj, state, f"ADV_CHOICE '{_adv_pos['text']}'")
         return "ADV_CHOICE", 1.0
+
+    # ─── 探索マップ 3D矢印タップ ───
+    _arrow_instruction = has_text(ocr, "矢印を", min_conf=0.2)
+    if _arrow_instruction and analysis_path is not None:
+        _arrow_pos = find_3d_arrow(analysis_path)
+        if _arrow_pos:
+            _ax, _ay = _arrow_pos
+            logger.info(">>> 【3D矢印】 探索マップ矢印 (%d,%d) 検出 → タップ", _ax, _ay)
+            tap_device(_ax, _ay, state, "MAP_ARROW_TAP")
+            if "map_arrow" not in ASSET_MANAGER._templates:
+                _hw, _hh = 70, 50
+                ASSET_MANAGER.save_template(
+                    analysis_path,
+                    max(0, _ax - _hw), max(0, _ay - _hh),
+                    min(W, _ax + _hw), min(H, _ay + _hh),
+                    name="map_arrow", action="MAP_ARROW_TAP",
+                    threshold=0.65, require_ocr=["矢印をタップ"],
+                )
+            return "MAP_ARROW_TAP", 1.0
+        else:
+            _ma_x, _ma_y = roi_to_device(int(W * 0.5), int(H * 0.29), state.game_roi)
+            logger.info(">>> 【3D矢印】 自動検出失敗 → デフォルト (%d,%d) タップ", _ma_x, _ma_y)
+            tap_device(_ma_x, _ma_y, state, "MAP_ARROW_FALLBACK")
+            return "MAP_ARROW_TAP", 1.0
 
     # ─── ダウンロード/ロード中 (セカンダリチェック) ───
     # ※ メインの厳格判定は関数冒頭の【絶対最優先 #-3】で実施済み。

@@ -19,7 +19,6 @@ from tools.ap.handlers.finger_priority import handle_finger_priority
 from tools.ap.handlers.quest import handle_quest_early
 from tools.ap.handlers.dialog_phase import handle_dialog_phase
 from tools.ap.handlers.tutorial import handle_tutorial
-from tools.ap.handlers.navigation import handle_navigation
 from tools.ap.handlers.home import handle_home
 from tools.ap.handlers.scene import handle_scene_specific
 from tools.ap.handlers.fallback import handle_fallback
@@ -48,11 +47,6 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
 
     # Phase 4: チュートリアル (名前入力, 指+金枠, スワイプ, アセットマッチ, ポップアップ)
     r = handle_tutorial(ctx, state)
-    if r is not None:
-        return r
-
-    # Phase 6: マップ矢印 / ハイライト指示 / ストーリータップ
-    r = handle_navigation(ctx, state)
     if r is not None:
         return r
 

@@ -12,7 +12,7 @@ import re
 import time
 from typing import Optional
 
-from tools.ap.constants import _CLOSE_BTN_OFFSET
+from tools.ap.constants import _CLOSE_BTN_OFFSET, _MENU_SCREEN_KWS
 from tools.ap.context import DetectContext
 from tools.ap.device import adb, tap_device, swipe_device
 from tools.ap.helpers import has_any, has_text
@@ -209,6 +209,43 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         logger.info(">>> 【お知らせ一覧】 タブ%d個検出 → ×クローズ (%d,%d)", _notice_tabs, _nx, _ny)
         tap_device(_nx, _ny, state, "NOTICE_LIST_CLOSE")
         return "NOTICE_LIST_CLOSE", 1.0
+
+    # ─── サブ画面脱出: 左上にメニュー画面名 → 戻るボタンタップ ───
+    # ガチャ/交換所等のサブ画面からの脱出 (チュートリアル中は誤動作するため home_reached 後のみ)
+    if state.home_reached and not ctx.in_battle_ctx:
+        for item in ocr:
+            _t = item.get("text", "")
+            _c = item.get("center", (0, 0))
+            if _c[0] < W * 0.20 and _c[1] < H * 0.15:
+                if any(kw in _t for kw in _MENU_SCREEN_KWS):
+                    _back_x = max(int(_c[0] - W * 0.05), int(W * 0.02))
+                    _back_y = _c[1]
+                    logger.info(">>> 【サブ画面脱出】 左上に '%s' 検出 → 戻る (%d,%d)",
+                                _t, _back_x, _back_y)
+                    tap_device(_back_x, _back_y, state, "SUB_SCREEN_BACK")
+                    return "SUB_SCREEN_BACK", 1.5
+
+    # ─── メニュースタック救済: 左上メニューKW + icon_back テンプレ → 戻る ───
+    if state.ineffective_tap_count >= 5 and not ctx.in_battle_ctx:
+        _menu_text = None
+        for item in ocr:
+            _t = item.get("text", "")
+            _c = item.get("center", (0, 0))
+            if _c[0] < W * 0.20 and _c[1] < H * 0.15:
+                if any(kw in _t for kw in _MENU_SCREEN_KWS):
+                    _menu_text = _t
+                    break
+        if _menu_text and analysis_path:
+            _back_roi = (0, 0, int(W * 0.15), int(H * 0.20))
+            _back_match = ASSET_MANAGER.match_single("icon_back", analysis_path, roi=_back_roi)
+            if _back_match and _back_match[2] >= 0.60:
+                _bx, _by = _back_match[0], _back_match[1]
+                logger.warning(
+                    ">>> 【メニュースタック救済】 '%s' + icon_back(%.2f) → 戻る (%d,%d) (ineffective=%d)",
+                    _menu_text, _back_match[2], _bx, _by, state.ineffective_tap_count,
+                )
+                tap_device(_bx, _by, state, "MENU_STALL_BACK")
+                return "MENU_STALL_BACK", 1.5
 
     # ─── プレゼントボックス: 「一括受取」タップ or BACK で戻る ───
     # 指テンプレ検出時 (pre_dialog_finger) はスキップ → finger_priority で処理
