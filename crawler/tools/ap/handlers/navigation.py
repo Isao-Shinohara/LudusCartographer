@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from tools.ap.constants import ANALYSIS_W, ANALYSIS_H
+from tools.ap.constants import ANALYSIS_W, ANALYSIS_H, _MENU_SCREEN_KWS
 from tools.ap.context import DetectContext
 from tools.ap.device import tap_device
 from tools.ap.helpers import has_text
@@ -58,15 +58,12 @@ def handle_navigation(ctx: DetectContext, state: PilotState) -> Optional[tuple[s
     # 左上に「↩ 画面名」が表示されるサブ画面を OCR で検出し、左上の戻るボタンをタップ
     # (チュートリアル中は誤動作するため home_reached 後のみ)
     if state.home_reached and not ctx.in_battle_ctx:
-        _sub_screen_names = ["ガチャ", "交換所", "ショップ", "パーティ", "編成",
-                             "ミッション", "メニュー", "設定", "フレンド", "プレゼント",
-                             "クエスト", "育成", "タワー"]
         for item in ocr:
             _t = item.get("text", "")
             _c = item.get("center", (0, 0))
             # 左上 (x < 20%, y < 15%) に画面名テキストがあるか
             if _c[0] < W * 0.20 and _c[1] < H * 0.15:
-                if any(kw in _t for kw in _sub_screen_names):
+                if any(kw in _t for kw in _MENU_SCREEN_KWS):
                     # 画面名の左にある戻るボタン (↩) をタップ
                     _back_x = max(int(_c[0] - W * 0.05), int(W * 0.02))
                     _back_y = _c[1]
@@ -76,3 +73,57 @@ def handle_navigation(ctx: DetectContext, state: PilotState) -> Optional[tuple[s
                     return "SUB_SCREEN_BACK", 1.5
 
     return None
+
+
+# ─── スタック救済: メニュー画面で操作が効かない場合の戻るボタン押下 ───
+# 条件 (全て AND):
+#   1. action_repeat_count >= 閾値 (同じアクションが繰り返されスタック)
+#   2. 左上にメニューキーワードが OCR で検出される
+#   3. icon_back テンプレートが左上領域でマッチする
+_MENU_STALL_THRESHOLD = 5
+
+
+def handle_menu_stall_recovery(
+    ctx: DetectContext, state: PilotState,
+) -> Optional[tuple[str, float]]:
+    """メニュー画面でスタックした際の救済処理。
+
+    アクションを実行しても phash/OCR に変化がない場合、
+    左上にメニューキーワード + icon_back テンプレがあれば戻るボタンを押す。
+    """
+    if state.action_repeat_count < _MENU_STALL_THRESHOLD:
+        return None
+    if ctx.in_battle_ctx:
+        return None
+
+    ocr = ctx.ocr
+    W, H = ctx.W, ctx.H
+    analysis_path = ctx.analysis_path
+
+    # 1. 左上にメニューキーワードがあるか
+    _menu_text = None
+    for item in ocr:
+        _t = item.get("text", "")
+        _c = item.get("center", (0, 0))
+        if _c[0] < W * 0.20 and _c[1] < H * 0.15:
+            if any(kw in _t for kw in _MENU_SCREEN_KWS):
+                _menu_text = _t
+                break
+    if not _menu_text:
+        return None
+
+    # 2. icon_back テンプレが左上領域でマッチするか
+    if analysis_path is None:
+        return None
+    _back_roi = (0, 0, int(W * 0.15), int(H * 0.20))
+    _back_match = ASSET_MANAGER.match_single("icon_back", analysis_path, roi=_back_roi)
+    if not _back_match or _back_match[2] < 0.60:
+        return None
+
+    _bx, _by = _back_match[0], _back_match[1]
+    logger.warning(
+        ">>> 【メニュースタック救済】 '%s' + icon_back(%.2f) → 戻る (%d,%d) (repeat=%d)",
+        _menu_text, _back_match[2], _bx, _by, state.action_repeat_count,
+    )
+    tap_device(_bx, _by, state, "MENU_STALL_BACK")
+    return "MENU_STALL_BACK", 1.5

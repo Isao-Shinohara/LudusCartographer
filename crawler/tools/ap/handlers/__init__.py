@@ -20,7 +20,7 @@ from tools.ap.handlers.quest import handle_quest_early
 from tools.ap.handlers.dialog_phase import handle_dialog_phase
 from tools.ap.handlers.tutorial import handle_tutorial
 from tools.ap.handlers.finger import handle_finger_detection
-from tools.ap.handlers.navigation import handle_navigation
+from tools.ap.handlers.navigation import handle_navigation, handle_menu_stall_recovery
 from tools.ap.handlers.home import handle_home
 from tools.ap.handlers.scene import handle_scene_specific
 from tools.ap.handlers.fallback import handle_fallback
@@ -85,6 +85,11 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
         state.last_action = "MINI_CONV_TAP"
         return "MINI_CONV_TAP", 0.3
+
+    # Phase 8.7: メニュースタック救済 (操作が効かないメニュー画面で戻るボタン)
+    r = handle_menu_stall_recovery(ctx, state)
+    if r is not None:
+        return r
 
     # Phase 9: フォールバック (閉じるボタン, システムダイアログ, 規約, 確認, ストーリー, etc.)
     return handle_fallback(ctx, state)
