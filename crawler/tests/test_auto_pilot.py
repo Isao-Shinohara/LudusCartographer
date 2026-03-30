@@ -1160,7 +1160,7 @@ class TestTitleScreenDetection:
 
     @patch("tools.ap.handlers.tutorial.detect_tutorial_gold_swipe", return_value=None)
     @patch("tools.ap.handlers.tutorial.is_tutorial_walk_scene", return_value=False)
-    @patch("tools.ap.handlers.finger.tap_device")
+    @patch("tools.ap.handlers.common.tap_device")
     def test_tap_to_start_triggers(self, mock_tap, mock_walk, mock_swipe, state, tmp_path):
         """OCR 'TAP TO START' + 'MAGIA EXEDRA' → title=True。"""
         import cv2

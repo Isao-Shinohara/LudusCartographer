@@ -15,7 +15,7 @@ from tools.ap.constants import (
 )
 from tools.ap.context import DetectContext
 from tools.ap.device import tap_device
-from tools.ap.helpers import has_any, has_text
+from tools.ap.helpers import has_any, has_text, log_milestone
 from tools.ap.image_proc import (
     detect_dialog, detect_dialog_corners, roi_to_device,
     _run_battle_glow_sm,
@@ -35,10 +35,12 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
     H = ctx.H
     analysis_path = ctx.analysis_path
 
-    # ─── バトル発光 State Machine (Phase 5 から移動) ───
+    # ─── バトル発光 State Machine ───
     # dialog_phase (#0-PRE) はチュートリアルポップアップ時にスキップするため、
     # ここで補完する。
     _is_battle_ctx = ctx.in_battle_ctx
+    if _is_battle_ctx:
+        log_milestone(state, "FIRST_BATTLE")
     if _is_battle_ctx and analysis_path is not None:
         _gsm_result = _run_battle_glow_sm(analysis_path, W, H, state, ocr, tag="GLOW_SM")
         if _gsm_result is not None:
