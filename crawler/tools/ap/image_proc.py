@@ -618,10 +618,24 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
             return None
 
         # 最大輪郭を金枠候補とする (指近傍なので偽陽性リスク低い)
-        _best = max(_contours, key=cv2.contourArea)
-        _area = cv2.contourArea(_best)
-        if _area < 2000:
+        # 矩形度 (solidity) でフィルタ: 金枠は矩形の枠線 → solidity >= 0.5
+        _best = None
+        for _c in sorted(_contours, key=cv2.contourArea, reverse=True):
+            _a = cv2.contourArea(_c)
+            if _a < 2000:
+                break
+            _hull = cv2.convexHull(_c)
+            _hull_area = cv2.contourArea(_hull)
+            _solidity = _a / max(_hull_area, 1)
+            if _solidity < 0.5:
+                logger.debug("[find_gold_frame_near] solidity=%.2f < 0.5 → 非矩形、スキップ (area=%d)",
+                             _solidity, int(_a))
+                continue
+            _best = _c
+            break
+        if _best is None:
             return None
+        _area = cv2.contourArea(_best)
         _bx, _by, _bw, _bh = cv2.boundingRect(_best)
         # 元画像座標に変換
         _frame_cx = _x1 + _bx + _bw // 2
@@ -629,8 +643,9 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
         _frame_w = _bw
         _frame_h = _bh
 
-        logger.debug("[find_gold_frame_near] HSV gold area=%d → center(%d,%d) %dx%d",
-                     int(_area), _frame_cx, _frame_cy, _frame_w, _frame_h)
+        logger.debug("[find_gold_frame_near] HSV gold area=%d solidity=%.2f → center(%d,%d) %dx%d",
+                     int(_area), cv2.contourArea(_best) / max(cv2.contourArea(cv2.convexHull(_best)), 1),
+                     _frame_cx, _frame_cy, _frame_w, _frame_h)
         return (_frame_cx, _frame_cy, _frame_w, _frame_h)
     except Exception as e:
         logger.debug("find_gold_frame_near error: %s", e)
