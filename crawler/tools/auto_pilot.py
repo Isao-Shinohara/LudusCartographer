@@ -2727,17 +2727,6 @@ def main():
                     logger.info("[MINI_CONV_RAPID] リトライ %d 回超 → OCR フォールスルー", _retry)
                     state._mini_conv_retry_count = 0
 
-        # ── ineffective_tap_count 更新 (メニュースタック救済用) ──
-        # 前回イテレーションでタップしたのに phash/OCR が変化なし → カウントアップ
-        _prev_tapped = state.total_taps > state._prev_taps_snapshot
-        _ocr_changed = texts != state._prev_ocr_texts
-        state._prev_taps_snapshot = state.total_taps
-        state._prev_ocr_texts = texts
-        if screen_changed or _ocr_changed:
-            state.ineffective_tap_count = 0
-        elif _prev_tapped:
-            state.ineffective_tap_count += 1
-
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
             state.same_phash_count = 0
@@ -3295,6 +3284,17 @@ def main():
             continue
 
         texts = all_texts(ocr_results)
+
+        # ── ineffective_tap_count 更新 (メニュースタック救済用) ──
+        # 前回イテレーションでタップしたのに phash/OCR が変化なし → カウントアップ
+        _prev_tapped = state.total_taps > state._prev_taps_snapshot
+        _ocr_changed = texts != state._prev_ocr_texts
+        state._prev_taps_snapshot = state.total_taps
+        state._prev_ocr_texts = texts
+        if screen_changed or _ocr_changed:
+            state.ineffective_tap_count = 0
+        elif _prev_tapped:
+            state.ineffective_tap_count += 1
 
         # ── ロック画面検出: "緊急通報のみ" = デバイスがスリープ → 復帰 ──
         _ocr_text_joined = " ".join(texts) if texts else ""
