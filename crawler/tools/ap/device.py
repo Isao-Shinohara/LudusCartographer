@@ -368,6 +368,28 @@ def _take_screenshot_adb(path: Path, retries: int = 3,
     return None, 0, 0, _retried
 
 
+def _ensure_analysis_size(path: Path) -> None:
+    """スクショファイルが ANALYSIS_W x ANALYSIS_H でなければリサイズして上書き。
+
+    全下流関数が imread_cached で正しい解像度を取得できるようにする。
+    Retina (2880x1440) や ADB (2160x1080) 等の解像度差を吸収。
+    """
+    try:
+        img = cv2.imread(str(path))
+        if img is None:
+            return
+        h, w = img.shape[:2]
+        # ポートレート → ランドスケープ回転
+        if w < h:
+            img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            h, w = img.shape[:2]
+        if (w, h) != (ANALYSIS_W, ANALYSIS_H):
+            img = cv2.resize(img, (ANALYSIS_W, ANALYSIS_H), interpolation=cv2.INTER_LANCZOS4)
+            cv2.imwrite(str(path), img)
+    except Exception:
+        pass
+
+
 def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[Path], int, int, int]:
     """スクリーンショット取得 (2段構え)。
 
@@ -375,6 +397,7 @@ def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[
     2. adb screencap フォールバック (~1.5-2s)
 
     scrcpy キャプチャが連続失敗した場合、自動的に scrcpy を再起動する。
+    取得後は ANALYSIS_W x ANALYSIS_H にリサイズして保存。
 
     Returns: (path, device_w, device_h, retry_count)
     ※ device_w/h は常に実機の物理解像度 (wm size) を返す
@@ -386,6 +409,7 @@ def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[
     _scrcpy = _take_screenshot_scrcpy(path)
     if _scrcpy is not None:
         _SCRCPY_FAIL_COUNT = 0
+        _ensure_analysis_size(_scrcpy[0])
         return _scrcpy[0], _scrcpy[1], _scrcpy[2], 0
 
     # scrcpy 失敗カウント: 連続失敗で自動復帰
@@ -403,7 +427,10 @@ def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[
             _SCRCPY_LAST_RESTART = _now
 
     # ── Tier 2: adb screencap フォールバック ──
-    return _take_screenshot_adb(path, retries=retries, min_bytes=min_bytes)
+    _result = _take_screenshot_adb(path, retries=retries, min_bytes=min_bytes)
+    if _result[0] is not None:
+        _ensure_analysis_size(_result[0])
+    return _result
 
 
 def _get_scrcpy_window_size() -> tuple[int, int]:
