@@ -97,7 +97,7 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
                         _ft_name_found, _ft_rot[2], _ft_rot[0], _ft_rot[1])
 
     # 金枠検出 — HSV で検出
-    _home_gold = find_gold_button(analysis_path) if analysis_path else None
+    _home_gold = find_gold_button(analysis_path, right_half_only=False) if analysis_path else None
     _home_gold_tmpl = _home_gold  # チュートリアル証拠として使用
 
     if _has_hand:

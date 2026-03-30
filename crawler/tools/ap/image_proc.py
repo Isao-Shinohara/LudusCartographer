@@ -698,16 +698,6 @@ def find_gold_frame_near(img_path: Path, cx: int, cy: int,
                 logger.debug("[find_gold_frame_near] solidity=%.2f < 0.5 → 非矩形、スキップ (area=%d)",
                              _solidity, int(_a))
                 continue
-            # 発光チェック: 金枠は発光して高輝度、地面テクスチャはくすんだ金色
-            _cbx, _cby, _cbw, _cbh = cv2.boundingRect(_c)
-            _bbox_region = _roi[_cby:_cby + _cbh, _cbx:_cbx + _cbw]
-            if _bbox_region.size > 0:
-                _gray_region = cv2.cvtColor(_bbox_region, cv2.COLOR_BGR2GRAY)
-                _p90 = float(np.percentile(_gray_region, 90))
-                if _p90 < 180:
-                    logger.debug("[find_gold_frame_near] p90=%.0f < 180 → 発光なし、スキップ (area=%d)",
-                                 _p90, int(_a))
-                    continue
             _best = _c
             break
         if _best is None:
@@ -2242,14 +2232,16 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
 
 # ─── Type B: 金枠ハイライトボタン検出 → 中心タップ ─────────────────────
 def find_gold_button(img_path: Path,
-                     overlay_mode: bool = False,
-                     skip_upper_filter: bool = False,
-                     ) -> Optional[tuple[int, int]]:
+                                    right_half_only: bool = True,
+                                    overlay_mode: bool = False,
+                                    skip_upper_filter: bool = False,
+                                    has_finger: bool = False,
+                                    ) -> Optional[tuple[int, int]]:
     """
     チュートリアルの「金枠ハイライトボタン」を検出しタップ座標を返す。
 
     内部で find_gold_frame_near を使用し、HSV 検出ロジックを共通化。
-    矩形度 (solidity >= 0.5) で菱形装飾を排除済みのため左右制限なし。
+    フィルタ条件 (right_half_only, 上部除外等) は維持。
 
     Returns: (tap_x, tap_y) or None
     """
@@ -2257,7 +2249,7 @@ def find_gold_button(img_path: Path,
         W_img, H_img = ANALYSIS_W, ANALYSIS_H
 
         # 画面中央を起点に広範囲で金枠を探索
-        _search_cx = int(W_img * 0.5)
+        _search_cx = int(W_img * 0.75) if right_half_only else int(W_img * 0.5)
         _search_cy = int(H_img * 0.6)
         _result = find_gold_frame_near(
             img_path, _search_cx, _search_cy, search_radius=max(W_img, H_img))
@@ -2279,8 +2271,37 @@ def find_gold_button(img_path: Path,
             logger.debug("[GoldBtn] 上部除外: (%d,%d) %dx%d cy=%d", x, y, w, h, cy)
             return None
 
-        logger.info("[GoldBtn] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f → tap(%d,%d)",
-                    area, x, y, w, h, aspect, cx, cy)
+        # 暗転チェック: 金枠 bbox 外側の輝度 std で判定
+        # チュートリアル暗転 (std < 45) → 本物の金枠
+        # 通常画面 (std >= 45) → 地面テクスチャ等の誤検出の可能性
+        _has_overlay = False
+        if not overlay_mode:
+            _gold_img = imread_analysis(img_path)
+            if _gold_img is not None:
+                _gray = cv2.cvtColor(_gold_img, cv2.COLOR_BGR2GRAY)
+                _gH, _gW = _gray.shape
+                _mask = np.ones((_gH, _gW), dtype=np.uint8) * 255
+                _bx, _by = max(0, x), max(0, y)
+                _mask[_by:min(_gH, _by + h), _bx:min(_gW, _bx + w)] = 0
+                _outside = _gray[_mask > 0]
+                _outside_std = float(_outside.std()) if _outside.size > 0 else 999.0
+                _has_overlay = _outside_std < 45
+                if _has_overlay:
+                    logger.debug("[GoldBtn] 暗転検出 (std=%.1f < 45)", _outside_std)
+
+        # 右半分のみフィルタ (暗転オーバーレイ時はバイパス)
+        if right_half_only and not overlay_mode and not _has_overlay and cx < W_img * 0.5:
+            logger.debug("[GoldBtn] 左半分除外: (%d,%d) %dx%d cx=%d", x, y, w, h, cx)
+            return None
+
+        # 暗転なし + 大きすぎる金枠 = 地面テクスチャの可能性 → 除外
+        if not overlay_mode and not _has_overlay and area > 50000:
+            logger.debug("[GoldBtn] 暗転なし+大面積除外: area=%d bbox=(%d,%d) %dx%d",
+                         area, x, y, w, h)
+            return None
+
+        logger.info("[GoldBtn] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f overlay=%s → tap(%d,%d)",
+                    area, x, y, w, h, aspect, _has_overlay, cx, cy)
         return cx, cy
 
     except Exception as e:
