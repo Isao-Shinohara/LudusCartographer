@@ -149,9 +149,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     _walk_ap = analysis_path is not None
     _walk_texts = len(texts) <= 2
     _walk_scene = state.current_scene != "MOVIE"
-    _walk_dl = not state.post_download
-    _walk_check = is_tutorial_walk_scene(analysis_path) if (_walk_ap and _walk_texts and _walk_scene and _walk_dl) else False
-    if _walk_ap and _walk_texts and _walk_scene and _walk_dl and _walk_check:
+    _walk_check = is_tutorial_walk_scene(analysis_path) if (_walk_ap and _walk_texts and _walk_scene) else False
+    if _walk_ap and _walk_texts and _walk_scene and _walk_check:
         _sx = int(ANALYSIS_W * 0.5)
         _fy = ANALYSIS_H - 80   # ナビゲーションバー回避マージン
         _ty = 50                 # ステータスバー回避マージン
