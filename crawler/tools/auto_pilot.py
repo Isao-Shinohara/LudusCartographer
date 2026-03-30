@@ -3563,6 +3563,15 @@ def main():
                 # 長時間スタック (15回以上) → 動画一時停止の可能性 → 中央タップで復帰
                 _wfc_total = getattr(state, "_wfc_total_count", 0) + 1
                 state._wfc_total_count = _wfc_total
+                # close_btn チェック: ×ボタンがあれば中央タップより優先
+                _wfc_close = ASSET_MANAGER.match_single("close_btn", _wfc_img) if _wfc_img else None
+                if _wfc_close and _wfc_close[2] >= 0.90:
+                    logger.info("[WFC_ESCAPE] ×ボタン検出 (score=%.2f) → タップ (%d,%d)",
+                                _wfc_close[2], _wfc_close[0], _wfc_close[1])
+                    tap_device(_wfc_close[0], _wfc_close[1], state, "WFC_CLOSE_BTN")
+                    state._wfc_consecutive = 0
+                    state._wfc_total_count = 0
+                    continue
                 if _wfc_total >= 5:
                     logger.warning(
                         "[WFC_ESCAPE] WAIT_FOR_CHANGE 累計%d回 → 動画一時停止疑い → 中央タップ",

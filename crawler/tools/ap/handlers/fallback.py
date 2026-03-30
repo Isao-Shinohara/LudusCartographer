@@ -41,13 +41,8 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             _has_close_btn = True
             _close_btn_pos = (_close_m[0], _close_m[1])
 
-    # ─── 非ダイアログ画面の×ボタン: メモリア詳細等 ───
-    # 画面遷移中の誤タップ防止: 同一アクション3回連続 (≈7-10秒) 後のみ発火
-    if _has_close_btn and not _is_dialog and state.action_repeat_count >= 3:
-        logger.info(">>> ×ボタン検出 (非ダイアログ, repeat=%d) → タップ (%d,%d)",
-                    state.action_repeat_count, _close_btn_pos[0], _close_btn_pos[1])
-        tap_device(_close_btn_pos[0], _close_btn_pos[1], state, "CLOSE_BTN_SCREEN")
-        return "CLOSE_BTN_SCREEN", 1.0
+    # ─── 非ダイアログ画面の×ボタン: WFC_ESCAPE に統合 (auto_pilot.py) ───
+    # close_btn 単独タップは WAIT_FOR_CHANGE 3回連続後の WFC_ESCAPE で処理
 
     # ─── ゲーム内システムダイアログ (画質設定・ダウンロード確認 等) ───
     # smart_tap_button で金色ボタン枠の幾何学的中心を取得 (OCR ずれを排除)
