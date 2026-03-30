@@ -1,8 +1,8 @@
 """
-ap/handlers/tutorial.py — チュートリアル系ハンドラ
+ap/handlers/tutorial.py — チュートリアル固有ハンドラ
 
-名前入力、指+金枠ボタン、チュートリアルスワイプ、アセットマッチング、
-チュートリアルポップアップ、報酬/強化ポップアップ等を処理する。
+名前入力、チュートリアル歩行/スワイプ、金枠ボタン、アセットマッチング。
+ポップアップ/ダイアログ系は dialog_phase.py / fallback.py に移動済み。
 """
 from __future__ import annotations
 
@@ -16,11 +16,10 @@ from tools.ap.constants import (
     ANALYSIS_W, ANALYSIS_H,
     BATTLE_WAIT, PHASH_THRESHOLD,
     _DIALOG_FIRST_KWS, _BATTLE_UI_KWS,
-    _CLOSE_BTN_OFFSET,
 )
 from tools.ap.device import adb, tap_device, swipe_device, take_screenshot
 from tools.ap.helpers import (
-    has_any, has_text, log_milestone, watchdog_recover,
+    has_any, has_text, log_milestone,
 )
 from tools.ap.image_proc import (
     ASSET_MANAGER,
@@ -28,15 +27,10 @@ from tools.ap.image_proc import (
     is_tutorial_walk_scene,
     detect_tutorial_gold_swipe,
     find_gold_button,
-    smart_tap_button,
-    detect_dialog,
-    process_paging_dialog,
-    count_page_dots,
     detect_movie_scene,
     detect_adv_scene,
     prepare_analysis_image,
     detect_background_blur,
-    detect_dialog_corners,
     imread_cached,
 )
 from lc.ocr import run_ocr
@@ -46,17 +40,12 @@ logger = logging.getLogger("auto_pilot")
 
 
 def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, float]]:
-    """チュートリアル系の画面を処理するハンドラ。
+    """チュートリアル固有の画面を処理するハンドラ。
 
     - プレイヤー名入力ダイアログ (#0-b-name)
-    - 指+金枠ボタン (FINGER_GOLD_TAP)
-    - メインクエストボタン / クエストマップノード
     - チュートリアル歩行シーン / Gold swipe (#0-walk, #0-aa)
     - 金枠ボタンタップ (バトルチュートリアル) (#0-ab)
-    - アセットマッチハンドラ (#0-a)
-    - チュートリアルポップアップ セカンダリ (#0)
-    - プレイヤー名入力 (重複セーフネット) (#0-b-extra)
-    - 各種ポップアップ (確認, 報酬, ガチャ結果, クローズ, プレゼントボックス, カルーセル, ガイド)
+    - アセットマッチハンドラ (#0-a): スワイプ指、ダイアログ▷、動画スキップ
 
     Returns:
         (action_name, wait_seconds) or None to fall through.
@@ -341,192 +330,5 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             # その他のアセットアクション: タップして return
             tap_device(cx, cy, state, action)
             return action, 0.5
-
-    # ─── 【優先 #0】チュートリアルポップアップ セカンダリセーフネット ───
-    # #0-DIALOG (形状ベース) が失敗した場合の OCR キーワードによるバックアップ。
-    # キーワードリストは _DIALOG_FIRST_KWS (定数) と共有して管理。
-    # BATTLE シーンではロール名 (DEFENDER 等) が常時表示されるため誤検出を防止
-    _in_battle_ctx = state.current_scene == "BATTLE" or getattr(state, "_from_battle", False)
-    pre_popup = None if _in_battle_ctx else has_any(ocr, list(_DIALOG_FIRST_KWS))
-    if pre_popup:
-        # 四隅テンプレで本物のダイアログか確認 (ホーム画面等の誤検出防止)
-        _corners = ctx.has_dialog_corners if ctx.has_dialog_corners is not None else (detect_dialog_corners(analysis_path) if analysis_path else False)
-        if analysis_path and not _corners:
-            logger.info("[PRE_POPUP] 四隅テンプレなし → ダイアログではない、スキップ (kw='%s')",
-                        pre_popup["text"][:10])
-            pre_popup = None
-    if pre_popup:
-        state.pre_popup_tap_count += 1
-        # ── ページドット検出: ドット≥2 → ページングが必要 (× 即タップではなく全ページ走査) ──
-        _popup_dots = count_page_dots(analysis_path) if analysis_path else 0
-        # ── テンプレートマッチングで ▷/× を優先検出 ──
-        _nav = detect_dialog(analysis_path, W, H) if analysis_path else None
-        if _nav:
-            _nav_type, cx, cy = _nav
-            if _nav_type == "close" and _popup_dots < 2:
-                # ページなし → × で即閉じ
-                logger.info(">>> 【チュートリアルポップアップ】 '%s' ×→(%d,%d) [template] dots=%d",
-                            pre_popup["text"][:10], cx, cy, _popup_dots)
-                tap_device(cx, cy, state, "PRE_POPUP_TAP")
-                return "TUTORIAL_POPUP", 1.0
-            if _nav_type == "close" and _popup_dots >= 2:
-                # ページあり + × 検出 → ▷ は固定座標で走査後 × で閉じ
-                logger.info(">>> 【チュートリアルポップアップ→PAGING】 '%s' dots=%d, × 検出→先にページ走査",
-                            pre_popup["text"][:10], _popup_dots)
-                _arr_x, _arr_y = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)
-                _pg_result = process_paging_dialog(
-                    analysis_path, W, H, state,
-                    initial_dlg=("next", _arr_x, _arr_y),
-                    ocr_texts=texts,
-                )
-                state.pre_popup_tap_count = 0
-                return _pg_result, 1.0
-            # ▷ 検出 → ページングダイアログ: process_paging_dialog で全ページ一括処理
-            # (単発タップだとページ2以降の OCR が _DIALOG_FIRST_KWS に不一致 → スタックする)
-            logger.info(">>> 【チュートリアルポップアップ→PAGING】 '%s' ▷(%d,%d) → 全ページ走査開始",
-                        pre_popup["text"][:10], cx, cy)
-            _pg_result = process_paging_dialog(
-                analysis_path, W, H, state,
-                initial_dlg=(_nav_type, cx, cy),
-                ocr_texts=texts,
-            )
-            state.pre_popup_tap_count = 0
-            return _pg_result, 1.0
-        # ── フォールバック: 固定座標 → process_paging_dialog に委譲 ──
-        # テンプレートなしでも ▷ 位置を推定してページング処理
-        _arr = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)   # ▷ 矢印
-        _cls = roi_to_device(int(W * 0.98), int(H * 0.056), state.game_roi)  # × ボタン
-        # まず ▷ をタップして反応を見る → process_paging_dialog で全ページ処理
-        logger.info(">>> 【チュートリアルポップアップ→PAGING(FB)】 '%s' ▷(%d,%d) dots=%d → 全ページ走査",
-                    pre_popup["text"][:10], _arr[0], _arr[1], _popup_dots)
-        _pg_result = process_paging_dialog(
-            analysis_path, W, H, state,
-            initial_dlg=("next", _arr[0], _arr[1]),
-            ocr_texts=texts,
-        )
-        state.pre_popup_tap_count = 0
-        return _pg_result, 1.0
-
-    # ─── 【最優先 #0-b】報酬/強化結果ポップアップを即時処理 (ブロブ誤検出防止) ───
-    # 「以下の内容でよろしいですか」確認ダイアログ → SmartTap で OK 物理中心をタップ
-    confirm_dlg = has_text(ocr, "以下の内容でよろしいですか", min_conf=0.3)
-    if confirm_dlg:
-        ok_bottom = next(
-            (item for item in ocr
-             if "OK" in item.get("text", "") and item["center"][1] > H * 0.6),
-            None
-        )
-        if ok_bottom:
-            ocr_cx, ocr_cy = ok_bottom["center"]
-        else:
-            ocr_cx, ocr_cy = roi_to_device(
-                int(W * 0.70), int(H * 0.88), state.game_roi)  # 比率ベースフォールバック
-        cx, cy = smart_tap_button(analysis_path, ocr_cx, ocr_cy, ocr_items=ocr)
-        logger.info(">>> 【確認ダイアログ】 SmartTap OK (%d,%d)", cx, cy)
-        tap_device(cx, cy, state, "CONFIRM_DIALOG_OK")
-        return "CONFIRM_DIALOG_OK", 1.0
-
-    # 「タップして次へ」: 報酬獲得画面の次へ進む
-    tap_next = has_text(ocr, "タップして次へ", min_conf=0.3)
-    if tap_next:
-        cx, cy = tap_next["center"]
-        logger.info(">>> 【報酬/次へ】 'タップして次へ' (%d,%d) タップ", cx, cy)
-        tap_device(cx, cy, state, "REWARD_NEXT")
-        return "REWARD_NEXT", 1.0
-
-    # ガチャ結果確認画面: 「限界突破」+「確定で獲得」→ OK ボタン想定位置タップ
-    # (OCR が "OK" を拾えない低解像度を考慮し、テキスト存在だけで判定)
-    _gacha_limit = has_text(ocr, "限界突破", min_conf=0.2)
-    _gacha_kakutei = has_text(ocr, "確定", min_conf=0.2) or has_text(ocr, "獲得", min_conf=0.2)
-    if _gacha_limit and _gacha_kakutei:
-        _ok_x, _ok_y = roi_to_device(int(W * 0.41), int(H * 0.89), state.game_roi)
-        logger.info(">>> 【ガチャ結果確認】 限界突破+確定/獲得 検出 → OK想定位置 (%d,%d) タップ", _ok_x, _ok_y)
-        tap_device(_ok_x, _ok_y, state, "GACHA_RESULT_OK")
-        return "GACHA_RESULT_OK", 1.5
-
-    # 限界突破/強化完了/レベルアップ系ポップアップ → 右上 × ボタンで閉じる
-    close_popup_kws = ["限界突破", "強化完了", "レベルアップ", "称号獲得", "エピソード解放",
-                       "ランクアップ", "新しいコンテンツ", "アンロック",
-                       "マギアボックス", "ミッション達成", "デイリーミッション",
-                       "ログインボーナス", "初心者ログイン", "キャンペーン"]
-
-    # カルーセル型チュートリアルポップアップ (「メインクエストをPLAYして」等の複数ページ説明)
-    # 閉じるボタン: ポップアップフレーム右上 (1430, 88) — 実測 2026-03-05
-    carousel_popup_kws = ["メインクエストをPLAY", "ピュエラピクトゥーラ", "POWER UP"]
-    carousel_match = has_any(ocr, carousel_popup_kws)
-    if carousel_match:
-        # 最終ページへ移動 (右ナビゲーション × 6) → フレーム右上 × をタップ
-        _cn_x, _cn_y = roi_to_device(int(W * 0.96), int(H * 0.5), state.game_roi)
-        for _ in range(6):
-            tap_device(_cn_x, _cn_y, state, "CAROUSEL_NAV_RIGHT", rapid=True)
-        close_x, close_y = roi_to_device(int(W * 0.94), int(H * 0.12), state.game_roi)
-        logger.info(">>> 【カルーセルポップアップ】 '%s' → フレーム右上 (%d,%d) タップ",
-                    carousel_match["text"][:10], close_x, close_y)
-        tap_device(close_x, close_y, state, "CAROUSEL_CLOSE")
-        return "CLOSE_POPUP", 1.0
-    # ─── プレゼントボックス画面: 「一括受取」タップ or BACK で戻る ───
-    # 指テンプレ検出時 (pre_dialog_finger) はスキップ → Asset Match の指+金枠フローに委譲
-    # OCR が「プレセントポックス」等に誤読するケースも拾う
-    _present_box = (has_text(ocr, "プレゼントボックス", min_conf=0.2)
-                    or (has_any(ocr, ["プレセント", "プレゼント"], min_conf=0.2)
-                        and has_any(ocr, ["ボックス", "ポックス", "ボック"], min_conf=0.2)))
-    if _present_box and not ctx.pre_dialog_finger:
-        _bulk_receive = has_text(ocr, "一括受取", min_conf=0.3)
-        if _bulk_receive:
-            _br_x, _br_y = _bulk_receive["center"]
-            logger.info(">>> 【プレゼントボックス】 一括受取 (%d,%d) タップ", _br_x, _br_y)
-            tap_device(_br_x, _br_y, state, "PRESENT_BULK_RECEIVE")
-            return "PRESENT_BULK_RECEIVE", 2.0
-        else:
-            # 一括受取ボタンが見えない → BACK キーで戻る
-            logger.info(">>> 【プレゼントボックス】 一括受取なし → BACK で戻る")
-            adb("shell input keyevent KEYCODE_BACK")
-            return "PRESENT_BOX_BACK", 1.0
-
-    close_popup = has_any(ocr, close_popup_kws)
-    _corners2 = ctx.has_dialog_corners if ctx.has_dialog_corners is not None else (detect_dialog_corners(analysis_path) if analysis_path else False)
-    if close_popup and analysis_path and not _corners2:
-        logger.info("[CLOSE_POPUP] 四隅テンプレなし → ダイアログではない、スキップ (kw='%s')",
-                    close_popup["text"][:10])
-        close_popup = None
-    if close_popup:
-        # CLOSE_POPUP スタック脱出: 8回以上累計失敗 → BACK キーで閉じる
-        if state.pre_popup_tap_count >= 8:
-            logger.warning(">>> 【%s ポップアップ】 × が8回空振り → BACK キーで脱出",
-                           close_popup["text"][:6])
-            try:
-                adb("shell input keyevent KEYCODE_BACK")
-            except Exception as _e:
-                logger.debug("[CLOSE_POPUP] BACK キー送信例外: %s", _e)
-            state.pre_popup_tap_count = 0
-            return "CLOSE_POPUP_BACK", 1.0
-        # テンプレートマッチングで正確な × 位置を取得 (固定座標より優先)
-        _close_match = ASSET_MANAGER.match_single("close_btn", analysis_path) if analysis_path else None
-        if _close_match and _close_match[2] >= 0.60:
-            close_x, close_y = _close_match[0], _close_match[1]
-            logger.info(">>> 【%s ポップアップ】 → × テンプレ(%.2f) (%d,%d) タップ",
-                        close_popup["text"][:6], _close_match[2], close_x, close_y)
-        else:
-            close_x = W - _CLOSE_BTN_OFFSET  # 右上 × ボタン
-            close_y = _CLOSE_BTN_OFFSET
-            logger.info(">>> 【%s ポップアップ】 → × 固定座標 (%d,%d) タップ",
-                        close_popup["text"][:6], close_x, close_y)
-        state.pre_popup_tap_count += 1
-        tap_device(close_x, close_y, state, f"CLOSE_POPUP_{close_popup['text'][:6]}")
-        return "CLOSE_POPUP", 1.0
-
-    # 「〜してみましょう」型チュートリアルガイド + ブロブスタック → × で閉じる
-    # 例: "今回は自動編成をしてみましょう。" が表示されたまま動かない場合
-    if state.blob_same_count >= 5:
-        tutorial_guide = (has_text(ocr, "てみましょう", min_conf=0.3) or
-                          has_text(ocr, "しましょう", min_conf=0.3))
-        if tutorial_guide and not ctx.in_battle_ctx:
-            close_x = W - _CLOSE_BTN_OFFSET  # 右上 × ボタン
-            close_y = _CLOSE_BTN_OFFSET
-            logger.info(">>> 【チュートリアルガイド スタック】 '%s' → × (%d,%d) タップ",
-                        tutorial_guide["text"][:10], close_x, close_y)
-            tap_device(close_x, close_y, state, "TUTORIAL_GUIDE_CLOSE")
-            state.blob_same_count = 0
-            return "CLOSE_POPUP", 1.0
 
     return None

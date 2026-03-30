@@ -12,10 +12,14 @@ import re
 import time
 from typing import Optional
 
+from tools.ap.constants import _CLOSE_BTN_OFFSET
 from tools.ap.context import DetectContext
-from tools.ap.device import tap_device, swipe_device
+from tools.ap.device import adb, tap_device, swipe_device
 from tools.ap.helpers import has_any, has_text
-from tools.ap.image_proc import smart_tap_button, roi_to_device, ASSET_MANAGER
+from tools.ap.image_proc import (
+    smart_tap_button, roi_to_device, ASSET_MANAGER,
+    detect_dialog_corners,
+)
 from tools.ap.state import PilotState
 
 logger = logging.getLogger("auto_pilot")
@@ -31,8 +35,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     analysis_path = ctx.analysis_path
 
     # ─── シーン判定フラグ ───
-    from tools.ap.image_proc import detect_dialog_corners as _ddc_fb
-    _is_dialog = _ddc_fb(analysis_path) if analysis_path else False
+    _is_dialog = detect_dialog_corners(analysis_path) if analysis_path else False
     _has_close_btn = False
     _close_btn_pos = None
     if analysis_path:
@@ -109,6 +112,57 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             tap_device(cx, cy, state, "AGREE")
         return "AGREE", 1.0
 
+    # ─── ガチャ結果確認: 「限界突破」+「確定/獲得」→ OK 固定位置タップ ───
+    _gacha_limit = has_text(ocr, "限界突破", min_conf=0.2)
+    _gacha_kakutei = has_text(ocr, "確定", min_conf=0.2) or has_text(ocr, "獲得", min_conf=0.2)
+    if _gacha_limit and _gacha_kakutei:
+        _ok_x, _ok_y = roi_to_device(int(W * 0.41), int(H * 0.89), state.game_roi)
+        logger.info(">>> 【ガチャ結果確認】 限界突破+確定/獲得 検出 → OK想定位置 (%d,%d) タップ", _ok_x, _ok_y)
+        tap_device(_ok_x, _ok_y, state, "GACHA_RESULT_OK")
+        return "GACHA_RESULT_OK", 1.5
+
+    # ─── 閉じるポップアップ (報酬/通知系) → × ボタンで閉じる ───
+    _close_popup_kws = ["限界突破", "強化完了", "レベルアップ", "称号獲得", "エピソード解放",
+                        "ランクアップ", "新しいコンテンツ", "アンロック",
+                        "マギアボックス", "ミッション達成", "デイリーミッション",
+                        "ログインボーナス", "初心者ログイン", "キャンペーン"]
+    _close_popup = has_any(ocr, _close_popup_kws)
+    if _close_popup and analysis_path and not _is_dialog:
+        logger.info("[CLOSE_POPUP] 四隅テンプレなし → ダイアログではない、スキップ (kw='%s')",
+                    _close_popup["text"][:10])
+        _close_popup = None
+    if _close_popup:
+        if state.pre_popup_tap_count >= 8:
+            logger.warning(">>> 【%s ポップアップ】 × が8回空振り → BACK キーで脱出",
+                           _close_popup["text"][:6])
+            try:
+                adb("shell input keyevent KEYCODE_BACK")
+            except Exception as _e:
+                logger.debug("[CLOSE_POPUP] BACK キー送信例外: %s", _e)
+            state.pre_popup_tap_count = 0
+            return "CLOSE_POPUP_BACK", 1.0
+        _close_match = ASSET_MANAGER.match_single("close_btn", analysis_path) if analysis_path else None
+        if _close_match and _close_match[2] >= 0.60:
+            _cpx, _cpy = _close_match[0], _close_match[1]
+            logger.info(">>> 【%s ポップアップ】 → × テンプレ(%.2f) (%d,%d) タップ",
+                        _close_popup["text"][:6], _close_match[2], _cpx, _cpy)
+        else:
+            _cpx = W - _CLOSE_BTN_OFFSET
+            _cpy = _CLOSE_BTN_OFFSET
+            logger.info(">>> 【%s ポップアップ】 → × 固定座標 (%d,%d) タップ",
+                        _close_popup["text"][:6], _cpx, _cpy)
+        state.pre_popup_tap_count += 1
+        tap_device(_cpx, _cpy, state, f"CLOSE_POPUP_{_close_popup['text'][:6]}")
+        return "CLOSE_POPUP", 1.0
+
+    # ─── 「タップして次へ」: 報酬獲得画面の次へ進む ───
+    _tap_next = has_text(ocr, "タップして次へ", min_conf=0.3)
+    if _tap_next:
+        cx, cy = _tap_next["center"]
+        logger.info(">>> 【報酬/次へ】 'タップして次へ' (%d,%d) タップ", cx, cy)
+        tap_device(cx, cy, state, "REWARD_NEXT")
+        return "REWARD_NEXT", 1.0
+
     # ─── 確認ダイアログ (ダイアログ証拠必須) ───
     # ボタンラベルのみ。四隅テンプレでダイアログが確認できた場合に限りタップ。
     if _is_dialog:
@@ -155,6 +209,36 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         logger.info(">>> 【お知らせ一覧】 タブ%d個検出 → ×クローズ (%d,%d)", _notice_tabs, _nx, _ny)
         tap_device(_nx, _ny, state, "NOTICE_LIST_CLOSE")
         return "NOTICE_LIST_CLOSE", 1.0
+
+    # ─── プレゼントボックス: 「一括受取」タップ or BACK で戻る ───
+    # 指テンプレ検出時 (pre_dialog_finger) はスキップ → finger_priority で処理
+    _present_box = (has_text(ocr, "プレゼントボックス", min_conf=0.2)
+                    or (has_any(ocr, ["プレセント", "プレゼント"], min_conf=0.2)
+                        and has_any(ocr, ["ボックス", "ポックス", "ボック"], min_conf=0.2)))
+    if _present_box and not ctx.pre_dialog_finger:
+        _bulk_receive = has_text(ocr, "一括受取", min_conf=0.3)
+        if _bulk_receive:
+            _br_x, _br_y = _bulk_receive["center"]
+            logger.info(">>> 【プレゼントボックス】 一括受取 (%d,%d) タップ", _br_x, _br_y)
+            tap_device(_br_x, _br_y, state, "PRESENT_BULK_RECEIVE")
+            return "PRESENT_BULK_RECEIVE", 2.0
+        else:
+            logger.info(">>> 【プレゼントボックス】 一括受取なし → BACK で戻る")
+            adb("shell input keyevent KEYCODE_BACK")
+            return "PRESENT_BOX_BACK", 1.0
+
+    # ─── チュートリアルガイドスタック: blob_same_count≥5 + 「してみましょう」→ × で閉じ ───
+    if state.blob_same_count >= 5:
+        _tutorial_guide = (has_text(ocr, "てみましょう", min_conf=0.3) or
+                           has_text(ocr, "しましょう", min_conf=0.3))
+        if _tutorial_guide and not ctx.in_battle_ctx:
+            _tg_x = W - _CLOSE_BTN_OFFSET
+            _tg_y = _CLOSE_BTN_OFFSET
+            logger.info(">>> 【チュートリアルガイド スタック】 '%s' → × (%d,%d) タップ",
+                        _tutorial_guide["text"][:10], _tg_x, _tg_y)
+            tap_device(_tg_x, _tg_y, state, "TUTORIAL_GUIDE_CLOSE")
+            state.blob_same_count = 0
+            return "CLOSE_POPUP", 1.0
 
     # ─── フォールバック: 何も見つからない ───
     logger.info(">>> 画面が安定するまで待機 (OCR %d件)", len(ocr))

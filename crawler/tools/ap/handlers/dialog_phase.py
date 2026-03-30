@@ -22,6 +22,7 @@ from tools.ap.constants import (
     _SPATIAL_MARGIN_TOP, _CLOSE_BTN_OFFSET,
     ANALYSIS_W, ANALYSIS_H,
     _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS,
+    _DIALOG_FIRST_KWS,
     CLOSE_ACTION_WAIT,
 )
 from tools.ap.helpers import has_any, has_text
@@ -34,7 +35,7 @@ from tools.ap.image_proc import (
     count_page_dots, detect_dialog, detect_dialog_nav, detect_dialog_corners,
     detect_popup_home, detect_popup_home_nav,
     ASSET_MANAGER, prepare_analysis_image,
-    roi_to_device,
+    roi_to_device, smart_tap_button,
 )
 from lc.ocr import run_ocr
 
@@ -482,6 +483,37 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     ctx.pre_dialog_finger = _pre_dialog_finger
     ctx.white_hand_pos = _white_hand_pos
 
+    # ── 【カルーセルポップアップ】複数ページ説明 → 右ナビ×6 → × 閉じ ──
+    _carousel_kws = ["メインクエストをPLAY", "ピュエラピクトゥーラ", "POWER UP"]
+    _carousel_match = has_any(ocr, _carousel_kws)
+    if _carousel_match:
+        _cn_x, _cn_y = roi_to_device(int(W * 0.96), int(H * 0.5), state.game_roi)
+        for _ in range(6):
+            tap_device(_cn_x, _cn_y, state, "CAROUSEL_NAV_RIGHT", rapid=True)
+        _close_x, _close_y = roi_to_device(int(W * 0.94), int(H * 0.12), state.game_roi)
+        logger.info(">>> 【カルーセルポップアップ】 '%s' → フレーム右上 (%d,%d) タップ",
+                    _carousel_match["text"][:10], _close_x, _close_y)
+        tap_device(_close_x, _close_y, state, "CAROUSEL_CLOSE")
+        return "CLOSE_POPUP", 1.0
+
+    # ── 【確認ダイアログ「以下の内容でよろしいですか」】SmartTap OK ──
+    _confirm_dlg = has_text(ocr, "以下の内容でよろしいですか", min_conf=0.3)
+    if _confirm_dlg:
+        _ok_bottom = next(
+            (item for item in ocr
+             if "OK" in item.get("text", "") and item["center"][1] > H * 0.6),
+            None
+        )
+        if _ok_bottom:
+            _ocr_cx, _ocr_cy = _ok_bottom["center"]
+        else:
+            _ocr_cx, _ocr_cy = roi_to_device(
+                int(W * 0.70), int(H * 0.88), state.game_roi)
+        _cx, _cy = smart_tap_button(analysis_path, _ocr_cx, _ocr_cy, ocr_items=ocr)
+        logger.info(">>> 【確認ダイアログ】 SmartTap OK (%d,%d)", _cx, _cy)
+        tap_device(_cx, _cy, state, "CONFIRM_DIALOG_OK")
+        return "CONFIRM_DIALOG_OK", 1.0
+
     # ─── 【最優先 #0-DIALOG】ダイアログ・ファースト ────────────
     # 指テンプレ検出時はダイアログ処理をスキップ → tutorial ハンドラで指+金枠タップ
     # (CLAUDE.md: 指アイコン+金枠が検出できたらシーンに関係なくタップする)
@@ -491,5 +523,60 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
             is_notice_popup=_is_notice)
         if _dialog_result is not None:
             return _dialog_result
+
+        # ── 【チュートリアルポップアップ セカンダリ】OCR キーワード補完 ──
+        # handle_dialog_screen (形状ベース) が失敗した場合のバックアップ。
+        # BATTLE シーンではロール名 (DEFENDER 等) が常時表示されるため誤検出を防止
+        _in_battle_popup = state.current_scene == "BATTLE" or getattr(state, "_from_battle", False)
+        _pre_popup = None if _in_battle_popup else has_any(ocr, list(_DIALOG_FIRST_KWS))
+        if _pre_popup:
+            _corners = ctx.has_dialog_corners if ctx.has_dialog_corners is not None else (
+                detect_dialog_corners(analysis_path) if analysis_path else False)
+            if analysis_path and not _corners:
+                logger.info("[PRE_POPUP] 四隅テンプレなし → ダイアログではない、スキップ (kw='%s')",
+                            _pre_popup["text"][:10])
+                _pre_popup = None
+        if _pre_popup:
+            state.pre_popup_tap_count += 1
+            _popup_dots = count_page_dots(analysis_path) if analysis_path else 0
+            _nav = detect_dialog(analysis_path, W, H) if analysis_path else None
+            if _nav:
+                _nav_type, _nx, _ny = _nav
+                if _nav_type == "close" and _popup_dots < 2:
+                    logger.info(">>> 【チュートリアルポップアップ】 '%s' ×→(%d,%d) [template] dots=%d",
+                                _pre_popup["text"][:10], _nx, _ny, _popup_dots)
+                    tap_device(_nx, _ny, state, "PRE_POPUP_TAP")
+                    return "TUTORIAL_POPUP", 1.0
+                if _nav_type == "close" and _popup_dots >= 2:
+                    logger.info(">>> 【チュートリアルポップアップ→PAGING】 '%s' dots=%d, × 検出→先にページ走査",
+                                _pre_popup["text"][:10], _popup_dots)
+                    _arr_x, _arr_y = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)
+                    _pg_result = process_paging_dialog(
+                        analysis_path, W, H, state,
+                        initial_dlg=("next", _arr_x, _arr_y),
+                        ocr_texts=texts,
+                    )
+                    state.pre_popup_tap_count = 0
+                    return _pg_result, 1.0
+                logger.info(">>> 【チュートリアルポップアップ→PAGING】 '%s' ▷(%d,%d) → 全ページ走査開始",
+                            _pre_popup["text"][:10], _nx, _ny)
+                _pg_result = process_paging_dialog(
+                    analysis_path, W, H, state,
+                    initial_dlg=(_nav_type, _nx, _ny),
+                    ocr_texts=texts,
+                )
+                state.pre_popup_tap_count = 0
+                return _pg_result, 1.0
+            # フォールバック: 固定座標 → process_paging_dialog に委譲
+            _arr = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)
+            logger.info(">>> 【チュートリアルポップアップ→PAGING(FB)】 '%s' ▷(%d,%d) dots=%d → 全ページ走査",
+                        _pre_popup["text"][:10], _arr[0], _arr[1], _popup_dots)
+            _pg_result = process_paging_dialog(
+                analysis_path, W, H, state,
+                initial_dlg=("next", _arr[0], _arr[1]),
+                ocr_texts=texts,
+            )
+            state.pre_popup_tap_count = 0
+            return _pg_result, 1.0
 
     return None
