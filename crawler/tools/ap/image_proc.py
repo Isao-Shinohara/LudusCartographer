@@ -1177,22 +1177,35 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
             ratio = beige_pixels / shape_pixels if shape_pixels > 0 else 0
 
             if ratio >= _BEIGE_THRESHOLD:
-                # ── 異色ピクセル棄却: ベージュ+黒以外が多すぎる → 偽陽性 ──
-                # 本物の吹き出し = ベージュ背景 + 黒テキスト + キャラアイコン (≈20-30%)
-                # ホーム画面バナー等 = キャラ髪色・服・装飾で異色 50%超
-                _OTHER_THRESHOLD = 0.50
+                # ── 異色ピクセル棄却: キャラアイコン円をマスクした上で判定 ──
+                # キャラアイコンは吹き出し端に埋め込まれた円形 (半径≈吹き出し高さ/2)
+                # マスク後はベージュ背景+黒テキストのみのはず
+                _OTHER_THRESHOLD = 0.20
+                _icon_r = _bh // 2
+                _icon_cy = _bh // 2
+                char_circle = np.zeros((_bh, _bw), dtype=np.uint8)
+                if from_left:
+                    cv2.circle(char_circle, (_icon_r, _icon_cy), _icon_r, 255, -1)
+                else:
+                    cv2.circle(char_circle, (_bw - _icon_r, _icon_cy), _icon_r, 255, -1)
+                # キャラ円を除外した角丸マスク
+                _shape_no_char = roi_shape.copy()
+                _shape_no_char[char_circle > 0] = 0
+                _shape_no_char_px = np.count_nonzero(_shape_no_char)
+                if _shape_no_char_px <= 0:
+                    continue
                 roi_img = resized[y0:y1, x0:x1]
                 roi_gray = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY)
                 dark_mask = (roi_gray < 80).astype(np.uint8) * 255
                 beige_or_dark = cv2.bitwise_or(roi_beige, dark_mask)
-                beige_or_dark_shaped = cv2.bitwise_and(beige_or_dark, roi_shape)
+                beige_or_dark_shaped = cv2.bitwise_and(beige_or_dark, _shape_no_char)
                 known_pixels = np.count_nonzero(beige_or_dark_shaped)
-                other_pixels = shape_pixels - known_pixels
-                other_ratio = other_pixels / shape_pixels if shape_pixels > 0 else 0
+                other_pixels = _shape_no_char_px - known_pixels
+                other_ratio = other_pixels / _shape_no_char_px
                 if other_ratio > _OTHER_THRESHOLD:
                     logger.debug(
                         "[MINI_CONV] %s: 異色棄却 other=%.1f%% (%d/%d)",
-                        side, other_ratio * 100, other_pixels, shape_pixels)
+                        side, other_ratio * 100, other_pixels, _shape_no_char_px)
                     continue
 
                 cx = x0 + bubble_w // 2
