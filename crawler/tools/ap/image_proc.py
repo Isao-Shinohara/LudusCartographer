@@ -1164,15 +1164,34 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
             ratio = beige_pixels / shape_pixels if shape_pixels > 0 else 0
 
             if ratio >= _BEIGE_THRESHOLD:
+                # ── 異色ピクセル棄却: ベージュ+黒以外が多すぎる → 偽陽性 ──
+                # 本物の吹き出し = ベージュ背景 + 黒テキスト + キャラアイコン (≈20-30%)
+                # ホーム画面バナー等 = キャラ髪色・服・装飾で異色 50%超
+                _OTHER_THRESHOLD = 0.50
+                roi_img = resized[y0:y1, x0:x1]
+                roi_gray = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY)
+                dark_mask = (roi_gray < 80).astype(np.uint8) * 255
+                beige_or_dark = cv2.bitwise_or(roi_beige, dark_mask)
+                beige_or_dark_shaped = cv2.bitwise_and(beige_or_dark, roi_shape)
+                known_pixels = np.count_nonzero(beige_or_dark_shaped)
+                other_pixels = shape_pixels - known_pixels
+                other_ratio = other_pixels / shape_pixels if shape_pixels > 0 else 0
+                if other_ratio > _OTHER_THRESHOLD:
+                    logger.debug(
+                        "[MINI_CONV] %s: 異色棄却 other=%.1f%% (%d/%d)",
+                        side, other_ratio * 100, other_pixels, shape_pixels)
+                    continue
+
                 cx = x0 + bubble_w // 2
                 cy = y0 + _BUBBLE_H // 2
                 candidates.append({
                     "cx": cx, "cy": cy, "side": side,
                     "x": x0, "y": y0, "w": bubble_w, "h": _BUBBLE_H,
                     "ratio": ratio, "area": beige_pixels,
+                    "other_ratio": other_ratio,
                 })
-                logger.debug("[MINI_CONV] %s bubble: w=%d ratio=%.2f (%d/%d)",
-                             side, bubble_w, ratio, beige_pixels, shape_pixels)
+                logger.debug("[MINI_CONV] %s bubble: w=%d ratio=%.2f other=%.1f%% (%d/%d)",
+                             side, bubble_w, ratio, other_ratio * 100, beige_pixels, shape_pixels)
 
         if not candidates:
             return None
