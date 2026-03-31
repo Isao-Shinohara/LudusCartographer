@@ -50,6 +50,8 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             "[MINI_CONV] 吹き出し(%s) → タップ (%d,%d)", _mc_side, _mc_cx, _mc_cy)
         tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
         state.last_action = "MINI_CONV_TAP"
+        # 吹き出し遷移アニメーションで MOVIE 誤昇格しないようリセット
+        state.phash_moving_count = 0
         return "MINI_CONV_TAP", 0.3
 
     # Phase 3: 指アイコン+金枠 (CLAUDE.md §0 優先度1)
