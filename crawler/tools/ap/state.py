@@ -98,6 +98,8 @@ class PilotState:
     pre_popup_tap_count: int = 0
     # 現在のシーン分類 (BATTLE / ADV / LOADING / MENU / UNKNOWN)
     current_scene: str = "UNKNOWN"
+    # MOVIE→UNKNOWN 遷移直後: 検知は行うがタップを抑制するフラグ
+    tap_suppressed: bool = False
     # ホーム画面からクエスト等への遷移試行回数 (遷移中の誤停止を防ぐ)
     home_nav_count: int = 0
     # ─── Watchdog ───

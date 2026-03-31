@@ -588,6 +588,9 @@ def tap_device(x: int, y: int, state, desc: str = "",
                 cv2.imwrite(_out, _dbg)
         except Exception:
             pass
+    if getattr(state, "tap_suppressed", False):
+        logger.debug("  [TAP_SUPPRESSED] 解析座標=(%d,%d) → %s (MOVIE遷移直後)", x, y, desc)
+        return
     logger.info(
         "  [TAP] 解析座標=(%d,%d) → デバイス座標=(%d,%d) | %s",
         x, y, real_x, real_y, desc
