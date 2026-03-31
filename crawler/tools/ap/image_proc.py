@@ -2341,59 +2341,41 @@ def find_gold_button(img_path: Path,
                          _tcx - _tw // 2, _tcy - _th // 2, _tw, _th, _tcx, _tcy)
             return _tcx, _tcy, "TMPL"
 
-        # ── HSV フォールバック ──
-        # 画面中央を起点に広範囲で金枠を探索
-        _search_cx = int(W_img * 0.5)
-        _search_cy = int(H_img * 0.6)
-        _result = find_gold_frame_near(
-            img_path, _search_cx, _search_cy, search_radius=max(W_img, H_img))
-        if _result is None:
-            return None
-
-        cx, cy, w, h = _result
-        area = w * h
-        x, y = cx - w // 2, cy - h // 2
-
-        # アスペクト比フィルタ — 上限のみ (横長のHPバー金枠等も許容)
-        aspect = h / max(w, 1)
-        if aspect > 3.0:
-            logger.debug("[GoldBtn] アスペクト比除外: (%d,%d) %dx%d asp=%.2f", x, y, w, h, aspect)
-            return None
-
-        # 画面上部 (y<35%) は除外 — ホーム画面装飾の誤検出防止
-        if not overlay_mode and not skip_upper_filter and cy < H_img * 0.35:
-            logger.debug("[GoldBtn] 上部除外: (%d,%d) %dx%d cy=%d", x, y, w, h, cy)
-            return None
-
-        # 暗転チェック: 金枠 bbox 外側の輝度 std で判定
-        # チュートリアル暗転 (std < 45) → 本物の金枠
-        # 通常画面 (std >= 45) → 地面テクスチャ等の誤検出の可能性
-        _has_overlay = False
-        if not overlay_mode:
-            _gold_img = imread_analysis(img_path)
-            if _gold_img is not None:
-                _gray = cv2.cvtColor(_gold_img, cv2.COLOR_BGR2GRAY)
-                _gH, _gW = _gray.shape
-                _mask = np.ones((_gH, _gW), dtype=np.uint8) * 255
-                _bx, _by = max(0, x), max(0, y)
-                _mask[_by:min(_gH, _by + h), _bx:min(_gW, _bx + w)] = 0
-                _outside = _gray[_mask > 0]
-                _outside_std = float(_outside.std()) if _outside.size > 0 else 999.0
-                _overlay_th = 40 if battle_mode else 45
-                _has_overlay = _outside_std < _overlay_th
-                if _has_overlay:
-                    logger.debug("[GoldBtn] 暗転検出 (std=%.1f < %d)", _outside_std, _overlay_th)
-
-        # 暗転なし → 偽陽性 (バトルUI装飾, カード額縁等) として除外
-        # チュートリアル金枠は必ず暗転オーバーレイを伴う
-        if not overlay_mode and not _has_overlay:
-            logger.debug("[GoldBtn] 暗転なし除外: area=%d bbox=(%d,%d) %dx%d",
-                         area, x, y, w, h)
-            return None
-
-        logger.debug("[GoldBtn:HSV] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f overlay=%s → tap(%d,%d)",
-                     area, x, y, w, h, aspect, _has_overlay, cx, cy)
-        return cx, cy, "HSV"
+        # ── HSV フォールバック (無効化中: テンプレマッチのみで検証) ──
+        # TODO: テンプレマッチで拾えない金枠がなければ HSV を完全削除
+        # _search_cx = int(W_img * 0.5)
+        # _search_cy = int(H_img * 0.6)
+        # _result = find_gold_frame_near(
+        #     img_path, _search_cx, _search_cy, search_radius=max(W_img, H_img))
+        # if _result is None:
+        #     return None
+        # cx, cy, w, h = _result
+        # area = w * h
+        # x, y = cx - w // 2, cy - h // 2
+        # aspect = h / max(w, 1)
+        # if aspect > 3.0:
+        #     return None
+        # if not overlay_mode and not skip_upper_filter and cy < H_img * 0.35:
+        #     return None
+        # _has_overlay = False
+        # if not overlay_mode:
+        #     _gold_img = imread_analysis(img_path)
+        #     if _gold_img is not None:
+        #         _gray = cv2.cvtColor(_gold_img, cv2.COLOR_BGR2GRAY)
+        #         _gH, _gW = _gray.shape
+        #         _mask = np.ones((_gH, _gW), dtype=np.uint8) * 255
+        #         _bx, _by = max(0, x), max(0, y)
+        #         _mask[_by:min(_gH, _by + h), _bx:min(_gW, _bx + w)] = 0
+        #         _outside = _gray[_mask > 0]
+        #         _outside_std = float(_outside.std()) if _outside.size > 0 else 999.0
+        #         _overlay_th = 40 if battle_mode else 45
+        #         _has_overlay = _outside_std < _overlay_th
+        # if not overlay_mode and not _has_overlay:
+        #     return None
+        # logger.debug("[GoldBtn:HSV] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f overlay=%s → tap(%d,%d)",
+        #              area, x, y, w, h, aspect, _has_overlay, cx, cy)
+        # return cx, cy, "HSV"
+        return None
 
     except Exception as e:
         logger.debug("find_gold_button error: %s", e)
