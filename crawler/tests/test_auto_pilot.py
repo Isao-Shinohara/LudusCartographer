@@ -1170,7 +1170,7 @@ class TestTitleScreenDetection:
         cv2.imwrite(str(img), np.zeros((720, 1520, 3), dtype=np.uint8))
         ocr = [
             {"text": "TAP TO START", "center": (760, 600), "confidence": 0.95},
-            {"text": "MAGIA EXEDRA", "center": (760, 400), "confidence": 0.95},
+            {"text": "魔法少女まどかマギカ", "center": (760, 400), "confidence": 0.95},
         ]
         action, wait = detect_and_act(ocr, state, analysis_path=img)
         assert action == "TITLE_TAP"
