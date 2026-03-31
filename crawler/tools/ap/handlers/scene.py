@@ -116,9 +116,17 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
         state.download_active = True
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
 
+    # ─── MAIN STORY 選択画面 ───
+    main_btn = has_text(ocr, "Main")
+    if main_btn and has_any(ocr, ["MAIN", "STORY", "8TORY"]):
+        cx, cy = main_btn["center"]
+        logger.info("[MainStory] 'Main'(%d,%d) タップ", cx, cy)
+        tap_device(cx, cy, state, "MAIN_STORY_SELECT")
+        return "MAIN_STORY_SELECT", 2.0
+
     # ─── クエストマップ/ステージ選択 ───
     stage_num = has_any(ocr, ["1-1", "1-2", "1-3", "2-1", "2-2", "2-3",
-                               "3-1", "3-2", "4-1", "4-2", "Main"])
+                               "3-1", "3-2", "4-1", "4-2"])
     sentu_btn = None
     for _skw in ["戦闘", "出撃", "挑戦"]:
         _sb = has_text(ocr, _skw)
@@ -145,12 +153,6 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
             cy = min(cy, _roi_max_y)
         logger.info("[QuestStart] '%s'(%d,%d) タップ", sentu_btn["text"], cx, cy)
         tap_device(cx, cy, state, f"QUEST_START {sentu_btn['text']}")
-        state.battle_wait_count = 0
-        return "QUEST_START", 2.0
-    elif stage_num:
-        fx, fy = roi_to_device(int(W * 0.74), int(H * 0.91), state.game_roi)
-        logger.info(">>> クエストマップ(固定) (%d,%d)", fx, fy)
-        tap_device(fx, fy, state, "QUEST_START_FIXED")
         state.battle_wait_count = 0
         return "QUEST_START", 2.0
 
