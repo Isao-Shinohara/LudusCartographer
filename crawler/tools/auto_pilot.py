@@ -134,7 +134,7 @@ from tools.ap.constants import (  # noqa: E402
     _DEBUG_SAVE_IMAGES, _GOLD_UI_ACTIONS, _SCENE_REEVAL_THRESHOLD,
     _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS, _CURRENCY_SPEND_KWS,
     _UI_TEXT_KWS, _SINGLE_ONLY,
-    _DIALOG_FIRST_KWS, _BATTLE_UI_KWS,
+    _DIALOG_FIRST_KWS, _BATTLE_UI_KWS, _MENU_SCREEN_KWS,
     ANALYSIS_W, ANALYSIS_H,
     _GLOW_CENTER_Y_OFFSET,
     _GOLD_BTN_RETRY_Y_OFFSET, _FINGER_TIP_RATIO,
@@ -3530,16 +3530,16 @@ def main():
                     _wfc_dist = phash_distance(cur_phash, _wfc_ph) if cur_phash and _wfc_ph else 0
                     if _wfc_dist >= PHASH_THRESHOLD:
                         _wfc_is_anim = True
-                if _wfc_is_anim:
-                    logger.info("[WFC_ESCAPE] 0.5s後phash_dist=%d → アニメーション中 → タップ抑制",
-                                _wfc_dist)
+                _wfc_total = getattr(state, "_wfc_total_count", 0) + 1
+                state._wfc_total_count = _wfc_total
+                # phash_dist=999 は比較不能 (phash未計算) であり「変化あり」ではない
+                if _wfc_is_anim and _wfc_dist != 999:
+                    logger.info("[WFC_ESCAPE] 0.5s後phash_dist=%d → アニメーション中 → タップ抑制 (total=%d)",
+                                _wfc_dist, _wfc_total)
                     state._wfc_consecutive = 0
                     state.last_action = "MOVIE_WAIT"
                     state.last_phash = _wfc_ph
                     continue
-                # 長時間スタック (15回以上) → 動画一時停止の可能性 → 中央タップで復帰
-                _wfc_total = getattr(state, "_wfc_total_count", 0) + 1
-                state._wfc_total_count = _wfc_total
                 # close_btn チェック: ×ボタン + OCR テキストあり → 中央タップより優先
                 # OCR 0件 (WebView 読み込み中等) では誤タップ防止のためスキップ
                 _wfc_close = ASSET_MANAGER.match_single("close_btn", _wfc_img) if _wfc_img else None
