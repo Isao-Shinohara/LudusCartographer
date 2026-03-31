@@ -1873,15 +1873,18 @@ def detect_popup_home(
         return False
     _H, _W = img.shape[:2]
     # 1. popup_home_next テンプレマッチ (ROI制限 + 2テンプレ)
-    _mv = _match_popup_next_roi(img, _H, _W, threshold=0.85)
-    if _mv < 0.85:
+    _mv = _match_popup_next_roi(img, _H, _W, threshold=0.84)
+    if _mv < 0.84:
+        logger.debug("[POPUP_HOME] next テンプレ不一致 (score=%.3f < 0.84)", _mv)
         return False
     # 2. ページドット
     _dots = count_page_dots(img_path)
     if _dots < 1:
+        logger.debug("[POPUP_HOME] ページドットなし (dots=%d)", _dots)
         return False
     # 3. 背景ぼかし
     if not detect_background_blur(img, _H, _W):
+        logger.debug("[POPUP_HOME] 背景ぼかしなし")
         return False
     logger.info("[POPUP_HOME] next テンプレ(%.3f)+ドット=%d+背景ぼかし → ホームポップアップ確定", _mv, _dots)
     return True
