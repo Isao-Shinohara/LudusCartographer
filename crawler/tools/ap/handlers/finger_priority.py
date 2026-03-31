@@ -16,7 +16,7 @@ from tools.ap.device import tap_device
 from tools.ap.image_proc import (
     ASSET_MANAGER,
     roi_to_device,
-    find_gold_frame_near,
+    find_gold_frame_by_template,
     detect_white_hand_pointer,
     smart_tap_button,
 )
@@ -62,8 +62,8 @@ def handle_finger_priority(
             tap_device(_bulk_x, _bulk_y, state, "PRESENT_BULK_RECEIVE")
             return "PRESENT_BULK_RECEIVE", 2.0
 
-    # 【プライマリ】金枠検出 (search_radius=300)
-    _gold = find_gold_frame_near(analysis_path, _f_cx, _f_cy, search_radius=300)
+    # 【プライマリ】金枠テンプレマッチ検出 (4隅)
+    _gold = find_gold_frame_by_template(analysis_path)
     if _gold:
         _gx, _gy, _gw, _gh = _gold
         logger.info("[FINGER_PRIORITY] 指(%.3f,%s)(%d,%d) → 金枠(%d,%d %dx%d)",
@@ -124,9 +124,9 @@ def handle_finger_priority(
                 logger.info("[FINGER_PRIORITY] 指(%d,%d,dir=%s) → OCR '%s'(%d,%d) dist=%d",
                             _hx, _hy, _hand_dir, _dir_items[0][3], tap_x, tap_y, _dir_items[0][2])
 
-        # フォールバック: 金枠検出 (小radius)
+        # フォールバック: 金枠テンプレマッチ検出
         if not _ocr_found:
-            _gold2 = find_gold_frame_near(analysis_path, _hx, _hy, search_radius=200)
+            _gold2 = find_gold_frame_by_template(analysis_path)
             if _gold2:
                 _gx, _gy = _gold2[0], _gold2[1]
                 if (_hand_dir == "up" and _gy > _hy + 30) or \

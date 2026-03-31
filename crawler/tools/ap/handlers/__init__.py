@@ -69,8 +69,7 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     # HSV: same>=2 + 遷移後5フレーム待機 (偽陽性対策)
     if ctx.analysis_path is not None and not state.download_active and not ctx.has_dialog_corners:
         _hsv_only = _same < 2 or _since_big_change < 5
-        _gold = find_gold_button(ctx.analysis_path,
-                                 battle_mode=(state.current_scene == "BATTLE"))
+        _gold = find_gold_button(ctx.analysis_path)
         if _gold:
             _gx, _gy, _method = _gold
             # HSV 検出時はガード条件を適用

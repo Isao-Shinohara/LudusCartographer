@@ -634,92 +634,6 @@ def detect_active_battle_char(
         return None
 
 
-def find_gold_frame_near(img_path: Path, cx: int, cy: int,
-                         search_radius: int = 200,
-                         direction: str = "") -> Optional[tuple[int, int, int, int]]:
-    """
-    指アイコン中心(cx,cy)の近傍内で金枠（装飾ボタン枠）をHSVで検索。
-
-    指の近傍に限定するため偽陽性リスクが低く、extent 制限を緩和できる。
-    direction: "up"/"down"/"left"/"right" で指先方向に探索範囲をシフト。
-    Returns: (frame_cx, frame_cy, frame_w, frame_h) or None
-    """
-    try:
-        _img = imread_analysis(img_path)
-        if _img is None:
-            return None
-        _H, _W = _img.shape[:2]
-
-        # 探索 ROI: 指の近傍 (direction で指先方向にシフト)
-        _ox, _oy = 0, 0
-        if direction == "down":
-            _oy = search_radius // 2
-        elif direction == "up":
-            _oy = -search_radius // 2
-        elif direction == "right":
-            _ox = search_radius // 2
-        elif direction == "left":
-            _ox = -search_radius // 2
-        _x1 = max(0, cx + _ox - search_radius)
-        _y1 = max(0, cy + _oy - search_radius)
-        _x2 = min(_W, cx + _ox + search_radius)
-        _y2 = min(_H, cy + _oy + search_radius)
-        _roi = _img[_y1:_y2, _x1:_x2]
-        if _roi.shape[0] < 30 or _roi.shape[1] < 30:
-            return None
-
-        # HSV 金色検出
-        _hsv = cv2.cvtColor(_roi, cv2.COLOR_BGR2HSV)
-        _mask = cv2.inRange(_hsv, np.array([15, 60, 140]), np.array([50, 255, 255]))
-        # 指アイコン周辺をマスク除外（指の金色が金枠と繋がるのを防止）
-        _finger_roi_x = cx + _ox - _x1  # ROI 内での指の相対座標
-        _finger_roi_y = cy + _oy - _y1
-        _finger_r = 50  # 指アイコンの除外半径
-        cv2.circle(_mask, (_finger_roi_x, _finger_roi_y), _finger_r, 0, -1)
-        _k = np.ones((7, 7), np.uint8)
-        _mask = cv2.morphologyEx(_mask, cv2.MORPH_CLOSE, _k)
-        _mask = cv2.dilate(_mask, _k, iterations=1)
-
-        _contours, _ = cv2.findContours(_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not _contours:
-            return None
-
-        # 最大輪郭を金枠候補とする (指近傍なので偽陽性リスク低い)
-        # 矩形度 (solidity) でフィルタ: 金枠は矩形の枠線 → solidity >= 0.5
-        _best = None
-        for _c in sorted(_contours, key=cv2.contourArea, reverse=True):
-            _a = cv2.contourArea(_c)
-            if _a < 2000:
-                break
-            _hull = cv2.convexHull(_c)
-            _hull_area = cv2.contourArea(_hull)
-            _solidity = _a / max(_hull_area, 1)
-            if _solidity < 0.5:
-                logger.debug("[find_gold_frame_near] solidity=%.2f < 0.5 → 非矩形、スキップ (area=%d)",
-                             _solidity, int(_a))
-                continue
-            _best = _c
-            break
-        if _best is None:
-            return None
-        _area = cv2.contourArea(_best)
-        _bx, _by, _bw, _bh = cv2.boundingRect(_best)
-        # 元画像座標に変換
-        _frame_cx = _x1 + _bx + _bw // 2
-        _frame_cy = _y1 + _by + _bh // 2  # 指の金色を除外済みなので素直に中心
-        _frame_w = _bw
-        _frame_h = _bh
-
-        logger.debug("[find_gold_frame_near] HSV gold area=%d solidity=%.2f → center(%d,%d) %dx%d",
-                     int(_area), cv2.contourArea(_best) / max(cv2.contourArea(cv2.convexHull(_best)), 1),
-                     _frame_cx, _frame_cy, _frame_w, _frame_h)
-        return (_frame_cx, _frame_cy, _frame_w, _frame_h)
-    except Exception as e:
-        logger.debug("find_gold_frame_near error: %s", e)
-        return None
-
-
-
 
 # ─── ADV ツールバー: 5個別アイコン名 ──────────────────────────────
 _ADV_TOOLBAR_ICON_NAMES = (
@@ -2315,68 +2229,20 @@ def find_gold_frame_by_template(
 
 
 # ─── Type B: 金枠ハイライトボタン検出 → 中心タップ ─────────────────────
-def find_gold_button(img_path: Path,
-                     overlay_mode: bool = False,
-                     skip_upper_filter: bool = False,
-                     battle_mode: bool = False,
-                     ) -> Optional[tuple[int, int]]:
+def find_gold_button(img_path: Path, **_kwargs) -> Optional[tuple[int, int, str]]:
     """
-    チュートリアルの「金枠ハイライトボタン」を検出しタップ座標を返す。
+    チュートリアルの「金枠ハイライトボタン」をテンプレマッチ (4隅) で検出。
 
-    検出優先順: テンプレマッチ (4隅) → HSV フォールバック。
-    暗転オーバーレイ判定で誤検出を防止。
-    battle_mode=True: バトル画面は暗い背景のため閾値を厳格化 (std < 40)。
-
-    Returns: (tap_x, tap_y, method) or None
-        method: "TMPL" (テンプレマッチ) or "HSV"
+    Returns: (tap_x, tap_y, "TMPL") or None
     """
     try:
-        W_img, H_img = ANALYSIS_W, ANALYSIS_H
-
-        # ── テンプレマッチ (4隅) → 高精度検出 ──
         _tmpl_result = find_gold_frame_by_template(img_path)
         if _tmpl_result:
             _tcx, _tcy, _tw, _th = _tmpl_result
             logger.debug("[GoldBtn:TMPL] 検出OK: (%d,%d) %dx%d → tap(%d,%d)",
                          _tcx - _tw // 2, _tcy - _th // 2, _tw, _th, _tcx, _tcy)
             return _tcx, _tcy, "TMPL"
-
-        # ── HSV フォールバック (無効化中: テンプレマッチのみで検証) ──
-        # TODO: テンプレマッチで拾えない金枠がなければ HSV を完全削除
-        # _search_cx = int(W_img * 0.5)
-        # _search_cy = int(H_img * 0.6)
-        # _result = find_gold_frame_near(
-        #     img_path, _search_cx, _search_cy, search_radius=max(W_img, H_img))
-        # if _result is None:
-        #     return None
-        # cx, cy, w, h = _result
-        # area = w * h
-        # x, y = cx - w // 2, cy - h // 2
-        # aspect = h / max(w, 1)
-        # if aspect > 3.0:
-        #     return None
-        # if not overlay_mode and not skip_upper_filter and cy < H_img * 0.35:
-        #     return None
-        # _has_overlay = False
-        # if not overlay_mode:
-        #     _gold_img = imread_analysis(img_path)
-        #     if _gold_img is not None:
-        #         _gray = cv2.cvtColor(_gold_img, cv2.COLOR_BGR2GRAY)
-        #         _gH, _gW = _gray.shape
-        #         _mask = np.ones((_gH, _gW), dtype=np.uint8) * 255
-        #         _bx, _by = max(0, x), max(0, y)
-        #         _mask[_by:min(_gH, _by + h), _bx:min(_gW, _bx + w)] = 0
-        #         _outside = _gray[_mask > 0]
-        #         _outside_std = float(_outside.std()) if _outside.size > 0 else 999.0
-        #         _overlay_th = 40 if battle_mode else 45
-        #         _has_overlay = _outside_std < _overlay_th
-        # if not overlay_mode and not _has_overlay:
-        #     return None
-        # logger.debug("[GoldBtn:HSV] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f overlay=%s → tap(%d,%d)",
-        #              area, x, y, w, h, aspect, _has_overlay, cx, cy)
-        # return cx, cy, "HSV"
         return None
-
     except Exception as e:
         logger.debug("find_gold_button error: %s", e)
         return None
