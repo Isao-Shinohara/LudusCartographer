@@ -976,6 +976,9 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     _adv = detect_adv_scene(img_path, roi=state.game_roi)
     _movie = detect_movie_scene(img_path, adv_result=_adv, phash_dist=dist,
                                 phash_moving_count=state.phash_moving_count)
+    if _movie.is_movie and state.current_scene == "GACHA":
+        logger.debug("[SCENE_EARLY] GACHA中 → MOVIE判定スキップ")
+        return "GACHA"
     if _movie.is_movie:
         # ADV→MOVIE 誤遷移防止: ADV テンプレが見えている間は MOVIE 遷移しない
         # current_scene に依存しない (UNKNOWN 状態でも ADV テンプレがあれば防止)
