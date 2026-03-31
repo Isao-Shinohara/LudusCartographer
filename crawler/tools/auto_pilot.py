@@ -684,6 +684,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         if dist >= 16:
             # 大きなフレーム変化 → 本物の動画再生、即 MOVIE 維持
             state._movie_stable_count = 0
+            state._movie_pause_count = 0
             # 長期滞留カウンタは全 dist レンジでインクリメント
             state._movie_recheck_count = getattr(state, "_movie_recheck_count", 0) + 1
             if state._movie_recheck_count >= 8:
@@ -704,6 +705,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             # 小さなフレーム変化 → バトル演出/ADV微動の可能性
             # 定期的にバトル/ADVテンプレートをチェック (3回に1回)
             state._movie_stable_count = 0
+            state._movie_pause_count = 0
             state._movie_recheck_count = getattr(state, "_movie_recheck_count", 0) + 1
             if state._movie_recheck_count % 3 == 0:
                 _battle_result = _check_battle_templates(img_path, ASSET_MANAGER)
@@ -768,11 +770,17 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                 return "UNKNOWN"
             return "MOVIE"
         state._movie_stable_count = getattr(state, "_movie_stable_count", 0) + 1
-        if state._movie_stable_count < _MOVIE_STABLE_THRESHOLD:
+        # 一時停止検出: dist == 0 が 3回連続 → 動画終了/一時停止確定
+        if dist == 0:
+            state._movie_pause_count = getattr(state, "_movie_pause_count", 0) + 1
+        else:
+            state._movie_pause_count = 0
+        if state._movie_stable_count < _MOVIE_STABLE_THRESHOLD and getattr(state, "_movie_pause_count", 0) < 3:
             return "MOVIE"
         # phash 安定 → 動画終了の可能性 → ADV/BATTLE 判定へフォールスルー
-        logger.info("[SCENE_EARLY] MOVIE中phash安定 (stable=%d) → ADV/BATTLE再判定",
-                    state._movie_stable_count)
+        _exit_reason = "pause_dist0" if getattr(state, "_movie_pause_count", 0) >= 3 else "stable"
+        logger.info("[SCENE_EARLY] MOVIE中phash安定 (%s, stable=%d, pause=%d) → ADV/BATTLE再判定",
+                    _exit_reason, state._movie_stable_count, getattr(state, "_movie_pause_count", 0))
         # NOTE: _from_movie は設定しない。ADV_EARLY パスで消費されず残留し、
         # 後続 OCR パスで ADV の SKIP ボタンを movie_skip_button と誤検出する。
         # MINI_CONV/TutorialWalk は state.current_scene=="MOVIE" ガードで防止済み。
