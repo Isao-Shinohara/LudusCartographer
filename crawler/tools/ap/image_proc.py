@@ -2287,14 +2287,10 @@ def find_gold_button(img_path: Path,
                 if _has_overlay:
                     logger.debug("[GoldBtn] 暗転検出 (std=%.1f < 45)", _outside_std)
 
-        # 暗転なし + 左半分 = キャラアイコン装飾の誤検出の可能性 → 除外
-        if not overlay_mode and not _has_overlay and cx < W_img * 0.5:
-            logger.debug("[GoldBtn] 暗転なし+左半分除外: (%d,%d) %dx%d cx=%d", x, y, w, h, cx)
-            return None
-
-        # 暗転なし + 大きすぎる金枠 = 地面テクスチャの可能性 → 除外
-        if not overlay_mode and not _has_overlay and area > 50000:
-            logger.debug("[GoldBtn] 暗転なし+大面積除外: area=%d bbox=(%d,%d) %dx%d",
+        # 暗転なし → 偽陽性 (バトルUI装飾, カード額縁等) として除外
+        # チュートリアル金枠は必ず暗転オーバーレイを伴う
+        if not overlay_mode and not _has_overlay:
+            logger.debug("[GoldBtn] 暗転なし除外: area=%d bbox=(%d,%d) %dx%d",
                          area, x, y, w, h)
             return None
 
