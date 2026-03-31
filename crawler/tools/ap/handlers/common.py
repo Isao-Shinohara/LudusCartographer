@@ -51,8 +51,9 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
     # ── 【#-4】MOVIE シーン中は一切タップしない ──
     # 動画はタップで一時停止/再開を繰り返す仕様 → 絶対にタップ禁止
     # detect_scene_early で MOVIE 判定済み → ここでは待機のみ返す
-    if state.current_scene == "MOVIE":
-        logger.debug("[detect_and_act] MOVIE シーン → タップ抑制, 待機")
+    # _from_movie_ttl: MOVIE→UNKNOWN 遷移直後も8フレームはタップ抑制
+    if state.current_scene == "MOVIE" or getattr(state, "_from_movie_ttl", 0) > 0:
+        logger.debug("[detect_and_act] MOVIE シーン/遷移直後 → タップ抑制, 待機")
         return "MOVIE_WAIT", 0.5
 
     # ── 【#-3b】download_active 状態管理 ──

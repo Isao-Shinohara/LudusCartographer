@@ -63,8 +63,6 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     # リセットは金枠が検出されなくなった時 (=画面遷移) のみ
     _gold_stall = getattr(state, "_gold_frame_stall_count", 0)
     if (ctx.analysis_path is not None and not state.download_active
-            and state.current_scene != "MOVIE"
-            and getattr(state, "_from_movie_ttl", 0) <= 0
             and not ctx.has_dialog_corners):
         _gold = find_gold_button(ctx.analysis_path)
         if _gold:

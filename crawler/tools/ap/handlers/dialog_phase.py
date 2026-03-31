@@ -65,8 +65,6 @@ def handle_popup_home(
     """
     if analysis_path is None:
         return None
-    if state.current_scene == "MOVIE":
-        return None
     if has_dialog_corners:
         return None
     if ocr_count < 1:
