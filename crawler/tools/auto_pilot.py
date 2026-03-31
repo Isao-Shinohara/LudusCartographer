@@ -3559,8 +3559,9 @@ def main():
                     # メニュースタック救済: 左上メニューKW + icon_back → 戻る
                     _wfc_escaped = False
                     if _wfc_img:
-                        _wfc_ocr2 = run_ocr(str(_wfc_img), lang=OCR_LANG,
-                                            min_confidence=OCR_MIN_CONF) if not _wfc_ocr else _wfc_ocr
+                        _wfc_ocr2 = (run_ocr(str(_wfc_img), lang=OCR_LANG,
+                                             min_confidence=OCR_MIN_CONF)
+                                     if not locals().get("_wfc_ocr") else _wfc_ocr)
                         _wfc_menu_text = None
                         for _wi in _wfc_ocr2:
                             _wt = _wi.get("text", "")
