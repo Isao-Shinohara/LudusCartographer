@@ -1463,6 +1463,8 @@ def parse_args():
                         help="adb pair 用ペアリングコード (Android 11+)")
     parser.add_argument("--pairing-port", type=int, default=None,
                         help="adb pair 用ポート番号 (Android 11+)")
+    parser.add_argument("--screen-off", action="store_true",
+                        help="scrcpy 起動時に端末の画面をオフにする")
     # parse_known_args: main.py 経由の場合に --android, --package 等の未知引数を無視
     args, _ = parser.parse_known_args()
     return args
@@ -2086,6 +2088,11 @@ def main():
     except RuntimeError as e:
         logger.error(str(e))
         sys.exit(1)
+
+    # ─── scrcpy 画面オフオプション ───
+    if args.screen_off:
+        from tools.ap.device import set_scrcpy_screen_off
+        set_scrcpy_screen_off(True)
 
     # ─── scrcpy 早期起動: fresh-install 含めた全工程を画面で確認可能にする ───
     _scrcpy_proc = manage_scrcpy()

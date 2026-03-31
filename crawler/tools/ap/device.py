@@ -41,6 +41,12 @@ _LAST_SCRCPY_BGR: Optional[np.ndarray] = None  # scrcpy キャプチャの BGR �
 _SCRCPY_FAIL_COUNT: int = 0  # scrcpy キャプチャ連続失敗回数 (自動復帰用)
 _SCRCPY_FAIL_RESTART_THRESHOLD: int = 3  # N回連続失敗でscrcpy再起動
 _SCRCPY_LAST_RESTART: float = 0.0  # 最後にscrcpyを再起動した時刻
+_SCRCPY_SCREEN_OFF: bool = False  # True: --turn-screen-off を付与
+
+
+def set_scrcpy_screen_off(enabled: bool) -> None:
+    global _SCRCPY_SCREEN_OFF
+    _SCRCPY_SCREEN_OFF = enabled
 _SCRCPY_RESTART_COOLDOWN: float = 30.0  # 再起動後のクールダウン (秒)
 
 
@@ -78,16 +84,18 @@ def _build_scrcpy_args(device_serial: str) -> list:
     # --window-width を max-size と同じ値に固定。
     # Quartz キャプチャはウィンドウ表示サイズに依存するため、
     # ウィンドウが小さいとテンプレマッチ精度が劣化する。
-    return [
+    _args = [
         _scrcpy_bin,
         "-s", device_serial,
-        "--turn-screen-off",
         "--stay-awake",
         "--max-size", str(_MAX_SIZE),
         "--window-width", str(_MAX_SIZE),
         # NOTE: --orientation は使わない。ポートレート画面も回転してしまうため。
         # ランドスケープ確認後に scrcpy を再起動してウィンドウサイズを復帰する。
     ]
+    if _SCRCPY_SCREEN_OFF:
+        _args.insert(3, "--turn-screen-off")
+    return _args
 
 
 def adb(cmd: str) -> str:
