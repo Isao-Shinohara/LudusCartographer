@@ -1255,7 +1255,7 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     _fm = _rapid_finger_rot  # 指テンプレマッチ結果 (cx, cy, score, direction)
     _gold_tap = find_gold_button(
         analysis_path, overlay_mode=False,
-        skip_upper_filter=True)
+        skip_upper_filter=True, battle_mode=True)
     if _gold_tap:
         _rapid_tx, _rapid_ty = _gold_tap
         _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
@@ -3138,7 +3138,7 @@ def main():
             _is_overlay2 = False if _is_battle2 else detect_tutorial_overlay(analysis_path)
             _gold_tap = find_gold_button(
                 analysis_path, overlay_mode=_is_overlay2,
-                skip_upper_filter=_is_battle2)
+                skip_upper_filter=_is_battle2, battle_mode=_is_battle2)
             if _gold_tap:
                 _rapid_tx, _rapid_ty = _gold_tap
                 _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"

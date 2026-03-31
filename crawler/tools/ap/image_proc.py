@@ -2237,12 +2237,14 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
 def find_gold_button(img_path: Path,
                      overlay_mode: bool = False,
                      skip_upper_filter: bool = False,
+                     battle_mode: bool = False,
                      ) -> Optional[tuple[int, int]]:
     """
     チュートリアルの「金枠ハイライトボタン」を検出しタップ座標を返す。
 
     内部で find_gold_frame_near を使用し、HSV 検出ロジックを共通化。
-    暗転オーバーレイ判定 (金枠外 std < 45) で誤検出を防止。
+    暗転オーバーレイ判定で誤検出を防止。
+    battle_mode=True: バトル画面は暗い背景のため閾値を厳格化 (std < 25)。
 
     Returns: (tap_x, tap_y) or None
     """
@@ -2286,9 +2288,10 @@ def find_gold_button(img_path: Path,
                 _mask[_by:min(_gH, _by + h), _bx:min(_gW, _bx + w)] = 0
                 _outside = _gray[_mask > 0]
                 _outside_std = float(_outside.std()) if _outside.size > 0 else 999.0
-                _has_overlay = _outside_std < 45
+                _overlay_th = 25 if battle_mode else 45
+                _has_overlay = _outside_std < _overlay_th
                 if _has_overlay:
-                    logger.debug("[GoldBtn] 暗転検出 (std=%.1f < 45)", _outside_std)
+                    logger.debug("[GoldBtn] 暗転検出 (std=%.1f < %d)", _outside_std, _overlay_th)
 
         # 暗転なし → 偽陽性 (バトルUI装飾, カード額縁等) として除外
         # チュートリアル金枠は必ず暗転オーバーレイを伴う
