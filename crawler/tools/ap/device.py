@@ -589,7 +589,7 @@ def tap_device(x: int, y: int, state, desc: str = "",
         except Exception:
             pass
     logger.info(
-        "  [DEBUG] TAP: 解析座標=(%d,%d) → デバイス座標=(%d,%d) | %s",
+        "  [TAP] 解析座標=(%d,%d) → デバイス座標=(%d,%d) | %s",
         x, y, real_x, real_y, desc
     )
     adb(f"shell input tap {real_x} {real_y}")
