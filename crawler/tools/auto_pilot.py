@@ -2574,7 +2574,7 @@ def main():
             _TT_OFFSETS = [0, 30, 60, 90, 120, 150]  # 追加オフセット (指先からさらに先)
             # 試行0: 金枠中心を最優先タップ
             if _tt and _tt_attempt == 0 and _tt_gold:
-                _tap_x, _tap_y = _tt_gold
+                _tap_x, _tap_y = _tt_gold[0], _tt_gold[1]
                 tap_device(_tap_x, _tap_y, state, "TUTORIAL_TAP_EARLY")
                 logger.info("[TUTORIAL_TAP] 金枠中心(%d,%d) タップ (試行1/%d)",
                             _tap_x, _tap_y, len(_TT_OFFSETS) + 1)
