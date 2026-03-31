@@ -338,7 +338,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
 
     # ─── タイトル画面 (TAP TO START) ───
     _is_tos_screen = "利用規約" in joined or "同意してゲームを始める" in joined
-    _title_kws_game = ["魔法", "少女", "まどか", "マギカ", "まどかハ", "MADOKA", "MAGICA"]
+    _title_kws_game = ["魔法", "少女", "まどか", "マギカ", "まどかハ", "MADOKA", "MAGICA", "MAGIA"]
     _is_title_screen = (
         not state.home_reached and not _is_tos_screen
         and any(kw in joined for kw in ["TAP TO START", "TAPTOSTART", "TAP T0 START",
