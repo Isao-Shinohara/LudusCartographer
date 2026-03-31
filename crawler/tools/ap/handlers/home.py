@@ -73,9 +73,9 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     state.home_reached = True
 
     # 前段ハンドラ (finger_priority) で指テンプレが処理済みの場合、
-    # チュートリアル証拠なしカウンタをリセット (誤完了判定防止)
+    # チュートリアル証拠として iter を更新 (誤完了判定防止)
     if ctx.pre_dialog_finger:
-        state._home_no_evidence_count = 0
+        state._home_last_evidence_iter = state.iteration
 
     # ── チュートリアル完了判定: 指テンプレ / 暗転+金枠 の有無 ──
     # チュートリアル中: 指アイコン or (暗転オーバーレイ + 金枠) が表示される
@@ -94,21 +94,17 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
         _home_gold = None
     _has_tutorial_evidence = _has_hand or (_has_overlay and _home_gold is not None)
 
-    if not _has_tutorial_evidence:
-        # チュートリアル完了候補
-        # 1フレームの遷移瞬間で誤判定しないよう、3回連続で確認
-        _no_evidence_count = getattr(state, "_home_no_evidence_count", 0) + 1
-    else:
-        state._home_no_evidence_count = 0
+    if _has_tutorial_evidence:
+        state._home_last_evidence_iter = state.iteration
 
     if not _has_tutorial_evidence:
-        state._home_no_evidence_count = _no_evidence_count
-        if not state.tutorial_cleared and _no_evidence_count < 3:
-            logger.info(">>> ホーム画面 チュートリアル証拠なし (%d/3) → 次フレームで再確認",
-                        _no_evidence_count)
+        _since_evidence = state.iteration - getattr(state, "_home_last_evidence_iter", state.iteration)
+        if not state.tutorial_cleared and _since_evidence < 5:
+            logger.info(">>> ホーム画面 チュートリアル証拠なし (last_evidence %d iter前) → 次フレームで再確認",
+                        _since_evidence)
             return "HOME_TUTORIAL_RECHECK", 0.5
         if not state.tutorial_cleared:
-            logger.info(">>> ホーム画面 暗転なし+金枠なし (3回連続) → チュートリアル完了")
+            logger.info(">>> ホーム画面 証拠なし 5iter以上経過 → チュートリアル完了")
             state.tutorial_cleared = True
             log_milestone(state, "HOME_REACHED")
         logger.info(">>> ホーム画面検出 (%d個) — チュートリアル完了済み", home_count)
@@ -117,7 +113,6 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     # ── チュートリアル中: 暗転+金枠あり ──
     # 指+金枠タップは finger_priority (Phase 1.5) で処理済みのため、
     # ここではスタック時のクエストナビゲートと吹き出しのみ処理
-    state._home_no_evidence_count = 0
     logger.info(">>> ホーム画面 チュートリアル中 (暗転=%s 金枠=%s)", _has_overlay, _home_gold is not None)
 
     # スタック時: クエストへナビゲート

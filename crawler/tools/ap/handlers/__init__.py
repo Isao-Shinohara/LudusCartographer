@@ -55,6 +55,7 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     # Phase 3: 指アイコン+金枠 (CLAUDE.md §0 優先度1)
     r = handle_finger_priority(ctx, state)
     if r is not None:
+        state._home_last_evidence_iter = state.iteration
         return r
 
     # Phase 3.5: 金枠ハイライト即タップ (CLAUDE.md §0 優先度1)
@@ -80,6 +81,7 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
                             _method, _gx, _gy, _gold_stall)
                 tap_device(_gx, _gy, state, "GOLD_FRAME_TAP")
                 state._gold_frame_stall_count = _gold_stall + 1
+                state._home_last_evidence_iter = state.iteration
                 return "GOLD_FRAME_TAP", 0.5
             else:
                 logger.info("[GOLD_FRAME:%s] 3回連続変化なし → スキップ (後続ハンドラに委譲)",
