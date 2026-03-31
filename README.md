@@ -76,13 +76,11 @@ cp config/.env.example config/.env
 ### 4. Auto Pilot の起動
 
 ```bash
-cd ~/Desktop/LudusCartographer/crawler
-
 # 途中再開
-./tools/run_autopilot.sh
+./crawler/tools/run_autopilot.sh
 
 # 新規アカウントで開始
-./tools/run_autopilot.sh -r
+./crawler/tools/run_autopilot.sh -r
 ```
 
 起動すると自動で:
@@ -115,13 +113,13 @@ cd ~/Desktop/LudusCartographer/crawler
 
 ```bash
 # 既存アカウントで1周 → 新規で2周 (計3周)
-./tools/run_autopilot.sh -c 3
+./crawler/tools/run_autopilot.sh -c 3
 
 # 全て新規で3周
-./tools/run_autopilot.sh -r -c 3
+./crawler/tools/run_autopilot.sh -r -c 3
 
 # 無限周回
-./tools/run_autopilot.sh -c 0
+./crawler/tools/run_autopilot.sh -c 0
 ```
 
 ### 停止・ログ監視
