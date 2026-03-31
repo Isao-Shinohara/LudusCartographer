@@ -504,6 +504,7 @@ def _run_battle_glow_sm(
         state.character_selected = True
         state.char_just_selected = True
         state.finger_detections += 1
+        state.phash_moving_count = 0
         return "GLOW_LEFT_CHAR", 0.3
 
     # P2: 右スキル発光 (キャラ選択済み)
@@ -520,6 +521,7 @@ def _run_battle_glow_sm(
                 state.character_selected = False
                 state.char_just_selected = False
                 state.finger_detections += 1
+                state.phash_moving_count = 0
                 _p2_tmpl_hit = True
                 return f"GLOW_RIGHT_{_btn.upper()}", 0.3
         # P2-b: テンプレ未検出 → glow フォールバック
@@ -533,6 +535,8 @@ def _run_battle_glow_sm(
             state.character_selected = False
             state.char_just_selected = False
             state.finger_detections += 1
+            # バトルアニメーションで MOVIE 誤昇格しないようリセット
+            state.phash_moving_count = 0
             return "GLOW_RIGHT_SKILL", 0.3
 
     # P3: キャラ選択済み + 発光なし → 通常攻撃 OCR フォールバック
@@ -546,6 +550,8 @@ def _run_battle_glow_sm(
                 tap_device(nx, ny, state, "NORMATK_TAP")
                 state.character_selected = False
                 state.char_just_selected = False
+                # バトルアニメーションで MOVIE 誤昇格しないようリセット
+                state.phash_moving_count = 0
                 return "NORMATK_TAP", 1.0
 
     return None
