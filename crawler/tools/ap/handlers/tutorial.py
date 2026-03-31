@@ -310,6 +310,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                     # チェッカー柄シーンが終わるまで繰り返しスワイプ
                     state._in_checker_walk = True
                     _max_repeat = tmpl_meta.get("max_repeat", 10)
+                    _sw_prev_ph = compute_phash(analysis_path) if analysis_path else ""
                     for _sw_i in range(_max_repeat):
                         logger.info(">>> [SWIPE_UP] (%d,%d)→(%d,%d) %dms (repeat %d/%d)",
                                     sx, sy, ex, ey, dur, _sw_i + 1, _max_repeat)
@@ -318,6 +319,14 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                         _sw_img, _sw_w, _sw_h, _ = take_screenshot()
                         if _sw_img:
                             _sw_analysis = prepare_analysis_image(_sw_img, _sw_w, _sw_h)
+                            # phash で大きな画面変化を検出 → 即終了
+                            _sw_cur_ph = compute_phash(_sw_analysis)
+                            if _sw_prev_ph and _sw_cur_ph:
+                                _sw_ph_dist = phash_distance(_sw_prev_ph, _sw_cur_ph)
+                                if _sw_ph_dist >= PHASH_THRESHOLD * 2:
+                                    logger.info("[SWIPE_UP] phash大変化 (dist=%d) → スワイプ終了", _sw_ph_dist)
+                                    break
+                            _sw_prev_ph = _sw_cur_ph
                             # スワイプ指テンプレが消えた or チェッカー床でなくなった → 終了
                             _sw_finger = ASSET_MANAGER.match_single("tutorial_swipe_finger", _sw_analysis)
                             _sw_walk = is_tutorial_walk_scene(_sw_analysis)
