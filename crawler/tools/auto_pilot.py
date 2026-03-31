@@ -3486,9 +3486,9 @@ def main():
             "RESULT_TAP", "RESULT_NEXT", "RESULT_RAPID", "RESULT_NEXT_EARLY",
             "RESULT_FREEZE", "GACHA_OK", "GACHA_RESULT_OK",
             "WAIT_FOR_CHANGE", "MOVIE_WAIT", "LOADING_WAIT",
-        ):
+        ) and state.same_phash_count >= 2:
             state._from_battle = False
-            logger.info("[FROM_BATTLE] action='%s' → _from_battle リセット", action)
+            logger.info("[FROM_BATTLE] action='%s' + 画面安定 → _from_battle リセット", action)
         # ── ホーム画面到達 ──
         if action == "GOAL_HOME_REACHED":
             if not state.grind_mode:
