@@ -3556,12 +3556,37 @@ def main():
                     else:
                         logger.info("[WFC_ESCAPE] ×ボタン検出だが OCR 0件 → 読み込み待ち、スキップ")
                 if _wfc_total >= 5:
-                    logger.warning(
-                        "[WFC_ESCAPE] WAIT_FOR_CHANGE 累計%d回 → 動画一時停止疑い → 中央タップ",
-                        _wfc_total)
-                    tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5),
-                               state, "WFC_PAUSE_RESUME")
-                    state._wfc_total_count = 0
+                    # メニュースタック救済: 左上メニューKW + icon_back → 戻る
+                    _wfc_escaped = False
+                    if _wfc_img:
+                        _wfc_ocr2 = run_ocr(str(_wfc_img), lang=OCR_LANG,
+                                            min_confidence=OCR_MIN_CONF) if not _wfc_ocr else _wfc_ocr
+                        _wfc_menu_text = None
+                        for _wi in _wfc_ocr2:
+                            _wt = _wi.get("text", "")
+                            _wc = _wi.get("center", (0, 0))
+                            if _wc[0] < ANALYSIS_W * 0.20 and _wc[1] < ANALYSIS_H * 0.15:
+                                if any(kw in _wt for kw in _MENU_SCREEN_KWS):
+                                    _wfc_menu_text = _wt
+                                    break
+                        if _wfc_menu_text:
+                            _back_roi = (0, 0, int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))
+                            _back_m = ASSET_MANAGER.match_single("icon_back", _wfc_img, roi=_back_roi)
+                            if _back_m and _back_m[2] >= 0.60:
+                                logger.warning(
+                                    "[WFC_ESCAPE] メニュースタック '%s' + icon_back(%.2f) → 戻る (%d,%d)",
+                                    _wfc_menu_text, _back_m[2], _back_m[0], _back_m[1])
+                                tap_device(_back_m[0], _back_m[1], state, "WFC_MENU_BACK")
+                                state._wfc_consecutive = 0
+                                state._wfc_total_count = 0
+                                _wfc_escaped = True
+                    if not _wfc_escaped:
+                        logger.warning(
+                            "[WFC_ESCAPE] WAIT_FOR_CHANGE 累計%d回 → 動画一時停止疑い → 中央タップ",
+                            _wfc_total)
+                        tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5),
+                                   state, "WFC_PAUSE_RESUME")
+                        state._wfc_total_count = 0
                 else:
                     logger.warning(
                         "[WFC_ESCAPE] WAIT_FOR_CHANGE %d 回連続 → 盲タップせず次ループへ",
