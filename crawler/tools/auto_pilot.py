@@ -3594,11 +3594,25 @@ def main():
                                 state._wfc_total_count = 0
                                 _wfc_escaped = True
                     if not _wfc_escaped:
-                        logger.warning(
-                            "[WFC_ESCAPE] WAIT_FOR_CHANGE 累計%d回 → 動画一時停止疑い → 中央タップ",
-                            _wfc_total)
-                        tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5),
-                                   state, "WFC_PAUSE_RESUME")
+                        # 中央タップ前に phash で静止確認 (動画再生中の誤タップ防止)
+                        time.sleep(0.5)
+                        _wfc_verify, _vw, _vh, _ = take_screenshot()
+                        _wfc_still = True
+                        if _wfc_verify and _wfc_img:
+                            _vf_analysis = prepare_analysis_image(_wfc_verify, _vw, _vh)
+                            _vf_ph = compute_phash(_vf_analysis) if _vf_analysis else ""
+                            _wfc_img_ph = compute_phash(_wfc_img) if _wfc_img else ""
+                            _vf_dist = phash_distance(_wfc_img_ph, _vf_ph) if _wfc_img_ph and _vf_ph else 0
+                            if _vf_dist >= PHASH_THRESHOLD:
+                                _wfc_still = False
+                                logger.info("[WFC_ESCAPE] 累計%d回だが phash変化中 (dist=%d) → タップ抑制",
+                                            _wfc_total, _vf_dist)
+                        if _wfc_still:
+                            logger.warning(
+                                "[WFC_ESCAPE] WAIT_FOR_CHANGE 累計%d回 + 静止確認 → 動画一時停止疑い → 中央タップ",
+                                _wfc_total)
+                            tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5),
+                                       state, "WFC_PAUSE_RESUME")
                         state._wfc_total_count = 0
                 else:
                     logger.warning(
