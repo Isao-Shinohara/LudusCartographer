@@ -925,6 +925,15 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     else:
         state.phash_moving_count = 0
 
+    # ── phash 連続変動で MOVIE 昇格 ──
+    # BATTLE/ADV/GACHA 以外で phash が 5 回以上連続変動 → ⏭なし動画と判断
+    _MOVIE_PROMOTE_THRESHOLD = 5
+    if (state.phash_moving_count >= _MOVIE_PROMOTE_THRESHOLD
+            and state.current_scene not in ("BATTLE", "ADV", "GACHA", "MOVIE")):
+        logger.info("[SCENE_EARLY] phash連続変動 %d回 → MOVIE昇格",
+                    state.phash_moving_count)
+        return "MOVIE"
+
     # ── ガチャ演出画面: SKIP + 暗背景 + 光の玉 → タップで進行 ──
     # MOVIE 中はスキップ (動画内のキャラ表示シーンで誤発火防止)
     if img_path and state.current_scene != "MOVIE" and getattr(state, "_from_movie_ttl", 0) <= 0:
