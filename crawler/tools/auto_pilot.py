@@ -848,7 +848,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # dist ガード: ADV→BATTLE 遷移時 (dist>=20) はフォールスルーして再評価する
     # NOTE: AUTO アイコン単独ではバトル画面の AUTO ボタンと区別不能 (score=0.91 で誤一致)
     #        → ADV ツールバー全体も確認して確定する
-    if state.current_scene == "ADV" and dist < 20:
+    if state.current_scene == "ADV" and (dist < 20 or dist == 999):
         # ADV 継続: ↓ボタン or AUTO が見えれば ADV 維持
         _adv_next_cont = ASSET_MANAGER.match_single("next_btn", img_path, roi=ADV_NEXT_BTN_ROI)
         if _adv_next_cont:
@@ -2661,8 +2661,8 @@ def main():
 
         elif _early_scene == "ADV":
             state.current_scene = "ADV"
-            # ADV_EARLY スタック脱出: 15回連続ハンドル成功 → OCR フォールスルー
-            _ADV_EARLY_STALL = 15
+            # ADV_EARLY スタック脱出: 30回連続ハンドル成功 → OCR フォールスルー
+            _ADV_EARLY_STALL = 30
             if state.adv_early_consecutive >= _ADV_EARLY_STALL:
                 logger.warning("[ADV_EARLY] %d 回連続 → OCR フォールスルー",
                                state.adv_early_consecutive)
