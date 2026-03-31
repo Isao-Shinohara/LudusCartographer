@@ -64,7 +64,8 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     _gold_stall = getattr(state, "_gold_frame_stall_count", 0)
     if (ctx.analysis_path is not None and not state.download_active
             and not ctx.has_dialog_corners):
-        _gold = find_gold_button(ctx.analysis_path)
+        _gold = find_gold_button(ctx.analysis_path,
+                                 battle_mode=(state.current_scene == "BATTLE"))
         if _gold:
             if _gold_stall < 3:
                 _gx, _gy = _gold
