@@ -297,13 +297,13 @@ SIGBUS クラッシュするため、スクリプト内部で `nohup` バック�
 
 ```bash
 # 途中再開
-crawler/tools/run_autopilot.sh
+./crawler/tools/run_autopilot.sh
 
 # 新規アカウント
-crawler/tools/run_autopilot.sh -r
+./crawler/tools/run_autopilot.sh -r
 
 # 3周回
-crawler/tools/run_autopilot.sh -c 3
+./crawler/tools/run_autopilot.sh -c 3
 
 # 停止
 pkill -f auto_pilot.py
@@ -322,7 +322,7 @@ PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
 ANDROID_HOME=~/Library/Android/sdk \
 ANDROID_SDK_ROOT=~/Library/Android/sdk \
 PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
-crawler/venv/bin/python -u crawler/tools/auto_pilot.py
+./crawler/venv/bin/python -u ./crawler/tools/auto_pilot.py
 ```
 
 ### 共通ルール
