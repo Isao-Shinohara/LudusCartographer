@@ -275,7 +275,7 @@ def handle_dialog_screen(
                 logger.info("[DIALOG_FRAME_GUARD] 四隅テンプレなし → ドット=%d+背景ぼかしあり → PAGING フォールバック続行",
                             _fb_dots)
             else:
-                logger.info("[DIALOG_FRAME_GUARD] 四隅テンプレなし (dots=%d, blur=%s) → PAGING スキップ (dlg_type=%s)",
+                logger.debug("[DIALOG_FRAME_GUARD] 四隅テンプレなし (dots=%d, blur=%s) → PAGING スキップ (dlg_type=%s)",
                             _fb_dots, _fb_blur is not None, _dlg_type)
                 # ガードでスキップ → 未処理なのでカウンタを戻す
                 state.pre_popup_tap_count = max(0, state.pre_popup_tap_count - 1)
@@ -669,7 +669,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
             _corners = ctx.has_dialog_corners if ctx.has_dialog_corners is not None else (
                 detect_dialog_corners(analysis_path) if analysis_path else False)
             if analysis_path and not _corners:
-                logger.info("[PRE_POPUP] 四隅テンプレなし → ダイアログではない、スキップ (kw='%s')",
+                logger.debug("[PRE_POPUP] 四隅テンプレなし → ダイアログではない、スキップ (kw='%s')",
                             _pre_popup["text"][:10])
                 _pre_popup = None
         if _pre_popup:

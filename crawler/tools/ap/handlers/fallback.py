@@ -129,7 +129,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
                         "ログインボーナス", "初心者ログイン", "キャンペーン"]
     _close_popup = has_any(ocr, _close_popup_kws)
     if _close_popup and analysis_path and not _is_dialog:
-        logger.info("[CLOSE_POPUP] 四隅テンプレなし → ダイアログではない、スキップ (kw='%s')",
+        logger.debug("[CLOSE_POPUP] 四隅テンプレなし → ダイアログではない、スキップ (kw='%s')",
                     _close_popup["text"][:10])
         _close_popup = None
     if _close_popup:
