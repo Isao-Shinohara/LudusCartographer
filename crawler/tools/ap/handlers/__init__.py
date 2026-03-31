@@ -59,13 +59,22 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
 
     # Phase 3.5: 金枠ハイライト即タップ (CLAUDE.md §0 優先度1)
     # 指アイコンなしでも金枠が検出されたら即タップ
-    if ctx.analysis_path is not None and not state.download_active:
+    # 3回連続画面変化なし → 偽陽性 (カード額縁等) と判断しスキップ (後続ハンドラに委譲)
+    _gold_stall = getattr(state, "_gold_frame_stall_count", 0)
+    if getattr(state, "last_action", "") != "GOLD_FRAME_TAP":
+        _gold_stall = 0
+        state._gold_frame_stall_count = 0
+    if ctx.analysis_path is not None and not state.download_active and _gold_stall < 3:
         _gold = find_gold_button(ctx.analysis_path)
         if _gold:
             _gx, _gy = _gold
-            logger.info("[GOLD_FRAME] 金枠検出 → 即タップ (%d,%d)", _gx, _gy)
+            logger.info("[GOLD_FRAME] 金枠検出 → 即タップ (%d,%d) (stall=%d)",
+                        _gx, _gy, _gold_stall)
             tap_device(_gx, _gy, state, "GOLD_FRAME_TAP")
+            state._gold_frame_stall_count = _gold_stall + 1
             return "GOLD_FRAME_TAP", 0.5
+    if _gold_stall >= 3:
+        logger.info("[GOLD_FRAME] 3回連続変化なし → スキップ (後続ハンドラに委譲)")
 
     # Phase 4: チュートリアル (名前入力, 指+金枠, スワイプ, アセットマッチ, ポップアップ)
     r = handle_tutorial(ctx, state)
