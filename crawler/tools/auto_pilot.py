@@ -1253,9 +1253,10 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
     # ただしチュートリアル指テンプレが左側で検出された場合は全画面探索を許可
     # (必殺技チュートリアル等で左側キャラカードをタップさせるケース)
     _fm = _rapid_finger_rot  # 指テンプレマッチ結果 (cx, cy, score, direction)
+    # 指テンプレ検出時は battle_mode 無効 (暗転なしの金枠チュートリアルを許容)
     _gold_tap = find_gold_button(
         analysis_path, overlay_mode=False,
-        skip_upper_filter=True, battle_mode=True)
+        skip_upper_filter=True, battle_mode=(_fm is None))
     if _gold_tap:
         _rapid_tx, _rapid_ty = _gold_tap
         _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
@@ -3154,10 +3155,13 @@ def main():
             # ── Phase 0: チュートリアル金枠 → 最優先タップ ──
             # 金枠を常時チェック (暗転オーバーレイ判定で誤検出防止)
             _is_battle2 = state.current_scene == "BATTLE"
+            _has_finger2 = bool(_rapid_blobs)
             _is_overlay2 = False if _is_battle2 else detect_tutorial_overlay(analysis_path)
+            # 指テンプレ検出時は battle_mode 無効 (暗転なしの金枠チュートリアルを許容)
             _gold_tap = find_gold_button(
                 analysis_path, overlay_mode=_is_overlay2,
-                skip_upper_filter=_is_battle2, battle_mode=_is_battle2)
+                skip_upper_filter=_is_battle2,
+                battle_mode=(_is_battle2 and not _has_finger2))
             if _gold_tap:
                 _rapid_tx, _rapid_ty = _gold_tap
                 _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
