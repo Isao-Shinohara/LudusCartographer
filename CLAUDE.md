@@ -291,7 +291,7 @@ export ANDROID_SERIAL=f6b8cef7
 
 ### ユーザーが起動する場合
 
-ランチャースクリプト `tools/run_autopilot.sh` を使用する。
+ランチャースクリプト `./crawler/tools/run_autopilot.sh` を使用する。
 macOS 26 の Vision framework が Terminal フォアグラウンドプロセスで
 SIGBUS クラッシュするため、スクリプト内部で `nohup` バックグラウンド実行する。
 
