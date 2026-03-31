@@ -53,6 +53,7 @@ def handle_popup_home(
     state: "PilotState",
     analysis_path: Optional[Path],
     ocr_count: int = 0,
+    has_dialog_corners: bool = False,
 ) -> Optional[tuple[str, float]]:
     """ホームポップアップ検出 → ドット数分 ▷ タップ → 最終ページで × 閉じ。
 
@@ -65,6 +66,8 @@ def handle_popup_home(
     if analysis_path is None:
         return None
     if state.current_scene == "MOVIE":
+        return None
+    if has_dialog_corners:
         return None
     if ocr_count < 1:
         return None
@@ -434,7 +437,9 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
 
     # ── 【ホームポップアップ検出】ダイアログ・お知らせポップアップとは独立 ──────────
     if analysis_path is not None:
-        _popup_home_result = handle_popup_home(state, analysis_path, ocr_count=len(ocr))
+        _popup_home_result = handle_popup_home(
+            state, analysis_path, ocr_count=len(ocr),
+            has_dialog_corners=bool(ctx.has_dialog_corners))
         if _popup_home_result is not None:
             return _popup_home_result
 
