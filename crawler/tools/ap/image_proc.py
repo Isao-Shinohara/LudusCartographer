@@ -1214,7 +1214,7 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
                 # そのため正円ではなく楕円マスクを使い、X 半径を
                 # アスペクト比の差分で補正する。
                 # 例: Xperia 2:1 → (43,43), Galaxy 2.11:1 → (40,43)
-                _OTHER_THRESHOLD = 0.25
+                _OTHER_THRESHOLD = 0.20
                 _H_orig, _W_orig = img.shape[:2]
                 _aspect_src = _W_orig / _H_orig if _H_orig > 0 else 2.0
                 _aspect_dst = ANALYSIS_W / ANALYSIS_H
