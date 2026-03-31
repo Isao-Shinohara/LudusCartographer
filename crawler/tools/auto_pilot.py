@@ -1463,7 +1463,7 @@ def parse_args():
                         help="adb pair 用ペアリングコード (Android 11+)")
     parser.add_argument("--pairing-port", type=int, default=None,
                         help="adb pair 用ポート番号 (Android 11+)")
-    parser.add_argument("--screen-off", action="store_true",
+    parser.add_argument("-s", "--screen-off", action="store_true",
                         help="scrcpy 起動時に端末の画面をオフにする")
     # parse_known_args: main.py 経由の場合に --android, --package 等の未知引数を無視
     args, _ = parser.parse_known_args()
