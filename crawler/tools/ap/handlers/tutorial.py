@@ -70,8 +70,9 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             None
         )
         if _ni_name_texts and _ni_ok:
-            _ni_cx, _ni_cy = roi_to_device(_ni_ok["center"][0], int(H * 0.78), state.game_roi)
-            logger.info(">>> 【名前入力 OK】 入力済み='%s' → ROI補正(%d,%d) タップ", _ni_name_texts[0], _ni_cx, _ni_cy)
+            _ni_cx = _ni_ok["center"][0]
+            _ni_cy = int(H * 0.78)
+            logger.info(">>> 【名前入力 OK】 入力済み='%s' → (%d,%d) タップ", _ni_name_texts[0], _ni_cx, _ni_cy)
             log_milestone(state, "NAME_INPUT")
             tap_device(_ni_cx, _ni_cy, state, "NAME_INPUT_OK")
             return "NAME_INPUT_OK", 2.0
@@ -84,11 +85,11 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                 _name_input_item  # フォールバック: 最初のマッチ
             )
             _nf_ocr_x, _nf_ocr_y = _field_item["center"]
-            _nf_x, _nf_y = roi_to_device(_nf_ocr_x, _nf_ocr_y, state.game_roi)
-            logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d) [OCR座標]", _nf_x, _nf_y)
-            tap_device(_nf_x, _nf_y, state, "NAME_INPUT_FOCUS")
+            logger.info(">>> 【名前入力】 テキストフィールドをフォーカス (%d,%d) [解析座標]", _nf_ocr_x, _nf_ocr_y)
+            tap_device(_nf_ocr_x, _nf_ocr_y, state, "NAME_INPUT_FOCUS")
+            time.sleep(0.5)
             adb("shell input text MadoDora")
-            time.sleep(0.2)
+            time.sleep(0.3)
             adb("shell input keyevent 66")
             logger.info(">>> 【名前入力】 'MadoDora' 入力完了 → OK タップ待ち")
             return "NAME_INPUT_TEXT", 1.5

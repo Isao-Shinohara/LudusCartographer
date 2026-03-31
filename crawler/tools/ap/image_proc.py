@@ -2294,8 +2294,8 @@ def find_gold_button(img_path: Path,
                          area, x, y, w, h)
             return None
 
-        logger.info("[GoldBtn] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f overlay=%s → tap(%d,%d)",
-                    area, x, y, w, h, aspect, _has_overlay, cx, cy)
+        logger.debug("[GoldBtn] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f overlay=%s → tap(%d,%d)",
+                     area, x, y, w, h, aspect, _has_overlay, cx, cy)
         return cx, cy
 
     except Exception as e:
