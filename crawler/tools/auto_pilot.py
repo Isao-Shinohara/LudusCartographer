@@ -1333,8 +1333,8 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
 
     # ── Phase C: フォールバック → 0.5秒待機+再確認 → 右側攻撃ボタン ──
     if not _rapid_action:
-        if state.normatk_fallback.stalled:
-            logger.info("[BATTLE] FALLBACK %d回連続 → OCR で再評価",
+        if state.normatk_fallback.stalled and state.same_phash_count >= 2:
+            logger.info("[BATTLE] FALLBACK %d回連続 + 画面安定 → OCR で再評価",
                         state.normatk_fallback.count)
             state.normatk_fallback.reset()
             return False
@@ -3133,8 +3133,8 @@ def main():
                 and state.battle_rapid_consecutive.count > 0
                 and state.battle_rapid_consecutive.count % 3 == 0):
             _atk_m = ASSET_MANAGER.match_single("battle_normal_attack", analysis_path)
-            if not _atk_m or _atk_m[2] < 0.70:
-                logger.info("[BATTLE_RAPID] 通常攻撃ボタン未検出 (count=%d) → OCR で再評価",
+            if (not _atk_m or _atk_m[2] < 0.70) and state.same_phash_count >= 2:
+                logger.info("[BATTLE_RAPID] 通常攻撃ボタン未検出 (count=%d) + 画面安定 → OCR で再評価",
                             state.battle_rapid_consecutive.count)
                 state.battle_rapid_consecutive.reset()
                 _force_ocr_override = True
@@ -3225,8 +3225,8 @@ def main():
             # 【永続ルール】左キャラにモヤがない場合は常に右側の通常攻撃/戦闘スキルをタップ
             # 安全弁: 連続10回フォールバック → バトル以外のシーンの可能性 → OCR 再評価
             if not _rapid_action:
-                if state.normatk_fallback.stalled:
-                    logger.info("[BATTLE_RAPID] FALLBACK %d回連続 → OCR で再評価",
+                if state.normatk_fallback.stalled and state.same_phash_count >= 2:
+                    logger.info("[BATTLE_RAPID] FALLBACK %d回連続 + 画面安定 → OCR で再評価",
                                 state.normatk_fallback.count)
                     state.normatk_fallback.reset()
                     # BATTLE_RAPID を抜けて OCR に回す (continue しない)
