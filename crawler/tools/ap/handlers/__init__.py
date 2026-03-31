@@ -62,9 +62,11 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     # 3回連続画面変化なし → 偽陽性 (カード額縁等) と判断しスキップ (後続ハンドラに委譲)
     # リセットは金枠が検出されなくなった時 (=画面遷移) のみ
     _gold_stall = getattr(state, "_gold_frame_stall_count", 0)
+    _since_big_change = state.iteration - getattr(state, "_last_big_change_iter", -999)
     if (ctx.analysis_path is not None and not state.download_active
             and not ctx.has_dialog_corners
-            and getattr(state, "same_phash_count", 0) >= 2):
+            and getattr(state, "same_phash_count", 0) >= 2
+            and _since_big_change >= 5):
         _gold = find_gold_button(ctx.analysis_path,
                                  battle_mode=(state.current_scene == "BATTLE"))
         if _gold:

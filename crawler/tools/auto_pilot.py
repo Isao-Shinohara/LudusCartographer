@@ -2751,6 +2751,8 @@ def main():
 
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
+            if dist >= 15 or dist == 999:
+                state._last_big_change_iter = state.iteration
             state.same_phash_count = 0
             state.consecutive_frozen_frames = 0
             state.stall_start = 0.0
