@@ -698,7 +698,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                             state._movie_recheck_count, dist)
                 state._movie_recheck_count = 0
                 state.current_scene = "UNKNOWN"
-                state._from_movie_ttl = 4  # MOVIE→UNKNOWN 遷移: 4フレームタップ抑制
+                state._from_movie_ttl = 2  # MOVIE→UNKNOWN 遷移: 2フレームタップ抑制
                 return "UNKNOWN"
             return "MOVIE"
         if dist >= 3:
@@ -765,7 +765,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
                             state._movie_recheck_count)
                 state._movie_recheck_count = 0
                 state.current_scene = "UNKNOWN"
-                state._from_movie_ttl = 4  # MOVIE→UNKNOWN 遷移: 4フレームタップ抑制
+                state._from_movie_ttl = 2  # MOVIE→UNKNOWN 遷移: 2フレームタップ抑制
                 return "UNKNOWN"
             return "MOVIE"
         state._movie_stable_count = getattr(state, "_movie_stable_count", 0) + 1
