@@ -99,6 +99,7 @@ cp config/.env.example config/.env
 |-----------|------|------|
 | `--reinstall` | `-r` | アプリを再インストールして新規アカウントで開始 |
 | `--cycles N` | `-c N` | 周回モード（下記参照） |
+| `--screen-off` | `-s` | scrcpy 起動時に端末の画面をオフにする |
 | `--verbose` | `-v` | デバッグログ出力 |
 
 #### 周回モード (`-c`)
