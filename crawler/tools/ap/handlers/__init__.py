@@ -10,6 +10,8 @@ from typing import Optional
 
 import logging
 
+logger = logging.getLogger(__name__)
+
 from tools.ap.context import DetectContext
 from tools.ap.state import PilotState
 from tools.ap.device import tap_device
@@ -44,7 +46,7 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     # Phase 2.5: ミニ会話タップ (OCR パスで検出済みの座標を使用)
     if ctx.mini_conv_pos is not None:
         _mc_cx, _mc_cy, _mc_side = ctx.mini_conv_pos
-        logging.getLogger(__name__).info(
+        logger.info(
             "[MINI_CONV] 吹き出し(%s) → タップ (%d,%d)", _mc_side, _mc_cx, _mc_cy)
         tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
         state.last_action = "MINI_CONV_TAP"
