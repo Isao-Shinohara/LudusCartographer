@@ -201,6 +201,8 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
          彩度が低いほど市松模様の確信度が高いため、val_std 閾値を緩和:
          adjusted_threshold = max(55, 60 - (25 - mean_sat) * 0.5)
          (タイトル画面・利用規約・パーティ編成等の暗い画面は std < 56)
+      3. 下半分の白黒バランスが均等 (>= 0.5) → チェック柄/階段の特徴
+         動画暗転やADVシーンは白or黒に偏る (balance 0.2-0.3)
     """
     try:
         img = imread_cached(img_path)
@@ -216,7 +218,18 @@ def is_tutorial_walk_scene(img_path: Path) -> bool:
         _std_threshold = max(55.0, 60.0 - (25.0 - mean_sat) * 0.5)
         if val_std < _std_threshold:
             return False
-        logger.info("[DEBG][WalkScene] sat=%.1f std=%.1f >= th=%.1f → True", mean_sat, val_std, _std_threshold)
+        # 下半分の白黒バランス: チェック柄は白黒が均等 (0.6-0.8)
+        h = gray.shape[0]
+        floor_gray = gray[h // 2:, :]
+        _, floor_bin = cv2.threshold(floor_gray, 128, 255, cv2.THRESH_BINARY)
+        floor_white = float(np.mean(floor_bin == 255))
+        floor_balance = 1.0 - abs(floor_white - 0.5) * 2
+        if floor_balance < 0.5:
+            logger.debug("[WalkScene] sat=%.1f std=%.1f balance=%.2f < 0.5 → False",
+                         mean_sat, val_std, floor_balance)
+            return False
+        logger.info("[DEBG][WalkScene] sat=%.1f std=%.1f >= th=%.1f balance=%.2f → True",
+                    mean_sat, val_std, _std_threshold, floor_balance)
         return True
     except Exception:
         return False
