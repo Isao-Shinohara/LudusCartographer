@@ -2685,13 +2685,13 @@ def main():
                             _fms, state.adv_early_consecutive, _ADV_EARLY_STALL)
                 continue
             else:
-                # ↓ボタン未検出 (セリフ切り替え中等) → 1s 待機してリトライ
+                # ↓ボタン未検出 (セリフ切り替え中等) → 0.5s 待機してリトライ
                 # OCR パスに落とさず ADV_EARLY に留まる
                 _adv_retry_count = getattr(state, "_adv_early_retry", 0) + 1
                 state._adv_early_retry = _adv_retry_count
                 if _adv_retry_count <= 3:
-                    logger.info("[ADV_EARLY] ↓未検出 → 1s待機リトライ (%d/3)", _adv_retry_count)
-                    time.sleep(1.0)
+                    logger.info("[ADV_EARLY] ↓未検出 → 0.5s待機リトライ (%d/3)", _adv_retry_count)
+                    time.sleep(0.5)
                     continue
                 state._adv_early_retry = 0
                 state.adv_early_consecutive = 0
