@@ -1119,6 +1119,31 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
         beige_mask = cv2.bitwise_and(_rgb_mask, _low_spread)
         beige_mask = cv2.bitwise_and(beige_mask, _warm_tone)
 
+        # ── キャラアイコン位置をベージュ扱いにしたマスク (幅推定用) ──
+        # キャラアイコン (黒いキャラ等) でベージュが途切れるのを防ぐため、
+        # 吹き出し端のアイコン円をベージュで埋めてからスキャンする。
+        _icon_r_est = _BUBBLE_H // 2  # アイコン半径 ≈ 吹き出し高さ/2
+        _H_orig, _W_orig = img.shape[:2]
+        _aspect_src = _W_orig / _H_orig if _H_orig > 0 else 2.0
+        _aspect_dst = ANALYSIS_W / ANALYSIS_H
+        _stretch = _aspect_dst / _aspect_src if _aspect_src > 0 else 1.0
+        _icon_rx_est = max(1, int(_icon_r_est * _stretch))
+        beige_for_scan = beige_mask.copy()
+        # アイコン中心 = 角丸半径 + アイコン半径 (角丸の内側にアイコンが配置)
+        _icon_cx_offset = int((_BUBBLE_R + _icon_r_est) * _stretch)
+        # 左端アイコン
+        _char_left = np.zeros((ANALYSIS_H, ANALYSIS_W), dtype=np.uint8)
+        cv2.ellipse(_char_left,
+                    (_icon_cx_offset, _BUBBLE_Y + _BUBBLE_H // 2),
+                    (_icon_rx_est, _icon_r_est), 0, 0, 360, 255, -1)
+        beige_for_scan[_char_left > 0] = 255
+        # 右端アイコン
+        _char_right = np.zeros((ANALYSIS_H, ANALYSIS_W), dtype=np.uint8)
+        cv2.ellipse(_char_right,
+                    (ANALYSIS_W - _icon_cx_offset, _BUBBLE_Y + _BUBBLE_H // 2),
+                    (_icon_rx_est, _icon_r_est), 0, 0, 360, 255, -1)
+        beige_for_scan[_char_right > 0] = 255
+
         # ── 吹き出し幅を推定: 端からベージュが途切れるまでスキャン ──
         def _find_bubble_width(beige, y0, h, from_left):
             """端からベージュピクセルの密度が高い列の数を数え、吹き出し幅を推定。
@@ -1146,7 +1171,7 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
         candidates = []
 
         for side, from_left in [("left", True), ("right", False)]:
-            bubble_w = _find_bubble_width(beige_mask, _BUBBLE_Y, _BUBBLE_H, from_left)
+            bubble_w = _find_bubble_width(beige_for_scan, _BUBBLE_Y, _BUBBLE_H, from_left)
             if bubble_w < _BUBBLE_R * 2:
                 continue
 
@@ -1197,11 +1222,13 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
                 _icon_ry = _bh // 2           # Y 半径 = 吹き出し高さの半分
                 _icon_rx = max(1, int(_icon_ry * _stretch_x))  # X 半径 = アスペクト補正
                 _icon_cy = _bh // 2
+                # アイコン中心 = 角丸半径 + アイコン半径 (ROI内座標)
+                _icon_cx_off = int((_BUBBLE_R + _icon_ry) * _stretch_x)
                 char_circle = np.zeros((_bh, _bw), dtype=np.uint8)
                 if from_left:
-                    cv2.ellipse(char_circle, (_icon_rx, _icon_cy), (_icon_rx, _icon_ry), 0, 0, 360, 255, -1)
+                    cv2.ellipse(char_circle, (_icon_cx_off, _icon_cy), (_icon_rx, _icon_ry), 0, 0, 360, 255, -1)
                 else:
-                    cv2.ellipse(char_circle, (_bw - _icon_rx, _icon_cy), (_icon_rx, _icon_ry), 0, 0, 360, 255, -1)
+                    cv2.ellipse(char_circle, (_bw - _icon_cx_off, _icon_cy), (_icon_rx, _icon_ry), 0, 0, 360, 255, -1)
                 # キャラ円を除外した角丸マスク
                 _shape_no_char = roi_shape.copy()
                 _shape_no_char[char_circle > 0] = 0
