@@ -22,6 +22,7 @@ from tools.ap.handlers.tutorial import handle_tutorial
 from tools.ap.handlers.home import handle_home
 from tools.ap.handlers.scene import handle_scene_specific
 from tools.ap.handlers.fallback import handle_fallback
+from tools.ap.image_proc import find_gold_button
 
 
 def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
@@ -53,6 +54,16 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     r = handle_finger_priority(ctx, state)
     if r is not None:
         return r
+
+    # Phase 3.5: 金枠ハイライト即タップ (CLAUDE.md §0 優先度1)
+    # 指アイコンなしでも金枠が検出されたら即タップ
+    if ctx.analysis_path is not None and not state.download_active:
+        _gold = find_gold_button(ctx.analysis_path)
+        if _gold:
+            _gx, _gy = _gold
+            logger.info("[GOLD_FRAME] 金枠検出 → 即タップ (%d,%d)", _gx, _gy)
+            tap_device(_gx, _gy, state, "GOLD_FRAME_TAP")
+            return "GOLD_FRAME_TAP", 0.5
 
     # Phase 4: チュートリアル (名前入力, 指+金枠, スワイプ, アセットマッチ, ポップアップ)
     r = handle_tutorial(ctx, state)
