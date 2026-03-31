@@ -64,6 +64,8 @@ def handle_popup_home(
     """
     if analysis_path is None:
         return None
+    if state.current_scene == "MOVIE":
+        return None
     if ocr_count < 1:
         return None
     if not detect_popup_home(analysis_path):
