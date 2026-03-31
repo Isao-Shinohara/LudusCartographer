@@ -63,22 +63,27 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     # リセットは金枠が検出されなくなった時 (=画面遷移) のみ
     _gold_stall = getattr(state, "_gold_frame_stall_count", 0)
     _since_big_change = state.iteration - getattr(state, "_last_big_change_iter", -999)
-    if (ctx.analysis_path is not None and not state.download_active
-            and not ctx.has_dialog_corners
-            and getattr(state, "same_phash_count", 0) >= 2
-            and _since_big_change >= 5):
+    _same = getattr(state, "same_phash_count", 0)
+    # テンプレマッチ: ガードなしで常時実行 (高精度のため誤検出リスク低い)
+    # HSV: same>=2 + 遷移後5フレーム待機 (偽陽性対策)
+    if ctx.analysis_path is not None and not state.download_active and not ctx.has_dialog_corners:
+        _hsv_only = _same < 2 or _since_big_change < 5
         _gold = find_gold_button(ctx.analysis_path,
                                  battle_mode=(state.current_scene == "BATTLE"))
         if _gold:
-            if _gold_stall < 3:
-                _gx, _gy = _gold
-                logger.info("[GOLD_FRAME] 金枠検出 → 即タップ (%d,%d) (stall=%d)",
-                            _gx, _gy, _gold_stall)
+            _gx, _gy, _method = _gold
+            # HSV 検出時はガード条件を適用
+            if _method == "HSV" and _hsv_only:
+                pass  # ガード条件未達 → スキップ
+            elif _gold_stall < 3:
+                logger.info("[GOLD_FRAME:%s] 金枠検出 → 即タップ (%d,%d) (stall=%d)",
+                            _method, _gx, _gy, _gold_stall)
                 tap_device(_gx, _gy, state, "GOLD_FRAME_TAP")
                 state._gold_frame_stall_count = _gold_stall + 1
                 return "GOLD_FRAME_TAP", 0.5
             else:
-                logger.info("[GOLD_FRAME] 3回連続変化なし → スキップ (後続ハンドラに委譲)")
+                logger.info("[GOLD_FRAME:%s] 3回連続変化なし → スキップ (後続ハンドラに委譲)",
+                            _method)
         else:
             state._gold_frame_stall_count = 0
 

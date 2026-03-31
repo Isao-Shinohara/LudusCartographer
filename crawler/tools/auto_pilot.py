@@ -488,7 +488,7 @@ def _battle_fast_check(analysis_path: Path,
     else:
         gb = find_gold_button(analysis_path)
         if gb:
-            gx, gy = gb
+            gx, gy = gb[0], gb[1]
             logger.info("[FAST] GoldBtn → tap(%d,%d)", gx, gy)
             tap_device(gx, gy, state, "GOLD_BTN_TAP")
             return "GOLD_BTN_TAP", BATTLE_WAIT
@@ -1258,7 +1258,7 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
         analysis_path, overlay_mode=False,
         skip_upper_filter=True, battle_mode=(_fm is None))
     if _gold_tap:
-        _rapid_tx, _rapid_ty = _gold_tap
+        _rapid_tx, _rapid_ty = _gold_tap[0], _gold_tap[1]
         _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
     # 指テンプレ検出済み + gold_button未検出 → 指テンプレ位置から金枠を探索
     # 指テンプレ名から方向を取得し、指の指す先の金枠のみ採用
@@ -3163,7 +3163,7 @@ def main():
                 skip_upper_filter=_is_battle2,
                 battle_mode=(_is_battle2 and not _has_finger2))
             if _gold_tap:
-                _rapid_tx, _rapid_ty = _gold_tap
+                _rapid_tx, _rapid_ty = _gold_tap[0], _gold_tap[1]
                 _rapid_action = "BATTLE_RAPID_GOLD_TUTORIAL"
                 if _is_overlay2:
                     logger.info("[BATTLE_RAPID] 暗転オーバーレイ → 全画面金枠 (%d,%d)",

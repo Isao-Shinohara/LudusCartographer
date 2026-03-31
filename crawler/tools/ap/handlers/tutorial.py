@@ -169,7 +169,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     if analysis_path is not None and _is_battle_tut_context and not ctx.in_battle_ctx and not state.download_active:
         _gold_btn = find_gold_button(analysis_path)
         if _gold_btn:
-            _bx, _by = _gold_btn
+            _bx, _by = _gold_btn[0], _gold_btn[1]
             logger.info(">>> [GoldBtn] 金枠ボタン検出 → tap(%d,%d)", _bx, _by)
             _base_ph_gb = compute_phash(analysis_path)
             tap_device(_bx, _by, state, "GOLD_BTN_TAP")

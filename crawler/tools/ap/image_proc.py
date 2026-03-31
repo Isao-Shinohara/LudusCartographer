@@ -2327,7 +2327,8 @@ def find_gold_button(img_path: Path,
     暗転オーバーレイ判定で誤検出を防止。
     battle_mode=True: バトル画面は暗い背景のため閾値を厳格化 (std < 40)。
 
-    Returns: (tap_x, tap_y) or None
+    Returns: (tap_x, tap_y, method) or None
+        method: "TMPL" (テンプレマッチ) or "HSV"
     """
     try:
         W_img, H_img = ANALYSIS_W, ANALYSIS_H
@@ -2338,7 +2339,7 @@ def find_gold_button(img_path: Path,
             _tcx, _tcy, _tw, _th = _tmpl_result
             logger.debug("[GoldBtn:TMPL] 検出OK: (%d,%d) %dx%d → tap(%d,%d)",
                          _tcx - _tw // 2, _tcy - _th // 2, _tw, _th, _tcx, _tcy)
-            return _tcx, _tcy
+            return _tcx, _tcy, "TMPL"
 
         # ── HSV フォールバック ──
         # 画面中央を起点に広範囲で金枠を探索
@@ -2392,7 +2393,7 @@ def find_gold_button(img_path: Path,
 
         logger.debug("[GoldBtn:HSV] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f overlay=%s → tap(%d,%d)",
                      area, x, y, w, h, aspect, _has_overlay, cx, cy)
-        return cx, cy
+        return cx, cy, "HSV"
 
     except Exception as e:
         logger.debug("find_gold_button error: %s", e)
