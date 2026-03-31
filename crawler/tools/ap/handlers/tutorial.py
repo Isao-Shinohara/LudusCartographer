@@ -225,33 +225,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
         if _swipe_m and _swipe_m[2] >= 0.82:
             asset_hit = (_swipe_m[0], _swipe_m[1], "SWIPE_UP", (0, 0, 0, 0))
 
-        # --- 2. チュートリアルダイアログ ▷ (ASSET_TUTORIAL_DIALOG_NEXT) ---
-        if not asset_hit:
-            _dnext_m = ASSET_MANAGER.match_single("tutorial_dialog_next", analysis_path)
-            if _dnext_m and _dnext_m[2] >= 0.91:
-                # 「矢印をタップ」画面では誤マッチ → #2-a MAP_ARROW に委譲
-                if any("矢印を" in t for t in texts):
-                    logger.info(">>> [Asset] DIALOG_NEXT を抑制 (矢印をタップ画面 → #2-a に委譲)")
-                else:
-                    # × ボタンが見える場合は最終ページ → × をタップして閉じる
-                    _close = ASSET_MANAGER.match_single("close_btn", analysis_path)
-                    _close = _close if (_close and _close[2] >= 0.60) else None
-                    if _close:
-                        logger.info("[DIALOG_NEXT] × ボタン検出 (%.2f) → 最終ページ、× タップ (%d,%d)",
-                                    _close[2], _close[0], _close[1])
-                        tap_device(_close[0], _close[1], state, "DIALOG_NEXT_CLOSE")
-                        return "DIALOG_NEXT_CLOSE", 1.0
-                    # スタック検出
-                    _cnt = getattr(state, "_dialog_next_stall_count", 0) + 1
-                    state._dialog_next_stall_count = _cnt
-                    if _cnt >= 3:
-                        _close_x, _close_y = roi_to_device(int(W * 0.94), int(H * 0.13), state.game_roi)
-                        logger.warning("[DIALOG_NEXT] %d 回連続同一画面 → 上端×エリア (%d,%d) タップ",
-                                       _cnt, _close_x, _close_y)
-                        tap_device(_close_x, _close_y, state, "DIALOG_NEXT_CORNER_CLOSE")
-                        state._dialog_next_stall_count = 0
-                        return "DIALOG_NEXT_CORNER_CLOSE", 1.5
-                    asset_hit = (_dnext_m[0], _dnext_m[1], "ASSET_TUTORIAL_DIALOG_NEXT", (0, 0, 0, 0))
+        # --- 2. チュートリアルダイアログ ▷ は dialog_phase (Phase 2) で ROI 付き検出済み ---
+        # 全画面検索はガチャ画面等で誤マッチするため削除
 
         # --- 4. 動画スキップ (MOVIE_SKIP_TEXT) ---
         if not asset_hit:
