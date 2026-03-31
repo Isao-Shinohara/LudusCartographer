@@ -2233,6 +2233,87 @@ def detect_tutorial_gold_swipe(img_path: Path) -> Optional[tuple[str, int, int, 
         return None
 
 
+# ─── 金枠テンプレマッチ (4隅) ─────────────────────────────────────────
+_GOLD_CORNER_TL_PATH = _CRAWLER_ROOT / "assets" / "templates" / "gold_frame_corner_tl.png"
+_GOLD_CORNER_CACHE: dict = {}
+
+
+def _load_gold_corners() -> dict:
+    """金枠左上テンプレを読み込み、4隅バリエーションを生成してキャッシュ。"""
+    if _GOLD_CORNER_CACHE:
+        return _GOLD_CORNER_CACHE
+    if not _GOLD_CORNER_TL_PATH.exists():
+        return {}
+    tpl = cv2.imread(str(_GOLD_CORNER_TL_PATH))
+    if tpl is None:
+        return {}
+    _GOLD_CORNER_CACHE["TL"] = cv2.cvtColor(tpl, cv2.COLOR_BGR2GRAY)
+    _GOLD_CORNER_CACHE["TR"] = cv2.cvtColor(cv2.flip(tpl, 1), cv2.COLOR_BGR2GRAY)
+    _GOLD_CORNER_CACHE["BL"] = cv2.cvtColor(cv2.flip(tpl, 0), cv2.COLOR_BGR2GRAY)
+    _GOLD_CORNER_CACHE["BR"] = cv2.cvtColor(cv2.flip(tpl, -1), cv2.COLOR_BGR2GRAY)
+    return _GOLD_CORNER_CACHE
+
+
+def find_gold_frame_by_template(
+    img_path: Path, threshold: float = 0.90,
+    rect_tolerance: int = 5,
+) -> Optional[tuple[int, int, int, int]]:
+    """金枠4隅テンプレマッチで金枠を検出する。
+
+    Returns: (center_x, center_y, width, height) or None
+    """
+    corners = _load_gold_corners()
+    if not corners:
+        return None
+    img = imread_analysis(img_path)
+    if img is None:
+        return None
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    tpl_h, tpl_w = corners["TL"].shape[:2]
+
+    # 各隅の最良マッチ位置を検出
+    matches = {}
+    for name, g_tpl in corners.items():
+        if gray.shape[0] < g_tpl.shape[0] or gray.shape[1] < g_tpl.shape[1]:
+            return None
+        result = cv2.matchTemplate(gray, g_tpl, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+        if max_val < threshold:
+            return None
+        matches[name] = (max_loc[0], max_loc[1], max_val)
+
+    # 矩形整合性チェック
+    tl_x, tl_y, _ = matches["TL"]
+    tr_x, tr_y, _ = matches["TR"]
+    bl_x, bl_y, _ = matches["BL"]
+    br_x, br_y, _ = matches["BR"]
+
+    # TL-TR: 水平 (y差が小さい)
+    if abs(tl_y - tr_y) > rect_tolerance:
+        return None
+    # BL-BR: 水平
+    if abs(bl_y - br_y) > rect_tolerance:
+        return None
+    # TL-BL: 垂直 (x差が小さい)
+    if abs(tl_x - bl_x) > rect_tolerance:
+        return None
+    # TR-BR: 垂直
+    if abs(tr_x - br_x) > rect_tolerance:
+        return None
+    # 幅・高さが正の値
+    frame_w = (tr_x + tpl_w) - tl_x
+    frame_h = (bl_y + tpl_h) - tl_y
+    if frame_w < 10 or frame_h < 10:
+        return None
+
+    cx = tl_x + frame_w // 2
+    cy = tl_y + frame_h // 2
+    scores = [matches[k][2] for k in ("TL", "TR", "BL", "BR")]
+    logger.debug("[GoldFrame:TMPL] 4隅検出 TL(%d,%d) BR(%d,%d) %dx%d scores=%.2f/%.2f/%.2f/%.2f",
+                 tl_x, tl_y, br_x, br_y, frame_w, frame_h, *scores)
+    return cx, cy, frame_w, frame_h
+
+
 # ─── Type B: 金枠ハイライトボタン検出 → 中心タップ ─────────────────────
 def find_gold_button(img_path: Path,
                      overlay_mode: bool = False,
@@ -2242,15 +2323,24 @@ def find_gold_button(img_path: Path,
     """
     チュートリアルの「金枠ハイライトボタン」を検出しタップ座標を返す。
 
-    内部で find_gold_frame_near を使用し、HSV 検出ロジックを共通化。
+    検出優先順: テンプレマッチ (4隅) → HSV フォールバック。
     暗転オーバーレイ判定で誤検出を防止。
-    battle_mode=True: バトル画面は暗い背景のため閾値を厳格化 (std < 25)。
+    battle_mode=True: バトル画面は暗い背景のため閾値を厳格化 (std < 40)。
 
     Returns: (tap_x, tap_y) or None
     """
     try:
         W_img, H_img = ANALYSIS_W, ANALYSIS_H
 
+        # ── テンプレマッチ (4隅) → 高精度検出 ──
+        _tmpl_result = find_gold_frame_by_template(img_path)
+        if _tmpl_result:
+            _tcx, _tcy, _tw, _th = _tmpl_result
+            logger.debug("[GoldBtn:TMPL] 検出OK: (%d,%d) %dx%d → tap(%d,%d)",
+                         _tcx - _tw // 2, _tcy - _th // 2, _tw, _th, _tcx, _tcy)
+            return _tcx, _tcy
+
+        # ── HSV フォールバック ──
         # 画面中央を起点に広範囲で金枠を探索
         _search_cx = int(W_img * 0.5)
         _search_cy = int(H_img * 0.6)
@@ -2300,7 +2390,7 @@ def find_gold_button(img_path: Path,
                          area, x, y, w, h)
             return None
 
-        logger.debug("[GoldBtn] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f overlay=%s → tap(%d,%d)",
+        logger.debug("[GoldBtn:HSV] 検出OK: area=%d bbox=(%d,%d,%d,%d) asp=%.1f overlay=%s → tap(%d,%d)",
                      area, x, y, w, h, aspect, _has_overlay, cx, cy)
         return cx, cy
 
