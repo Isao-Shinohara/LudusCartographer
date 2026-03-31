@@ -1181,13 +1181,21 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
                 # キャラアイコンは吹き出し端に埋め込まれた円形 (半径≈吹き出し高さ/2)
                 # マスク後はベージュ背景+黒テキストのみのはず
                 _OTHER_THRESHOLD = 0.20
-                _icon_r = _bh // 2
+                # キャラアイコンは実機上で正円 (直径=吹き出し高さ)。
+                # 元画像と解析画像のアスペクト比が異なる場合、
+                # resize で横方向に伸縮するため楕円マスクを使用。
+                _H_orig, _W_orig = img.shape[:2]
+                _aspect_src = _W_orig / _H_orig if _H_orig > 0 else 2.0
+                _aspect_dst = ANALYSIS_W / ANALYSIS_H
+                _stretch_x = _aspect_dst / _aspect_src if _aspect_src > 0 else 1.0
+                _icon_ry = _bh // 2           # Y 半径 = 吹き出し高さの半分
+                _icon_rx = max(1, int(_icon_ry * _stretch_x))  # X 半径 = アスペクト補正
                 _icon_cy = _bh // 2
                 char_circle = np.zeros((_bh, _bw), dtype=np.uint8)
                 if from_left:
-                    cv2.circle(char_circle, (_icon_r, _icon_cy), _icon_r, 255, -1)
+                    cv2.ellipse(char_circle, (_icon_rx, _icon_cy), (_icon_rx, _icon_ry), 0, 0, 360, 255, -1)
                 else:
-                    cv2.circle(char_circle, (_bw - _icon_r, _icon_cy), _icon_r, 255, -1)
+                    cv2.ellipse(char_circle, (_bw - _icon_rx, _icon_cy), (_icon_rx, _icon_ry), 0, 0, 360, 255, -1)
                 # キャラ円を除外した角丸マスク
                 _shape_no_char = roi_shape.copy()
                 _shape_no_char[char_circle > 0] = 0
