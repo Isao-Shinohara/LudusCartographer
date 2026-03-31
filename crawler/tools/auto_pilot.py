@@ -2671,6 +2671,7 @@ def main():
                 state.current_scene = "UNKNOWN"
                 _skip_rapid = True
             elif handle_adv(_early_analysis, state, dist, cur_phash, actual_w, actual_h):
+                state._adv_early_retry = 0
                 state.adv_early_consecutive += 1
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
@@ -2678,8 +2679,17 @@ def main():
                             _fms, state.adv_early_consecutive, _ADV_EARLY_STALL)
                 continue
             else:
+                # ↓ボタン未検出 (セリフ切り替え中等) → 1s 待機してリトライ
+                # OCR パスに落とさず ADV_EARLY に留まる
+                _adv_retry_count = getattr(state, "_adv_early_retry", 0) + 1
+                state._adv_early_retry = _adv_retry_count
+                if _adv_retry_count <= 3:
+                    logger.info("[ADV_EARLY] ↓未検出 → 1s待機リトライ (%d/3)", _adv_retry_count)
+                    time.sleep(1.0)
+                    continue
+                state._adv_early_retry = 0
                 state.adv_early_consecutive = 0
-                _skip_rapid = True  # ADV ハンドラがフォールスルー → OCR へ直行
+                _skip_rapid = True  # 3回リトライ失敗 → OCR へ直行
 
         # ── MINI_CONV 高速モード: 前回ミニ会話なら OCR スキップして即吹き出し検出 ──
         _MINI_CONV_RAPID_MAX = 5   # 同一座標で連続タップ上限 → OCR パスにフォールスルー
