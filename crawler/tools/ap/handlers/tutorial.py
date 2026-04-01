@@ -99,10 +99,11 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     # ─── 【最優先 #0-walk】チュートリアル歩行シーン (白黒背景) → 上ホールドスワイプ ───
     # 指アイコンが出ない場面でも白黒市松/階段背景なら上スワイプを強制実行。
     # ADV検出ガードより先に評価する (ADV誤検出でブロックされるのを防ぐ)。
+    from tools.auto_pilot import _is_walk_swipe_ready
     _walk_ap = analysis_path is not None
     _walk_texts = len(texts) <= 2
     _walk_scene = state.current_scene != "MOVIE"
-    _walk_check = is_tutorial_walk_scene(analysis_path) if (_walk_ap and _walk_texts and _walk_scene) else False
+    _walk_check = _is_walk_swipe_ready(analysis_path, state) if (_walk_ap and _walk_texts and _walk_scene) else False
     if _walk_ap and _walk_texts and _walk_scene and _walk_check:
         _sx = int(ANALYSIS_W * 0.5)
         _fy = ANALYSIS_H - 20   # 下端ギリギリ (より大きなスワイプ)
