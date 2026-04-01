@@ -1,9 +1,9 @@
 {
   "action": "SWIPE_UP",
   "swipe_direction": "up",
-  "swipe_from_x_ratio": 0.691,
+  "swipe_from_x_ratio": 0.5,
   "swipe_from_y_ratio": 0.806,
-  "swipe_to_x_ratio": 0.691,
+  "swipe_to_x_ratio": 0.5,
   "swipe_to_y_ratio": 0.069,
   "swipe_duration_ms": 10000,
   "repeat_until_change": true,
