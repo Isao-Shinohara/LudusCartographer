@@ -287,7 +287,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                     _max_repeat = tmpl_meta.get("max_repeat", 10)
                     _sw_prev_ph = compute_phash(analysis_path) if analysis_path else ""
                     for _sw_i in range(_max_repeat):
-                        logger.info(">>> [SWIPE_UP] (%d,%d)→(%d,%d) %dms (repeat %d/%d)",
+                        logger.info(">>> [SWIPE_UP][解析] (%d,%d)→(%d,%d) %dms (repeat %d/%d)",
                                     sx, sy, ex, ey, dur, _sw_i + 1, _max_repeat)
                         swipe_device(sx, sy, ex, ey, dur, state=state, desc="SWIPE_UP_ASSET")
                         # スワイプ後にシーン変化を確認

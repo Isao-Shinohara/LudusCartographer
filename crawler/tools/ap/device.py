@@ -622,7 +622,7 @@ def swipe_device(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300,
     """解析座標 → デバイス実座標に変換してスワイプ (tap_device のスワイプ版)。"""
     rx1, ry1 = _to_device(x1, y1, state)
     rx2, ry2 = _to_device(x2, y2, state)
-    logger.info("  SWIPE_DEVICE (%d,%d)->(%d,%d) %dms | %s", rx1, ry1, rx2, ry2, duration_ms, desc)
+    logger.info("  [実機] SWIPE (%d,%d)->(%d,%d) %dms | %s", rx1, ry1, rx2, ry2, duration_ms, desc)
     adb(f"shell input swipe {rx1} {ry1} {rx2} {ry2} {duration_ms}")
 
 
