@@ -167,6 +167,19 @@ def handle_dialog_screen(
 
     _dlg_type, _dlg_x, _dlg_y = _dlg
 
+    # ── 通常ダイアログ優先: OK ボタンがあればお知らせポップアップより先に処理 ──
+    # 画質設定等の通常ダイアログが NOTICE_POPUP に誤判定される問題の根本対策
+    if is_notice_popup and _dlg_type in ("next", "bottom"):
+        _ok_btn_early = has_any(ocr, _CONFIRM_POS_KWS, exact=True)
+        _cancel_btn_early = has_any(ocr, _CONFIRM_NEG_KWS, exact=True)
+        if _ok_btn_early and not _cancel_btn_early:
+            _ok_x, _ok_y = _ok_btn_early["center"]
+            logger.info("[Dialog#0] NOTICE_POPUP だが OK '%s'(%d,%d) 検出 → 通常ダイアログとして処理",
+                        _ok_btn_early["text"], _ok_x, _ok_y)
+            tap_device(_ok_x, _ok_y, state, f"DIALOG_OK_DIRECT '{_ok_btn_early['text']}'")
+            state.pre_popup_tap_count = 0
+            return "DIALOG_OK_DIRECT", CLOSE_ACTION_WAIT
+
     # ── お知らせポップアップ: ドット数分 ▷ タップ → × 閉じ ──
     if is_notice_popup:
         _total_pages = count_page_dots(analysis_path)
