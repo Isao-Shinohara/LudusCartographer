@@ -1835,15 +1835,57 @@ _POPUP_NEXT_DARK_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "popup_home
 _POPUP_CLOSE_TEMPLATE     = _CRAWLER_ROOT / "assets" / "templates" / "popup_home_close.png"
 _POPUP_CORNER_BL_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "popup_notice_corner_bl.png"
 
-# マスク付きマッチ: テンプレの枠線パターンだけで判定 (背景の影響を排除)
-_POPUP_CORNER_MASK_THRESH = 140
-_POPUP_CORNER_MATCH_THRESH = 0.65
+# マスク付きマッチ: テンプレの枠線+1px膨張で判定 (背景の影響を考慮)
+_POPUP_CORNER_FRAME_THRESH = 75   # 枠線抽出の輝度閾値
+_POPUP_CORNER_MATCH_THRESH = 0.40  # 座標一致を優先するため低めに設定
 _POPUP_CORNER_Y_TOLERANCE = 30   # 上辺/下辺の Y 差許容 (px)
 _POPUP_CORNER_X_TOLERANCE = 30   # 左辺/右辺の X 差許容 (px)
 _POPUP_CORNER_MIN_WIDTH = 200    # ポップアップ最小幅 (px)
 _POPUP_CORNER_MAX_WIDTH = 1200   # ポップアップ最大幅 (px)
 _POPUP_CORNER_MIN_HEIGHT = 100   # ポップアップ最小高さ (px)
 _POPUP_CORNER_MAX_HEIGHT = 600   # ポップアップ最大高さ (px)
+_POPUP_CORNER_ROI_PAD = 50       # BL/BR 座標から TL/TR を探す際のパディング (px)
+
+
+def _build_popup_corner_masks() -> Optional[tuple]:
+    """ポップアップ角テンプレートからマスク付き4隅データを構築。
+
+    テンプレートのアルファチャンネルを利用し、枠線(輝度>=75)を抽出後
+    1px膨張(アルファ内)で背景影響を含めたマスクを生成する。
+
+    Returns: (tpl_bl, tpl_br, tpl_tl, tpl_tr,
+              mask_bl, mask_br, mask_tl, mask_tr, th, tw) or None
+    """
+    if not _POPUP_CORNER_BL_TEMPLATE.exists():
+        return None
+    _tpl_rgba = cv2.imread(str(_POPUP_CORNER_BL_TEMPLATE), cv2.IMREAD_UNCHANGED)
+    if _tpl_rgba is None:
+        return None
+
+    # アルファチャンネルがある場合: 枠線+1px膨張マスク
+    if len(_tpl_rgba.shape) == 3 and _tpl_rgba.shape[2] == 4:
+        _gray = cv2.cvtColor(_tpl_rgba[:, :, :3], cv2.COLOR_BGR2GRAY)
+        _alpha = _tpl_rgba[:, :, 3]
+        _frame = ((_alpha > 0) & (_gray >= _POPUP_CORNER_FRAME_THRESH)).astype(np.uint8) * 255
+        _kernel = np.ones((3, 3), np.uint8)
+        _dilated = cv2.dilate(_frame, _kernel, iterations=1)
+        _mask_bl = cv2.bitwise_and(_dilated, _alpha)
+    else:
+        # アルファなしフォールバック: 輝度閾値マスク
+        _gray = cv2.cvtColor(_tpl_rgba, cv2.COLOR_BGR2GRAY) if len(_tpl_rgba.shape) == 3 else _tpl_rgba
+        _, _mask_bl = cv2.threshold(_gray, _POPUP_CORNER_FRAME_THRESH, 255, cv2.THRESH_BINARY)
+
+    _tpl_bl = cv2.cvtColor(_tpl_rgba[:, :, :3], cv2.COLOR_BGR2GRAY) if len(_tpl_rgba.shape) == 3 else _tpl_rgba
+    _tpl_br = cv2.flip(_tpl_bl, 1)
+    _tpl_tl = cv2.flip(_tpl_bl, 0)
+    _tpl_tr = cv2.flip(_tpl_bl, -1)
+    _mask_br = cv2.flip(_mask_bl, 1)
+    _mask_tl = cv2.flip(_mask_bl, 0)
+    _mask_tr = cv2.flip(_mask_bl, -1)
+
+    return (_tpl_bl, _tpl_br, _tpl_tl, _tpl_tr,
+            _mask_bl, _mask_br, _mask_tl, _mask_tr,
+            _tpl_bl.shape[0], _tpl_bl.shape[1])
 
 
 def _detect_popup_corners(
@@ -1852,91 +1894,111 @@ def _detect_popup_corners(
                     tuple[int, int, float], tuple[int, int, float]]]:
     """ポップアップ四隅 (TL, TR, BL, BR) をマスク付きテンプレマッチで検出。
 
-    BL テンプレから反転で TL/TR/BR を生成し、各象限の ROI で検索。
-    4隅全て検出 + 長方形整合性チェックを通過した場合のみ結果を返す。
+    段階的 ROI 探索:
+      1. BL を左下象限、BR を右下象限で検出 (信頼度が高い)
+      2. TR を BR.x ± PAD の縦帯 (上半分) で検出
+      3. TL を BL.x ± PAD かつ TR.y ± PAD の狭い ROI で検出
+    長方形整合性チェックを通過した場合のみ結果を返す。
 
     Returns: ((tl_cx, tl_cy, tl_score), (tr_cx, tr_cy, tr_score),
               (bl_cx, bl_cy, bl_score), (br_cx, br_cy, br_score)) or None
     """
-    if not _POPUP_CORNER_BL_TEMPLATE.exists():
+    _data = _build_popup_corner_masks()
+    if _data is None:
         return None
-    _tpl_bl_color = imread_cached(_POPUP_CORNER_BL_TEMPLATE)
-    if _tpl_bl_color is None:
-        return None
-    _tpl_bl = cv2.cvtColor(_tpl_bl_color, cv2.COLOR_BGR2GRAY) if len(_tpl_bl_color.shape) == 3 else _tpl_bl_color
-    _tpl_br = cv2.flip(_tpl_bl, 1)    # 左右反転
-    _tpl_tl = cv2.flip(_tpl_bl, 0)    # 上下反転
-    _tpl_tr = cv2.flip(_tpl_bl, -1)   # 上下左右反転
+    _tpl_bl, _tpl_br, _tpl_tl, _tpl_tr, \
+        _mask_bl, _mask_br, _mask_tl, _mask_tr, _th, _tw = _data
 
     _H, _W = img_gray.shape
-    _th, _tw = _tpl_bl.shape
+    _PAD = _POPUP_CORNER_ROI_PAD
+    _THRESH = _POPUP_CORNER_MATCH_THRESH
 
-    # マスク生成
-    _masks = {}
-    for _name, _tpl in [("tl", _tpl_tl), ("tr", _tpl_tr), ("bl", _tpl_bl), ("br", _tpl_br)]:
-        _, _masks[_name] = cv2.threshold(_tpl, _POPUP_CORNER_MASK_THRESH, 255, cv2.THRESH_BINARY)
-
-    # 各象限の ROI + オフセット
-    _quadrants = [
-        ("tl", _tpl_tl, img_gray[:_H // 2, :_W // 2],   0,       0),
-        ("tr", _tpl_tr, img_gray[:_H // 2, _W // 2:],    _W // 2, 0),
-        ("bl", _tpl_bl, img_gray[_H // 2:, :_W // 2],    0,       _H // 2),
-        ("br", _tpl_br, img_gray[_H // 2:, _W // 2:],    _W // 2, _H // 2),
-    ]
-
-    _results = {}
-    for _name, _tpl, _roi, _ox, _oy in _quadrants:
-        if _roi.shape[0] < _th or _roi.shape[1] < _tw:
+    def _match(tpl, mask, roi):
+        if roi.shape[0] < _th or roi.shape[1] < _tw:
             return None
         try:
-            _res = cv2.matchTemplate(_roi, _tpl, cv2.TM_CCOEFF_NORMED, mask=_masks[_name])
-            _res_clean = np.where(np.isfinite(_res), _res, -1)
-            _, _s, _, _loc = cv2.minMaxLoc(_res_clean)
-            if not np.isfinite(_s) or _s < _POPUP_CORNER_MATCH_THRESH:
-                logger.debug("[POPUP_CORNER] %s スコア不足 (%.3f < %.2f)",
-                             _name.upper(), _s, _POPUP_CORNER_MATCH_THRESH)
+            _res = cv2.matchTemplate(roi, tpl, cv2.TM_CCOEFF_NORMED, mask=mask)
+            _res = np.where(np.isfinite(_res), _res, -1)
+            _, _s, _, _loc = cv2.minMaxLoc(_res)
+            if _s < _THRESH:
                 return None
+            return (_loc[0], _loc[1], _s)
         except Exception:
             return None
-        _cx = _ox + _loc[0] + _tw // 2
-        _cy = _oy + _loc[1] + _th // 2
-        _results[_name] = (_cx, _cy, _s)
 
-    _tl = _results["tl"]
-    _tr = _results["tr"]
-    _bl = _results["bl"]
-    _br = _results["br"]
+    # ── Step 1: BL (左下象限) ──
+    _roi_bl = img_gray[_H // 2:, :_W // 2]
+    _m_bl = _match(_tpl_bl, _mask_bl, _roi_bl)
+    if _m_bl is None:
+        logger.debug("[POPUP_CORNER] BL 未検出")
+        return None
+    _bl_cx = _m_bl[0] + _tw // 2
+    _bl_cy = _H // 2 + _m_bl[1] + _th // 2
+    _bl = (_bl_cx, _bl_cy, _m_bl[2])
 
-    # 長方形整合性チェック
-    # 上辺: TL-TR の Y 差 + 幅
+    # ── Step 2: BR (右下象限) ──
+    _roi_br = img_gray[_H // 2:, _W // 2:]
+    _m_br = _match(_tpl_br, _mask_br, _roi_br)
+    if _m_br is None:
+        logger.debug("[POPUP_CORNER] BR 未検出")
+        return None
+    _br_cx = _W // 2 + _m_br[0] + _tw // 2
+    _br_cy = _H // 2 + _m_br[1] + _th // 2
+    _br = (_br_cx, _br_cy, _m_br[2])
+
+    # ── Step 3: TR (BR.x ± PAD, 上半分) ──
+    _tr_x1 = max(0, _br_cx - _tw // 2 - _PAD)
+    _tr_x2 = min(_W, _br_cx + _tw // 2 + _PAD)
+    _roi_tr = img_gray[:_H // 2, _tr_x1:_tr_x2]
+    _m_tr = _match(_tpl_tr, _mask_tr, _roi_tr)
+    if _m_tr is None:
+        logger.debug("[POPUP_CORNER] TR 未検出 (ROI x=%d-%d)", _tr_x1, _tr_x2)
+        return None
+    _tr_cx = _tr_x1 + _m_tr[0] + _tw // 2
+    _tr_cy = _m_tr[1] + _th // 2
+    _tr = (_tr_cx, _tr_cy, _m_tr[2])
+
+    # ── Step 4: TL (BL.x ± PAD, TR.y ± PAD) ──
+    _tl_x1 = max(0, _bl_cx - _tw // 2 - _PAD)
+    _tl_x2 = min(_W, _bl_cx + _tw // 2 + _PAD)
+    _tl_y1 = max(0, _tr_cy - _th // 2 - _PAD)
+    _tl_y2 = min(_H, _tr_cy + _th // 2 + _PAD)
+    _roi_tl = img_gray[_tl_y1:_tl_y2, _tl_x1:_tl_x2]
+    _m_tl = _match(_tpl_tl, _mask_tl, _roi_tl)
+    if _m_tl is None:
+        logger.debug("[POPUP_CORNER] TL 未検出 (ROI x=%d-%d, y=%d-%d)",
+                     _tl_x1, _tl_x2, _tl_y1, _tl_y2)
+        return None
+    _tl_cx = _tl_x1 + _m_tl[0] + _tw // 2
+    _tl_cy = _tl_y1 + _m_tl[1] + _th // 2
+    _tl = (_tl_cx, _tl_cy, _m_tl[2])
+
+    # ── 長方形整合性チェック ──
     _dy_top = abs(_tl[1] - _tr[1])
-    _width_top = _tr[0] - _tl[0]
+    _dy_bot = abs(_bl[1] - _br[1])
+    _dx_left = abs(_tl[0] - _bl[0])
+    _dx_right = abs(_tr[0] - _br[0])
     if _dy_top > _POPUP_CORNER_Y_TOLERANCE:
         logger.debug("[POPUP_CORNER] 上辺Y差=%d > %d → 棄却", _dy_top, _POPUP_CORNER_Y_TOLERANCE)
         return None
-    # 下辺: BL-BR の Y 差 + 幅
-    _dy_bot = abs(_bl[1] - _br[1])
-    _width_bot = _br[0] - _bl[0]
     if _dy_bot > _POPUP_CORNER_Y_TOLERANCE:
         logger.debug("[POPUP_CORNER] 下辺Y差=%d > %d → 棄却", _dy_bot, _POPUP_CORNER_Y_TOLERANCE)
         return None
-    # 左辺: TL-BL の X 差
-    _dx_left = abs(_tl[0] - _bl[0])
     if _dx_left > _POPUP_CORNER_X_TOLERANCE:
         logger.debug("[POPUP_CORNER] 左辺X差=%d > %d → 棄却", _dx_left, _POPUP_CORNER_X_TOLERANCE)
         return None
-    # 右辺: TR-BR の X 差
-    _dx_right = abs(_tr[0] - _br[0])
     if _dx_right > _POPUP_CORNER_X_TOLERANCE:
         logger.debug("[POPUP_CORNER] 右辺X差=%d > %d → 棄却", _dx_right, _POPUP_CORNER_X_TOLERANCE)
         return None
-    # 幅の整合性 (上辺と下辺の幅が近い)
+
+    _width_top = _tr[0] - _tl[0]
+    _width_bot = _br[0] - _bl[0]
     _avg_width = (_width_top + _width_bot) / 2
     if _avg_width < _POPUP_CORNER_MIN_WIDTH or _avg_width > _POPUP_CORNER_MAX_WIDTH:
         logger.debug("[POPUP_CORNER] 幅=%.0f (範囲外 %d-%d) → 棄却",
                      _avg_width, _POPUP_CORNER_MIN_WIDTH, _POPUP_CORNER_MAX_WIDTH)
         return None
-    # 高さの整合性
+
     _height_left = _bl[1] - _tl[1]
     _height_right = _br[1] - _tr[1]
     _avg_height = (_height_left + _height_right) / 2
