@@ -29,7 +29,6 @@ from tools.ap.constants import (
 from tools.ap.helpers import has_any, has_text
 from tools.ap.device import adb, tap_device, take_screenshot
 from tools.ap.image_proc import (
-    _run_battle_glow_sm,
     detect_notice_popup, detect_mini_conversation,
     detect_white_hand_pointer,
     detect_dialog_frame_and_nav, process_paging_dialog,
@@ -423,30 +422,13 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     if ctx.has_dialog_corners is None and analysis_path is not None:
         ctx.has_dialog_corners = detect_dialog_corners(analysis_path)
 
-    # ─── 【最優先 #0-PRE】バトル発光SM ガード ─────────────────────────────────
-    # DIALOG_CLOSE が「通常攻撃」等のバトルアクションを踏み越えるのを防ぐ。
-    # ① 「メニューが使用できません」トースト → DIALOG 誤検出スキップ (toast 自然消滅)
-    # ② P1: 左キャラ発光 (character_selected=False) → GLOW_LEFT_CHAR
-    # ③ P2: 右スキル発光 (character_selected=True) → GLOW_RIGHT_SKILL
-    # ④ P3: 発光なし + character_selected → 通常攻撃 OCR フォールバック
+    # ─── バトルトーストガード ─────────────────────────────────
+    # 「メニューが使用できません」トースト → DIALOG 誤検出スキップ (toast 自然消滅)
     _is_battle_ctx = ctx.in_battle_ctx
     _battle_menu_toast = "メニューが使用できません" in joined
     if _is_battle_ctx and _battle_menu_toast:
-        # メニューボタン誤タップ → トースト表示中。DIALOG_CLOSE を完全スキップして2秒待機
         logger.info("[#0-PRE] 「メニューが使用できません」トースト検出 → DIALOG_CLOSE スキップ (2s wait)")
         return "BATTLE_MENU_TOAST_WAIT", 2.0
-    # チュートリアルダイアログが表示されている場合は発光 SM をスキップ
-    # (ポップアップを閉じないとバトルが進行しないため)
-    _tutorial_popup_kws = ["ロールについて", "種類あります", "探索ポイント", "移動ポイント",
-                           "バトルポイント", "遊び方", "操作方法", "編成について",
-                           "SPを消費", "戦闘スキル", "使ってみましょう", "タップしてみましょう"]
-    _has_tutorial_popup = any(kw in joined for kw in _tutorial_popup_kws)
-    if _is_battle_ctx and analysis_path is not None and not _has_tutorial_popup:
-        _pre_result = _run_battle_glow_sm(analysis_path, W, H, state, ocr, tag="#0-PRE")
-        if _pre_result is not None:
-            return _pre_result
-    if _has_tutorial_popup:
-        logger.info("[#0-PRE] チュートリアルダイアログ検出 → 発光SM スキップ (ダイアログ処理優先)")
 
     # ── 【ホームポップアップ検出】ダイアログ・お知らせポップアップとは独立 ──────────
     if analysis_path is not None:
