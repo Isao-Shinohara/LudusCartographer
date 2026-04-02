@@ -1837,7 +1837,7 @@ _POPUP_CORNER_BL_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "popup_noti
 
 # マスク付きマッチ: テンプレの枠線パターンだけで判定 (背景の影響を排除)
 _POPUP_CORNER_MASK_THRESH = 140
-_POPUP_CORNER_MATCH_THRESH = 0.78
+_POPUP_CORNER_MATCH_THRESH = 0.65
 _POPUP_CORNER_Y_TOLERANCE = 30   # 上辺/下辺の Y 差許容 (px)
 _POPUP_CORNER_X_TOLERANCE = 30   # 左辺/右辺の X 差許容 (px)
 _POPUP_CORNER_MIN_WIDTH = 200    # ポップアップ最小幅 (px)
