@@ -1129,8 +1129,10 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
         # キャラアイコン (黒いキャラ等) でベージュが途切れるのを防ぐため、
         # 吹き出し端のアイコン円をベージュで埋めてからスキャンする。
         _icon_r_est = _BUBBLE_H // 2  # アイコン半径 ≈ 吹き出し高さ/2
-        _H_orig, _W_orig = img.shape[:2]
-        _aspect_src = _W_orig / _H_orig if _H_orig > 0 else 2.0
+        # resized は常に ANALYSIS_W x ANALYSIS_H なので stretch=1.0 が正しい。
+        # imread_cached のキャッシュが旧サイズを返す場合に備え resized.shape を使う。
+        _H_resized, _W_resized = resized.shape[:2]
+        _aspect_src = _W_resized / _H_resized if _H_resized > 0 else 2.0
         _aspect_dst = ANALYSIS_W / ANALYSIS_H
         _stretch = _aspect_dst / _aspect_src if _aspect_src > 0 else 1.0
         _icon_rx_est = max(1, int(_icon_r_est * _stretch))
@@ -1221,8 +1223,8 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
                 # アスペクト比の差分で補正する。
                 # 例: Xperia 2:1 → (43,43), Galaxy 2.11:1 → (40,43)
                 _OTHER_THRESHOLD = 0.20
-                _H_orig, _W_orig = img.shape[:2]
-                _aspect_src = _W_orig / _H_orig if _H_orig > 0 else 2.0
+                _H_r, _W_r = resized.shape[:2]
+                _aspect_src = _W_r / _H_r if _H_r > 0 else 2.0
                 _aspect_dst = ANALYSIS_W / ANALYSIS_H
                 _stretch_x = _aspect_dst / _aspect_src if _aspect_src > 0 else 1.0
                 _icon_ry = _bh // 2           # Y 半径 = 吹き出し高さの半分
@@ -1277,9 +1279,10 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
             logger.debug("[MINI_CONV] ocr_items=None → テキスト検証不可、スキップ")
             return None
         # OCR座標を ANALYSIS_W x ANALYSIS_H にスケーリング (Retina等の高解像度対応)
-        _H_orig, _W_orig = img.shape[:2]
-        _sx = ANALYSIS_W / _W_orig if _W_orig > 0 else 1.0
-        _sy = ANALYSIS_H / _H_orig if _H_orig > 0 else 1.0
+        # resized.shape を使う (imread_cached のキャッシュ旧サイズ問題を回避)
+        _H_r, _W_r = resized.shape[:2]
+        _sx = ANALYSIS_W / _W_r if _W_r > 0 else 1.0
+        _sy = ANALYSIS_H / _H_r if _H_r > 0 else 1.0
         by1, by2 = best["y"], best["y"] + best["h"]
         if best["side"] == "left":
             bx1, bx2 = 0, ANALYSIS_W // 2
