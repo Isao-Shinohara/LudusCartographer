@@ -2061,6 +2061,131 @@ def _reinstall_from_play_store(serial: str, package: str) -> None:
     logger.info("[REINSTALL] === 再インストール完了 → 通常起動シーケンスへ ===")
 
 
+# ─── 高速パスハンドラ ─────────────────────────────────
+def _handle_rapid_path(
+    state: "PilotState",
+    _early_scene: str,
+    _early_analysis,
+    _skip_rapid: bool,
+    dist: int,
+    cur_phash: str,
+    actual_w: int,
+    actual_h: int,
+    i: int,
+    _loop_t0: float,
+    img_path: "Path",
+) -> tuple[bool, bool]:
+    """MINI_CONV_RAPID / BATTLE_EARLY / ADV_EARLY の高速パスを処理する.
+
+    Returns:
+        (handled, skip_rapid):
+            handled=True  → 呼び出し元で continue（OCR パスをスキップ）
+            skip_rapid=True → 高速パス失敗、OCR にフォールスルー
+    """
+    # ── MINI_CONV 高速モード (最優先): 前回ミニ会話なら OCR スキップして即吹き出し検出 ──
+    _MINI_CONV_RAPID_MAX = 5   # 同一座標で連続タップ上限 → OCR パスにフォールスルー
+    _MINI_CONV_RETRY_MAX = 3   # 検出失敗時の前回位置再タップ上限
+    if (not _skip_rapid
+            and state.last_action == "MINI_CONV_TAP"
+            and state.current_scene not in ("MENU", "MOVIE", "BATTLE", "GACHA")
+            and state.last_action != "MOVIE_WAIT"
+            and getattr(state, "_from_movie_ttl", 0) <= 0
+            and _early_analysis is not None):
+        _mc_rapid = detect_mini_conversation(_early_analysis)
+        _mc_prev = getattr(state, "_mini_conv_rapid_pos", (0, 0))
+        if _mc_rapid is not None:
+            _mc_rx, _mc_ry, _mc_rs = _mc_rapid
+            # スタック検出: 同一座標 (±10px) で連続タップ → OCR にフォールスルー
+            _mc_same = (abs(_mc_rx - _mc_prev[0]) < 10
+                        and abs(_mc_ry - _mc_prev[1]) < 10)
+            _mc_count = getattr(state, "_mini_conv_rapid_count", 0)
+            if _mc_same:
+                _mc_count += 1
+            else:
+                _mc_count = 1
+            state._mini_conv_rapid_pos = (_mc_rx, _mc_ry)
+            state._mini_conv_rapid_count = _mc_count
+            state._mini_conv_retry_count = 0  # 検出成功 → リトライカウンタリセット
+            if _mc_count > _MINI_CONV_RAPID_MAX:
+                logger.warning("[MINI_CONV_RAPID] 同一座標 %d 回連続 → OCR フォールスルー",
+                               _mc_count)
+                state._mini_conv_rapid_count = 0
+                state.last_action = "WAIT_FOR_CHANGE"
+            else:
+                logger.info("[MINI_CONV_RAPID][iter %d] 吹き出し(%s) → タップ (%d,%d) [%d/%d]",
+                            i, _mc_rs, _mc_rx, _mc_ry, _mc_count, _MINI_CONV_RAPID_MAX)
+                tap_device(_mc_rx, _mc_ry, state, "MINI_CONV_TAP")
+                state.last_action = "MINI_CONV_TAP"
+                state.last_phash = ""
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                logger.info("  [PERF] Loop %.0fms (MINI_CONV_RAPID)", _fms)
+                return True, _skip_rapid
+        elif _mc_prev != (0, 0):
+            # 検出失敗だが直前にミニ会話だった → 前回位置を再タップ
+            # (吹き出しの見た目が微妙に変わり検出フィルタを通過できないケース)
+            _retry = getattr(state, "_mini_conv_retry_count", 0) + 1
+            state._mini_conv_retry_count = _retry
+            if _retry <= _MINI_CONV_RETRY_MAX:
+                logger.info("[MINI_CONV_RAPID][iter %d] 検出失敗 → 前回位置 (%d,%d) 再タップ [retry %d/%d]",
+                            i, _mc_prev[0], _mc_prev[1], _retry, _MINI_CONV_RETRY_MAX)
+                tap_device(_mc_prev[0], _mc_prev[1], state, "MINI_CONV_TAP")
+                state.last_action = "MINI_CONV_TAP"
+                state.last_phash = ""
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                logger.info("  [PERF] Loop %.0fms (MINI_CONV_RAPID_RETRY)", _fms)
+                return True, _skip_rapid
+            else:
+                logger.info("[MINI_CONV_RAPID] リトライ %d 回超 → OCR フォールスルー", _retry)
+                state._mini_conv_retry_count = 0
+
+    if not _skip_rapid and _early_scene == "BATTLE":
+        state.current_scene = "BATTLE"
+        state._from_battle = False  # BATTLE復帰でフラグクリア
+        _early_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
+        if handle_battle(_early_analysis, state, dist):
+            _fms = (time.time() - _loop_t0) * 1000
+            state.total_loop_ms += _fms
+            logger.info("  [PERF] Loop %.0fms (BATTLE_EARLY)", _fms)
+            return True, _skip_rapid
+        _skip_rapid = True  # BATTLE ハンドラがフォールスルー → OCR へ直行
+
+    if not _skip_rapid and _early_scene == "ADV":
+        state.current_scene = "ADV"
+        # ADV_EARLY スタック脱出: 30回連続ハンドル成功 → OCR フォールスルー
+        _ADV_EARLY_STALL = 30
+        if state.adv_early_consecutive >= _ADV_EARLY_STALL:
+            logger.warning("[ADV_EARLY] %d 回連続 → OCR フォールスルー",
+                           state.adv_early_consecutive)
+            state.adv_early_consecutive = 0
+            state.adv_confirmed_count = 0
+            state.current_scene = "UNKNOWN"
+            _skip_rapid = True
+        elif handle_adv(_early_analysis, state, dist, cur_phash, actual_w, actual_h):
+            state._adv_early_retry = 0
+            state.adv_early_consecutive += 1
+            _fms = (time.time() - _loop_t0) * 1000
+            state.total_loop_ms += _fms
+            logger.info("  [PERF] Loop %.0fms (ADV_EARLY) [%d/%d]",
+                        _fms, state.adv_early_consecutive, _ADV_EARLY_STALL)
+            return True, _skip_rapid
+        else:
+            # ↓ボタン未検出 (セリフ切り替え中等) → 0.5s 待機してリトライ
+            # OCR パスに落とさず ADV_EARLY に留まる
+            _adv_retry_count = getattr(state, "_adv_early_retry", 0) + 1
+            state._adv_early_retry = _adv_retry_count
+            if _adv_retry_count <= 3:
+                logger.info("[ADV_EARLY] ↓未検出 → 0.5s待機リトライ (%d/3)", _adv_retry_count)
+                time.sleep(0.5)
+                return True, _skip_rapid
+            state._adv_early_retry = 0
+            state.adv_early_consecutive = 0
+            _skip_rapid = True  # 3回リトライ失敗 → OCR へ直行
+
+    return False, _skip_rapid
+
+
 # ─── メインループ ─────────────────────────────────
 def main():
     import tools.ap.constants as _ap_const  # _DEBUG_SAVE_IMAGES 直接書換え用
@@ -2654,106 +2779,13 @@ def main():
             logger.info("  [PERF] Loop %.0fms (GACHA)", _fms)
             continue
 
-        # ── MINI_CONV 高速モード (最優先): 前回ミニ会話なら OCR スキップして即吹き出し検出 ──
-        _MINI_CONV_RAPID_MAX = 5   # 同一座標で連続タップ上限 → OCR パスにフォールスルー
-        _MINI_CONV_RETRY_MAX = 3   # 検出失敗時の前回位置再タップ上限
-        if (not _skip_rapid
-                and state.last_action == "MINI_CONV_TAP"
-                and state.current_scene not in ("MENU", "MOVIE", "BATTLE", "GACHA")
-                and state.last_action != "MOVIE_WAIT"
-                and getattr(state, "_from_movie_ttl", 0) <= 0
-                and _early_analysis is not None):
-            _mc_rapid = detect_mini_conversation(_early_analysis)
-            _mc_prev = getattr(state, "_mini_conv_rapid_pos", (0, 0))
-            if _mc_rapid is not None:
-                _mc_rx, _mc_ry, _mc_rs = _mc_rapid
-                # スタック検出: 同一座標 (±10px) で連続タップ → OCR にフォールスルー
-                _mc_same = (abs(_mc_rx - _mc_prev[0]) < 10
-                            and abs(_mc_ry - _mc_prev[1]) < 10)
-                _mc_count = getattr(state, "_mini_conv_rapid_count", 0)
-                if _mc_same:
-                    _mc_count += 1
-                else:
-                    _mc_count = 1
-                state._mini_conv_rapid_pos = (_mc_rx, _mc_ry)
-                state._mini_conv_rapid_count = _mc_count
-                state._mini_conv_retry_count = 0  # 検出成功 → リトライカウンタリセット
-                if _mc_count > _MINI_CONV_RAPID_MAX:
-                    logger.warning("[MINI_CONV_RAPID] 同一座標 %d 回連続 → OCR フォールスルー",
-                                   _mc_count)
-                    state._mini_conv_rapid_count = 0
-                    state.last_action = "WAIT_FOR_CHANGE"
-                else:
-                    logger.info("[MINI_CONV_RAPID][iter %d] 吹き出し(%s) → タップ (%d,%d) [%d/%d]",
-                                i, _mc_rs, _mc_rx, _mc_ry, _mc_count, _MINI_CONV_RAPID_MAX)
-                    tap_device(_mc_rx, _mc_ry, state, "MINI_CONV_TAP")
-                    state.last_action = "MINI_CONV_TAP"
-                    state.last_phash = ""
-                    _fms = (time.time() - _loop_t0) * 1000
-                    state.total_loop_ms += _fms
-                    logger.info("  [PERF] Loop %.0fms (MINI_CONV_RAPID)", _fms)
-                    continue
-            elif _mc_prev != (0, 0):
-                # 検出失敗だが直前にミニ会話だった → 前回位置を再タップ
-                # (吹き出しの見た目が微妙に変わり検出フィルタを通過できないケース)
-                _retry = getattr(state, "_mini_conv_retry_count", 0) + 1
-                state._mini_conv_retry_count = _retry
-                if _retry <= _MINI_CONV_RETRY_MAX:
-                    logger.info("[MINI_CONV_RAPID][iter %d] 検出失敗 → 前回位置 (%d,%d) 再タップ [retry %d/%d]",
-                                i, _mc_prev[0], _mc_prev[1], _retry, _MINI_CONV_RETRY_MAX)
-                    tap_device(_mc_prev[0], _mc_prev[1], state, "MINI_CONV_TAP")
-                    state.last_action = "MINI_CONV_TAP"
-                    state.last_phash = ""
-                    _fms = (time.time() - _loop_t0) * 1000
-                    state.total_loop_ms += _fms
-                    logger.info("  [PERF] Loop %.0fms (MINI_CONV_RAPID_RETRY)", _fms)
-                    continue
-                else:
-                    logger.info("[MINI_CONV_RAPID] リトライ %d 回超 → OCR フォールスルー", _retry)
-                    state._mini_conv_retry_count = 0
-
-        if not _skip_rapid and _early_scene == "BATTLE":
-            state.current_scene = "BATTLE"
-            state._from_battle = False  # BATTLE復帰でフラグクリア
-            _early_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
-            if handle_battle(_early_analysis, state, dist):
-                _fms = (time.time() - _loop_t0) * 1000
-                state.total_loop_ms += _fms
-                logger.info("  [PERF] Loop %.0fms (BATTLE_EARLY)", _fms)
-                continue
-            _skip_rapid = True  # BATTLE ハンドラがフォールスルー → OCR へ直行
-
-        if not _skip_rapid and _early_scene == "ADV":
-            state.current_scene = "ADV"
-            # ADV_EARLY スタック脱出: 30回連続ハンドル成功 → OCR フォールスルー
-            _ADV_EARLY_STALL = 30
-            if state.adv_early_consecutive >= _ADV_EARLY_STALL:
-                logger.warning("[ADV_EARLY] %d 回連続 → OCR フォールスルー",
-                               state.adv_early_consecutive)
-                state.adv_early_consecutive = 0
-                state.adv_confirmed_count = 0
-                state.current_scene = "UNKNOWN"
-                _skip_rapid = True
-            elif handle_adv(_early_analysis, state, dist, cur_phash, actual_w, actual_h):
-                state._adv_early_retry = 0
-                state.adv_early_consecutive += 1
-                _fms = (time.time() - _loop_t0) * 1000
-                state.total_loop_ms += _fms
-                logger.info("  [PERF] Loop %.0fms (ADV_EARLY) [%d/%d]",
-                            _fms, state.adv_early_consecutive, _ADV_EARLY_STALL)
-                continue
-            else:
-                # ↓ボタン未検出 (セリフ切り替え中等) → 0.5s 待機してリトライ
-                # OCR パスに落とさず ADV_EARLY に留まる
-                _adv_retry_count = getattr(state, "_adv_early_retry", 0) + 1
-                state._adv_early_retry = _adv_retry_count
-                if _adv_retry_count <= 3:
-                    logger.info("[ADV_EARLY] ↓未検出 → 0.5s待機リトライ (%d/3)", _adv_retry_count)
-                    time.sleep(0.5)
-                    continue
-                state._adv_early_retry = 0
-                state.adv_early_consecutive = 0
-                _skip_rapid = True  # 3回リトライ失敗 → OCR へ直行
+        # ── 高速パス: MINI_CONV_RAPID / BATTLE_EARLY / ADV_EARLY ──
+        _rapid_handled, _skip_rapid = _handle_rapid_path(
+            state, _early_scene, _early_analysis, _skip_rapid,
+            dist, cur_phash, actual_w, actual_h, i, _loop_t0, img_path,
+        )
+        if _rapid_handled:
+            continue
 
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
