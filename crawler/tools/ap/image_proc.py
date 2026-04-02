@@ -1789,41 +1789,99 @@ def detect_background_blur(img, H: int, W: int) -> bool:
     return False
 
 
+def detect_popup_overlay(
+    img_path: Path, ocr_texts: Optional[list[str]] = None,
+) -> Optional[dict]:
+    """ポップアップオーバーレイ（お知らせ/ホーム共通）を検出する。
+
+    必須条件 (全て AND):
+      1. ポップアップ専用四隅テンプレ — 長方形整合性チェック付き
+      2. ページドット ≥ 1
+      3. 背景ぼかし
+
+    付加的要素:
+      - popup_home_next テンプレ (▷ボタン) — 検出スコアを返すが必須ではない
+      - OCR「今日は表示し」検出時は is_notice=True
+
+    Returns:
+      {"dots": int, "next_score": float, "is_notice": bool,
+       "corners": (tl, tr, bl, br)} or None
+    """
+    if ocr_texts is None:
+        ocr_texts = []
+
+    # OCR「今日は表示しない」→ お知らせ確定フラグ
+    _is_notice_ocr = any("今日は表示し" in t for t in ocr_texts)
+
+    if not img_path:
+        if _is_notice_ocr:
+            logger.info("[POPUP] 「今日は表示しない」検出 → お知らせポップアップ確定 (画像なし)")
+            return {"dots": 0, "next_score": 0.0, "is_notice": True, "corners": None}
+        return None
+
+    _img = imread_cached(img_path)
+    if _img is None:
+        if _is_notice_ocr:
+            logger.info("[POPUP] 「今日は表示しない」検出 → お知らせポップアップ確定 (画像読込失敗)")
+            return {"dots": 0, "next_score": 0.0, "is_notice": True, "corners": None}
+        return None
+
+    # 1. 四隅テンプレ
+    _img_gray = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY) if len(_img.shape) == 3 else _img
+    _corners = _detect_popup_corners(_img_gray)
+    if _corners is None:
+        # 四隅なしでも OCR で確定できる
+        if _is_notice_ocr:
+            logger.info("[POPUP] 「今日は表示しない」検出 → お知らせポップアップ確定 (四隅なし)")
+            return {"dots": 0, "next_score": 0.0, "is_notice": True, "corners": None}
+        return None
+
+    # 2. ページドット
+    _dots = count_page_dots(img_path)
+    if _dots < 1:
+        if _is_notice_ocr:
+            logger.info("[POPUP] 「今日は表示しない」検出 → お知らせポップアップ確定 (ドットなし)")
+            return {"dots": 0, "next_score": 0.0, "is_notice": True, "corners": _corners}
+        return None
+
+    # 3. 背景ぼかし
+    _bH, _bW = _img.shape[:2]
+    if not detect_background_blur(_img, _bH, _bW):
+        if _is_notice_ocr:
+            logger.info("[POPUP] 「今日は表示しない」検出 → お知らせポップアップ確定 (ぼかしなし)")
+            return {"dots": _dots, "next_score": 0.0, "is_notice": True, "corners": _corners}
+        return None
+
+    # 必須3条件クリア — 付加情報を収集
+    _next_score = _match_popup_next_roi(_img, _bH, _bW)
+    _tl, _tr, _bl, _br = _corners
+
+    logger.info("[POPUP] 四隅TL(%.3f)TR(%.3f)BL(%.3f)BR(%.3f)+ドット=%d+背景ぼかし"
+                "+next(%.3f) notice_ocr=%s → ポップアップ確定",
+                _tl[2], _tr[2], _bl[2], _br[2], _dots, _next_score, _is_notice_ocr)
+
+    return {
+        "dots": _dots,
+        "next_score": _next_score,
+        "is_notice": _is_notice_ocr,
+        "corners": _corners,
+    }
+
+
 def detect_notice_popup(
     img_path: Path, ocr_texts: list[str], W: int = ANALYSIS_W, H: int = ANALYSIS_H,
 ) -> bool:
-    """お知らせポップアップを検出する。
+    """お知らせポップアップを検出する (後方互換ラッパー)。"""
+    result = detect_popup_overlay(img_path, ocr_texts)
+    return result is not None
 
-    判定条件 (ビジュアルパターン):
-      1. 四隅テンプレ (dialog_corner_tl + bl) — ダイアログ枠の存在
-      2. ページドット ≥ 2 — 複数ページのお知らせ
-      3. 背景ぼかし — ポップアップの背景
-      全条件を満たした場合のみ True。
 
-    補助条件 (OCR):
-      「今日は表示し」テキストがあれば即確定 (ビジュアル判定のフォールバック)
-    """
-    # OCR フォールバック: 「今日は表示しない」検出
-    if any("今日は表示し" in t for t in ocr_texts):
-        logger.info("[NOTICE_POPUP] 「今日は表示しない」検出 → お知らせポップアップ確定")
-        return True
-    # ビジュアルパターン: 四隅専用テンプレ + ドット≥1 + 背景ぼかし
-    if img_path:
-        _img = imread_cached(img_path)
-        if _img is not None:
-            _img_gray = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY) if len(_img.shape) == 3 else _img
-            _corners = _detect_popup_corners(_img_gray)
-            if _corners is not None:
-                _tl, _tr, _bl, _br = _corners
-                _dots = count_page_dots(img_path)
-                if _dots >= 1:
-                    _bH, _bW = _img.shape[:2]
-                    if detect_background_blur(_img, _bH, _bW):
-                        logger.info("[NOTICE_POPUP] 四隅TL(%.3f)TR(%.3f)BL(%.3f)BR(%.3f)"
-                                    "+ドット=%d+背景ぼかし → お知らせポップアップ確定",
-                                    _tl[2], _tr[2], _bl[2], _br[2], _dots)
-                        return True
-    return False
+def detect_popup_home(
+    img_path: Path, W: int = ANALYSIS_W, H: int = ANALYSIS_H,
+) -> bool:
+    """ホームポップアップを検出する (後方互換ラッパー)。"""
+    result = detect_popup_overlay(img_path)
+    return result is not None
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -2041,47 +2099,12 @@ def _match_popup_next_roi(img, _H: int, _W: int, threshold: float = 0.89) -> flo
 def detect_popup_home(
     img_path: Path, W: int = ANALYSIS_W, H: int = ANALYSIS_H,
 ) -> bool:
-    """ホームポップアップを検出する。
+    """ホームポップアップを検出する (後方互換ラッパー)。
 
-    判定条件 (全て AND):
-      1. popup_home_next テンプレ検出 (閾値 0.84, ROI: 右側縦中央, light/dark 2種)
-      2. ページドット ≥ 1
-      3. 背景ぼかし
-      4. 四隅 (TL, TR, BL, BR) マスク付きテンプレマッチ (長方形整合性チェック付き)
+    detect_popup_overlay に委譲。▷ボタンは付加的要素のため必須条件から除外。
     """
-    if not img_path:
-        return False
-    if not _POPUP_NEXT_TEMPLATE.exists() and not _POPUP_NEXT_DARK_TEMPLATE.exists():
-        return False
-    img = imread_analysis(img_path)
-    if img is None:
-        return False
-    _H, _W = img.shape[:2]
-    # 1. popup_home_next テンプレマッチ (ROI制限 + 2テンプレ)
-    _mv = _match_popup_next_roi(img, _H, _W, threshold=0.84)
-    if _mv < 0.84:
-        logger.debug("[POPUP_HOME] next テンプレ不一致 (score=%.3f < 0.84)", _mv)
-        return False
-    # 2. ページドット
-    _dots = count_page_dots(img_path)
-    if _dots < 1:
-        logger.debug("[POPUP_HOME] ページドットなし (dots=%d)", _dots)
-        return False
-    # 3. 背景ぼかし
-    if not detect_background_blur(img, _H, _W):
-        logger.debug("[POPUP_HOME] 背景ぼかしなし")
-        return False
-    # 4. 四隅マスク付きテンプレマッチ
-    _img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _corners = _detect_popup_corners(_img_gray)
-    if _corners is None:
-        logger.debug("[POPUP_HOME] 四隅テンプレ未検出 → 棄却")
-        return False
-    _tl, _tr, _bl, _br = _corners
-    logger.info("[POPUP_HOME] next テンプレ(%.3f)+ドット=%d+背景ぼかし"
-                "+四隅TL(%.3f)TR(%.3f)BL(%.3f)BR(%.3f) → ホームポップアップ確定",
-                _mv, _dots, _tl[2], _tr[2], _bl[2], _br[2])
-    return True
+    result = detect_popup_overlay(img_path)
+    return result is not None
 
 
 def detect_popup_home_nav(
