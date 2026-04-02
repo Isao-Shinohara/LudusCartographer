@@ -42,14 +42,8 @@ def classify_scene(texts: list[str], last_action: str,
     if any(kw in joined for kw in ["クエスト", "ショップ", "ガシャ", "ガチャ",
                                     "ホーム", "メニュー", "お知らせ", "編成", "光の間"]):
         return "MENU", SCENE_INTERVAL["MENU"]
-    # ADV = ツールバー検出 or スキップボタンあり or 直前が会話送り or 長い日本語文章
+    # ADV = ツールバー検出 or スキップボタンあり
     if adv_detected or any(kw in joined for kw in ["スキップ", "SKIP"]):
-        return "ADV", SCENE_INTERVAL["ADV"]
-    if last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT"):
-        return "ADV", SCENE_INTERVAL["ADV"]
-    _story_lines = [t for t in texts if len(t) >= 8 and
-                    any(0x3041 <= ord(c) <= 0x30FF for c in t)]
-    if len(_story_lines) >= 2:
         return "ADV", SCENE_INTERVAL["ADV"]
     return "UNKNOWN", SCENE_INTERVAL["UNKNOWN"]
 
