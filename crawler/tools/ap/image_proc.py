@@ -2672,11 +2672,17 @@ class AssetManager:
         ("right", cv2.ROTATE_90_COUNTERCLOCKWISE),
     ]
 
+    # マスク付きマッチ用の閾値 (テンプレの白い手部分を抽出)
+    _FINGER_MASK_THRESH = 140
+
     def match_finger_rotated(
         self, screenshot_path: Path,
         threshold: float = 0.70,
     ) -> Optional[tuple[int, int, float, str]]:
         """tutorial_hand_pointer を4方向回転してマッチング。
+
+        1. マスク付きマッチ (TM_CCOEFF_NORMED + 白手マスク): 背景の影響を排除
+        2. 通常マッチ (TM_CCOEFF_NORMED): フォールバック
 
         Returns: (cx, cy, score, direction) or None
             direction: "up" / "down" / "left" / "right"
@@ -2689,7 +2695,30 @@ class AssetManager:
             return None
         img = cv2.cvtColor(_color, cv2.COLOR_BGR2GRAY)
         base_tmpl = data["img"]
+
+        # --- Phase 1: マスク付きマッチ (白い手の形状のみで判定) ---
         best: Optional[tuple[int, int, float, str]] = None
+        for direction, rot_code in self._FINGER_ROTATIONS:
+            tmpl = cv2.rotate(base_tmpl, rot_code) if rot_code is not None else base_tmpl
+            if tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
+                continue
+            try:
+                _, mask = cv2.threshold(tmpl, self._FINGER_MASK_THRESH, 255, cv2.THRESH_BINARY)
+                res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED, mask=mask)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if not np.isfinite(max_val):
+                    continue
+                if max_val >= threshold and (best is None or max_val > best[2]):
+                    h, w = tmpl.shape
+                    cx = max_loc[0] + w // 2
+                    cy = max_loc[1] + h // 2
+                    best = (cx, cy, max_val, direction)
+            except Exception:
+                pass
+        if best is not None:
+            return best
+
+        # --- Phase 2: 通常マッチ (フォールバック) ---
         for direction, rot_code in self._FINGER_ROTATIONS:
             tmpl = cv2.rotate(base_tmpl, rot_code) if rot_code is not None else base_tmpl
             if tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:

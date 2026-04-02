@@ -96,15 +96,19 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
 
     if _has_tutorial_evidence:
         state._home_last_evidence_iter = state.iteration
+        state._home_no_evidence_count = 0  # 証拠ありでカウンタリセット
+
+    _HOME_NO_EVIDENCE_THRESHOLD = 5  # ホーム画面で連続N回証拠なしで完了判定
 
     if not _has_tutorial_evidence:
-        _since_evidence = state.iteration - getattr(state, "_home_last_evidence_iter", state.iteration)
-        if not state.tutorial_cleared and _since_evidence < 5:
-            logger.info(">>> ホーム画面 チュートリアル証拠なし (last_evidence %d iter前) → 次フレームで再確認",
-                        _since_evidence)
-            return "HOME_TUTORIAL_RECHECK", 0.5
         if not state.tutorial_cleared:
-            logger.info(">>> ホーム画面 証拠なし 5iter以上経過 → チュートリアル完了")
+            _no_ev = getattr(state, "_home_no_evidence_count", 0) + 1
+            state._home_no_evidence_count = _no_ev
+            if _no_ev < _HOME_NO_EVIDENCE_THRESHOLD:
+                logger.info(">>> ホーム画面 チュートリアル証拠なし (%d/%d回) → 次フレームで再確認",
+                            _no_ev, _HOME_NO_EVIDENCE_THRESHOLD)
+                return "HOME_TUTORIAL_RECHECK", 0.5
+            logger.info(">>> ホーム画面 証拠なし %d回連続 → チュートリアル完了", _no_ev)
             state.tutorial_cleared = True
             log_milestone(state, "HOME_REACHED")
         logger.info(">>> ホーム画面検出 (%d個) — チュートリアル完了済み", home_count)
