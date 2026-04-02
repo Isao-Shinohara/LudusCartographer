@@ -2449,7 +2449,7 @@ def _load_gold_corners() -> dict:
 
 
 def find_gold_frame_by_template(
-    img_path: Path, threshold: float = 0.90,
+    img_path: Path, threshold: float = 0.80,
     rect_tolerance: int = 5,
 ) -> Optional[tuple[int, int, int, int]]:
     """金枠4隅テンプレマッチで金枠を検出する。
