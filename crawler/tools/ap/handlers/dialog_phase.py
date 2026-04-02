@@ -613,19 +613,6 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     ctx.pre_dialog_finger = _pre_dialog_finger
     ctx.white_hand_pos = _white_hand_pos
 
-    # ── 【カルーセルポップアップ】複数ページ説明 → 右ナビ×6 → × 閉じ ──
-    _carousel_kws = ["メインクエストをPLAY", "ピュエラピクトゥーラ", "POWER UP"]
-    _carousel_match = has_any(ocr, _carousel_kws)
-    if _carousel_match:
-        _cn_x, _cn_y = roi_to_device(int(W * 0.96), int(H * 0.5), state.game_roi)
-        for _ in range(6):
-            tap_device(_cn_x, _cn_y, state, "CAROUSEL_NAV_RIGHT", rapid=True)
-        _close_x, _close_y = roi_to_device(int(W * 0.94), int(H * 0.12), state.game_roi)
-        logger.info(">>> 【カルーセルポップアップ】 '%s' → フレーム右上 (%d,%d) タップ",
-                    _carousel_match["text"][:10], _close_x, _close_y)
-        tap_device(_close_x, _close_y, state, "CAROUSEL_CLOSE")
-        return "CLOSE_POPUP", 1.0
-
     # ── 【確認ダイアログ「以下の内容でよろしいですか」】SmartTap OK ──
     _confirm_dlg = has_text(ocr, "以下の内容でよろしいですか", min_conf=0.3)
     if _confirm_dlg:
