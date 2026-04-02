@@ -52,19 +52,18 @@ def handle_popup_home(
     state: "PilotState",
     analysis_path: Optional[Path],
     ocr_count: int = 0,
-    has_dialog_corners: bool = False,
 ) -> Optional[tuple[str, float]]:
     """ホームポップアップ検出 → ドット数分 ▷ タップ → 最終ページで × 閉じ。
 
     popup_home_next / popup_home_close テンプレで検出・操作する。
     ダイアログ・お知らせポップアップの検出ロジックとは完全に独立。
+    ポップアップ専用四隅テンプレ（長方形整合性チェック付き）で判定するため
+    汎用 dialog_corners とは独立して動作する。
     OCR 0件の場合はスキップ（動画フレームの誤検出防止）。
 
     Returns: (action_name, wait_sec) or None
     """
     if analysis_path is None:
-        return None
-    if has_dialog_corners:
         return None
     if state.current_scene == "BATTLE":
         return None
@@ -433,8 +432,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     # ── 【ホームポップアップ検出】ダイアログ・お知らせポップアップとは独立 ──────────
     if analysis_path is not None:
         _popup_home_result = handle_popup_home(
-            state, analysis_path, ocr_count=len(ocr),
-            has_dialog_corners=bool(ctx.has_dialog_corners))
+            state, analysis_path, ocr_count=len(ocr))
         if _popup_home_result is not None:
             return _popup_home_result
 
