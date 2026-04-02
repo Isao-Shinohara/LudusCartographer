@@ -1681,8 +1681,18 @@ def detect_dialog_frame_and_nav(
 # ─── お知らせポップアップ検出 ─────────────────────────────────────────────
 
 
+_DOT_ACTIVE_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "popup_dot_active.png"
+_DOT_INACTIVE_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "popup_dot_inactive.png"
+_DOT_MATCH_THRESH = 0.85
+_DOT_Y_TOLERANCE = 5   # 同一行と見なす Y 差 (px)
+_DOT_SUPPRESS_R = 8     # NMS 抑制半径 (px)
+
+
 def count_page_dots(img_or_path, H: int = 720, W: int = 1520) -> int:
     """画面下部のページドットインジケータ (● ○ ○ …) の個数を返す。
+
+    アクティブ/非アクティブの2テンプレートでマッチし、
+    Y軸整列フィルタで水平に並ぶドットのみカウントする。
 
     Args:
         img_or_path: cv2画像(ndarray) または画像ファイルパス(Path)
@@ -1696,60 +1706,63 @@ def count_page_dots(img_or_path, H: int = 720, W: int = 1520) -> int:
         H, W = img.shape[:2]
     else:
         img = img_or_path
-    # ROI: 下部20%, 中央80%  (ドットが y=85% 付近に出るケースに対応)
-    _y1 = int(H * 0.80)
-    _x1 = int(W * 0.10)
-    _x2 = int(W * 0.90)
-    _roi = img[_y1:H, _x1:_x2]
+
+    # ROI: y=82-95%, x=15-85% (中央揃いで最大10個程度のドットに対応)
+    _y1 = int(H * 0.82)
+    _y2 = int(H * 0.95)
+    _x1 = int(W * 0.15)
+    _x2 = int(W * 0.85)
+    _roi = img[_y1:_y2, _x1:_x2]
     if _roi.size == 0:
         return 0
     _gray = cv2.cvtColor(_roi, cv2.COLOR_BGR2GRAY)
-    _, _thr = cv2.threshold(_gray, 140, 255, cv2.THRESH_BINARY)
-    _cnts, _ = cv2.findContours(_thr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    # 面積閾値を解像度でスケーリング (基準: 1520x720)
-    # max_area=800: 金色アクティブドット (輝度が高く膨張) を含む
-    _scale = (W * H) / (1520 * 720)
-    _min_area = 15 * _scale
-    _max_area = 800 * _scale
-    _dots = []       # (cx, cy) — 面積フィルタ通過
-    _oversized = []  # (cx, cy) — 面積オーバー (アクティブドット膨張の可能性)
-    for _c in _cnts:
-        _a = cv2.contourArea(_c)
-        if _a < _min_area:
+
+    # 2テンプレートでマッチ → 候補座標を統合
+    _candidates = []  # (cx, cy, score) — ROI 内座標
+    for _tpl_path in (_DOT_ACTIVE_TEMPLATE, _DOT_INACTIVE_TEMPLATE):
+        if not _tpl_path.exists():
             continue
-        _x, _y, _w, _h = cv2.boundingRect(_c)
-        _asp = _w / max(_h, 1)
-        if not (0.5 < _asp < 2.0):  # roughly circular
+        _tpl = imread_cached(_tpl_path)
+        if _tpl is None:
             continue
-        _cx, _cy = _x + _w // 2, _y + _h // 2
-        if _a <= _max_area:
-            _dots.append((_cx, _cy))
-        elif _a <= _max_area * 3:
-            # 面積オーバーだが極端に大きくない → アクティブドット候補として保持
-            _oversized.append((_cx, _cy))
-    if len(_dots) < 2 and not _oversized:
-        return len(_dots)
-    # 水平整列チェック: 実際のページドットは同一Y座標に並ぶ
-    # 最頻Y座標 ±5px 以内のドットだけカウント (装飾散乱を除外)
-    _roi_w = _x2 - _x1
+        _g = cv2.cvtColor(_tpl, cv2.COLOR_BGR2GRAY) if len(_tpl.shape) == 3 else _tpl
+        _th, _tw = _g.shape[:2]
+        if _gray.shape[0] < _th or _gray.shape[1] < _tw:
+            continue
+        _res = cv2.matchTemplate(_gray, _g, cv2.TM_CCOEFF_NORMED)
+        # 閾値超えの全位置を収集
+        _locs = np.where(_res >= _DOT_MATCH_THRESH)
+        for _py, _px in zip(*_locs):
+            _cx = _px + _tw // 2
+            _cy = _py + _th // 2
+            _s = float(_res[_py, _px])
+            _candidates.append((_cx, _cy, _s))
+
+    if not _candidates:
+        return 0
+
+    # NMS: 近接候補を統合 (同一ドットの重複除去)
+    _candidates.sort(key=lambda c: -c[2])  # スコア降順
+    _kept = []
+    for _cx, _cy, _s in _candidates:
+        _dup = False
+        for _kx, _ky, _ in _kept:
+            if abs(_cx - _kx) < _DOT_SUPPRESS_R and abs(_cy - _ky) < _DOT_SUPPRESS_R:
+                _dup = True
+                break
+        if not _dup:
+            _kept.append((_cx, _cy, _s))
+
+    if len(_kept) < 1:
+        return 0
+
+    # Y 軸整列フィルタ: 同一行 (Y差 ≤ _DOT_Y_TOLERANCE) の最大グループ
     _best_count = 0
-    _best_y = None
-    for _ref_y in set(d[1] for d in _dots):
-        _row = [d for d in _dots if abs(d[1] - _ref_y) <= 5]
-        if len(_row) < 2:
-            continue
-        _xs = [d[0] for d in _row]
-        _x_span = max(_xs) - min(_xs)
-        if _x_span > _roi_w * 0.30:
-            continue  # 散らばりすぎ → 装飾要素
+    for _ref_y in set(d[1] for d in _kept):
+        _row = [d for d in _kept if abs(d[1] - _ref_y) <= _DOT_Y_TOLERANCE]
         if len(_row) > _best_count:
             _best_count = len(_row)
-            _best_y = _ref_y
-    # 面積オーバーの候補を同じ行に追加 (アクティブドットの膨張を救済)
-    if _best_y is not None and _oversized:
-        for _ocx, _ocy in _oversized:
-            if abs(_ocy - _best_y) <= 5:
-                _best_count += 1
+
     return _best_count
 
 
