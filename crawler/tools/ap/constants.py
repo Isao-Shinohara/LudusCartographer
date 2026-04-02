@@ -194,7 +194,6 @@ OCR_MIN_CONF = 0.3
 SCENE_INTERVAL = {
     "BATTLE":  0.2,
     "ADV":     0.2,
-    "STORY":   0.2,
     "LOADING": 1.0,
     "MENU":    0.2,
     "UNKNOWN": 0.2,

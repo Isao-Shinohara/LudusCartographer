@@ -26,8 +26,7 @@ def classify_scene(texts: list[str], last_action: str,
     """
     OCR テキストからシーンを分類し (scene_label, poll_interval) を返す。
     - BATTLE  : バトル画面 — detect_scene_early のテンプレートマッチで判定済み
-    - ADV     : アドベンチャー — スキップボタンあり or 直前に STORY_TAP
-    - STORY   : ストーリー送り — スキップなし・会話テキストのみ
+    - ADV     : アドベンチャー — スキップボタンあり or 会話テキスト
     - LOADING : ロード/ダウンロード中
     - MENU    : ホーム/メニュー画面
     - UNKNOWN : 判定不能
@@ -43,17 +42,15 @@ def classify_scene(texts: list[str], last_action: str,
     if any(kw in joined for kw in ["クエスト", "ショップ", "ガシャ", "ガチャ",
                                     "ホーム", "メニュー", "お知らせ", "編成", "光の間"]):
         return "MENU", SCENE_INTERVAL["MENU"]
-    # ADV = ツールバー検出 or スキップボタンあり
+    # ADV = ツールバー検出 or スキップボタンあり or 直前が会話送り or 長い日本語文章
     if adv_detected or any(kw in joined for kw in ["スキップ", "SKIP"]):
         return "ADV", SCENE_INTERVAL["ADV"]
-    # STORY = 直前アクションが会話送り、またはスキップなし会話テキスト
     if last_action in ("STORY_TAP", "ADV_RAPID_TAP", "STORY_TAP_HINT"):
-        return "STORY", SCENE_INTERVAL["STORY"]
-    # STORY ヒューリスティック: 長い日本語文章 (8文字超 + ひらがな含む) が2件以上
-    story_lines = [t for t in texts if len(t) >= 8 and
-                   any(0x3041 <= ord(c) <= 0x30FF for c in t)]
-    if len(story_lines) >= 2:
-        return "STORY", SCENE_INTERVAL["STORY"]
+        return "ADV", SCENE_INTERVAL["ADV"]
+    _story_lines = [t for t in texts if len(t) >= 8 and
+                    any(0x3041 <= ord(c) <= 0x30FF for c in t)]
+    if len(_story_lines) >= 2:
+        return "ADV", SCENE_INTERVAL["ADV"]
     return "UNKNOWN", SCENE_INTERVAL["UNKNOWN"]
 
 

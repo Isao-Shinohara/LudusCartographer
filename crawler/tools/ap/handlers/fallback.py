@@ -178,11 +178,11 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             tap_device(cx, cy, state, f"CONFIRM '{text}'")
             return "CONFIRM", 1.0
 
-    # ─── ストーリー/会話 (下部テキストボックス) ───
+    # ─── ADV会話送り (下部テキストボックス) ───
     # ADV 構造的証拠 (AUTOボタン・↓送りボタン・ADVツールバー) がある場合のみ
-    _STORY_TAP_EXCLUDE = {"Rank", "Pank", "Runk", "AUTO", "SKIP", ">>", ">|"}
+    _ADV_TAP_EXCLUDE = {"Rank", "Pank", "Runk", "AUTO", "SKIP", ">>", ">|"}
     lower_texts = [r for r in ocr if r["center"][1] > H * 0.6
-                   and r["text"] not in _STORY_TAP_EXCLUDE]
+                   and r["text"] not in _ADV_TAP_EXCLUDE]
     # 防御的 ADV 検出: adv_result が空でも AUTO + ↓ボタンで判定
     # ↓ボタンは ADV 固有。ADV固有アイコン(menu/log/skip)は探索パート等で誤マッチするため不使用。
     _has_auto_template = False
@@ -197,7 +197,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     if lower_texts and len(ocr) <= 15 and not state.download_active and _has_adv_evidence:
         target = lower_texts[-1]
         cx, cy = target["center"]
-        logger.info(">>> ストーリー送り '%s' (%d,%d)", target["text"][:10], cx, cy)
+        logger.info(">>> ADV会話送り '%s' (%d,%d)", target["text"][:10], cx, cy)
         tap_device(cx, cy, state, "STORY_TAP")
         return "STORY_TAP", 0.3
 
