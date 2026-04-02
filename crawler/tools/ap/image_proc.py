@@ -1852,36 +1852,34 @@ def detect_popup_overlay(
             return {"dots": _dots, "next_score": 0.0, "is_notice": True, "corners": _corners}
         return None
 
-    # 必須3条件クリア — 付加情報を収集
+    # 4. ▷ボタンまたは×ボタンのどちらかが存在すること
     _next_score = _match_popup_next_roi(_img, _bH, _bW)
+    _close_score = _match_popup_close(_img_gray)
+    _NAV_THRESH = 0.75
+    _has_nav = _next_score >= _NAV_THRESH or _close_score >= _NAV_THRESH
+    if not _has_nav:
+        if _is_notice_ocr:
+            logger.info("[POPUP] 「今日は表示しない」検出 → お知らせポップアップ確定 (▷/×なし)")
+            return {"dots": _dots, "next_score": _next_score, "close_score": _close_score,
+                    "is_notice": True, "corners": _corners}
+        logger.debug("[POPUP] ▷(%.3f)/×(%.3f) いずれも閾値%.2f未満 → 棄却",
+                     _next_score, _close_score, _NAV_THRESH)
+        return None
+
     _tl, _tr, _bl, _br = _corners
 
     logger.info("[POPUP] 四隅TL(%.3f)TR(%.3f)BL(%.3f)BR(%.3f)+ドット=%d+背景ぼかし"
-                "+next(%.3f) notice_ocr=%s → ポップアップ確定",
-                _tl[2], _tr[2], _bl[2], _br[2], _dots, _next_score, _is_notice_ocr)
+                "+next(%.3f)+close(%.3f) notice_ocr=%s → ポップアップ確定",
+                _tl[2], _tr[2], _bl[2], _br[2], _dots, _next_score, _close_score, _is_notice_ocr)
 
     return {
         "dots": _dots,
         "next_score": _next_score,
+        "close_score": _close_score,
         "is_notice": _is_notice_ocr,
         "corners": _corners,
     }
 
-
-def detect_notice_popup(
-    img_path: Path, ocr_texts: list[str], W: int = ANALYSIS_W, H: int = ANALYSIS_H,
-) -> bool:
-    """お知らせポップアップを検出する (後方互換ラッパー)。"""
-    result = detect_popup_overlay(img_path, ocr_texts)
-    return result is not None
-
-
-def detect_popup_home(
-    img_path: Path, W: int = ANALYSIS_W, H: int = ANALYSIS_H,
-) -> bool:
-    """ホームポップアップを検出する (後方互換ラッパー)。"""
-    result = detect_popup_overlay(img_path)
-    return result is not None
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -2096,15 +2094,19 @@ def _match_popup_next_roi(img, _H: int, _W: int, threshold: float = 0.89) -> flo
     return _best
 
 
-def detect_popup_home(
-    img_path: Path, W: int = ANALYSIS_W, H: int = ANALYSIS_H,
-) -> bool:
-    """ホームポップアップを検出する (後方互換ラッパー)。
-
-    detect_popup_overlay に委譲。▷ボタンは付加的要素のため必須条件から除外。
-    """
-    result = detect_popup_overlay(img_path)
-    return result is not None
+def _match_popup_close(img_gray: np.ndarray) -> float:
+    """popup_home_close テンプレを全画面でマッチし最高スコアを返す。"""
+    if not _POPUP_CLOSE_TEMPLATE.exists():
+        return 0.0
+    _tpl = imread_cached(_POPUP_CLOSE_TEMPLATE)
+    if _tpl is None:
+        return 0.0
+    _g = cv2.cvtColor(_tpl, cv2.COLOR_BGR2GRAY) if len(_tpl.shape) == 3 else _tpl
+    if img_gray.shape[0] < _g.shape[0] or img_gray.shape[1] < _g.shape[1]:
+        return 0.0
+    _r = cv2.matchTemplate(img_gray, _g, cv2.TM_CCOEFF_NORMED)
+    _, _mv, _, _ = cv2.minMaxLoc(_r)
+    return _mv
 
 
 def detect_popup_home_nav(

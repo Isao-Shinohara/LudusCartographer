@@ -29,11 +29,11 @@ from tools.ap.constants import (
 from tools.ap.helpers import has_any, has_text
 from tools.ap.device import adb, tap_device, take_screenshot
 from tools.ap.image_proc import (
-    detect_notice_popup, detect_mini_conversation,
+    detect_popup_overlay, detect_mini_conversation,
     detect_white_hand_pointer,
     detect_dialog_frame_and_nav, process_paging_dialog,
     count_page_dots, detect_dialog, detect_dialog_nav, detect_dialog_corners,
-    detect_popup_home, detect_popup_home_nav,
+    detect_popup_home_nav,
     ASSET_MANAGER, prepare_analysis_image,
     roi_to_device, smart_tap_button,
     detect_background_blur, imread_cached,
@@ -69,7 +69,7 @@ def handle_popup_home(
         return None
     if ocr_count < 1:
         return None
-    if not detect_popup_home(analysis_path):
+    if not detect_popup_overlay(analysis_path):
         return None
 
     W, H = ANALYSIS_W, ANALYSIS_H
@@ -565,7 +565,8 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     # ── 【お知らせポップアップ検出】PRE_DIALOG_GUARD バイパス ──────────
     _is_notice = False
     if analysis_path is not None:
-        _is_notice = detect_notice_popup(analysis_path, texts)
+        _popup = detect_popup_overlay(analysis_path, texts)
+        _is_notice = _popup is not None and _popup.get("is_notice", False)
     ctx.is_notice = _is_notice
 
     # ── 【#0-DIALOG 前ガード】指ブロブ検出時はダイアログ検出をスキップ ──────

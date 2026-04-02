@@ -198,7 +198,7 @@ from tools.ap.image_proc import (  # noqa: E402
     detect_guide_glow, _run_battle_glow_sm, detect_active_battle_char,
     detect_movie_skip_button, detect_mini_conversation,
     detect_dialog, detect_dialog_nav, detect_dialog_frame_and_nav,
-    process_paging_dialog, detect_notice_popup, count_page_dots, detect_background_blur,
+    process_paging_dialog, count_page_dots, detect_background_blur,
     detect_text_input_area,
     detect_tutorial_gold_swipe, find_gold_button, detect_tutorial_overlay,
     smart_tap_button, find_3d_arrow,
