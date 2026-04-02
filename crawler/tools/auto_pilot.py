@@ -2654,50 +2654,7 @@ def main():
             logger.info("  [PERF] Loop %.0fms (GACHA)", _fms)
             continue
 
-        elif _early_scene == "BATTLE":
-            state.current_scene = "BATTLE"
-            state._from_battle = False  # BATTLE復帰でフラグクリア
-            _early_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
-            if handle_battle(_early_analysis, state, dist):
-                _fms = (time.time() - _loop_t0) * 1000
-                state.total_loop_ms += _fms
-                logger.info("  [PERF] Loop %.0fms (BATTLE_EARLY)", _fms)
-                continue
-            _skip_rapid = True  # BATTLE ハンドラがフォールスルー → OCR へ直行
-
-        elif _early_scene == "ADV":
-            state.current_scene = "ADV"
-            # ADV_EARLY スタック脱出: 30回連続ハンドル成功 → OCR フォールスルー
-            _ADV_EARLY_STALL = 30
-            if state.adv_early_consecutive >= _ADV_EARLY_STALL:
-                logger.warning("[ADV_EARLY] %d 回連続 → OCR フォールスルー",
-                               state.adv_early_consecutive)
-                state.adv_early_consecutive = 0
-                state.adv_confirmed_count = 0
-                state.current_scene = "UNKNOWN"
-                _skip_rapid = True
-            elif handle_adv(_early_analysis, state, dist, cur_phash, actual_w, actual_h):
-                state._adv_early_retry = 0
-                state.adv_early_consecutive += 1
-                _fms = (time.time() - _loop_t0) * 1000
-                state.total_loop_ms += _fms
-                logger.info("  [PERF] Loop %.0fms (ADV_EARLY) [%d/%d]",
-                            _fms, state.adv_early_consecutive, _ADV_EARLY_STALL)
-                continue
-            else:
-                # ↓ボタン未検出 (セリフ切り替え中等) → 0.5s 待機してリトライ
-                # OCR パスに落とさず ADV_EARLY に留まる
-                _adv_retry_count = getattr(state, "_adv_early_retry", 0) + 1
-                state._adv_early_retry = _adv_retry_count
-                if _adv_retry_count <= 3:
-                    logger.info("[ADV_EARLY] ↓未検出 → 0.5s待機リトライ (%d/3)", _adv_retry_count)
-                    time.sleep(0.5)
-                    continue
-                state._adv_early_retry = 0
-                state.adv_early_consecutive = 0
-                _skip_rapid = True  # 3回リトライ失敗 → OCR へ直行
-
-        # ── MINI_CONV 高速モード: 前回ミニ会話なら OCR スキップして即吹き出し検出 ──
+        # ── MINI_CONV 高速モード (最優先): 前回ミニ会話なら OCR スキップして即吹き出し検出 ──
         _MINI_CONV_RAPID_MAX = 5   # 同一座標で連続タップ上限 → OCR パスにフォールスルー
         _MINI_CONV_RETRY_MAX = 3   # 検出失敗時の前回位置再タップ上限
         if (not _skip_rapid
@@ -2754,6 +2711,49 @@ def main():
                 else:
                     logger.info("[MINI_CONV_RAPID] リトライ %d 回超 → OCR フォールスルー", _retry)
                     state._mini_conv_retry_count = 0
+
+        if not _skip_rapid and _early_scene == "BATTLE":
+            state.current_scene = "BATTLE"
+            state._from_battle = False  # BATTLE復帰でフラグクリア
+            _early_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
+            if handle_battle(_early_analysis, state, dist):
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                logger.info("  [PERF] Loop %.0fms (BATTLE_EARLY)", _fms)
+                continue
+            _skip_rapid = True  # BATTLE ハンドラがフォールスルー → OCR へ直行
+
+        if not _skip_rapid and _early_scene == "ADV":
+            state.current_scene = "ADV"
+            # ADV_EARLY スタック脱出: 30回連続ハンドル成功 → OCR フォールスルー
+            _ADV_EARLY_STALL = 30
+            if state.adv_early_consecutive >= _ADV_EARLY_STALL:
+                logger.warning("[ADV_EARLY] %d 回連続 → OCR フォールスルー",
+                               state.adv_early_consecutive)
+                state.adv_early_consecutive = 0
+                state.adv_confirmed_count = 0
+                state.current_scene = "UNKNOWN"
+                _skip_rapid = True
+            elif handle_adv(_early_analysis, state, dist, cur_phash, actual_w, actual_h):
+                state._adv_early_retry = 0
+                state.adv_early_consecutive += 1
+                _fms = (time.time() - _loop_t0) * 1000
+                state.total_loop_ms += _fms
+                logger.info("  [PERF] Loop %.0fms (ADV_EARLY) [%d/%d]",
+                            _fms, state.adv_early_consecutive, _ADV_EARLY_STALL)
+                continue
+            else:
+                # ↓ボタン未検出 (セリフ切り替え中等) → 0.5s 待機してリトライ
+                # OCR パスに落とさず ADV_EARLY に留まる
+                _adv_retry_count = getattr(state, "_adv_early_retry", 0) + 1
+                state._adv_early_retry = _adv_retry_count
+                if _adv_retry_count <= 3:
+                    logger.info("[ADV_EARLY] ↓未検出 → 0.5s待機リトライ (%d/3)", _adv_retry_count)
+                    time.sleep(0.5)
+                    continue
+                state._adv_early_retry = 0
+                state.adv_early_consecutive = 0
+                _skip_rapid = True  # 3回リトライ失敗 → OCR へ直行
 
         if screen_changed:
             # 画面変化あり → カウンタリセット & Watchdog タイマーリセット
