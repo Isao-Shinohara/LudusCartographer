@@ -1807,21 +1807,21 @@ def detect_notice_popup(
     if any("今日は表示し" in t for t in ocr_texts):
         logger.info("[NOTICE_POPUP] 「今日は表示しない」検出 → お知らせポップアップ確定")
         return True
-    # ビジュアルパターン: 下角専用テンプレ + ドット≥1 + 背景ぼかし
+    # ビジュアルパターン: 四隅専用テンプレ + ドット≥1 + 背景ぼかし
     if img_path:
         _img = imread_cached(img_path)
         if _img is not None:
             _img_gray = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY) if len(_img.shape) == 3 else _img
-            _corners = _detect_popup_bottom_corners(_img_gray)
+            _corners = _detect_popup_corners(_img_gray)
             if _corners is not None:
-                _bl, _br = _corners
+                _tl, _tr, _bl, _br = _corners
                 _dots = count_page_dots(img_path)
                 if _dots >= 1:
                     _bH, _bW = _img.shape[:2]
                     if detect_background_blur(_img, _bH, _bW):
-                        logger.info("[NOTICE_POPUP] 下角BL(%.3f,%d,%d)BR(%.3f,%d,%d)"
+                        logger.info("[NOTICE_POPUP] 四隅TL(%.3f)TR(%.3f)BL(%.3f)BR(%.3f)"
                                     "+ドット=%d+背景ぼかし → お知らせポップアップ確定",
-                                    _bl[2], _bl[0], _bl[1], _br[2], _br[0], _br[1], _dots)
+                                    _tl[2], _tr[2], _bl[2], _br[2], _dots)
                         return True
     return False
 
@@ -1838,20 +1838,25 @@ _POPUP_CORNER_BL_TEMPLATE = _CRAWLER_ROOT / "assets" / "templates" / "popup_noti
 # マスク付きマッチ: テンプレの枠線パターンだけで判定 (背景の影響を排除)
 _POPUP_CORNER_MASK_THRESH = 140
 _POPUP_CORNER_MATCH_THRESH = 0.78
-_POPUP_CORNER_Y_TOLERANCE = 30   # BL/BR の Y 差許容 (px)
+_POPUP_CORNER_Y_TOLERANCE = 30   # 上辺/下辺の Y 差許容 (px)
+_POPUP_CORNER_X_TOLERANCE = 30   # 左辺/右辺の X 差許容 (px)
 _POPUP_CORNER_MIN_WIDTH = 200    # ポップアップ最小幅 (px)
 _POPUP_CORNER_MAX_WIDTH = 1200   # ポップアップ最大幅 (px)
+_POPUP_CORNER_MIN_HEIGHT = 100   # ポップアップ最小高さ (px)
+_POPUP_CORNER_MAX_HEIGHT = 600   # ポップアップ最大高さ (px)
 
 
-def _detect_popup_bottom_corners(
+def _detect_popup_corners(
     img_gray: np.ndarray,
-) -> Optional[tuple[tuple[int, int, float], tuple[int, int, float]]]:
-    """ポップアップ下角 (BL + BR) をマスク付きテンプレマッチで検出。
+) -> Optional[tuple[tuple[int, int, float], tuple[int, int, float],
+                    tuple[int, int, float], tuple[int, int, float]]]:
+    """ポップアップ四隅 (TL, TR, BL, BR) をマスク付きテンプレマッチで検出。
 
-    BL テンプレを左半分下半分、左右反転した BR テンプレを右半分下半分で検索。
-    両方検出 + Y 座標近接 + 幅が妥当なら結果を返す。
+    BL テンプレから反転で TL/TR/BR を生成し、各象限の ROI で検索。
+    4隅全て検出 + 長方形整合性チェックを通過した場合のみ結果を返す。
 
-    Returns: ((bl_cx, bl_cy, bl_score), (br_cx, br_cy, br_score)) or None
+    Returns: ((tl_cx, tl_cy, tl_score), (tr_cx, tr_cy, tr_score),
+              (bl_cx, bl_cy, bl_score), (br_cx, br_cy, br_score)) or None
     """
     if not _POPUP_CORNER_BL_TEMPLATE.exists():
         return None
@@ -1859,55 +1864,88 @@ def _detect_popup_bottom_corners(
     if _tpl_bl_color is None:
         return None
     _tpl_bl = cv2.cvtColor(_tpl_bl_color, cv2.COLOR_BGR2GRAY) if len(_tpl_bl_color.shape) == 3 else _tpl_bl_color
-    _tpl_br = cv2.flip(_tpl_bl, 1)
+    _tpl_br = cv2.flip(_tpl_bl, 1)    # 左右反転
+    _tpl_tl = cv2.flip(_tpl_bl, 0)    # 上下反転
+    _tpl_tr = cv2.flip(_tpl_bl, -1)   # 上下左右反転
 
     _H, _W = img_gray.shape
     _th, _tw = _tpl_bl.shape
 
     # マスク生成
-    _, _mask_bl = cv2.threshold(_tpl_bl, _POPUP_CORNER_MASK_THRESH, 255, cv2.THRESH_BINARY)
-    _, _mask_br = cv2.threshold(_tpl_br, _POPUP_CORNER_MASK_THRESH, 255, cv2.THRESH_BINARY)
+    _masks = {}
+    for _name, _tpl in [("tl", _tpl_tl), ("tr", _tpl_tr), ("bl", _tpl_bl), ("br", _tpl_br)]:
+        _, _masks[_name] = cv2.threshold(_tpl, _POPUP_CORNER_MASK_THRESH, 255, cv2.THRESH_BINARY)
 
-    # BL: 左半分・下半分
-    _roi_bl = img_gray[_H // 2:, :_W // 2]
-    if _roi_bl.shape[0] < _th or _roi_bl.shape[1] < _tw:
-        return None
-    try:
-        _res_bl = cv2.matchTemplate(_roi_bl, _tpl_bl, cv2.TM_CCOEFF_NORMED, mask=_mask_bl)
-        _, _s_bl, _, _loc_bl = cv2.minMaxLoc(_res_bl)
-        if not np.isfinite(_s_bl) or _s_bl < _POPUP_CORNER_MATCH_THRESH:
+    # 各象限の ROI + オフセット
+    _quadrants = [
+        ("tl", _tpl_tl, img_gray[:_H // 2, :_W // 2],   0,       0),
+        ("tr", _tpl_tr, img_gray[:_H // 2, _W // 2:],    _W // 2, 0),
+        ("bl", _tpl_bl, img_gray[_H // 2:, :_W // 2],    0,       _H // 2),
+        ("br", _tpl_br, img_gray[_H // 2:, _W // 2:],    _W // 2, _H // 2),
+    ]
+
+    _results = {}
+    for _name, _tpl, _roi, _ox, _oy in _quadrants:
+        if _roi.shape[0] < _th or _roi.shape[1] < _tw:
             return None
-    except Exception:
-        return None
-    _bl_cx = _loc_bl[0] + _tw // 2
-    _bl_cy = _H // 2 + _loc_bl[1] + _th // 2
-
-    # BR: 右半分・下半分
-    _roi_br = img_gray[_H // 2:, _W // 2:]
-    if _roi_br.shape[0] < _th or _roi_br.shape[1] < _tw:
-        return None
-    try:
-        _res_br = cv2.matchTemplate(_roi_br, _tpl_br, cv2.TM_CCOEFF_NORMED, mask=_mask_br)
-        _, _s_br, _, _loc_br = cv2.minMaxLoc(_res_br)
-        if not np.isfinite(_s_br) or _s_br < _POPUP_CORNER_MATCH_THRESH:
+        try:
+            _res = cv2.matchTemplate(_roi, _tpl, cv2.TM_CCOEFF_NORMED, mask=_masks[_name])
+            _res_clean = np.where(np.isfinite(_res), _res, -1)
+            _, _s, _, _loc = cv2.minMaxLoc(_res_clean)
+            if not np.isfinite(_s) or _s < _POPUP_CORNER_MATCH_THRESH:
+                logger.debug("[POPUP_CORNER] %s スコア不足 (%.3f < %.2f)",
+                             _name.upper(), _s, _POPUP_CORNER_MATCH_THRESH)
+                return None
+        except Exception:
             return None
-    except Exception:
-        return None
-    _br_cx = _W // 2 + _loc_br[0] + _tw // 2
-    _br_cy = _H // 2 + _loc_br[1] + _th // 2
+        _cx = _ox + _loc[0] + _tw // 2
+        _cy = _oy + _loc[1] + _th // 2
+        _results[_name] = (_cx, _cy, _s)
 
-    # 座標整合性: Y 差 + 幅
-    _dy = abs(_bl_cy - _br_cy)
-    _width = _br_cx - _bl_cx
-    if _dy > _POPUP_CORNER_Y_TOLERANCE:
-        logger.debug("[POPUP_CORNER] Y差=%d > %d → 棄却", _dy, _POPUP_CORNER_Y_TOLERANCE)
+    _tl = _results["tl"]
+    _tr = _results["tr"]
+    _bl = _results["bl"]
+    _br = _results["br"]
+
+    # 長方形整合性チェック
+    # 上辺: TL-TR の Y 差 + 幅
+    _dy_top = abs(_tl[1] - _tr[1])
+    _width_top = _tr[0] - _tl[0]
+    if _dy_top > _POPUP_CORNER_Y_TOLERANCE:
+        logger.debug("[POPUP_CORNER] 上辺Y差=%d > %d → 棄却", _dy_top, _POPUP_CORNER_Y_TOLERANCE)
         return None
-    if _width < _POPUP_CORNER_MIN_WIDTH or _width > _POPUP_CORNER_MAX_WIDTH:
-        logger.debug("[POPUP_CORNER] 幅=%d (範囲外 %d-%d) → 棄却",
-                     _width, _POPUP_CORNER_MIN_WIDTH, _POPUP_CORNER_MAX_WIDTH)
+    # 下辺: BL-BR の Y 差 + 幅
+    _dy_bot = abs(_bl[1] - _br[1])
+    _width_bot = _br[0] - _bl[0]
+    if _dy_bot > _POPUP_CORNER_Y_TOLERANCE:
+        logger.debug("[POPUP_CORNER] 下辺Y差=%d > %d → 棄却", _dy_bot, _POPUP_CORNER_Y_TOLERANCE)
+        return None
+    # 左辺: TL-BL の X 差
+    _dx_left = abs(_tl[0] - _bl[0])
+    if _dx_left > _POPUP_CORNER_X_TOLERANCE:
+        logger.debug("[POPUP_CORNER] 左辺X差=%d > %d → 棄却", _dx_left, _POPUP_CORNER_X_TOLERANCE)
+        return None
+    # 右辺: TR-BR の X 差
+    _dx_right = abs(_tr[0] - _br[0])
+    if _dx_right > _POPUP_CORNER_X_TOLERANCE:
+        logger.debug("[POPUP_CORNER] 右辺X差=%d > %d → 棄却", _dx_right, _POPUP_CORNER_X_TOLERANCE)
+        return None
+    # 幅の整合性 (上辺と下辺の幅が近い)
+    _avg_width = (_width_top + _width_bot) / 2
+    if _avg_width < _POPUP_CORNER_MIN_WIDTH or _avg_width > _POPUP_CORNER_MAX_WIDTH:
+        logger.debug("[POPUP_CORNER] 幅=%.0f (範囲外 %d-%d) → 棄却",
+                     _avg_width, _POPUP_CORNER_MIN_WIDTH, _POPUP_CORNER_MAX_WIDTH)
+        return None
+    # 高さの整合性
+    _height_left = _bl[1] - _tl[1]
+    _height_right = _br[1] - _tr[1]
+    _avg_height = (_height_left + _height_right) / 2
+    if _avg_height < _POPUP_CORNER_MIN_HEIGHT or _avg_height > _POPUP_CORNER_MAX_HEIGHT:
+        logger.debug("[POPUP_CORNER] 高さ=%.0f (範囲外 %d-%d) → 棄却",
+                     _avg_height, _POPUP_CORNER_MIN_HEIGHT, _POPUP_CORNER_MAX_HEIGHT)
         return None
 
-    return ((_bl_cx, _bl_cy, _s_bl), (_br_cx, _br_cy, _s_br))
+    return (_tl, _tr, _bl, _br)
 
 
 def _match_popup_next_roi(img, _H: int, _W: int, threshold: float = 0.89) -> float:
@@ -1947,7 +1985,7 @@ def detect_popup_home(
       1. popup_home_next テンプレ検出 (閾値 0.84, ROI: 右側縦中央, light/dark 2種)
       2. ページドット ≥ 1
       3. 背景ぼかし
-      4. 下角 (BL + BR) マスク付きテンプレマッチ (座標整合性チェック付き)
+      4. 四隅 (TL, TR, BL, BR) マスク付きテンプレマッチ (長方形整合性チェック付き)
     """
     if not img_path:
         return False
@@ -1971,16 +2009,16 @@ def detect_popup_home(
     if not detect_background_blur(img, _H, _W):
         logger.debug("[POPUP_HOME] 背景ぼかしなし")
         return False
-    # 4. 下角 (BL + BR) マスク付きテンプレマッチ
+    # 4. 四隅マスク付きテンプレマッチ
     _img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _corners = _detect_popup_bottom_corners(_img_gray)
+    _corners = _detect_popup_corners(_img_gray)
     if _corners is None:
-        logger.debug("[POPUP_HOME] 下角テンプレ未検出 → 棄却")
+        logger.debug("[POPUP_HOME] 四隅テンプレ未検出 → 棄却")
         return False
-    _bl, _br = _corners
+    _tl, _tr, _bl, _br = _corners
     logger.info("[POPUP_HOME] next テンプレ(%.3f)+ドット=%d+背景ぼかし"
-                "+下角BL(%.3f,%d,%d)BR(%.3f,%d,%d) → ホームポップアップ確定",
-                _mv, _dots, _bl[2], _bl[0], _bl[1], _br[2], _br[0], _br[1])
+                "+四隅TL(%.3f)TR(%.3f)BL(%.3f)BR(%.3f) → ホームポップアップ確定",
+                _mv, _dots, _tl[2], _tr[2], _bl[2], _br[2])
     return True
 
 
