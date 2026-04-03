@@ -38,12 +38,18 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     if r is not None:
         return r
 
-    # Phase 2: ダイアログハンドラ
+    # Phase 2: 指アイコン+金枠 最優先 (CLAUDE.md §0 優先度1)
+    r = handle_finger_priority(ctx, state)
+    if r is not None:
+        state._home_last_evidence_iter = state.iteration
+        return r
+
+    # Phase 3: ダイアログハンドラ
     r = handle_dialog_phase(ctx, state)
     if r is not None:
         return r
 
-    # Phase 2.5: ミニ会話タップ (OCR パスで検出済みの座標を使用)
+    # Phase 3.5: ミニ会話タップ (OCR パスで検出済みの座標を使用)
     if ctx.mini_conv_pos is not None:
         _mc_cx, _mc_cy, _mc_side = ctx.mini_conv_pos
         logger.info(
@@ -53,12 +59,6 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         # 吹き出し遷移アニメーションで MOVIE 誤昇格しないようリセット
         state.phash_moving_count = 0
         return "MINI_CONV_TAP", 0.3
-
-    # Phase 3: 指アイコン+金枠 (CLAUDE.md §0 優先度1)
-    r = handle_finger_priority(ctx, state)
-    if r is not None:
-        state._home_last_evidence_iter = state.iteration
-        return r
 
     # Phase 3.5: 金枠ハイライト即タップ (CLAUDE.md §0 優先度1)
     # 指アイコンなしでも金枠が検出されたら即タップ

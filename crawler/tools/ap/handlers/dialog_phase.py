@@ -19,7 +19,6 @@ from typing import Optional
 from tools.ap.context import DetectContext
 from tools.ap.state import PilotState
 from tools.ap.constants import (
-    _SPATIAL_MARGIN_TOP, _CLOSE_BTN_OFFSET,
     ANALYSIS_W, ANALYSIS_H,
     _CONFIRM_POS_KWS, _CONFIRM_NEG_KWS,
     _CURRENCY_SPEND_KWS, _OCR_BBOX_Y_PADDING,
@@ -28,8 +27,7 @@ from tools.ap.constants import (
 from tools.ap.helpers import has_any, has_text
 from tools.ap.device import adb, tap_device, take_screenshot
 from tools.ap.image_proc import (
-    detect_popup_overlay, detect_mini_conversation,
-    detect_white_hand_pointer,
+    detect_popup_overlay,
     detect_dialog_frame_and_nav, process_paging_dialog,
     count_page_dots, detect_dialog, detect_dialog_nav, detect_dialog_corners,
     detect_popup_home_nav,
@@ -573,56 +571,12 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
         tap_device(_cp_x, _cp_y_adj, state, f"CONFIRM_DIALOG_OK '{_confirm_pos['text']}'")
         return "ADV_CHOICE", 1.0
 
-    # ── 【お知らせポップアップ検出】PRE_DIALOG_GUARD バイパス ──────────
+    # ── 【お知らせポップアップ検出】──────────
     _is_notice = False
     if analysis_path is not None:
         _popup = detect_popup_overlay(analysis_path, texts)
         _is_notice = _popup is not None and _popup.get("is_notice", False)
     ctx.is_notice = _is_notice
-
-    # ── 【#0-DIALOG 前ガード】指ブロブ検出時はダイアログ検出をスキップ ──────
-    # お知らせポップアップ検出時はガードをバイパス (×で確実に閉じるため)
-    # ADV/ミニ会話/動画シーン検出時はスキップ (指アイコンは出ない — 背景装飾の誤検出防止)
-    _pre_dialog_finger = False
-    _is_mini_conv = ctx.is_mini_conv  # detect_and_act で OCR 付きで検出済み
-    _is_result_screen = any(
-        any(k in t for k in ("Result", "リザルト", "次へ"))
-        for t in texts
-    )
-    ctx.is_result_screen_flag = _is_result_screen
-    # ADV/MOVIE シーンでは指ブロブ+金枠検出を完全スキップ (緑発光等の誤検出防止)
-    _is_adv_or_movie = (
-        ctx.adv_result.is_adv
-        or state.current_scene in ("ADV", "MOVIE")
-        or any(t in ("SKIP", "スキップ") for t in texts)
-    )
-    ctx.is_adv_or_movie = _is_adv_or_movie
-    _white_hand_pos = None  # (cx, cy, score, direction) or None
-    if analysis_path is not None and not _is_result_screen and not _is_notice and not _is_adv_or_movie and not _is_mini_conv:
-        _pdg_rot = ASSET_MANAGER.match_finger_rotated(analysis_path)
-        _pdg_match = (_pdg_rot[0], _pdg_rot[1], _pdg_rot[2]) if _pdg_rot else None
-        if _pdg_match and _pdg_match[2] >= 0.70:
-            _pdg_cx, _pdg_cy = _pdg_match[0], _pdg_match[1]
-            if _pdg_cy > _SPATIAL_MARGIN_TOP and _pdg_cx < W - _CLOSE_BTN_OFFSET:
-                # × ボタンが高信頼度で存在する場合は指ガードを抑制
-                _close_match = ASSET_MANAGER.match_single("close_btn", analysis_path)
-                if _close_match and _close_match[2] >= 0.85:
-                    logger.info("[PRE_DIALOG_GUARD] 指(%.3f)だが ×(%.3f) → ガード抑制",
-                                _pdg_match[2], _close_match[2])
-                else:
-                    _pre_dialog_finger = True
-                    logger.info("[PRE_DIALOG_GUARD] 指テンプレ(%.3f) (%d,%d) → #0-DIALOG スキップ",
-                                _pdg_match[2], _pdg_cx, _pdg_cy)
-        if not _pre_dialog_finger:
-            _white_hand_pos = detect_white_hand_pointer(analysis_path, threshold=0.90)
-            if _white_hand_pos is not None:
-                _pre_dialog_finger = True
-                logger.info(
-                    "[PRE_DIALOG_GUARD] 白ハンドポインタ (%d,%d) score=%.3f → #0-DIALOG スキップ",
-                    _white_hand_pos[0], _white_hand_pos[1], _white_hand_pos[2],
-                )
-    ctx.pre_dialog_finger = _pre_dialog_finger
-    ctx.white_hand_pos = _white_hand_pos
 
     # ── 【確認ダイアログ「以下の内容でよろしいですか」】SmartTap OK ──
     _confirm_dlg = has_text(ocr, "以下の内容でよろしいですか", min_conf=0.3)
@@ -642,55 +596,53 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
         tap_device(_cx, _cy, state, "CONFIRM_DIALOG_OK")
         return "CONFIRM_DIALOG_OK", 1.0
 
-    # ─── 【最優先 #0-DIALOG】ダイアログ・ファースト ────────────
-    # 指テンプレ検出時はダイアログ処理をスキップ → tutorial ハンドラで指+金枠タップ
-    # (CLAUDE.md: 指アイコン+金枠が検出できたらシーンに関係なくタップする)
-    if not _pre_dialog_finger:
-        _dialog_result = handle_dialog_screen(
-            state, analysis_path, ocr, texts, _is_battle_ctx,
-            is_notice_popup=_is_notice)
-        if _dialog_result is not None:
-            return _dialog_result
+    # ─── 【#0-DIALOG】ダイアログ・ファースト ────────────
+    # 指アイコン+金枠は dispatch Phase 2 (handle_finger_priority) で処理済み
+    _dialog_result = handle_dialog_screen(
+        state, analysis_path, ocr, texts, _is_battle_ctx,
+        is_notice_popup=_is_notice)
+    if _dialog_result is not None:
+        return _dialog_result
 
-        # ── 【チュートリアルポップアップ】形状ベース検出 ──
-        # ダイアログ四隅 + ページドット ≥ 1 + 背景ぼかし + ▷/× ボタン
-        # BATTLE シーンでは誤検出防止のためスキップ
-        _in_battle_popup = state.current_scene == "BATTLE" or getattr(state, "_from_battle", False)
-        if not _in_battle_popup and analysis_path is not None:
-            _tp_corners = ctx.has_dialog_corners if ctx.has_dialog_corners is not None else (
-                detect_dialog_corners(analysis_path))
-            if _tp_corners:
-                _tp_dots = count_page_dots(analysis_path)
-                _tp_blur_img = imread_cached(analysis_path)
-                _tp_blur = (_tp_blur_img is not None
-                            and detect_background_blur(_tp_blur_img,
-                                                       _tp_blur_img.shape[0],
-                                                       _tp_blur_img.shape[1]))
-                _tp_nav = detect_dialog(analysis_path, W, H) if (_tp_dots >= 1 and _tp_blur) else None
-                if _tp_nav is not None:
-                    _nav_type, _nx, _ny = _tp_nav
-                    if _nav_type == "close" and _tp_dots < 2:
-                        logger.info(">>> 【チュートリアルポップアップ】 ×→(%d,%d) dots=%d",
-                                    _nx, _ny, _tp_dots)
-                        tap_device(_nx, _ny, state, "TUTORIAL_POPUP_CLOSE")
-                        return "TUTORIAL_POPUP", 1.0
-                    if _nav_type == "close" and _tp_dots >= 2:
-                        logger.info(">>> 【チュートリアルポップアップ→PAGING】 dots=%d, ×検出→先にページ走査",
-                                    _tp_dots)
-                        _arr_x, _arr_y = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)
-                        _pg_result = process_paging_dialog(
-                            analysis_path, W, H, state,
-                            initial_dlg=("next", _arr_x, _arr_y),
-                            ocr_texts=texts,
-                        )
-                        return _pg_result, 1.0
-                    logger.info(">>> 【チュートリアルポップアップ→PAGING】 ▷(%d,%d) dots=%d → 全ページ走査",
+    # ── 【チュートリアルポップアップ】形状ベース検出 ──
+    # ダイアログ四隅 + ページドット ≥ 1 + 背景ぼかし + ▷/× ボタン
+    # BATTLE シーンでは誤検出防止のためスキップ
+    _in_battle_popup = state.current_scene == "BATTLE" or getattr(state, "_from_battle", False)
+    if not _in_battle_popup and analysis_path is not None:
+        _tp_corners = ctx.has_dialog_corners if ctx.has_dialog_corners is not None else (
+            detect_dialog_corners(analysis_path))
+        if _tp_corners:
+            _tp_dots = count_page_dots(analysis_path)
+            _tp_blur_img = imread_cached(analysis_path)
+            _tp_blur = (_tp_blur_img is not None
+                        and detect_background_blur(_tp_blur_img,
+                                                   _tp_blur_img.shape[0],
+                                                   _tp_blur_img.shape[1]))
+            _tp_nav = detect_dialog(analysis_path, W, H) if (_tp_dots >= 1 and _tp_blur) else None
+            if _tp_nav is not None:
+                _nav_type, _nx, _ny = _tp_nav
+                if _nav_type == "close" and _tp_dots < 2:
+                    logger.info(">>> 【チュートリアルポップアップ】 ×→(%d,%d) dots=%d",
                                 _nx, _ny, _tp_dots)
+                    tap_device(_nx, _ny, state, "TUTORIAL_POPUP_CLOSE")
+                    return "TUTORIAL_POPUP", 1.0
+                if _nav_type == "close" and _tp_dots >= 2:
+                    logger.info(">>> 【チュートリアルポップアップ→PAGING】 dots=%d, ×検出→先にページ走査",
+                                _tp_dots)
+                    _arr_x, _arr_y = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)
                     _pg_result = process_paging_dialog(
                         analysis_path, W, H, state,
-                        initial_dlg=(_nav_type, _nx, _ny),
+                        initial_dlg=("next", _arr_x, _arr_y),
                         ocr_texts=texts,
                     )
                     return _pg_result, 1.0
+                logger.info(">>> 【チュートリアルポップアップ→PAGING】 ▷(%d,%d) dots=%d → 全ページ走査",
+                            _nx, _ny, _tp_dots)
+                _pg_result = process_paging_dialog(
+                    analysis_path, W, H, state,
+                    initial_dlg=(_nav_type, _nx, _ny),
+                    ocr_texts=texts,
+                )
+                return _pg_result, 1.0
 
     return None

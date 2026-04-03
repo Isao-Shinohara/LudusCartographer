@@ -352,10 +352,9 @@ class TestHandleDialogScreen:
         result = handle_dialog_screen(state, None, [], [], False)
         assert result is None
 
-    @patch("tools.ap.handlers.dialog_phase.detect_white_hand_pointer", return_value=None)
     @patch("tools.ap.handlers.dialog_phase.tap_device")
     @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav", return_value=("close", 100, 50))
-    def test_dialog_close_returns_action(self, mock_dlg, mock_tap, mock_white,
+    def test_dialog_close_returns_action(self, mock_dlg, mock_tap,
                                           state, tmp_path):
         from tools.auto_pilot import handle_dialog_screen
         analysis = tmp_path / "test.png"
@@ -366,7 +365,6 @@ class TestHandleDialogScreen:
         from tools.ap.constants import CLOSE_ACTION_WAIT; assert result[1] == CLOSE_ACTION_WAIT
         mock_tap.assert_called_once()
 
-    @patch("tools.ap.handlers.dialog_phase.detect_white_hand_pointer", return_value=None)
     @patch("tools.ap.handlers.dialog_phase.tap_device")
     @patch("tools.ap.handlers.dialog_phase.process_paging_dialog", return_value="DIALOG_CLOSED")
     @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav", return_value=("next", 800, 400))
@@ -374,7 +372,7 @@ class TestHandleDialogScreen:
     @patch("tools.ap.handlers.dialog_phase.count_page_dots", return_value=3)
     @patch("tools.ap.handlers.dialog_phase.detect_dialog", return_value=("next", 800, 400))
     def test_paging_dialog_returns_action(self, mock_detect_dialog, mock_count_dots, mock_detect_corners, mock_dlg,
-                                           mock_paging, mock_tap, mock_white, state, tmp_path):
+                                           mock_paging, mock_tap, state, tmp_path):
         from tools.auto_pilot import handle_dialog_screen
         analysis = tmp_path / "test.png"
         analysis.touch()
@@ -433,10 +431,9 @@ class TestHandleDialogScreen:
         result = handle_dialog_screen(state, analysis, [], [], True)
         assert result is None
 
-    @patch("tools.ap.handlers.dialog_phase.detect_white_hand_pointer", return_value=None)
     @patch("tools.ap.handlers.dialog_phase.adb")
     @patch("tools.ap.handlers.dialog_phase.detect_dialog_frame_and_nav", return_value=("close", 100, 400))
-    def test_escalation_back_at_8_attempts(self, mock_dlg, mock_adb, mock_white,
+    def test_escalation_back_at_8_attempts(self, mock_dlg, mock_adb,
                                             state, tmp_path):
         from tools.auto_pilot import handle_dialog_screen
         state.pre_popup_tap_count = 7  # 次で8
