@@ -786,20 +786,18 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         # MINI_CONV/TutorialWalk は state.current_scene=="MOVIE" ガードで防止済み。
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
-    # 画面安定時のみテンプレートで実在確認 (Result画面等での誤BATTLE継続を防止)
-    # アニメーション中 (dist >= PHASH_THRESHOLD) はテンプレ確認をスキップし BATTLE 維持
+    # 毎回テンプレートでバトル UI の実在を確認する (~10ms)。
+    # current_scene は前回の判定結果に過ぎず、画面遷移後も残留する。
+    # テンプレ未検出なら UNKNOWN を返し OCR で正確にシーンを再判定する。
     if state.current_scene == "BATTLE" and dist < 30:
-        if (dist < PHASH_THRESHOLD
-                and state.battle_rapid_consecutive.count > 0
-                and state.battle_rapid_consecutive.count % 3 == 0):
-            from tools.ap.image_proc import ASSET_MANAGER as _AM_verify
-            _verify_roi = BATTLE_BTN_ROI
-            _v_atk = _AM_verify.match_single("battle_normal_attack", img_path, roi=_verify_roi)
-            _v_skl = _AM_verify.match_single("battle_skill", img_path, roi=_verify_roi)
-            _v_best = max((_v_atk[2] if _v_atk else 0), (_v_skl[2] if _v_skl else 0))
-            if _v_best < 0.70:
-                logger.info("[SCENE_EARLY] BATTLE継続チェック: テンプレ未検出 (best=%.2f) → UNKNOWN", _v_best)
-                return "UNKNOWN"
+        from tools.ap.image_proc import ASSET_MANAGER as _AM_verify
+        _verify_roi = BATTLE_BTN_ROI
+        _v_atk = _AM_verify.match_single("battle_normal_attack", img_path, roi=_verify_roi)
+        _v_skl = _AM_verify.match_single("battle_skill", img_path, roi=_verify_roi)
+        _v_best = max((_v_atk[2] if _v_atk else 0), (_v_skl[2] if _v_skl else 0))
+        if _v_best < 0.70:
+            logger.info("[SCENE_EARLY] BATTLE継続チェック: テンプレ未検出 (best=%.2f) → UNKNOWN", _v_best)
+            return "UNKNOWN"
         return "BATTLE"
 
     # チュートリアル歩行シーン (チェッカー床): BATTLE/MOVIE 判定より先に検出
