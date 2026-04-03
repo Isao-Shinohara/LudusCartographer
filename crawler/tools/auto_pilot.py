@@ -678,8 +678,9 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
     # ── MOVIE 継続: phash が安定するまで即 MOVIE を返す ──
     # 動画再生中 (dist >= 3) はフレームが変化するので MOVIE 維持。
-    # phash が安定 (dist < 3 が 3 回以上) したら動画終了とみなし ADV/BATTLE 再判定を許可。
-    _MOVIE_STABLE_THRESHOLD = 3  # dist < 3 がこの回数続いたら安定とみなす
+    # phash が安定 (dist < 3) したら動画終了とみなし ADV/BATTLE 再判定を許可。
+    # 偽脱出しても OCR 1ループ (~2s) で再判定されるため、即応性を優先する。
+    _MOVIE_STABLE_THRESHOLD = 1  # dist < 3 がこの回数続いたら安定とみなす
     if state.current_scene == "MOVIE":
         if dist >= 16:
             # 大きなフレーム変化 → 本物の動画再生、即 MOVIE 維持
