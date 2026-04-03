@@ -3050,3 +3050,119 @@ _RESULT_NEXT_Y_RATIO = 0.914
 _FORMATION_KWS = ["パーティ", "編成", "キオク", "ポートレイト", "自動編成"]
 
 
+# ═══════════════════════════════════════════════════════════════════
+#  detect_login_bonus_popup — ログインボーナスポップアップ検出
+#
+#  エッジ投影 (Sobel) で画面上の大型矩形の枠線を検出し、
+#  画面占有率 + 背景ぼかし + close_btn テンプレで判定する。
+#  四隅テンプレ / ページドット / OCR に依存しない汎用検出。
+# ═══════════════════════════════════════════════════════════════════
+
+# エッジ投影ピーク検出の最小ピーク強度 (最大値に対する比率)
+_LBP_PEAK_RATIO = 0.25
+# ピーク間の最小距離 (px) — 近接ピークを除外
+_LBP_PEAK_MIN_DIST = 80
+# 検出矩形の最小画面占有率
+_LBP_MIN_SCREEN_RATIO = 0.35
+
+
+def _find_projection_peaks(
+    projection: np.ndarray, min_ratio: float, min_dist: int,
+) -> list[int]:
+    """1次元投影からピーク位置を返す (scipy 不要)。"""
+    _max_val = projection.max()
+    _thresh = _max_val * min_ratio
+    # 単純ピーク検出: 前後より大きい & 閾値以上
+    _peaks: list[int] = []
+    for i in range(1, len(projection) - 1):
+        if (projection[i] > projection[i - 1]
+                and projection[i] >= projection[i + 1]
+                and projection[i] >= _thresh):
+            _peaks.append(i)
+    # 近接ピーク除去: 強度が高い方を残す
+    if not _peaks:
+        return _peaks
+    _filtered: list[int] = [_peaks[0]]
+    for p in _peaks[1:]:
+        if p - _filtered[-1] < min_dist:
+            if projection[p] > projection[_filtered[-1]]:
+                _filtered[-1] = p
+        else:
+            _filtered.append(p)
+    return _filtered
+
+
+def detect_login_bonus_popup(
+    img_path: Path,
+) -> Optional[dict]:
+    """ログインボーナスポップアップを検出する。
+
+    Sobel エッジ投影で大型矩形の枠線を検出し、
+    画面占有率 ≥ 35% + 背景ぼかし + close_btn テンプレの3条件で判定。
+
+    Returns:
+      {"rect": (left, top, right, bottom), "screen_ratio": float,
+       "close_btn": (cx, cy, score) | None}
+      or None (未検出)
+    """
+    _img = imread_cached(img_path)
+    if _img is None:
+        return None
+    _H, _W = _img.shape[:2]
+    _gray = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY) if len(_img.shape) == 3 else _img
+
+    # ── Sobel エッジ投影 ──
+    _sobel_x = cv2.Sobel(_gray, cv2.CV_64F, 1, 0, ksize=3)
+    _sobel_y = cv2.Sobel(_gray, cv2.CV_64F, 0, 1, ksize=3)
+    _vert_proj = np.mean(np.abs(_sobel_x), axis=0)   # 垂直エッジ → 左右枠線
+    _horiz_proj = np.mean(np.abs(_sobel_y), axis=1)   # 水平エッジ → 上下枠線
+
+    _v_peaks = _find_projection_peaks(_vert_proj, _LBP_PEAK_RATIO, _LBP_PEAK_MIN_DIST)
+    _h_peaks = _find_projection_peaks(_horiz_proj, _LBP_PEAK_RATIO, _LBP_PEAK_MIN_DIST)
+
+    if len(_v_peaks) < 2 or len(_h_peaks) < 1:
+        return None
+
+    # 最外の左右ピーク = 枠線候補
+    _left = _v_peaks[0]
+    _right = _v_peaks[-1]
+    _top = _h_peaks[0]
+    _bottom = _h_peaks[-1] if len(_h_peaks) >= 2 else _H
+
+    _rect_w = _right - _left
+    _rect_h = _bottom - _top
+    if _rect_w <= 0 or _rect_h <= 0:
+        return None
+
+    _screen_ratio = (_rect_w * _rect_h) / (_W * _H)
+
+    if _screen_ratio < _LBP_MIN_SCREEN_RATIO:
+        logger.debug("[LOGIN_BONUS] 面積比 %.1f%% < %.0f%% → 棄却",
+                     _screen_ratio * 100, _LBP_MIN_SCREEN_RATIO * 100)
+        return None
+
+    # ── 背景ぼかし確認 ──
+    if not detect_background_blur(_img, _H, _W):
+        logger.debug("[LOGIN_BONUS] 背景ぼかし未検出 → 棄却")
+        return None
+
+    # ── close_btn テンプレマッチ ──
+    _close_match = ASSET_MANAGER.match_single("close_btn", img_path)
+    _close_info = None
+    if _close_match and _close_match[2] >= 0.50:
+        _close_info = (_close_match[0], _close_match[1], _close_match[2])
+
+    logger.info(
+        "[LOGIN_BONUS] 検出: rect=(%d,%d)-(%d,%d) 面積比=%.1f%% close_btn=%s",
+        _left, _top, _right, _bottom,
+        _screen_ratio * 100,
+        f"({_close_info[0]},{_close_info[1]} score={_close_info[2]:.2f})" if _close_info else "なし",
+    )
+
+    return {
+        "rect": (_left, _top, _right, _bottom),
+        "screen_ratio": _screen_ratio,
+        "close_btn": _close_info,
+    }
+
+

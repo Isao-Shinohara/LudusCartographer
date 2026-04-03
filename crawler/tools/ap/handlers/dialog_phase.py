@@ -34,6 +34,7 @@ from tools.ap.image_proc import (
     detect_dialog_frame_and_nav, process_paging_dialog,
     count_page_dots, detect_dialog, detect_dialog_nav, detect_dialog_corners,
     detect_popup_home_nav,
+    detect_login_bonus_popup,
     ASSET_MANAGER, prepare_analysis_image,
     roi_to_device, smart_tap_button,
     detect_background_blur, imread_cached,
@@ -435,6 +436,22 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
             state, analysis_path, ocr_count=len(ocr))
         if _popup_home_result is not None:
             return _popup_home_result
+
+    # ── 【ログインボーナスポップアップ】エッジ投影ベース検出 → × で閉じ ──────
+    if analysis_path is not None and not _is_battle_ctx:
+        _lbp = detect_login_bonus_popup(analysis_path)
+        if _lbp is not None:
+            _close_info = _lbp["close_btn"]
+            if _close_info:
+                _lbx, _lby = _close_info[0], _close_info[1]
+                logger.info(">>> 【ログインボーナスポップアップ】 × テンプレ(%.2f) (%d,%d) タップ",
+                            _close_info[2], _lbx, _lby)
+            else:
+                _lbx = W - _CLOSE_BTN_OFFSET
+                _lby = _CLOSE_BTN_OFFSET
+                logger.info(">>> 【ログインボーナスポップアップ】 × 固定座標 (%d,%d) タップ", _lbx, _lby)
+            tap_device(_lbx, _lby, state, "LOGIN_BONUS_CLOSE")
+            return "LOGIN_BONUS_CLOSE", 1.0
 
     # ── 【お知らせ一覧画面】タブ3つ全て検出 → × で閉じ ──────────
     _notice_list_tabs = ["お知らせ", "情報", "不具合"]
