@@ -1460,8 +1460,8 @@ def detect_dialog_corners(img_path: Path) -> bool:
         else:
             _tl_s = f"TL={_corners['tl'][2]:.3f}" if "tl" in _corners else f"TL=未検出({_scores.get('tl', 0):.3f})"
             _bl_s = f"BL={_corners['bl'][2]:.3f}" if "bl" in _corners else f"BL=未検出({_scores.get('bl', 0):.3f})"
-            logger.info("[DialogCorners] %s %s (閾値=%.2f) img=%dx%d",
-                        _tl_s, _bl_s, _CORNER_THRESHOLD, _W, _H)
+            logger.debug("[DialogCorners] %s %s (閾値=%.2f) img=%dx%d",
+                         _tl_s, _bl_s, _CORNER_THRESHOLD, _W, _H)
         return False
     except Exception:
         return False
