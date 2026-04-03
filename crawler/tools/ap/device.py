@@ -461,14 +461,21 @@ def _get_scrcpy_window_size() -> tuple[int, int]:
     return 0, 0
 
 
-def manage_scrcpy() -> Optional[subprocess.Popen]:
-    """scrcpy を規定オプションで起動。ウィンドウサイズが不足している場合のみ再起動。"""
+def manage_scrcpy(force_restart: bool = False) -> Optional[subprocess.Popen]:
+    """scrcpy を規定オプションで起動。ウィンドウサイズが不足している場合のみ再起動。
+
+    Args:
+        force_restart: True なら既存ウィンドウがあっても再起動する
+                       (--turn-screen-off 等のオプション変更を反映するため)
+    """
     # 現在の scrcpy ウィンドウサイズで判定 (コマンドライン引数は見ない)
     _MIN_W = 720
     win_w, win_h = _get_scrcpy_window_size()
-    if win_w >= _MIN_W:
+    if win_w >= _MIN_W and not force_restart:
         logger.info("[SCRCPY] 既存ウィンドウ検出 (%dx%d >= min %d) — 継続", win_w, win_h, _MIN_W)
         return None
+    if force_restart and win_w > 0:
+        logger.info("[SCRCPY] オプション変更のため再起動 (%dx%d)", win_w, win_h)
 
     # scrcpy ウィンドウが見つからない or サイズ不足 → 既存プロセスを Kill して再起動
     if win_w > 0:

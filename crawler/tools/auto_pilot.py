@@ -2218,7 +2218,8 @@ def main():
         set_scrcpy_screen_off(True)
 
     # ─── scrcpy 早期起動: fresh-install 含めた全工程を画面で確認可能にする ───
-    _scrcpy_proc = manage_scrcpy()
+    # -s 指定時は --turn-screen-off を反映するため既存ウィンドウがあっても再起動する
+    _scrcpy_proc = manage_scrcpy(force_restart=args.screen_off)
     if _scrcpy_proc is not None:
         logger.info("[SCRCPY] ウィンドウ生成待ち (3秒)...")
         time.sleep(3)
