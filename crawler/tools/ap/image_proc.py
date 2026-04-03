@@ -1223,6 +1223,8 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
                 # アスペクト比の差分で補正する。
                 # 例: Xperia 2:1 → (43,43), Galaxy 2.11:1 → (40,43)
                 _OTHER_THRESHOLD = 0.20
+                _OTHER_THRESHOLD_RELAXED = 0.30  # 2色支配時の緩和閾値
+                _HIST_TOP2_THRESHOLD = 0.70      # ヒストグラム2色支配率の閾値
                 _H_r, _W_r = resized.shape[:2]
                 _aspect_src = _W_r / _H_r if _H_r > 0 else 2.0
                 _aspect_dst = ANALYSIS_W / ANALYSIS_H
@@ -1251,10 +1253,34 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
                 known_pixels = np.count_nonzero(beige_or_dark_shaped)
                 other_pixels = _shape_no_char_px - known_pixels
                 other_ratio = other_pixels / _shape_no_char_px
-                if other_ratio > _OTHER_THRESHOLD:
+
+                # ── 2色支配判定: ヒストグラム bin=32 の top2 率 ──
+                # 吹き出しは背景色+文字色の2色構成のため、色に依存せず判定可能。
+                # マスク適用済みグレースケールで計算。
+                _masked_gray = roi_gray.copy()
+                _masked_gray[_shape_no_char == 0] = 0
+                _valid_pixels = roi_gray[_shape_no_char > 0]
+                _hist_top2 = 0.0
+                if len(_valid_pixels) > 0:
+                    _quantized = (_valid_pixels // 32) * 32
+                    _vals, _counts = np.unique(_quantized, return_counts=True)
+                    _sorted_idx = np.argsort(-_counts)
+                    _top2_cnt = _counts[_sorted_idx[0]]
+                    if len(_sorted_idx) > 1:
+                        _top2_cnt += _counts[_sorted_idx[1]]
+                    _hist_top2 = _top2_cnt / len(_valid_pixels)
+
+                # 判定: ベージュ+黒と2色支配の両方を加味
+                # (1) other_ratio <= 20%: 従来通り通過
+                # (2) other_ratio <= 30% かつ hist_top2 >= 70%: 2色支配で緩和通過
+                # (3) それ以外: 棄却
+                _effective_thresh = _OTHER_THRESHOLD
+                if _hist_top2 >= _HIST_TOP2_THRESHOLD:
+                    _effective_thresh = _OTHER_THRESHOLD_RELAXED
+                if other_ratio > _effective_thresh:
                     logger.debug(
-                        "[MINI_CONV] %s: 異色棄却 other=%.1f%% (%d/%d)",
-                        side, other_ratio * 100, other_pixels, _shape_no_char_px)
+                        "[MINI_CONV] %s: 異色棄却 other=%.1f%% hist_top2=%.1f%% thresh=%.0f%%",
+                        side, other_ratio * 100, _hist_top2 * 100, _effective_thresh * 100)
                     continue
 
                 cx = x0 + bubble_w // 2
