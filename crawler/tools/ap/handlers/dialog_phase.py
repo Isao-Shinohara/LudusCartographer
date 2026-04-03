@@ -306,15 +306,22 @@ def handle_dialog_screen(
                 # 背景ぼかしなし + ドット検出: 常にダイアログ四隅テンプレで確認。
                 # バトルUIアイコンがドットに見えるケースが多いため、
                 # _in_battle に関わらず四隅テンプレが無ければスキップする。
-                _has_corner = detect_dialog(analysis_path, W, H, require_blur=False)
+                _has_corner = detect_dialog_corners(analysis_path)
+                _has_dialog_full = detect_dialog(analysis_path, W, H, require_blur=False) if _has_corner else None
                 if not _has_corner:
                     logger.info(
                         "[DIALOG_BLUR_GUARD] ドット=%d だが四隅テンプレなし → PAGING スキップ (battle=%s)",
                         _guard_dots, _in_battle)
                     return None
-                logger.info(
-                    "[DIALOG_BLUR_GUARD] ドット=%d + 四隅テンプレあり → PAGING 続行 (battle=%s)",
-                    _guard_dots, _in_battle)
+                if not _has_dialog_full:
+                    logger.info(
+                        "[DIALOG_BLUR_GUARD] ドット=%d + 四隅テンプレあり + ▷/×未検出 → PAGING 続行 (battle=%s)",
+                        _guard_dots, _in_battle)
+                else:
+                    _nav_type = _has_dialog_full[0] if isinstance(_has_dialog_full, tuple) else "?"
+                    logger.info(
+                        "[DIALOG_BLUR_GUARD] ドット=%d + 四隅テンプレあり + ▷/×=%s → PAGING 続行 (battle=%s)",
+                        _guard_dots, _nav_type, _in_battle)
             else:
                 logger.info(
                     "[DIALOG_BLUR_GUARD] 背景ぼかしなし+ドット=%d+▷/×=%s → ダイアログではない、PAGING スキップ",
