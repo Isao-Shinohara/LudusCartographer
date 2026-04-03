@@ -1070,7 +1070,8 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
 
 def detect_mini_conversation(img_path: Path, ocr_items=None,
                              min_bubble_area: int = 3000,
-                             upper_ratio: float = 0.35):
+                             upper_ratio: float = 0.35,
+                             skip_ocr_verify: bool = False):
     """
     ミニ会話シーン（上部の吹き出し）を検出しアクティブ話者の中心座標を返す。
 
@@ -1299,30 +1300,31 @@ def detect_mini_conversation(img_path: Path, ocr_items=None,
 
         best = max(candidates, key=lambda c: c["ratio"])
 
-        # OCR 検証: 吹き出しのY範囲 + 左右半分にテキストが存在するか (必須)
-        # 吹き出し幅はセリフ長で可変するため、X方向は左半分/右半分のみで判定
-        if ocr_items is None:
-            logger.debug("[MINI_CONV] ocr_items=None → テキスト検証不可、スキップ")
-            return None
-        # OCR座標を ANALYSIS_W x ANALYSIS_H にスケーリング (Retina等の高解像度対応)
-        # resized.shape を使う (imread_cached のキャッシュ旧サイズ問題を回避)
-        _H_r, _W_r = resized.shape[:2]
-        _sx = ANALYSIS_W / _W_r if _W_r > 0 else 1.0
-        _sy = ANALYSIS_H / _H_r if _H_r > 0 else 1.0
-        by1, by2 = best["y"], best["y"] + best["h"]
-        if best["side"] == "left":
-            bx1, bx2 = 0, ANALYSIS_W // 2
-        else:
-            bx1, bx2 = ANALYSIS_W // 2, ANALYSIS_W
-        has_text_inside = any(
-            bx1 <= r["center"][0] * _sx <= bx2 and by1 <= r["center"][1] * _sy <= by2
-            for r in ocr_items
-            if r["text"] not in ("AUTO", ">>", ">|", "D1", "×")
-        )
-        if not has_text_inside:
-            logger.debug("[MINI_CONV] %s: テキスト未検出 (bbox=(%d,%d)-(%d,%d) scale=%.2f,%.2f)",
-                         best["side"], bx1, by1, bx2, by2, _sx, _sy)
-            return None
+        # OCR 検証: 吹き出しのY範囲 + 左右半分にテキストが存在するか
+        # skip_ocr_verify=True の場合はスキップ (rapid パスでは直前ループで検証済み)
+        if not skip_ocr_verify:
+            if ocr_items is None:
+                logger.debug("[MINI_CONV] ocr_items=None → テキスト検証不可、スキップ")
+                return None
+            # OCR座標を ANALYSIS_W x ANALYSIS_H にスケーリング (Retina等の高解像度対応)
+            # resized.shape を使う (imread_cached のキャッシュ旧サイズ問題を回避)
+            _H_r, _W_r = resized.shape[:2]
+            _sx = ANALYSIS_W / _W_r if _W_r > 0 else 1.0
+            _sy = ANALYSIS_H / _H_r if _H_r > 0 else 1.0
+            by1, by2 = best["y"], best["y"] + best["h"]
+            if best["side"] == "left":
+                bx1, bx2 = 0, ANALYSIS_W // 2
+            else:
+                bx1, bx2 = ANALYSIS_W // 2, ANALYSIS_W
+            has_text_inside = any(
+                bx1 <= r["center"][0] * _sx <= bx2 and by1 <= r["center"][1] * _sy <= by2
+                for r in ocr_items
+                if r["text"] not in ("AUTO", ">>", ">|", "D1", "×")
+            )
+            if not has_text_inside:
+                logger.debug("[MINI_CONV] %s: テキスト未検出 (bbox=(%d,%d)-(%d,%d) scale=%.2f,%.2f)",
+                             best["side"], bx1, by1, bx2, by2, _sx, _sy)
+                return None
 
         logger.debug("[MINI_CONV] bubble (%d,%d) side=%s ratio=%.2f",
                      best["cx"], best["cy"], best["side"], best["ratio"])

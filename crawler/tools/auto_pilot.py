@@ -2090,7 +2090,7 @@ def _handle_rapid_path(
             and state.last_action != "MOVIE_WAIT"
             and getattr(state, "_from_movie_ttl", 0) <= 0
             and _early_analysis is not None):
-        _mc_rapid = detect_mini_conversation(_early_analysis)
+        _mc_rapid = detect_mini_conversation(_early_analysis, skip_ocr_verify=True)
         _mc_prev = getattr(state, "_mini_conv_rapid_pos", (0, 0))
         if _mc_rapid is not None:
             _mc_rx, _mc_ry, _mc_rs = _mc_rapid
