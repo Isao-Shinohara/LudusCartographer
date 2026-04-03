@@ -1192,7 +1192,7 @@ class TestTitleScreenDetection:
 
     @patch("tools.ap.handlers.fallback.tap_device")
     def test_home_reached_blocks(self, mock_tap, state, tmp_path):
-        """home_reached=True → TAP TO START でもタイトル判定しない。"""
+        """home_reached=True でも TAP TO START があればタップする。"""
         import cv2
         import numpy as np
         from tools.auto_pilot import detect_and_act
@@ -1203,7 +1203,7 @@ class TestTitleScreenDetection:
             {"text": "TAP TO START", "center": (760, 600), "confidence": 0.95},
         ]
         action, wait = detect_and_act(ocr, state, analysis_path=img)
-        assert action != "TITLE_TAP"
+        assert action == "TITLE_TAP"
 
 
 # ─── Fix #5: ポートレート検出 ──────────────────────────────────

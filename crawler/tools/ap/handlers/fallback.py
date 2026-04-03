@@ -338,13 +338,9 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
 
     # ─── タイトル画面 (TAP TO START) ───
     _is_tos_screen = "利用規約" in joined or "同意してゲームを始める" in joined
-    _title_kws_game = ["魔法", "少女", "まどか", "マギカ", "まどかハ", "MADOKA", "MAGICA", "MAGIA"]
-    _is_title_screen = (
-        not state.home_reached and not _is_tos_screen
-        and any(kw in joined for kw in ["TAP TO START", "TAPTOSTART", "TAP T0 START",
-                                         "TAPTO START", "TAP TOSTART"])
-        and any(kw in joined for kw in _title_kws_game)
-    )
+    _has_tap_to_start = any(kw in joined for kw in ["TAP TO START", "TAPTOSTART", "TAP T0 START",
+                                                      "TAPTO START", "TAP TOSTART"])
+    _is_title_screen = not _is_tos_screen and _has_tap_to_start
     if _is_title_screen:
         logger.info("  タイトル画面検出 → TAP TO START タップ")
         log_milestone(state, "TITLE_TAP")
