@@ -1985,7 +1985,9 @@ def _detect_popup_corners(
       1. BL を左下象限、BR を右下象限で検出 (信頼度が高い)
       2. TR を BR.x ± PAD の縦帯 (上半分) で検出
       3. TL を BL.x ± PAD かつ TR.y ± PAD の狭い ROI で検出
-    長方形整合性チェックを通過した場合のみ結果を返す。
+
+    2隅以上が閾値超え + 長方形整合性チェック通過で結果を返す。
+    閾値未満のコーナーもベスト位置を記録し、対辺からの推定座標で補完する。
 
     Returns: ((tl_cx, tl_cy, tl_score), (tr_cx, tr_cy, tr_score),
               (bl_cx, bl_cy, bl_score), (br_cx, br_cy, br_score)) or None
@@ -1999,25 +2001,25 @@ def _detect_popup_corners(
     _H, _W = img_gray.shape
     _PAD = _POPUP_CORNER_ROI_PAD
     _THRESH = _POPUP_CORNER_MATCH_THRESH
+    _MIN_CORNERS = 2  # 最低限必要な閾値超えコーナー数
 
-    def _match(tpl, mask, roi):
+    def _match_best(tpl, mask, roi):
+        """閾値に関係なくベストマッチを返す。"""
         if roi.shape[0] < _th or roi.shape[1] < _tw:
             return None
         try:
             _res = cv2.matchTemplate(roi, tpl, cv2.TM_CCOEFF_NORMED, mask=mask)
             _res = np.where(np.isfinite(_res), _res, -1)
             _, _s, _, _loc = cv2.minMaxLoc(_res)
-            if _s < _THRESH:
-                return None
             return (_loc[0], _loc[1], _s)
         except Exception:
             return None
 
     # ── Step 1: BL (左下象限) ──
     _roi_bl = img_gray[_H // 2:, :_W // 2]
-    _m_bl = _match(_tpl_bl, _mask_bl, _roi_bl)
+    _m_bl = _match_best(_tpl_bl, _mask_bl, _roi_bl)
     if _m_bl is None:
-        logger.debug("[POPUP_CORNER] BL 未検出")
+        logger.debug("[POPUP_CORNER] BL マッチ失敗")
         return None
     _bl_cx = _m_bl[0] + _tw // 2
     _bl_cy = _H // 2 + _m_bl[1] + _th // 2
@@ -2025,9 +2027,9 @@ def _detect_popup_corners(
 
     # ── Step 2: BR (右下象限) ──
     _roi_br = img_gray[_H // 2:, _W // 2:]
-    _m_br = _match(_tpl_br, _mask_br, _roi_br)
+    _m_br = _match_best(_tpl_br, _mask_br, _roi_br)
     if _m_br is None:
-        logger.debug("[POPUP_CORNER] BR 未検出")
+        logger.debug("[POPUP_CORNER] BR マッチ失敗")
         return None
     _br_cx = _W // 2 + _m_br[0] + _tw // 2
     _br_cy = _H // 2 + _m_br[1] + _th // 2
@@ -2037,9 +2039,9 @@ def _detect_popup_corners(
     _tr_x1 = max(0, _br_cx - _tw // 2 - _PAD)
     _tr_x2 = min(_W, _br_cx + _tw // 2 + _PAD)
     _roi_tr = img_gray[:_H // 2, _tr_x1:_tr_x2]
-    _m_tr = _match(_tpl_tr, _mask_tr, _roi_tr)
+    _m_tr = _match_best(_tpl_tr, _mask_tr, _roi_tr)
     if _m_tr is None:
-        logger.debug("[POPUP_CORNER] TR 未検出 (ROI x=%d-%d)", _tr_x1, _tr_x2)
+        logger.debug("[POPUP_CORNER] TR マッチ失敗 (ROI x=%d-%d)", _tr_x1, _tr_x2)
         return None
     _tr_cx = _tr_x1 + _m_tr[0] + _tw // 2
     _tr_cy = _m_tr[1] + _th // 2
@@ -2051,14 +2053,23 @@ def _detect_popup_corners(
     _tl_y1 = max(0, _tr_cy - _th // 2 - _PAD)
     _tl_y2 = min(_H, _tr_cy + _th // 2 + _PAD)
     _roi_tl = img_gray[_tl_y1:_tl_y2, _tl_x1:_tl_x2]
-    _m_tl = _match(_tpl_tl, _mask_tl, _roi_tl)
+    _m_tl = _match_best(_tpl_tl, _mask_tl, _roi_tl)
     if _m_tl is None:
-        logger.debug("[POPUP_CORNER] TL 未検出 (ROI x=%d-%d, y=%d-%d)",
+        logger.debug("[POPUP_CORNER] TL マッチ失敗 (ROI x=%d-%d, y=%d-%d)",
                      _tl_x1, _tl_x2, _tl_y1, _tl_y2)
         return None
     _tl_cx = _tl_x1 + _m_tl[0] + _tw // 2
     _tl_cy = _tl_y1 + _m_tl[1] + _th // 2
     _tl = (_tl_cx, _tl_cy, _m_tl[2])
+
+    # ── 閾値超えコーナー数チェック (2隅以上必須) ──
+    _corners = {"TL": _tl, "TR": _tr, "BL": _bl, "BR": _br}
+    _pass_count = sum(1 for c in _corners.values() if c[2] >= _THRESH)
+    if _pass_count < _MIN_CORNERS:
+        _scores = " ".join(f"{k}={v[2]:.3f}" for k, v in _corners.items())
+        logger.debug("[POPUP_CORNER] 閾値超え %d/%d < %d → 棄却 (%s)",
+                     _pass_count, len(_corners), _MIN_CORNERS, _scores)
+        return None
 
     # ── 長方形整合性チェック ──
     _dy_top = abs(_tl[1] - _tr[1])
@@ -2093,6 +2104,12 @@ def _detect_popup_corners(
         logger.debug("[POPUP_CORNER] 高さ=%.0f (範囲外 %d-%d) → 棄却",
                      _avg_height, _POPUP_CORNER_MIN_HEIGHT, _POPUP_CORNER_MAX_HEIGHT)
         return None
+
+    if _pass_count < 4:
+        _scores = " ".join(f"{k}={v[2]:.3f}{'✓' if v[2] >= _THRESH else '✗'}"
+                           for k, v in _corners.items())
+        logger.info("[POPUP_CORNER] %d/4隅閾値超え + 長方形整合OK → 通過 (%s)",
+                    _pass_count, _scores)
 
     return (_tl, _tr, _bl, _br)
 
