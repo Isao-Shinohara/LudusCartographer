@@ -1433,6 +1433,7 @@ def detect_dialog_corners(img_path: Path) -> bool:
         # BL: 専用テンプレ。なければ TL の上下反転をフォールバック
         _tpl_bl = imread_cached(_DIALOG_CORNER_BL) if _DIALOG_CORNER_BL.exists() else cv2.flip(_tpl_tl, 0)
         _corners = {}
+        _scores = {}  # 閾値未満のスコアも記録
         for _key, _tpl in (("tl", _tpl_tl), ("bl", _tpl_bl)):
             if _key == "tl":
                 _roi = img[: _H // 2, : _W // 2]
@@ -1445,21 +1446,22 @@ def detect_dialog_corners(img_path: Path) -> bool:
                 continue
             _r = cv2.matchTemplate(_roi, _tpl, cv2.TM_CCOEFF_NORMED)
             _, _mv, _, _ml = cv2.minMaxLoc(_r)
+            _scores[_key] = _mv
             if _mv >= _CORNER_THRESHOLD:
                 _corners[_key] = (_ml[0], _oy + _ml[1], _mv)
         if "tl" in _corners and "bl" in _corners:
             _dx = abs(_corners["tl"][0] - _corners["bl"][0])
             if _dx <= _X_TOLERANCE:
                 return True
-            logger.debug("[DialogCorners] TL(%d,%d,%.3f) BL(%d,%d,%.3f) X差=%d > %d → 棄却",
-                         _corners["tl"][0], _corners["tl"][1], _corners["tl"][2],
-                         _corners["bl"][0], _corners["bl"][1], _corners["bl"][2],
-                         _dx, _X_TOLERANCE)
+            logger.info("[DialogCorners] TL(%d,%d,%.3f) BL(%d,%d,%.3f) X差=%d > %d → 棄却",
+                        _corners["tl"][0], _corners["tl"][1], _corners["tl"][2],
+                        _corners["bl"][0], _corners["bl"][1], _corners["bl"][2],
+                        _dx, _X_TOLERANCE)
         else:
-            _tl_s = f"TL={_corners['tl'][2]:.3f}" if "tl" in _corners else "TL=未検出"
-            _bl_s = f"BL={_corners['bl'][2]:.3f}" if "bl" in _corners else "BL=未検出"
-            logger.debug("[DialogCorners] %s %s (閾値=%.2f) img=%dx%d",
-                         _tl_s, _bl_s, _CORNER_THRESHOLD, _W, _H)
+            _tl_s = f"TL={_corners['tl'][2]:.3f}" if "tl" in _corners else f"TL=未検出({_scores.get('tl', 0):.3f})"
+            _bl_s = f"BL={_corners['bl'][2]:.3f}" if "bl" in _corners else f"BL=未検出({_scores.get('bl', 0):.3f})"
+            logger.info("[DialogCorners] %s %s (閾値=%.2f) img=%dx%d",
+                        _tl_s, _bl_s, _CORNER_THRESHOLD, _W, _H)
         return False
     except Exception:
         return False
