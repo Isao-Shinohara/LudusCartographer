@@ -2223,18 +2223,17 @@ def main():
         logger.info("[SCRCPY] ウィンドウ生成待ち (3秒)...")
         time.sleep(3)
 
-    # ─── -s: スクリーンがオンならオフにする ───
+    # ─── -s: 端末画面がオンなら画面オフにする ───
     # scrcpy 既存継続の場合 --turn-screen-off が適用されないため、
-    # ADB でスクリーン状態を確認し、オンならオフにする。
+    # ADB で端末の画面状態を確認し、オンならオフにする。
     if args.screen_off:
-        _screen_state = adb("shell dumpsys display | grep mScreenState")
-        logger.info("[SCREEN_OFF] mScreenState: %s", _screen_state.strip())
+        _screen_state = adb("shell dumpsys power | grep 'Display Power'")
         if "ON" in _screen_state.upper():
-            logger.info("[SCREEN_OFF] スクリーンがオン → オフにします")
+            logger.info("[SCREEN_OFF] 端末画面がオン → オフにします")
             adb("shell input keyevent KEYCODE_POWER")
             time.sleep(0.5)
         else:
-            logger.info("[SCREEN_OFF] スクリーンは既にオフ")
+            logger.info("[SCREEN_OFF] 端末画面は既にオフ")
 
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
     if args.reinstall:
