@@ -1760,13 +1760,28 @@ def count_page_dots(img_or_path, H: int = 720, W: int = 1520) -> int:
         return 0
 
     # Y 軸整列フィルタ: 同一行 (Y差 ≤ _DOT_Y_TOLERANCE) の最大グループ
-    _best_count = 0
+    _best_row: list = []
     for _ref_y in set(d[1] for d in _kept):
         _row = [d for d in _kept if abs(d[1] - _ref_y) <= _DOT_Y_TOLERANCE]
-        if len(_row) > _best_count:
-            _best_count = len(_row)
+        if len(_row) > len(_best_row):
+            _best_row = _row
 
-    return _best_count
+    if len(_best_row) < 2:
+        return len(_best_row)
+
+    # 等間隔補完: 薄いドット (アクティブ直後等) がテンプレマッチで検出漏れするため、
+    # 検出済みドットの間隔中央値を基準に、大きなギャップに欠損ドットを補間する。
+    _xs = sorted(d[0] for d in _best_row)
+    _gaps = [_xs[i] - _xs[i - 1] for i in range(1, len(_xs))]
+    _median_gap = float(np.median(_gaps))
+    if _median_gap < 5:
+        return len(_best_row)
+    _total = 1  # 先頭ドット分
+    for _g in _gaps:
+        _n_dots_in_gap = round(_g / _median_gap)
+        _total += max(1, _n_dots_in_gap)
+
+    return _total
 
 
 def _detect_page_dots(img, H: int, W: int) -> bool:
