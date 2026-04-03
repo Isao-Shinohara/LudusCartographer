@@ -2181,11 +2181,16 @@ def _match_popup_close(img_gray: np.ndarray) -> float:
 def detect_popup_home_nav(
     img_path: Path, W: int = ANALYSIS_W, H: int = ANALYSIS_H,
     threshold: float = 0.75,
+    prefer_close: bool = False,
 ) -> Optional[tuple[str, int, int]]:
     """ホームポップアップの ▷(次へ) または ×(閉じる) ボタンを検出する。
 
     ▷ 検出は ROI (右側70%〜, 縦中央25%〜75%) + light/dark 2テンプレで行う。
     × 検出は全画面で行う (最終ページでは × がポップアップ右上に出現)。
+
+    Args:
+        prefer_close: True なら × を先に検出 (最終ページ用)。
+                      False なら ▷ を先に検出 (ページ送り中)。
 
     Returns: ("next", cx, cy) | ("close", cx, cy) | None
     """
@@ -2195,51 +2200,54 @@ def detect_popup_home_nav(
     _H, _W = img.shape[:2]
     _gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # × ボタン優先 (最終ページで × が出現すると ▷ は消える) — 全画面検索
-    if _POPUP_CLOSE_TEMPLATE.exists():
-        _tpl_c = imread_cached(_POPUP_CLOSE_TEMPLATE)
-        if _tpl_c is not None:
-            _g_c = cv2.cvtColor(_tpl_c, cv2.COLOR_BGR2GRAY)
-            _r_c = cv2.matchTemplate(_gray, _g_c, cv2.TM_CCOEFF_NORMED)
-            _, _mv_c, _, _ml_c = cv2.minMaxLoc(_r_c)
-            if _mv_c >= threshold:
-                _th_c, _tw_c = _g_c.shape[:2]
-                _cx = _ml_c[0] + _tw_c // 2
-                _cy = _ml_c[1] + _th_c // 2
-                logger.debug("[PopupHomeNav] × 検出 (%d,%d) score=%.3f", _cx, _cy, _mv_c)
-                return ("close", _cx, _cy)
-
-    # ▷ ボタン — ROI 制限 (右側70%〜, 縦中央25%〜75%) + light/dark 2テンプレ
-    _rx1, _ry1 = int(_W * 0.70), int(_H * 0.25)
-    _rx2, _ry2 = _W, int(_H * 0.75)
-    _roi = _gray[_ry1:_ry2, _rx1:_rx2]
-    if _roi.size == 0:
+    def _find_close():
+        if _POPUP_CLOSE_TEMPLATE.exists():
+            _tpl_c = imread_cached(_POPUP_CLOSE_TEMPLATE)
+            if _tpl_c is not None:
+                _g_c = cv2.cvtColor(_tpl_c, cv2.COLOR_BGR2GRAY)
+                _r_c = cv2.matchTemplate(_gray, _g_c, cv2.TM_CCOEFF_NORMED)
+                _, _mv_c, _, _ml_c = cv2.minMaxLoc(_r_c)
+                if _mv_c >= threshold:
+                    _th_c, _tw_c = _g_c.shape[:2]
+                    _cx = _ml_c[0] + _tw_c // 2
+                    _cy = _ml_c[1] + _th_c // 2
+                    logger.debug("[PopupHomeNav] × 検出 (%d,%d) score=%.3f", _cx, _cy, _mv_c)
+                    return ("close", _cx, _cy)
         return None
 
-    _best_n: Optional[tuple[int, int, float]] = None
-    for _tpl_path in (_POPUP_NEXT_TEMPLATE, _POPUP_NEXT_DARK_TEMPLATE):
-        if not _tpl_path.exists():
-            continue
-        _tpl_n = imread_cached(_tpl_path)
-        if _tpl_n is None:
-            continue
-        _g_n = cv2.cvtColor(_tpl_n, cv2.COLOR_BGR2GRAY)
-        if _roi.shape[0] < _g_n.shape[0] or _roi.shape[1] < _g_n.shape[1]:
-            continue
-        _r_n = cv2.matchTemplate(_roi, _g_n, cv2.TM_CCOEFF_NORMED)
-        _, _mv_n, _, _ml_n = cv2.minMaxLoc(_r_n)
-        if _mv_n >= threshold:
-            _th_n, _tw_n = _g_n.shape[:2]
-            _cx_n = _ml_n[0] + _rx1 + _tw_n // 2
-            _cy_n = _ml_n[1] + _ry1 + _th_n // 2
-            if _best_n is None or _mv_n > _best_n[2]:
-                _best_n = (_cx_n, _cy_n, _mv_n)
+    def _find_next():
+        _rx1, _ry1 = int(_W * 0.70), int(_H * 0.25)
+        _rx2, _ry2 = _W, int(_H * 0.75)
+        _roi = _gray[_ry1:_ry2, _rx1:_rx2]
+        if _roi.size == 0:
+            return None
+        _best_n = None
+        for _tpl_path in (_POPUP_NEXT_TEMPLATE, _POPUP_NEXT_DARK_TEMPLATE):
+            if not _tpl_path.exists():
+                continue
+            _tpl_n = imread_cached(_tpl_path)
+            if _tpl_n is None:
+                continue
+            _g_n = cv2.cvtColor(_tpl_n, cv2.COLOR_BGR2GRAY)
+            if _roi.shape[0] < _g_n.shape[0] or _roi.shape[1] < _g_n.shape[1]:
+                continue
+            _r_n = cv2.matchTemplate(_roi, _g_n, cv2.TM_CCOEFF_NORMED)
+            _, _mv_n, _, _ml_n = cv2.minMaxLoc(_r_n)
+            if _mv_n >= threshold:
+                _th_n, _tw_n = _g_n.shape[:2]
+                _cx_n = _ml_n[0] + _rx1 + _tw_n // 2
+                _cy_n = _ml_n[1] + _ry1 + _th_n // 2
+                if _best_n is None or _mv_n > _best_n[2]:
+                    _best_n = (_cx_n, _cy_n, _mv_n)
+        if _best_n:
+            logger.debug("[PopupHomeNav] ▷ 検出 (%d,%d) score=%.3f",
+                         _best_n[0], _best_n[1], _best_n[2])
+            return ("next", _best_n[0], _best_n[1])
+        return None
 
-    if _best_n:
-        logger.debug("[PopupHomeNav] ▷ 検出 (%d,%d) score=%.3f", _best_n[0], _best_n[1], _best_n[2])
-        return ("next", _best_n[0], _best_n[1])
-
-    return None
+    if prefer_close:
+        return _find_close() or _find_next()
+    return _find_next() or _find_close()
 
 
 def _find_close_by_asset(analysis_path: Path) -> Optional[tuple]:

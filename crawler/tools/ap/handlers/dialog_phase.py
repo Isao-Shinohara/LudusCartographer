@@ -75,9 +75,9 @@ def handle_popup_home(
     _remaining = max(0, _total_pages - 1)
     logger.info(">>> 【ホームポップアップ】ドット=%d → ▷%d回タップ後×閉じ", _total_pages, _remaining)
 
-    # ▷ を検出してページ送り
+    # ▷ を検出してページ送り (▷ 優先: × より先に検出)
     if _remaining > 0:
-        _nav = detect_popup_home_nav(analysis_path)
+        _nav = detect_popup_home_nav(analysis_path, prefer_close=False)
         if _nav and _nav[0] == "next":
             _nx, _ny = _nav[1], _nav[2]
             for _i in range(_remaining):
@@ -86,13 +86,12 @@ def handle_popup_home(
                 logger.info("[POPUP_HOME] ▷タップ (%d/%d)", _i + 1, _remaining)
                 time.sleep(0.5)
 
-    # 最終ページ → × ボタンを検出して閉じる
+    # 最終ページ → × ボタンを検出して閉じる (× 優先)
     time.sleep(0.3)
-    # 最終ページのスクリーンショットを取得して × を検出
     _ss = take_screenshot()
     if _ss and _ss[0]:
         _close_analysis = prepare_analysis_image(Path(_ss[0]), _ss[1], _ss[2])
-        _close_nav = detect_popup_home_nav(_close_analysis)
+        _close_nav = detect_popup_home_nav(_close_analysis, prefer_close=True)
         if _close_nav and _close_nav[0] == "close":
             _cx, _cy = _close_nav[1], _close_nav[2]
             _dx, _dy = roi_to_device(_cx, _cy, state.game_roi)
