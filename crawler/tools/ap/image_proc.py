@@ -2085,51 +2085,62 @@ def _detect_popup_corners(
 
     # ── 閾値超えコーナー数チェック (2隅以上必須) ──
     _corners = {"TL": _tl, "TR": _tr, "BL": _bl, "BR": _br}
-    _pass_count = sum(1 for c in _corners.values() if c[2] >= _THRESH)
+    _passed = {k: v for k, v in _corners.items() if v[2] >= _THRESH}
+    _pass_count = len(_passed)
     if _pass_count < _MIN_CORNERS:
         _scores = " ".join(f"{k}={v[2]:.3f}" for k, v in _corners.items())
         logger.debug("[POPUP_CORNER] 閾値超え %d/%d < %d → 棄却 (%s)",
                      _pass_count, len(_corners), _MIN_CORNERS, _scores)
         return None
 
-    # ── 長方形整合性チェック ──
-    _dy_top = abs(_tl[1] - _tr[1])
-    _dy_bot = abs(_bl[1] - _br[1])
-    _dx_left = abs(_tl[0] - _bl[0])
-    _dx_right = abs(_tr[0] - _br[0])
-    if _dy_top > _POPUP_CORNER_Y_TOLERANCE:
-        logger.debug("[POPUP_CORNER] 上辺Y差=%d > %d → 棄却", _dy_top, _POPUP_CORNER_Y_TOLERANCE)
-        return None
-    if _dy_bot > _POPUP_CORNER_Y_TOLERANCE:
-        logger.debug("[POPUP_CORNER] 下辺Y差=%d > %d → 棄却", _dy_bot, _POPUP_CORNER_Y_TOLERANCE)
-        return None
-    if _dx_left > _POPUP_CORNER_X_TOLERANCE:
-        logger.debug("[POPUP_CORNER] 左辺X差=%d > %d → 棄却", _dx_left, _POPUP_CORNER_X_TOLERANCE)
-        return None
-    if _dx_right > _POPUP_CORNER_X_TOLERANCE:
-        logger.debug("[POPUP_CORNER] 右辺X差=%d > %d → 棄却", _dx_right, _POPUP_CORNER_X_TOLERANCE)
-        return None
+    # ── 長方形整合性チェック (閾値超えコーナーのみで判定) ──
+    # 低スコアコーナーは位置精度が悪いため、整合性チェックから除外する。
+    # 対辺ペア (上辺TL-TR, 下辺BL-BR, 左辺TL-BL, 右辺TR-BR) のうち
+    # 両方が閾値超えのペアのみチェックする。
+    _pairs = [
+        ("上辺Y", "TL", "TR", lambda a, b: abs(a[1] - b[1]), _POPUP_CORNER_Y_TOLERANCE),
+        ("下辺Y", "BL", "BR", lambda a, b: abs(a[1] - b[1]), _POPUP_CORNER_Y_TOLERANCE),
+        ("左辺X", "TL", "BL", lambda a, b: abs(a[0] - b[0]), _POPUP_CORNER_X_TOLERANCE),
+        ("右辺X", "TR", "BR", lambda a, b: abs(a[0] - b[0]), _POPUP_CORNER_X_TOLERANCE),
+    ]
+    for _label, _k1, _k2, _diff_fn, _tol in _pairs:
+        if _k1 in _passed and _k2 in _passed:
+            _diff = _diff_fn(_corners[_k1], _corners[_k2])
+            if _diff > _tol:
+                logger.debug("[POPUP_CORNER] %s差=%d > %d → 棄却", _label, _diff, _tol)
+                return None
 
-    _width_top = _tr[0] - _tl[0]
-    _width_bot = _br[0] - _bl[0]
-    _avg_width = (_width_top + _width_bot) / 2
-    if _avg_width < _POPUP_CORNER_MIN_WIDTH or _avg_width > _POPUP_CORNER_MAX_WIDTH:
-        logger.debug("[POPUP_CORNER] 幅=%.0f (範囲外 %d-%d) → 棄却",
-                     _avg_width, _POPUP_CORNER_MIN_WIDTH, _POPUP_CORNER_MAX_WIDTH)
-        return None
+    # 幅・高さチェック: 閾値超えペアから算出
+    if "BL" in _passed and "BR" in _passed:
+        _width = _br[0] - _bl[0]
+        if _width < _POPUP_CORNER_MIN_WIDTH or _width > _POPUP_CORNER_MAX_WIDTH:
+            logger.debug("[POPUP_CORNER] 幅=%.0f (範囲外 %d-%d) → 棄却",
+                         _width, _POPUP_CORNER_MIN_WIDTH, _POPUP_CORNER_MAX_WIDTH)
+            return None
+    elif "TL" in _passed and "TR" in _passed:
+        _width = _tr[0] - _tl[0]
+        if _width < _POPUP_CORNER_MIN_WIDTH or _width > _POPUP_CORNER_MAX_WIDTH:
+            logger.debug("[POPUP_CORNER] 幅=%.0f (範囲外 %d-%d) → 棄却",
+                         _width, _POPUP_CORNER_MIN_WIDTH, _POPUP_CORNER_MAX_WIDTH)
+            return None
 
-    _height_left = _bl[1] - _tl[1]
-    _height_right = _br[1] - _tr[1]
-    _avg_height = (_height_left + _height_right) / 2
-    if _avg_height < _POPUP_CORNER_MIN_HEIGHT or _avg_height > _POPUP_CORNER_MAX_HEIGHT:
-        logger.debug("[POPUP_CORNER] 高さ=%.0f (範囲外 %d-%d) → 棄却",
-                     _avg_height, _POPUP_CORNER_MIN_HEIGHT, _POPUP_CORNER_MAX_HEIGHT)
-        return None
+    if "TL" in _passed and "BL" in _passed:
+        _height = _bl[1] - _tl[1]
+        if _height < _POPUP_CORNER_MIN_HEIGHT or _height > _POPUP_CORNER_MAX_HEIGHT:
+            logger.debug("[POPUP_CORNER] 高さ=%.0f (範囲外 %d-%d) → 棄却",
+                         _height, _POPUP_CORNER_MIN_HEIGHT, _POPUP_CORNER_MAX_HEIGHT)
+            return None
+    elif "TR" in _passed and "BR" in _passed:
+        _height = _br[1] - _tr[1]
+        if _height < _POPUP_CORNER_MIN_HEIGHT or _height > _POPUP_CORNER_MAX_HEIGHT:
+            logger.debug("[POPUP_CORNER] 高さ=%.0f (範囲外 %d-%d) → 棄却",
+                         _height, _POPUP_CORNER_MIN_HEIGHT, _POPUP_CORNER_MAX_HEIGHT)
+            return None
 
     if _pass_count < 4:
         _scores = " ".join(f"{k}={v[2]:.3f}{'✓' if v[2] >= _THRESH else '✗'}"
                            for k, v in _corners.items())
-        logger.info("[POPUP_CORNER] %d/4隅閾値超え + 長方形整合OK → 通過 (%s)",
+        logger.info("[POPUP_CORNER] %d/4隅閾値超え + 整合OK → 通過 (%s)",
                     _pass_count, _scores)
 
     return (_tl, _tr, _bl, _br)
