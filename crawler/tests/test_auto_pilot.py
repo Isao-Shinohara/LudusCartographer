@@ -241,7 +241,9 @@ class TestHandleResultScreen:
 
     @patch("tools.ap.handlers.result.watchdog_recover", return_value=True)
     @patch("tools.ap.handlers.result.tap_device")
-    @patch("tools.ap.handlers.result.detect_guide_glow", return_value=[])
+    @patch("tools.ap.handlers.result.detect_guide_glow", return_value=[
+        {"cx": 1000, "cy": 500, "area": 500, "side": "right",
+         "bx": 980, "by": 480, "bw": 40, "bh": 40}])
     def test_freeze_recovery_at_30_taps(self, mock_glow, mock_tap,
                                          mock_watchdog, state, tmp_path):
         from tools.auto_pilot import handle_result_screen

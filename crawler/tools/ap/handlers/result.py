@@ -104,13 +104,10 @@ def handle_result_screen(
                         _rgx, _rgy)
             tap_device(_rgx, _rgy, state, "RESULT_RAPID")
         else:
-            # 右側グローなし → 「次へ」想定位置 (ROI補正付き)
-            _rc_x, _rc_y = roi_to_device(
-                int(W * _RESULT_NEXT_X_RATIO),
-                int(H * _RESULT_NEXT_Y_RATIO), state.game_roi)
-            logger.info("[RESULT_RAPID] no right glow → 次へ想定位置 (%d,%d)",
-                        _rc_x, _rc_y)
-            tap_device(_rc_x, _rc_y, state, "RESULT_RAPID")
+            # 右側グローなし → Result 画面が実在する証拠がない
+            # 画面遷移済みの可能性があるため OCR フルパスで正確に判定する
+            logger.info("[RESULT_RAPID] no right glow → OCR フォールスルー")
+            return None
 
         state.result_rapid_count += 1
         state.result_total_taps += 1
