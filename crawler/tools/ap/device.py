@@ -470,15 +470,28 @@ def manage_scrcpy(force_restart: bool = False) -> Optional[subprocess.Popen]:
     """
     # 現在の scrcpy ウィンドウサイズで判定 (コマンドライン引数は見ない)
     _MIN_W = 720
+    _TITLE_BAR_H = 33  # macOS タイトルバー高さ (概算)
+    _EXPECTED_RATIO = 2.0  # ゲーム描画領域のアスペクト比 (width / height)
+    _RATIO_TOLERANCE = 0.15  # 許容誤差
     win_w, win_h = _get_scrcpy_window_size()
-    if win_w >= _MIN_W and not force_restart:
-        logger.info("[SCRCPY] 既存ウィンドウ検出 (%dx%d >= min %d) — 継続", win_w, win_h, _MIN_W)
-        return None
-    if force_restart and win_w > 0:
+    _need_restart = force_restart
+    if win_w >= _MIN_W and not _need_restart:
+        # アスペクト比チェック: タイトルバーを除いた描画領域が 2:1 ± 許容範囲か
+        _game_h = max(1, win_h - _TITLE_BAR_H)
+        _ratio = win_w / _game_h
+        if abs(_ratio - _EXPECTED_RATIO) > _RATIO_TOLERANCE:
+            logger.info("[SCRCPY] アスペクト比不正 (%dx%d, ratio=%.2f, 期待=%.1f±%.2f) — 再起動",
+                        win_w, win_h, _ratio, _EXPECTED_RATIO, _RATIO_TOLERANCE)
+            _need_restart = True
+        else:
+            logger.info("[SCRCPY] 既存ウィンドウ検出 (%dx%d >= min %d, ratio=%.2f) — 継続",
+                        win_w, win_h, _MIN_W, _ratio)
+            return None
+    if force_restart and win_w > 0 and not _need_restart:
         logger.info("[SCRCPY] オプション変更のため再起動 (%dx%d)", win_w, win_h)
 
-    # scrcpy ウィンドウが見つからない or サイズ不足 → 既存プロセスを Kill して再起動
-    if win_w > 0:
+    # scrcpy ウィンドウが見つからない or サイズ/比率不足 → 既存プロセスを Kill して再起動
+    if win_w > 0 and not force_restart:
         logger.info("[SCRCPY] ウィンドウサイズ不足 (%dx%d < min %d) — 再起動", win_w, win_h, _MIN_W)
     else:
         logger.info("[SCRCPY] ウィンドウ未検出 — 新規起動")
