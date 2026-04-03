@@ -15,7 +15,7 @@ from tools.ap.state import PilotState
 from tools.ap.constants import (
     ANALYSIS_W, ANALYSIS_H,
     BATTLE_WAIT, PHASH_THRESHOLD,
-    _DIALOG_FIRST_KWS, _BATTLE_UI_KWS,
+    _BATTLE_UI_KWS,
 )
 from tools.ap.device import adb, tap_device, swipe_device, take_screenshot
 from tools.ap.helpers import (
@@ -117,10 +117,9 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     # phash監視: スワイプ後2s待機 → 変化なければ再実行 (最大2回)
     # バトルUI（通常攻撃・単体攻撃・WAVE・Turn）が見えるとき はバトル中なのでスキップ
     _is_battle_ui = any(kw in joined for kw in _BATTLE_UI_KWS)
-    _has_dialog_kw = any(kw in joined for kw in _DIALOG_FIRST_KWS)
     from tools.ap.image_proc import count_home_nav_templates
     _is_home_screen = count_home_nav_templates(analysis_path) >= 3 if analysis_path else False
-    if analysis_path is not None and not _is_battle_ui and not ctx.adv_result.is_adv and not _has_dialog_kw and not _is_home_screen and not state.post_download:
+    if analysis_path is not None and not _is_battle_ui and not ctx.adv_result.is_adv and not _is_home_screen and not state.post_download:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:
             _dir, _sx, _fy, _ty, _dur = _gold
@@ -263,8 +262,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             if action == "SWIPE_UP":
                 # 安全ネット: ダイアログKWまたは背景ぼかしがあればポップアップ上のスワイプ誤発火を防止
                 # ただし OCR 0件なら本物のポップアップではない (チェッカー柄スワイプシーン等)
-                _swipe_skip = any(kw in joined for kw in _DIALOG_FIRST_KWS)
-                if not _swipe_skip and analysis_path is not None and len(texts) >= 2:
+                _swipe_skip = False
+                if analysis_path is not None and len(texts) >= 2:
                     _blur_img = imread_cached(analysis_path)
                     if _blur_img is not None:
                         _bH, _bW = _blur_img.shape[:2]

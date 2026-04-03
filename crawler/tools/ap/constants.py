@@ -129,19 +129,6 @@ _SINGLE_ONLY: frozenset = frozenset([
     "footer_home_pmatch", "footer_home_quest", "footer_home_union", "footer_home_shop",
 ])
 
-# ─── ダイアログ・ファースト: 検知キーワード一覧 ───────────────────────────────
-_DIALOG_FIRST_KWS: frozenset = frozenset([
-    # バトル/ロール説明
-    "ロールについて", "ロールは全部", "STEP1", "STEP2", "バトルシステム", "ブレイクし",
-    "ATTACKER", "BREAKER", "BUFFER", "DEBUFFER", "DEFENDER", "HEALER",
-    "アタッカー", "ブレイカー", "バッファー", "デバッファー", "ディフェンダー", "ヒーラー",
-    # パーティ/編成
-    "ポートレイト", "キオクを最大", "ポジションを", "前衛", "後衛",
-    "各キオク", "パーティを組", "チームを組",
-    # マギアボックス/素材
-    "マギアボックス", "最大24時間", "素材が溜", "プレイヤーLv",
-])
-
 # BATTLE 高速パス: OCR 前テンプレートマッチングで使用。
 _BATTLE_UI_KWS: frozenset = frozenset([
     "通常攻撃", "単体攻撃", "单体攻撃",

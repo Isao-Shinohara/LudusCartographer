@@ -16,7 +16,7 @@ from tools.ap.constants import (
     ANALYSIS_W, ANALYSIS_H, BLACKOUT_BRIGHTNESS, ANALYSIS_PATH,
     _GLOW_CENTER_Y_OFFSET, _CHAR_HEAD_X1, _CHAR_HEAD_X2,
     _CHAR_HEAD_Y1, _CHAR_HEAD_Y2, _SINGLE_ONLY, _CRAWLER_ROOT,
-    _DEBUG_SAVE_IMAGES, _DIALOG_FIRST_KWS,
+    _DEBUG_SAVE_IMAGES,
 )
 from lc.utils import compute_phash, phash_distance
 from tools.ap.device import tap_device, take_screenshot
@@ -1571,12 +1571,7 @@ def detect_dialog_frame_and_nav(
             logger.debug("[Dialog×] STEP0: × 検出(%d,%d) だが中央ダイアログ枠なし → 棄却",
                          _close_x_pos[0], _close_x_pos[1])
 
-        # OCR キーワード補助: 枠未検出でもキーワードがあればフォールバック実行
-        _ocr_trigger = False
-        if not _frame_detected and ocr_texts:
-            _joined_ocr = " ".join(ocr_texts)
-            _ocr_trigger = any(kw in _joined_ocr for kw in _DIALOG_FIRST_KWS)
-        if not _frame_detected and not _ocr_trigger:
+        if not _frame_detected:
             return None                           # ダイアログ未検出
 
         # ──────────────────────────────────────────────────────────────
@@ -3178,17 +3173,22 @@ def detect_login_bonus_popup(
         logger.debug("[LOGIN_BONUS] 背景ぼかし未検出 → 棄却")
         return None
 
-    # ── close_btn テンプレマッチ ──
+    # ── close_btn テンプレマッチ (必須) ──
     _close_match = ASSET_MANAGER.match_single("close_btn", img_path)
     _close_info = None
     if _close_match and _close_match[2] >= 0.50:
         _close_info = (_close_match[0], _close_match[1], _close_match[2])
 
+    if _close_info is None:
+        logger.debug("[LOGIN_BONUS] close_btn 未検出 → 棄却 (面積比=%.1f%%)",
+                     _screen_ratio * 100)
+        return None
+
     logger.info(
-        "[LOGIN_BONUS] 検出: rect=(%d,%d)-(%d,%d) 面積比=%.1f%% close_btn=%s",
+        "[LOGIN_BONUS] 検出: rect=(%d,%d)-(%d,%d) 面積比=%.1f%% close_btn=(%d,%d score=%.2f)",
         _left, _top, _right, _bottom,
         _screen_ratio * 100,
-        f"({_close_info[0]},{_close_info[1]} score={_close_info[2]:.2f})" if _close_info else "なし",
+        _close_info[0], _close_info[1], _close_info[2],
     )
 
     return {
