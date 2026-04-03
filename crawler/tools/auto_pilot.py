@@ -2224,6 +2224,14 @@ def main():
         logger.info("[SCRCPY] ウィンドウ生成待ち (3秒)...")
         time.sleep(3)
 
+    # ─── -s なし: スクリーンがオフなら起こす ───
+    if not args.screen_off:
+        _screen_state = adb("shell dumpsys display | grep mScreenState")
+        if "OFF" in _screen_state.upper():
+            logger.info("[SCREEN_ON] スクリーンがオフ → 起こします")
+            adb("shell input keyevent KEYCODE_WAKEUP")
+            time.sleep(0.5)
+
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
     if args.reinstall:
         # 永続状態をクリア (新規アカウントでは前回の状態は無効)
