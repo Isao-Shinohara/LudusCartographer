@@ -2780,6 +2780,7 @@ def main():
                 state.last_phash = ""
             else:
                 logger.info("[GACHA] アニメーション待機 (dist=%d static=%d/5)", dist, _gacha_static)
+                time.sleep(0.5)
             _fms = (time.time() - _loop_t0) * 1000
             state.total_loop_ms += _fms
             logger.info("  [PERF] Loop %.0fms (GACHA)", _fms)
