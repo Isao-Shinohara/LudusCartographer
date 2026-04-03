@@ -3660,7 +3660,7 @@ def main():
         if action == state.last_action and action not in (
             "WAIT_FOR_CHANGE", "BATTLE_WAIT", "DOWNLOAD_WAIT",
             "MOVIE_WAIT", "LOADING_WAIT", "ADV_WAIT",
-            "HOME_CLEAR_CHECK",
+            "HOME_CLEAR_CHECK", "MINI_CONV_TAP",
         ):
             state.action_repeat_count += 1
         else:
