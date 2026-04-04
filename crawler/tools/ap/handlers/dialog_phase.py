@@ -441,7 +441,10 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
             return _popup_home_result
 
     # ── 【ログインボーナスポップアップ】エッジ投影ベース検出 → × で閉じ ──────
-    if analysis_path is not None and not _is_battle_ctx:
+    # OK/キャンセル等の操作ボタンがある通常ダイアログは LOGIN_BONUS ではない
+    _has_action_btn = any(has_text(ocr, kw, min_conf=0.5)
+                         for kw in ("OK", "キャンセル", "はい", "いいえ", "決定"))
+    if analysis_path is not None and not _is_battle_ctx and not _has_action_btn:
         _lbp = detect_login_bonus_popup(analysis_path)
         if _lbp is not None:
             _close_info = _lbp["close_btn"]
