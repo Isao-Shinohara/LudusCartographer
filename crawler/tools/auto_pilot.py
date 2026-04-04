@@ -2761,6 +2761,7 @@ def main():
             # ガチャ演出: アニメーション中はタップせず待機
             # phash が安定（アニメーション終了）したら中央タップで進行
             state.current_scene = "GACHA"
+            state._gacha_cooldown = 10  # MOVIE→UNKNOWN での誤SKIP防止用
             _gacha_static = getattr(state, "_gacha_static_count", 0)
             _gacha_total_wait = getattr(state, "_gacha_total_wait", 0) + 1
             state._gacha_total_wait = _gacha_total_wait
@@ -3485,6 +3486,16 @@ def main():
             # icon_skip はADVツールバーのアイコンなのでタップしない (movie_textのみ)
             _skip_btn = detect_movie_skip_button(analysis_path) if analysis_path else None
             _is_gacha = is_gacha_scene(analysis_path) if analysis_path else False
+            # ガチャ演出の光の玉が一瞬消えるフレームで誤 SKIP を防止
+            _gacha_cooldown = getattr(state, "_gacha_cooldown", 0)
+            if not _is_gacha and _gacha_cooldown > 0:
+                _is_gacha = True
+                logger.info("[MOVIE→UNKNOWN] ガチャクールダウン中 (残%d) → SKIP抑制",
+                            _gacha_cooldown)
+            if _is_gacha:
+                state._gacha_cooldown = 10  # ガチャ検出後10フレーム猶予
+            elif _gacha_cooldown > 0:
+                state._gacha_cooldown = _gacha_cooldown - 1
             if _skip_btn and _skip_btn[2] == "movie_text" and not _is_gacha:
                 logger.info("[MOVIE→UNKNOWN] SKIPテキスト検出 → タップ (%d,%d)", _skip_btn[0], _skip_btn[1])
                 tap_device(_skip_btn[0], _skip_btn[1], state, "MOVIE_SKIP")
