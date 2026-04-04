@@ -3543,8 +3543,12 @@ def main():
             # 2周目以降は常に再インストール
             logger.info("[GRIND] 再インストール開始")
             _reinstall_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
-            # アプリ起動
+            # アプリ起動 (-s モード等で画面オフ/ロックの可能性があるため WAKEUP + ロック解除)
             logger.info("[GRIND] アプリ起動")
+            adb("shell input keyevent KEYCODE_WAKEUP")
+            time.sleep(0.5)
+            adb("shell input keyevent 82")  # KEYCODE_MENU でロック解除
+            time.sleep(0.5)
             adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
             time.sleep(5)
             # 周回用状態リセット (全フィールド + 動的属性 + デバイスキャッシュ)
