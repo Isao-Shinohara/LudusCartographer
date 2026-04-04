@@ -72,12 +72,15 @@ class GrindMission(Mission):
     name = "grind"
     description = "クエスト周回"
 
-    def __init__(self, max_cycles: int = 0):
+    def __init__(self, max_cycles: int = 0, fresh_start: bool = False):
         self.max_cycles = max_cycles
+        self.fresh_start = fresh_start
 
     def configure_state(self, state, args):
         state.grind_mode = True
         state.grind_max_cycles = self.max_cycles
+        if self.fresh_start:
+            state.is_fresh_start = True
 
     def is_goal(self, action, state):
         return action == "GOAL_GRIND_COMPLETE"
@@ -87,7 +90,8 @@ class GrindMission(Mission):
 
     def banner_info(self):
         _cycle_str = f"{self.max_cycles}周" if self.max_cycles > 0 else "無制限"
-        return f"{self.name}: {self.description} ({_cycle_str})"
+        _fresh = " + 新規インストール" if self.fresh_start else ""
+        return f"{self.name}: {self.description} ({_cycle_str}{_fresh})"
 
 
 class ResumeMission(Mission):
@@ -109,6 +113,9 @@ class ResumeMission(Mission):
 def select_mission(args: argparse.Namespace) -> Mission:
     """CLI 引数からミッションを選択する。"""
     if args.reinstall:
+        if args.cycles is not None:
+            # -r -c N: 新規インストール + N周回
+            return GrindMission(max_cycles=args.cycles, fresh_start=True)
         return TutorialMission()
     if args.cycles is not None:
         # --cycles 0 = 無限, --cycles N = N周
