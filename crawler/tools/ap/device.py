@@ -461,6 +461,24 @@ def _get_scrcpy_window_size() -> tuple[int, int]:
     return 0, 0
 
 
+def _is_scrcpy_process_alive() -> bool:
+    """scrcpy プロセスが生きているか確認する。"""
+    try:
+        ps = subprocess.run(
+            ["/bin/ps", "aux"], capture_output=True, text=True, timeout=5
+        )
+        for line in ps.stdout.splitlines():
+            if "scrcpy" not in line or "grep" in line:
+                continue
+            if "adb" in line and "scrcpy-server" in line:
+                continue
+            # scrcpy 本体プロセスが見つかった
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def manage_scrcpy(force_restart: bool = False) -> Optional[subprocess.Popen]:
     """scrcpy を規定オプションで起動。ウィンドウサイズが不足している場合のみ再起動。
 
@@ -476,17 +494,24 @@ def manage_scrcpy(force_restart: bool = False) -> Optional[subprocess.Popen]:
     win_w, win_h = _get_scrcpy_window_size()
     _need_restart = force_restart
     if win_w >= _MIN_W and not _need_restart:
-        # アスペクト比チェック: タイトルバーを除いた描画領域が 2:1 ± 許容範囲か
-        _game_h = max(1, win_h - _TITLE_BAR_H)
-        _ratio = win_w / _game_h
-        if abs(_ratio - _EXPECTED_RATIO) > _RATIO_TOLERANCE:
-            logger.info("[SCRCPY] アスペクト比不正 (%dx%d, ratio=%.2f, 期待=%.1f±%.2f) — 再起動",
-                        win_w, win_h, _ratio, _EXPECTED_RATIO, _RATIO_TOLERANCE)
+        # プロセス生存チェック: ウィンドウがあってもプロセスが死んでいたら再起動
+        # --stay-awake はプロセスが生きている間のみ有効
+        if not _is_scrcpy_process_alive():
+            logger.info("[SCRCPY] ウィンドウあり(%dx%d)だがプロセス消滅 → 再起動 (--stay-awake 復帰)",
+                        win_w, win_h)
             _need_restart = True
         else:
-            logger.info("[SCRCPY] 既存ウィンドウ検出 (%dx%d >= min %d, ratio=%.2f) — 継続",
-                        win_w, win_h, _MIN_W, _ratio)
-            return None
+            # アスペクト比チェック: タイトルバーを除いた描画領域が 2:1 ± 許容範囲か
+            _game_h = max(1, win_h - _TITLE_BAR_H)
+            _ratio = win_w / _game_h
+            if abs(_ratio - _EXPECTED_RATIO) > _RATIO_TOLERANCE:
+                logger.info("[SCRCPY] アスペクト比不正 (%dx%d, ratio=%.2f, 期待=%.1f±%.2f) — 再起動",
+                            win_w, win_h, _ratio, _EXPECTED_RATIO, _RATIO_TOLERANCE)
+                _need_restart = True
+            else:
+                logger.info("[SCRCPY] 既存ウィンドウ検出 (%dx%d >= min %d, ratio=%.2f) — 継続",
+                            win_w, win_h, _MIN_W, _ratio)
+                return None
     if force_restart and win_w > 0 and not _need_restart:
         logger.info("[SCRCPY] オプション変更のため再起動 (%dx%d)", win_w, win_h)
 
