@@ -2174,7 +2174,7 @@ def _detect_popup_corners(
     if _pass_count < 4:
         _scores = " ".join(f"{k}={v[2]:.3f}{'✓' if v[2] >= _THRESH else '✗'}"
                            for k, v in _corners.items())
-        logger.info("[POPUP_CORNER] %d/4隅閾値超え + 整合OK → 通過 (%s)",
+        logger.debug("[POPUP_CORNER] %d/4隅閾値超え + 整合OK → 通過 (%s)",
                     _pass_count, _scores)
 
     return (_tl, _tr, _bl, _br)
