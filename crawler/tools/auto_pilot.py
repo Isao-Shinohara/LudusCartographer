@@ -1775,10 +1775,13 @@ def _reinstall_from_play_store(serial: str, package: str) -> None:
     _adb_key("KEYCODE_WAKEUP")
     time.sleep(1)
     # スワイプでロック解除 (パスワードなし前提)
-    subprocess.run(
-        ["adb", "-s", serial, "shell", "input", "swipe", "360", "1200", "360", "400", "300"],
-        capture_output=True, timeout=5,
-    )
+    try:
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "input", "swipe", "360", "1200", "360", "400", "300"],
+            capture_output=True, timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("[REINSTALL] ロック解除スワイプがタイムアウト → 続行")
     time.sleep(1)
 
     # --- Step 1: アンインストール ---
