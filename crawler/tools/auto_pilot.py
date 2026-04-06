@@ -931,9 +931,23 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     _MOVIE_PROMOTE_THRESHOLD = 5
     if (state.phash_moving_count >= _MOVIE_PROMOTE_THRESHOLD
             and state.current_scene not in ("BATTLE", "ADV", "GACHA", "MOVIE")):
-        logger.info("[SCENE_EARLY] phash連続変動 %d回 → MOVIE昇格",
-                    state.phash_moving_count)
-        return "MOVIE"
+        # バトル/ADV/ミニ会話が見えていたら MOVIE ではない → 昇格棄却
+        _promote_reject = False
+        if _check_battle_templates(img_path, ASSET_MANAGER):
+            logger.info("[SCENE_EARLY] phash変動だがバトルUI検出 → MOVIE昇格棄却")
+            _promote_reject = True
+        elif detect_adv_scene(img_path, roi=state.game_roi).is_adv:
+            logger.info("[SCENE_EARLY] phash変動だがADV検出 → MOVIE昇格棄却")
+            _promote_reject = True
+        elif detect_mini_conversation(img_path) is not None:
+            logger.info("[SCENE_EARLY] phash変動だがミニ会話検出 → MOVIE昇格棄却")
+            _promote_reject = True
+        if _promote_reject:
+            state.phash_moving_count = 0
+        else:
+            logger.info("[SCENE_EARLY] phash連続変動 %d回 → MOVIE昇格",
+                        state.phash_moving_count)
+            return "MOVIE"
 
     # ── ガチャ演出画面: SKIP + 暗背景 + 光の玉 → タップで進行 ──
     # MOVIE 中はスキップ (動画内のキャラ表示シーンで誤発火防止)
