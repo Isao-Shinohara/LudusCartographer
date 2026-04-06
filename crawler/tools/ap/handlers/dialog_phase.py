@@ -445,7 +445,9 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     _has_action_btn = any(has_text(ocr, kw, min_conf=0.5)
                          for kw in ("OK", "キャンセル", "はい", "いいえ", "決定"))
     _is_movie_ctx = state.current_scene == "MOVIE"
-    if analysis_path is not None and not _is_battle_ctx and not _has_action_btn and not _is_movie_ctx:
+    _is_stable = state.same_phash_count >= 2  # phash安定後のみ (誤検出防止)
+    if (analysis_path is not None and not _is_battle_ctx and not _has_action_btn
+            and not _is_movie_ctx and _is_stable):
         _lbp = detect_login_bonus_popup(analysis_path)
         if _lbp is not None:
             _close_info = _lbp["close_btn"]
