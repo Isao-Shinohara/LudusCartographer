@@ -100,7 +100,9 @@ def handle_popup_home(
             return "POPUP_HOME_CLOSE", CLOSE_ACTION_WAIT
 
     # × テンプレ未検出 → close_btn テンプレマッチフォールバック → 右上固定座標
-    _close_btn_m = ASSET_MANAGER.match_single("close_btn", analysis_path) if analysis_path else None
+    # close_btn を右上エリア (x>70%, y<30%) に限定して検出
+    _close_btn_roi = (int(W * 0.70), 0, int(W * 0.30), int(H * 0.30))
+    _close_btn_m = ASSET_MANAGER.match_single("close_btn", analysis_path, roi=_close_btn_roi) if analysis_path else None
     if _close_btn_m and _close_btn_m[2] >= 0.80:
         _fx, _fy = _close_btn_m[0], _close_btn_m[1]
         tap_device(_fx, _fy, state, "POPUP_HOME_CLOSE_BTN")
