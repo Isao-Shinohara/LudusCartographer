@@ -916,7 +916,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
     # ── phash 連続変化カウンタ更新 ──
     # BATTLE/ADV は上で return 済み。ここに来るのは UNKNOWN 候補のみ。
-    _PHASH_MOVING_THRESHOLD = 5  # phash_dist >= 5 で「フレーム変化あり」
+    _PHASH_MOVING_THRESHOLD = 8  # phash_dist >= 8 で「フレーム変化あり」
     if dist >= _PHASH_MOVING_THRESHOLD:
         state.phash_moving_count += 1
     else:
