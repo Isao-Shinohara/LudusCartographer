@@ -3241,10 +3241,24 @@ def detect_login_bonus_popup(
         return None
 
     # ── close_btn テンプレマッチ (必須) ──
+    # × ボタンは矩形の右上角付近にある → 位置制約で誤検出を排除
+    # 許容範囲: 矩形右端から rect_w*0.15 以内、矩形上端から rect_h*0.15 以内
+    # (ボタンは矩形の角ギリギリか少し外側に配置される)
     _close_match = ASSET_MANAGER.match_single("close_btn", img_path)
     _close_info = None
     if _close_match and _close_match[2] >= 0.50:
-        _close_info = (_close_match[0], _close_match[1], _close_match[2])
+        _cx, _cy = _close_match[0], _close_match[1]
+        _margin_x = max(_rect_w * 0.15, 40)  # 最低40px
+        _margin_y = max(_rect_h * 0.15, 40)
+        _x_ok = _cx >= _right - _margin_x
+        # × は矩形上端の近傍 (上端から ±margin_y) にある
+        _y_ok = abs(_cy - _top) <= _margin_y
+        if _x_ok and _y_ok:
+            _close_info = (_cx, _cy, _close_match[2])
+        else:
+            logger.debug("[LOGIN_BONUS] close_btn (%d,%d) が右上角にない → 棄却 "
+                         "(rect右上=(%d,%d) margin=%.0f,%.0f)",
+                         _cx, _cy, _right, _top, _margin_x, _margin_y)
 
     if _close_info is None:
         logger.debug("[LOGIN_BONUS] close_btn 未検出 → 棄却 (面積比=%.1f%%)",
