@@ -1027,7 +1027,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
 
 def handle_movie(img_path: Path, state: PilotState, dist: int,
-                 cur_phash: str) -> bool:
+                 cur_phash: str, ocr_results: list = None) -> bool:
     """動画シーン専用ハンドラ。指アイコン / GoldSwipe / 金枠ボタン検出なし。
 
     - post_download + SKIP 表示 → DL完了後ループなので SKIP タップで脱出
@@ -1043,17 +1043,34 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
         state.movie_wait_consecutive = 0; state.movie_static_count = 0
         return False
 
-    # ── DL直後 + SKIP 表示 → DL完了後ループ脱出 (唯一の SKIP タップ箇所) ──
+    # ── DL直後 + SKIP 表示 → DL完了後ループ脱出 ──
     # ダウンロード完了後に動画がループする現象: SKIP をタップして抜ける
+    # テンプレマッチ優先、OCR フォールバック (ocr_results が渡された場合のみ)
     if state.post_download:
         _skip_pos = detect_movie_skip_button(img_path)
         if _skip_pos:
             _sk_x, _sk_y = roi_to_device(_skip_pos[0], _skip_pos[1], state.game_roi)
-            logger.info("[MOVIE] DL直後 + SKIP検出 → SKIPタップ (%d,%d) でループ脱出", _sk_x, _sk_y)
+            logger.info("[MOVIE] DL直後 + SKIP検出(テンプレ) → SKIPタップ (%d,%d)", _sk_x, _sk_y)
             tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP")
             state.movie_wait_consecutive = 0; state.movie_static_count = 0
             state.last_phash = ""
             return True
+        # OCR フォールバック: テンプレ未検出でも OCR で SKIP テキストを検出
+        if ocr_results:
+            _skip_item = next(
+                (item for item in ocr_results
+                 if "SKIP" in item.get("text", "").upper()
+                 or item.get("text", "").upper() == "SK"),
+                None)
+            if _skip_item:
+                _sk_x, _sk_y = _skip_item["center"]
+                _sk_x, _sk_y = roi_to_device(_sk_x, _sk_y, state.game_roi)
+                logger.info("[MOVIE] DL直後 + SKIP検出(OCR '%s') → SKIPタップ (%d,%d)",
+                            _skip_item["text"], _sk_x, _sk_y)
+                tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP")
+                state.movie_wait_consecutive = 0; state.movie_static_count = 0
+                state.last_phash = ""
+                return True
         logger.info("[MOVIE] DL直後だが SKIP 未検出 → 待機")
 
     # ── 待機カウンタ ──
@@ -3441,21 +3458,9 @@ def main():
                     scene, i, dist, state.same_phash_count, len(ocr_results), texts[:8])
         state.last_ocr_texts = texts
 
-        # ── DL直後 SKIP 検出 (OCRベース, テンプレート不要) ──
-        # post_download 中は動画判定・テンプレートに依存せず OCR の "SKIP" を直接タップ
+        # ── DL直後 SKIP 検出 → handle_movie に統合済み (OCR結果を渡す) ──
         if state.post_download and scene not in ("BATTLE", "MENU"):
-            _skip_item = next(
-                (item for item in ocr_results
-                 if "SKIP" in item.get("text", "").upper()
-                 or item.get("text", "").upper() == "SK"),
-                None)
-            if _skip_item:
-                _sk_x, _sk_y = _skip_item["center"]
-                _sk_x, _sk_y = roi_to_device(_sk_x, _sk_y, state.game_roi)
-                logger.info(
-                    "[DL_SKIP_OCR] DL直後 SKIP '%s' → タップ (%d,%d)",
-                    _skip_item["text"], _sk_x, _sk_y)
-                tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP_OCR")
+            if handle_movie(img_path, state, dist, cur_phash, ocr_results=ocr_results):
                 state.last_action = "MOVIE_SKIP"
                 state.last_phash = ""
                 continue
@@ -3794,7 +3799,7 @@ def main():
             "DOWNLOAD_WAIT", "MOVIE_WAIT", "MOVIE_SKIP",
             "LOADING_WAIT", "WAIT_FOR_CHANGE",
             "MAIN_STORY_LOADING",
-            "DL_COMPLETE_OK", "SYSTEM_DLG_OK", "MOVIE_SKIP_OCR",
+            "DL_COMPLETE_OK", "SYSTEM_DLG_OK",
             "ADV_CHOICE", "SCENE_TAP", "STORY_TAP",
         ))
         _POST_DL_GRACE = 20  # DL完了後20イテレーションはpost_downloadを維持
