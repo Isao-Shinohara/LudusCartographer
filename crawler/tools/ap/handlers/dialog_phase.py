@@ -99,10 +99,16 @@ def handle_popup_home(
             logger.info("[POPUP_HOME] ×閉じ完了 (total=%d pages)", _total_pages)
             return "POPUP_HOME_CLOSE", CLOSE_ACTION_WAIT
 
-    # × テンプレ未検出 → 右上固定座標フォールバック
-    _fx, _fy = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
-    tap_device(_fx, _fy, state, "POPUP_HOME_CLOSE_FALLBACK")
-    logger.info("[POPUP_HOME] × 未検出 → 右上固定座標 (%d,%d) で閉じる", _fx, _fy)
+    # × テンプレ未検出 → close_btn テンプレマッチフォールバック → 右上固定座標
+    _close_btn_m = ASSET_MANAGER.match_single("close_btn", analysis_path) if analysis_path else None
+    if _close_btn_m and _close_btn_m[2] >= 0.80:
+        _fx, _fy = _close_btn_m[0], _close_btn_m[1]
+        tap_device(_fx, _fy, state, "POPUP_HOME_CLOSE_BTN")
+        logger.info("[POPUP_HOME] close_btn(%.2f) → (%d,%d) で閉じる", _close_btn_m[2], _fx, _fy)
+    else:
+        _fx, _fy = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
+        tap_device(_fx, _fy, state, "POPUP_HOME_CLOSE_FALLBACK")
+        logger.info("[POPUP_HOME] × 未検出 → 右上固定座標 (%d,%d) で閉じる", _fx, _fy)
     return "POPUP_HOME_CLOSE", CLOSE_ACTION_WAIT
 
 

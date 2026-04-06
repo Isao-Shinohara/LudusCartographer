@@ -2118,19 +2118,22 @@ def _detect_popup_corners(
                 logger.debug("[POPUP_CORNER] %s差=%d > %d → 棄却", _label, _diff, _tol)
                 return None
 
-    # 幅・高さチェック: 閾値超えペアから算出
+    # 幅・高さチェック: 閾値超えペアから算出 (対角ペアも含む)
+    _checked_size = False
     if "BL" in _passed and "BR" in _passed:
         _width = _br[0] - _bl[0]
         if _width < _POPUP_CORNER_MIN_WIDTH or _width > _POPUP_CORNER_MAX_WIDTH:
             logger.debug("[POPUP_CORNER] 幅=%.0f (範囲外 %d-%d) → 棄却",
                          _width, _POPUP_CORNER_MIN_WIDTH, _POPUP_CORNER_MAX_WIDTH)
             return None
+        _checked_size = True
     elif "TL" in _passed and "TR" in _passed:
         _width = _tr[0] - _tl[0]
         if _width < _POPUP_CORNER_MIN_WIDTH or _width > _POPUP_CORNER_MAX_WIDTH:
             logger.debug("[POPUP_CORNER] 幅=%.0f (範囲外 %d-%d) → 棄却",
                          _width, _POPUP_CORNER_MIN_WIDTH, _POPUP_CORNER_MAX_WIDTH)
             return None
+        _checked_size = True
 
     if "TL" in _passed and "BL" in _passed:
         _height = _bl[1] - _tl[1]
@@ -2138,11 +2141,34 @@ def _detect_popup_corners(
             logger.debug("[POPUP_CORNER] 高さ=%.0f (範囲外 %d-%d) → 棄却",
                          _height, _POPUP_CORNER_MIN_HEIGHT, _POPUP_CORNER_MAX_HEIGHT)
             return None
+        _checked_size = True
     elif "TR" in _passed and "BR" in _passed:
         _height = _br[1] - _tr[1]
         if _height < _POPUP_CORNER_MIN_HEIGHT or _height > _POPUP_CORNER_MAX_HEIGHT:
             logger.debug("[POPUP_CORNER] 高さ=%.0f (範囲外 %d-%d) → 棄却",
                          _height, _POPUP_CORNER_MIN_HEIGHT, _POPUP_CORNER_MAX_HEIGHT)
+            return None
+        _checked_size = True
+
+    # 対角ペアのチェック (TL+BR, TR+BL): 同辺ペアが通過しなかった場合
+    if not _checked_size:
+        if "TL" in _passed and "BR" in _passed:
+            _diag_w = _br[0] - _tl[0]
+            _diag_h = _br[1] - _tl[1]
+            if (_diag_w < _POPUP_CORNER_MIN_WIDTH or _diag_w > _POPUP_CORNER_MAX_WIDTH
+                    or _diag_h < _POPUP_CORNER_MIN_HEIGHT or _diag_h > _POPUP_CORNER_MAX_HEIGHT):
+                logger.debug("[POPUP_CORNER] 対角TL-BR: w=%d h=%d (範囲外) → 棄却", _diag_w, _diag_h)
+                return None
+        elif "TR" in _passed and "BL" in _passed:
+            _diag_w = _tr[0] - _bl[0]
+            _diag_h = _bl[1] - _tr[1]
+            if (_diag_w < _POPUP_CORNER_MIN_WIDTH or _diag_w > _POPUP_CORNER_MAX_WIDTH
+                    or _diag_h < _POPUP_CORNER_MIN_HEIGHT or _diag_h > _POPUP_CORNER_MAX_HEIGHT):
+                logger.debug("[POPUP_CORNER] 対角TR-BL: w=%d h=%d (範囲外) → 棄却", _diag_w, _diag_h)
+                return None
+        else:
+            # 対辺も対角もチェックできない → 棄却
+            logger.debug("[POPUP_CORNER] サイズチェック不能 (閾値超え隅の組み合わせが不十分) → 棄却")
             return None
 
     if _pass_count < 4:
