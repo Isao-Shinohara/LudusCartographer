@@ -2832,8 +2832,13 @@ class AssetManager:
                     _scenes = ["MOVIE"]
                 else:
                     _scenes = []  # 空 = 全シーン対象
+            # マスク生成: close_btn は×マーク部分のみでマッチング (背景差異を無視)
+            _mask = None
+            if name == "close_btn":
+                _, _mask = cv2.threshold(img, 80, 255, cv2.THRESH_BINARY)
             self._templates[name] = {
                 "img": img,
+                "mask": _mask,
                 "edge_img": _edge_img,
                 "edge_weight": _ew,
                 "threshold": float(meta.get("threshold", self.DEFAULT_THRESHOLD)),
@@ -2896,7 +2901,11 @@ class AssetManager:
                 if _tmpl.shape[0] > img.shape[0] or _tmpl.shape[1] > img.shape[1]:
                     continue
                 try:
-                    res = cv2.matchTemplate(img, _tmpl, cv2.TM_CCOEFF_NORMED)
+                    _mask = data.get("mask")
+                    if _mask is not None and _rot_code is None:
+                        res = cv2.matchTemplate(img, _tmpl, cv2.TM_CCORR_NORMED, mask=_mask)
+                    else:
+                        res = cv2.matchTemplate(img, _tmpl, cv2.TM_CCOEFF_NORMED)
                     _, max_val, _, max_loc = cv2.minMaxLoc(res)
                     # エッジ重みスコアリング: edge_weight > 0 なら形状重視
                     _ew = data["edge_weight"]
@@ -2949,7 +2958,12 @@ class AssetManager:
         if tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
             return None
         try:
-            res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
+            _mask = data.get("mask")
+            if _mask is not None:
+                # マスク付きマッチ: ×マーク等の形状部分のみで比較 (背景無視)
+                res = cv2.matchTemplate(img, tmpl, cv2.TM_CCORR_NORMED, mask=_mask)
+            else:
+                res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, max_loc = cv2.minMaxLoc(res)
             # エッジ重みスコアリング
             _ew = data["edge_weight"]
