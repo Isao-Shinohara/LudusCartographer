@@ -2119,29 +2119,17 @@ def _handle_rapid_path(
                 state.total_loop_ms += _fms
                 logger.info("  [PERF] Loop %.0fms (MINI_CONV_RAPID)", _fms)
                 return True, _skip_rapid
-        elif _mc_prev != (0, 0):
-            # 検出失敗だが直前にミニ会話だった → OCR でテキストが見えれば前回位置を再タップ
-            _retry = getattr(state, "_mini_conv_retry_count", 0) + 1
-            state._mini_conv_retry_count = _retry
-            if _retry <= _MINI_CONV_RETRY_MAX:
-                _retry_ocr = run_ocr(str(_early_analysis), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
-                if len(_retry_ocr) > 0:
-                    logger.info("[MINI_CONV_RAPID][iter %d] 検出失敗+OCR %d件 → 前回位置 (%d,%d) 再タップ [retry %d/%d]",
-                                i, len(_retry_ocr), _mc_prev[0], _mc_prev[1], _retry, _MINI_CONV_RETRY_MAX)
-                    tap_device(_mc_prev[0], _mc_prev[1], state, "MINI_CONV_TAP")
-                    state.last_action = "MINI_CONV_TAP"
-                    state.last_phash = ""
-                    state.phash_moving_count = 0  # MOVIE 誤昇格防止
-                    _fms = (time.time() - _loop_t0) * 1000
-                    state.total_loop_ms += _fms
-                    logger.info("  [PERF] Loop %.0fms (MINI_CONV_RAPID_RETRY)", _fms)
-                    return True, _skip_rapid
-                else:
-                    logger.info("[MINI_CONV_RAPID][iter %d] 検出失敗+OCR 0件 → 画面遷移中、リトライせず OCR フォールスルー", i)
-                    state._mini_conv_retry_count = 0
-            else:
-                logger.info("[MINI_CONV_RAPID] リトライ %d 回超 → OCR フォールスルー", _retry)
-                state._mini_conv_retry_count = 0
+        # TODO: 削除予定 — 前回位置再タップは誤タップの原因になるため無効化
+        # elif _mc_prev != (0, 0):
+        #     _retry = getattr(state, "_mini_conv_retry_count", 0) + 1
+        #     state._mini_conv_retry_count = _retry
+        #     if _retry <= _MINI_CONV_RETRY_MAX:
+        #         _retry_ocr = run_ocr(str(_early_analysis), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
+        #         if len(_retry_ocr) > 0:
+        #             tap_device(_mc_prev[0], _mc_prev[1], state, "MINI_CONV_TAP")
+        #             ...
+        #     else:
+        #         state._mini_conv_retry_count = 0
 
     if not _skip_rapid and _early_scene == "BATTLE":
         state.current_scene = "BATTLE"
