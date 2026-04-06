@@ -3027,7 +3027,7 @@ class AssetManager:
                 continue
             try:
                 _, mask = cv2.threshold(tmpl, self._FINGER_MASK_THRESH, 255, cv2.THRESH_BINARY)
-                res = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED, mask=mask)
+                res = cv2.matchTemplate(img, tmpl, cv2.TM_CCORR_NORMED, mask=mask)
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
                 if not np.isfinite(max_val):
                     continue
