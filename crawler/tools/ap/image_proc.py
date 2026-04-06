@@ -2674,6 +2674,91 @@ def find_gold_frame_by_template(
     return None
 
 
+# ─── 金枠内ボタン検出 (左右エッジテンプレ) ─────────────────────────
+_GOLD_BTN_EDGE_R: Optional[np.ndarray] = None
+_GOLD_BTN_EDGE_L: Optional[np.ndarray] = None
+
+
+def _load_gold_btn_edges():
+    """ボタン右端テンプレ + 左反転版をロード。"""
+    global _GOLD_BTN_EDGE_R, _GOLD_BTN_EDGE_L
+    if _GOLD_BTN_EDGE_R is not None:
+        return
+    _tpl_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "templates"
+    _r_path = _tpl_dir / "gold_btn_edge_r.png"
+    if _r_path.exists():
+        _GOLD_BTN_EDGE_R = cv2.imread(str(_r_path), cv2.IMREAD_GRAYSCALE)
+        _GOLD_BTN_EDGE_L = cv2.flip(_GOLD_BTN_EDGE_R, 1)
+
+
+def find_button_in_gold_frame(
+    img_path: Path,
+    gold_rect: tuple[int, int, int, int],
+    threshold: float = 0.75,
+    y_tolerance: int = 10,
+) -> Optional[tuple[int, int, int, int]]:
+    """金枠内のボタンを左右エッジテンプレで検出。
+
+    gold_rect: (cx, cy, w, h) — 金枠の中心と幅高さ
+    Returns: (btn_cx, btn_cy, btn_w, btn_h) or None
+    """
+    _load_gold_btn_edges()
+    if _GOLD_BTN_EDGE_R is None:
+        return None
+    img = imread_analysis(img_path)
+    if img is None:
+        return None
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _H, _W = gray.shape
+
+    # 金枠周辺を ROI として検索 (金枠より少し広め)
+    _gcx, _gcy, _gw, _gh = gold_rect
+    _margin = 50
+    _rx1 = max(0, _gcx - _gw // 2 - _margin)
+    _ry1 = max(0, _gcy - _gh // 2 - _margin)
+    _rx2 = min(_W, _gcx + _gw // 2 + _margin)
+    _ry2 = min(_H, _gcy + _gh // 2 + _margin)
+    roi = gray[_ry1:_ry2, _rx1:_rx2]
+
+    th, tw = _GOLD_BTN_EDGE_R.shape[:2]
+    if roi.shape[0] < th or roi.shape[1] < tw:
+        return None
+
+    # 右端マッチ
+    res_r = cv2.matchTemplate(roi, _GOLD_BTN_EDGE_R, cv2.TM_CCOEFF_NORMED)
+    _, max_r, _, loc_r = cv2.minMaxLoc(res_r)
+
+    # 左端マッチ
+    res_l = cv2.matchTemplate(roi, _GOLD_BTN_EDGE_L, cv2.TM_CCOEFF_NORMED)
+    _, max_l, _, loc_l = cv2.minMaxLoc(res_l)
+
+    if max_r < threshold or max_l < threshold:
+        logger.debug("[GoldBtnEdge] スコア不足 R=%.3f L=%.3f (th=%.2f)", max_r, max_l, threshold)
+        return None
+
+    # ROI → 画像座標に変換
+    r_cx = _rx1 + loc_r[0] + tw // 2
+    r_cy = _ry1 + loc_r[1] + th // 2
+    l_cx = _rx1 + loc_l[0] + tw // 2
+    l_cy = _ry1 + loc_l[1] + th // 2
+
+    # 矩形整合性チェック
+    if abs(r_cy - l_cy) > y_tolerance:
+        logger.debug("[GoldBtnEdge] Y差=%d > %d → 棄却", abs(r_cy - l_cy), y_tolerance)
+        return None
+    btn_w = r_cx - l_cx
+    if btn_w < 20 or btn_w > 500:
+        logger.debug("[GoldBtnEdge] 幅=%d (範囲外 20-500) → 棄却", btn_w)
+        return None
+
+    btn_cx = (l_cx + r_cx) // 2
+    btn_cy = (l_cy + r_cy) // 2
+    btn_h = th
+    logger.info("[GoldBtnEdge] ボタン検出 (%d,%d) %dx%d scores=R%.2f/L%.2f",
+                btn_cx, btn_cy, btn_w, btn_h, max_r, max_l)
+    return btn_cx, btn_cy, btn_w, btn_h
+
+
 # ─── Type B: 金枠ハイライトボタン検出 → 中心タップ ─────────────────────
 def find_gold_button(img_path: Path, **_kwargs) -> Optional[tuple[int, int, str]]:
     """

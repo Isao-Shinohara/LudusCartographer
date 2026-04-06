@@ -17,6 +17,7 @@ from tools.ap.image_proc import (
     ASSET_MANAGER,
     roi_to_device,
     find_gold_frame_by_template,
+    find_button_in_gold_frame,
     detect_white_hand_pointer,
     smart_tap_button,
 )
@@ -47,9 +48,24 @@ def handle_finger_priority(
     _gold = find_gold_frame_by_template(analysis_path)
     if _gold:
         _gx, _gy, _gw, _gh = _gold
+        # 金枠中心タップ3回失敗 → 金枠内のボタンを探索してタップ
+        _gold_fail = getattr(state, "_gold_frame_tap_fail", 0)
+        if _gold_fail >= 3:
+            _btn = find_button_in_gold_frame(analysis_path, _gold)
+            if _btn:
+                _bx, _by, _bw, _bh = _btn
+                logger.info("[FINGER_PRIORITY] 金枠中心%d回失敗 → ボタン検出(%d,%d %dx%d) タップ",
+                            _gold_fail, _bx, _by, _bw, _bh)
+                tap_device(_bx, _by, state, "GOLD_BTN_INNER_TAP")
+                state._gold_frame_tap_fail = 0
+                return "GOLD_BTN_INNER_TAP", 1.0
         logger.info("[FINGER_PRIORITY] 金枠検出(%d,%d %dx%d) → タップ", _gx, _gy, _gw, _gh)
         tap_device(_gx, _gy, state, "GOLD_FRAME_TAP")
+        state._gold_frame_tap_fail = _gold_fail + 1
         return "GOLD_FRAME_TAP", 1.0
+
+    # 金枠未検出 → 失敗カウンタリセット
+    state._gold_frame_tap_fail = 0
 
     # 指テンプレ回転マッチ (金枠との共検出が必須)
     # TM_CCORR_NORMED+mask は白い形状に偽陽性が出るため、指テンプレ単独ではタップしない
