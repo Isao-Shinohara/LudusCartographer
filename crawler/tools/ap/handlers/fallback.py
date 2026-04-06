@@ -219,8 +219,13 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             _c = item.get("center", (0, 0))
             if _c[0] < W * 0.20 and _c[1] < H * 0.15:
                 if any(kw in _t for kw in _MENU_SCREEN_KWS):
-                    _back_x = max(int(_c[0] - W * 0.05), int(W * 0.02))
-                    _back_y = _c[1]
+                    # icon_back テンプレで正確な位置を取得
+                    _back_m = ASSET_MANAGER.match_single("icon_back", analysis_path)
+                    if _back_m and _back_m[2] >= 0.70:
+                        _back_x, _back_y = _back_m[0], _back_m[1]
+                    else:
+                        _back_x = max(int(_c[0] - W * 0.05), int(W * 0.02))
+                        _back_y = _c[1]
                     logger.info(">>> 【サブ画面脱出】 左上に '%s' 検出 → 戻る (%d,%d)",
                                 _t, _back_x, _back_y)
                     tap_device(_back_x, _back_y, state, "SUB_SCREEN_BACK")
