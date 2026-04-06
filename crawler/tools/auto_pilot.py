@@ -1086,6 +1086,12 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
                 state.movie_wait_consecutive = 0; state.movie_static_count = 0
                 state.last_phash = ""
                 return True
+        # SKIP 未検出: ミニ会話が見えていたら MOVIE ではない → OCR パスへ脱出
+        _mc = detect_mini_conversation(img_path)
+        if _mc is not None:
+            logger.info("[MOVIE] DL直後 SKIP未検出+ミニ会話検出 → MOVIEハンドラ脱出")
+            state.movie_wait_consecutive = 0; state.movie_static_count = 0
+            return False
         logger.info("[MOVIE] DL直後だが SKIP 未検出 → 待機")
 
     # ── 待機カウンタ ──
