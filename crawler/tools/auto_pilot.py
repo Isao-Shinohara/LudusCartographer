@@ -2809,7 +2809,7 @@ def main():
                 _gacha_static = 0
             state._gacha_static_count = _gacha_static
             # 安定判定 OR 長時間待機(200回≒30秒)で強制タップ
-            _GACHA_MAX_WAIT = 20  # ~3秒
+            _GACHA_MAX_WAIT = 10  # ~7秒
             if _gacha_static >= 5 or _gacha_total_wait >= _GACHA_MAX_WAIT:
                 tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "GACHA_TAP")
                 _reason = "安定" if _gacha_static >= 5 else f"長時間待機({_gacha_total_wait}回)"
