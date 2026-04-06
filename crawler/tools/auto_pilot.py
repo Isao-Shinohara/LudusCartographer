@@ -355,7 +355,7 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
 def generate_and_copy_report(state: PilotState, reason: str) -> None:
     """
     ホーム到達またはエラー停止時に状況レポートを生成し pbcopy でコピー。
-    Gemini へのペースト用。
+    レポート確認用。
     """
     # Git コミット情報
     try:
@@ -440,7 +440,7 @@ def generate_and_copy_report(state: PilotState, reason: str) -> None:
             check=False, timeout=5,
         )
         logger.info("[REPORT] レポート保存: %s", report_path)
-        logger.info("[REPORT] クリップボードにコピー完了 — Gemini にペーストしてください")
+        logger.info("[REPORT] クリップボードにコピー完了")
     except Exception as e:
         logger.error("[REPORT] コピー失敗: %s", e)
 
