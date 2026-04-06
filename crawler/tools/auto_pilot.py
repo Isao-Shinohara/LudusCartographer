@@ -3665,11 +3665,15 @@ def main():
                                 logger.info("[WFC_ESCAPE] 累計%d回だが phash変化中 (dist=%d) → タップ抑制",
                                             _wfc_total, _vf_dist)
                         if _wfc_still:
-                            logger.warning(
-                                "[WFC_ESCAPE] WAIT_FOR_CHANGE 累計%d回 + 静止確認 → 動画一時停止疑い → 中央タップ",
-                                _wfc_total)
-                            tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5),
-                                       state, "WFC_PAUSE_RESUME")
+                            # 暗転中は中央タップしない (ロード中の誤タップ防止)
+                            if _wfc_verify and is_dark_screen(_wfc_verify):
+                                logger.info("[WFC_ESCAPE] 累計%d回+静止だが暗転中 → タップ抑制", _wfc_total)
+                            else:
+                                logger.warning(
+                                    "[WFC_ESCAPE] WAIT_FOR_CHANGE 累計%d回 + 静止確認 → 動画一時停止疑い → 中央タップ",
+                                    _wfc_total)
+                                tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5),
+                                           state, "WFC_PAUSE_RESUME")
                         state._wfc_total_count = 0
                 else:
                     logger.warning(
