@@ -716,6 +716,13 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
             state._movie_pause_count = 0
             state._movie_recheck_count = getattr(state, "_movie_recheck_count", 0) + 1
             if state._movie_recheck_count % 3 == 0:
+                # ミニ会話チェック: BATTLE/GACHA より先に判定
+                _mc = detect_mini_conversation(img_path)
+                if _mc is not None:
+                    logger.info("[SCENE_EARLY] MOVIE中ミニ会話検出 → UNKNOWN (OCRへ)")
+                    state._movie_recheck_count = 0
+                    state.current_scene = "UNKNOWN"
+                    return "UNKNOWN"
                 _battle_result = _check_battle_templates(img_path, ASSET_MANAGER)
                 if _battle_result:
                     _btn, _bs, _cs = _battle_result
