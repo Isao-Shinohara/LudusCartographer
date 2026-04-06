@@ -990,7 +990,7 @@ def detect_movie_scene(img_path, adv_result=None, ocr_texts=None,
         return MovieSceneResult()
     if has_skip:
         # ⏭ボタンあり + ADV証拠(↓/ツールバー)なし → 動画確定 (CLAUDE.md §0)
-        logger.info("[MOVIE_SCENE] ⏭検出(%s) + ADV証拠なし → MOVIE確定", _skip_source)
+        logger.debug("[MOVIE_SCENE] ⏭検出(%s) + ADV証拠なし → MOVIE候補", _skip_source)
     else:
         # ⏭ なし: phash 連続変化があれば動画の可能性を残す
         # AUTO 単独でも ADV 判定 OK (⏭なし時)
