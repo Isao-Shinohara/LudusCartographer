@@ -50,7 +50,8 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         return r
 
     # Phase 3.5: ミニ会話タップ (OCR パスで検出済みの座標を使用)
-    if ctx.mini_conv_pos is not None:
+    # MOVIE 中は動画フレーム内のテキストを吹き出しと誤検出するためスキップ
+    if ctx.mini_conv_pos is not None and state.current_scene not in ("MOVIE",):
         _mc_cx, _mc_cy, _mc_side = ctx.mini_conv_pos
         logger.info(
             "[MINI_CONV] 吹き出し(%s) → タップ (%d,%d)", _mc_side, _mc_cx, _mc_cy)
