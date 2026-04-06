@@ -318,14 +318,7 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
             logger.info(">>> ADV ↓ボタンタップ (%d,%d)", cx, cy)
             tap_device(cx, cy, state, "ADV_NEXT_TAP")
             return "ADV_NEXT_TAP", 0.3
-        # ↓ ボタンなし → SKIP ボタンを探す (キャラ紹介/ガチャ演出等)
-        _skip_match = has_any(ocr, ["SKIP", "スキップ"])
-        if _skip_match:
-            sx, sy = _skip_match["center"]
-            logger.info(">>> ADV ↓未検出 → SKIP '%s' (%d,%d)", _skip_match["text"], sx, sy)
-            tap_device(sx, sy, state, "ADV_SKIP_TAP")
-            return "ADV_SKIP_TAP", 1.0
-        # ↓テンプレ不一致 + SKIP なし → 盲タップせず None を返して OCR パスへ
-        logger.info(">>> ADV ↓未検出 + SKIP なし → フォールスルー")
+        # ↓テンプレ不一致 → 盲タップせず None を返して OCR パスへ
+        logger.info(">>> ADV ↓未検出 → フォールスルー")
 
     return None

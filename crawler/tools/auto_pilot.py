@@ -976,11 +976,6 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # MOVIE 初回検出 (最後): 特定要素が最も少ないため他シーンを先に排除
     # チュートリアル中 + download_active → DL完了ダイアログ優先 (SKIPボタン以外はスキップ)
     if state.download_active and not state.home_reached:
-        # SKIPボタン検出 → キャンセル誤タップからの復帰 (MOVIE判定を許可)
-        _dl_init_movie = detect_movie_scene(img_path, adv_result=None, phash_dist=dist)
-        if _dl_init_movie.is_movie and _dl_init_movie.has_skip_btn:
-            logger.warning("[SCENE_EARLY] download_active + SKIPボタン検出 → キャンセル誤タップ復帰 → MOVIE")
-            return "MOVIE"
         logger.info("[SCENE_EARLY] download_active=True (チュートリアル) → MOVIE判定スキップ (DL完了ダイアログ優先)")
         return "UNKNOWN"
     _adv = detect_adv_scene(img_path, roi=state.game_roi)
@@ -1042,23 +1037,13 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     """
     W, H = ANALYSIS_W, ANALYSIS_H
 
-    # ── DL画面背景動画: SKIPボタンが出たらキャンセル誤タップ → SKIPで脱出 ──
+    # ── DL中: MOVIE判定されたらDL完了ダイアログ検出のためフルOCRへ ──
     if state.download_active and not state.home_reached:
-        _dl_skip = detect_movie_skip_button(img_path)
-        if _dl_skip:
-            _dsk_x, _dsk_y = roi_to_device(_dl_skip[0], _dl_skip[1], state.game_roi)
-            logger.warning("[MOVIE] download_active + SKIP検出 → キャンセル誤タップ復帰 SKIPタップ (%d,%d)",
-                           _dsk_x, _dsk_y)
-            tap_device(_dsk_x, _dsk_y, state, "MOVIE_SKIP")
-            state.movie_wait_consecutive = 0; state.movie_static_count = 0
-            state.last_phash = ""
-            return True
-        # SKIP なし → DL完了ダイアログ検出のためフルOCRへ
         logger.info("[MOVIE] download_active=True → MOVIEハンドラ脱出 (DL完了チェック優先)")
         state.movie_wait_consecutive = 0; state.movie_static_count = 0
         return False
 
-    # ── DL直後 + SKIP 表示 → DL完了後ループ脱出 ──
+    # ── DL直後 + SKIP 表示 → DL完了後ループ脱出 (唯一の SKIP タップ箇所) ──
     # ダウンロード完了後に動画がループする現象: SKIP をタップして抜ける
     if state.post_download:
         _skip_pos = detect_movie_skip_button(img_path)
@@ -2794,7 +2779,6 @@ def main():
             # ガチャ演出: アニメーション中はタップせず待機
             # phash が安定（アニメーション終了）したら中央タップで進行
             state.current_scene = "GACHA"
-            state._gacha_cooldown = 10  # MOVIE→UNKNOWN での誤SKIP防止用
             _gacha_static = getattr(state, "_gacha_static_count", 0)
             _gacha_total_wait = getattr(state, "_gacha_total_wait", 0) + 1
             state._gacha_total_wait = _gacha_total_wait
@@ -3515,33 +3499,10 @@ def main():
             state._from_movie_ttl = 0
         if _from_movie_ttl > 0:
             state._from_movie_ttl = _from_movie_ttl - 1
-            # MOVIE スキップボタンがあれば SKIPタップ、なければ待機
-            # icon_skip はADVツールバーのアイコンなのでタップしない (movie_textのみ)
-            _skip_btn = detect_movie_skip_button(analysis_path) if analysis_path else None
-            _is_gacha = is_gacha_scene(analysis_path) if analysis_path else False
-            # ガチャ演出の光の玉が一瞬消えるフレームで誤 SKIP を防止
-            _gacha_cooldown = getattr(state, "_gacha_cooldown", 0)
-            if not _is_gacha and _gacha_cooldown > 0:
-                _is_gacha = True
-                logger.info("[MOVIE→UNKNOWN] ガチャクールダウン中 (残%d) → SKIP抑制",
-                            _gacha_cooldown)
-            if _is_gacha:
-                state._gacha_cooldown = 10  # ガチャ検出後10フレーム猶予
-            elif _gacha_cooldown > 0:
-                state._gacha_cooldown = _gacha_cooldown - 1
-            if _skip_btn and _skip_btn[2] == "movie_text" and not _is_gacha:
-                logger.info("[MOVIE→UNKNOWN] SKIPテキスト検出 → タップ (%d,%d)", _skip_btn[0], _skip_btn[1])
-                tap_device(_skip_btn[0], _skip_btn[1], state, "MOVIE_SKIP")
-                action, wait_sec = "MOVIE_SKIP", 2.0
-            elif _is_gacha:
-                logger.info("[MOVIE→UNKNOWN] ガチャ演出中 → SKIPタップ抑制")
-                action, wait_sec = "MOVIE_WAIT", 1.0
-            elif _skip_btn and _skip_btn[2] == "adv_icon":
-                logger.info("[MOVIE→UNKNOWN] ADV⏭アイコン → ADVシーン、タップ抑制")
-                action, wait_sec = "MOVIE_WAIT", 1.0
-            else:
-                logger.info("[MOVIE→UNKNOWN] テンプレタップ抑制 → MOVIE再判定待ち")
-                action, wait_sec = "MOVIE_WAIT", 1.0
+            # MOVIE→UNKNOWN 直後はテンプレタップ抑制して待機
+            # SKIP タップは post_download 時のみ許可 (ガチャ演出・動画の誤SKIPを防止)
+            logger.info("[MOVIE→UNKNOWN] テンプレタップ抑制 → MOVIE再判定待ち")
+            action, wait_sec = "MOVIE_WAIT", 1.0
         else:
             _taps_before = state.total_taps
             action, wait_sec = detect_and_act(ocr_results, state, analysis_path,

@@ -228,20 +228,8 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
         # --- 2. チュートリアルダイアログ ▷ は dialog_phase (Phase 2) で ROI 付き検出済み ---
         # 全画面検索はガチャ画面等で誤マッチするため削除
 
-        # --- 4. 動画スキップ (MOVIE_SKIP_TEXT) ---
-        if not asset_hit:
-            _skip_m = ASSET_MANAGER.match_single("movie_skip", analysis_path)
-            if _skip_m and _skip_m[2] >= 0.70:
-                _title_kws = ["MAGIA", "EXEDRA", "TAP", "START", "サポート"]
-                _menu_kws = ["光の間", "ショップ", "ガチャ", "ガシャ", "交換所",
-                             "パーティ", "クエスト", "クエス", "マップ", "レイヤ"]
-                _menu_hits = sum(1 for kw in _menu_kws if any(kw in t for t in texts))
-                if any(kw in joined for kw in _title_kws):
-                    logger.info("[Asset] MOVIE_SKIP_TEXT をタイトル画面で抑制")
-                elif _menu_hits >= 2:
-                    logger.info("[Asset] MOVIE_SKIP_TEXT をメニュー画面で抑制 (menu_kw=%d)", _menu_hits)
-                else:
-                    asset_hit = (_skip_m[0], _skip_m[1], "MOVIE_SKIP_TEXT", (0, 0, 0, 0))
+        # --- 4. 動画スキップ (MOVIE_SKIP_TEXT) --- 削除済み
+        # SKIP タップは post_download 時の MOVIE ハンドラのみで実行する
 
         # --- 5. マップ矢印 → navigation.py (Phase 6) に統合済み ---
 
