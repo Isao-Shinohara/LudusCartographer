@@ -191,7 +191,7 @@ _pilot_state_ref: Optional["PilotState"] = None
 
 # ─── 画像処理: ap/image_proc.py から import ───
 from tools.ap.image_proc import (  # noqa: E402
-    detect_game_roi, roi_to_device, is_dark_screen, is_tutorial_walk_scene,
+    detect_game_roi, roi_to_device, is_dark_screen, get_screen_p90, is_tutorial_walk_scene,
     detect_gacha_orbs, is_gacha_scene,
     prepare_analysis_image,
     detect_white_hand_pointer, create_finger_mask_image,
@@ -2570,6 +2570,39 @@ def main():
         if state.consecutive_blackouts > 0:
             state.consecutive_blackouts = 0
 
+        # ── 2.3) 暗背景 + OCR 0件連続 → OCR スキップ (トークン節約) ──
+        # p90=6〜20 の薄暗い画面で OCR が空振りし続ける場合、phash 変化待ちのみに切り替える
+        _p90 = get_screen_p90(img_path)
+        if _p90 <= BLACKOUT_BRIGHTNESS:
+            if state.dark_ocr_empty_count >= 2:
+                # 既に2回以上 OCR 0件 → phash のみで待機
+                try:
+                    cur_phash = compute_phash(img_path)
+                except Exception:
+                    cur_phash = ""
+                if state.last_phash and cur_phash:
+                    dist = phash_distance(state.last_phash, cur_phash)
+                else:
+                    dist = 999
+                if dist >= PHASH_THRESHOLD:
+                    # 画面が変わった → OCR 復帰
+                    logger.info("[DARK_SKIP] p90=%.1f 暗背景+OCR空振り%d回後に画面変化(dist=%d) → OCR復帰",
+                                _p90, state.dark_ocr_empty_count, dist)
+                    state.dark_ocr_empty_count = 0
+                    state.last_phash = cur_phash
+                    # fall through to normal processing
+                else:
+                    # 画面変化なし → OCR スキップして待機
+                    state.last_phash = cur_phash
+                    state.last_screen_change_time = time.time()  # Watchdog抑制
+                    time.sleep(0.5)
+                    _fms = (time.time() - _loop_t0) * 1000
+                    state.total_loop_ms += _fms
+                    continue
+        else:
+            # 暗背景でなければカウンタリセット
+            state.dark_ocr_empty_count = 0
+
         # ── 2.5) ダウンロード/ロード中ショートカット ──
         # 前回アクションが DOWNLOAD_WAIT/LOADING_WAIT → phash/シーン判定をスキップ
         # phash だけ更新して detect_and_act へ直行 (DL 完了判定は detect_and_act 内で行う)
@@ -3581,6 +3614,16 @@ def main():
         else:
             state.pending_candidates = []
             state.pending_candidate_idx = 0
+        # ── 暗背景 + OCR 0件カウンタ更新 ──
+        if action == "WAIT_FOR_CHANGE" and len(ocr_results) == 0:
+            _cur_p90 = get_screen_p90(img_path)
+            if _cur_p90 <= BLACKOUT_BRIGHTNESS:
+                state.dark_ocr_empty_count += 1
+            else:
+                state.dark_ocr_empty_count = 0
+        elif action != "WAIT_FOR_CHANGE":
+            state.dark_ocr_empty_count = 0
+
         # ── WAIT_FOR_CHANGE スタック脱出: 3 回連続で中央タップ ──
         if action == "WAIT_FOR_CHANGE":
             state._wfc_consecutive = getattr(state, "_wfc_consecutive", 0) + 1

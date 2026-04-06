@@ -78,6 +78,8 @@ class PilotState:
     total_ocr_skipped: int = 0
     total_blackout_skipped: int = 0
     consecutive_blackouts: int = 0
+    # 暗背景(p90=6〜20) + OCR 0件の連続回数 (OCRスキップ判定用)
+    dark_ocr_empty_count: int = 0
     screenshots_saved: int = 0
     device_w: int = 0
     device_h: int = 0

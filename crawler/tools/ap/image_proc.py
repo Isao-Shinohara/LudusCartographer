@@ -293,6 +293,20 @@ def is_gacha_scene(img_path: Path) -> bool:
     return True
 
 
+def get_screen_p90(img_path: Path) -> float:
+    """中央60%領域の 90th percentile 輝度を返す。取得失敗時は 255.0。"""
+    try:
+        from PIL import Image
+        with Image.open(img_path) as img:
+            gray = np.array(img.convert("L"))
+            h, w = gray.shape
+            y0, y1 = int(h * 0.2), int(h * 0.8)
+            x0, x1 = int(w * 0.2), int(w * 0.8)
+            return float(np.percentile(gray[y0:y1, x0:x1], 90))
+    except Exception:
+        return 255.0
+
+
 def is_dark_screen(img_path: Path) -> bool:
     """暗転判定 — 中央60%領域の 90th percentile 輝度で判定。
 
@@ -302,23 +316,13 @@ def is_dark_screen(img_path: Path) -> bool:
     完全暗転 (p90 <= 5) → True
     暗背景+テキスト (p90 = 6〜BLACKOUT_BRIGHTNESS) → False (OCR で処理すべき)
     """
-    try:
-        from PIL import Image
-        with Image.open(img_path) as img:
-            gray = np.array(img.convert("L"))
-            h, w = gray.shape
-            y0, y1 = int(h * 0.2), int(h * 0.8)
-            x0, x1 = int(w * 0.2), int(w * 0.8)
-            _p90 = float(np.percentile(gray[y0:y1, x0:x1], 90))
-            # 完全暗転のみ True (名前表示等の暗背景+白テキスト画面を除外)
-            _is_dark = _p90 <= 5
-            if _p90 <= BLACKOUT_BRIGHTNESS:
-                logger.info("[DEBG][DarkScreen] p90=%.1f → %s (threshold=5/blackout=%d)",
-                            _p90, "暗転" if _is_dark else "暗背景+テキスト→OCRへ",
-                            BLACKOUT_BRIGHTNESS)
-            return _is_dark
-    except Exception:
-        return False
+    _p90 = get_screen_p90(img_path)
+    _is_dark = _p90 <= 5
+    if _p90 <= BLACKOUT_BRIGHTNESS:
+        logger.info("[DEBG][DarkScreen] p90=%.1f → %s (threshold=5/blackout=%d)",
+                    _p90, "暗転" if _is_dark else "暗背景+テキスト→OCRへ",
+                    BLACKOUT_BRIGHTNESS)
+    return _is_dark
 
 
 def prepare_analysis_image(img_path: Path, actual_w: int, actual_h: int) -> Path:
