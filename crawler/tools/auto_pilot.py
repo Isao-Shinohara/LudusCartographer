@@ -682,6 +682,13 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # 偽脱出しても OCR 1ループ (~2s) で再判定されるため、即応性を優先する。
     _MOVIE_STABLE_THRESHOLD = 1  # dist < 3 がこの回数続いたら安定とみなす
     if state.current_scene == "MOVIE":
+        # ── ガチャ演出検出 → GACHA にリダイレクト ──
+        if is_gacha_scene(img_path):
+            logger.info("[SCENE_EARLY] MOVIE中ガチャ演出検出 → GACHA にリダイレクト")
+            state.current_scene = "GACHA"
+            state.movie_wait_consecutive = 0
+            state.movie_static_count = 0
+            return "GACHA"
         if dist >= 16:
             # 大きなフレーム変化 → 本物の動画再生、即 MOVIE 維持
             state._movie_stable_count = 0
@@ -984,6 +991,16 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     if _movie.is_movie and state.current_scene == "GACHA":
         logger.debug("[SCENE_EARLY] GACHA中 → MOVIE判定スキップ")
         return "GACHA"
+    # ガチャ演出判定: MOVIE 候補だが is_gacha_scene → GACHA にリダイレクト
+    if _movie.is_movie and is_gacha_scene(img_path):
+        logger.info("[SCENE_EARLY] MOVIE候補だがガチャ演出検出 → GACHA")
+        return "GACHA"
+    # ガチャ直後ガード: GACHA→遷移→SKIP付き画面 の MOVIE 誤判定を防止
+    _gacha_ttl = getattr(state, "_gacha_scene_ttl", 0)
+    if _movie.is_movie and _movie.has_skip_btn and _gacha_ttl > 0:
+        logger.info("[SCENE_EARLY] MOVIE(SKIP)+ガチャ直後(TTL=%d)+非ガチャ演出 → ガチャ結果画面、MOVIE棄却",
+                    _gacha_ttl)
+        return "UNKNOWN"
     if _movie.is_movie:
         # ADV→MOVIE 誤遷移防止: ADV テンプレが見えている間は MOVIE 遷移しない
         # current_scene に依存しない (UNKNOWN 状態でも ADV テンプレがあれば防止)
@@ -2383,6 +2400,9 @@ def main():
         state.iteration = i
         _loop_t0 = time.time()  # [PERF] ループ開始時刻
         clear_imread_cache()    # 前イテレーションのキャッシュを破棄
+        # ガチャ直後 TTL デクリメント
+        if getattr(state, "_gacha_scene_ttl", 0) > 0:
+            state._gacha_scene_ttl -= 1
 
         # ── 定期健診 (100 iter ごと) ──
         if i > 0 and i % 100 == 0:
@@ -2796,6 +2816,7 @@ def main():
             # ガチャ演出: アニメーション中はタップせず待機
             # phash が安定（アニメーション終了）したら中央タップで進行
             state.current_scene = "GACHA"
+            state._gacha_scene_ttl = 30  # ガチャ結果画面の MOVIE 誤判定防止用
             _gacha_static = getattr(state, "_gacha_static_count", 0)
             _gacha_total_wait = getattr(state, "_gacha_total_wait", 0) + 1
             state._gacha_total_wait = _gacha_total_wait
