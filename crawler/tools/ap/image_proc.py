@@ -319,7 +319,7 @@ def is_dark_screen(img_path: Path) -> bool:
     _p90 = get_screen_p90(img_path)
     _is_dark = _p90 <= 5
     if _p90 <= BLACKOUT_BRIGHTNESS:
-        logger.info("[DEBG][DarkScreen] p90=%.1f → %s (threshold=5/blackout=%d)",
+        logger.debug("[DarkScreen] p90=%.1f → %s (threshold=5/blackout=%d)",
                     _p90, "暗転" if _is_dark else "暗背景+テキスト→OCRへ",
                     BLACKOUT_BRIGHTNESS)
     return _is_dark
