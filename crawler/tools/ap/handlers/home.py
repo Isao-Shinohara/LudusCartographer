@@ -80,15 +80,16 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     # ── チュートリアル完了判定: 指テンプレ / 暗転+金枠 の有無 ──
     # チュートリアル中: 指アイコン or (暗転オーバーレイ + 金枠) が表示される
     # チュートリアル完了後: 指なし + 暗転なし + 金枠なし
+    _has_overlay = detect_tutorial_overlay(analysis_path) if analysis_path else False
+    _home_gold = find_gold_button(analysis_path) if analysis_path else None
+    # 指テンプレ検出: 金枠との共検出を必須化 (白い形状への偽陽性防止)
     _has_hand = False
-    if analysis_path:
+    if analysis_path and _home_gold is not None:
         _ft_rot = ASSET_MANAGER.match_finger_rotated(analysis_path)
         if _ft_rot and _ft_rot[2] >= 0.70:
             _has_hand = True
-            logger.info(">>> ホーム: finger_%s(%.2f) (%d,%d) 検出 → チュートリアル中",
+            logger.info(">>> ホーム: finger_%s(%.2f) (%d,%d) + 金枠あり → チュートリアル中",
                         _ft_rot[3], _ft_rot[2], _ft_rot[0], _ft_rot[1])
-    _has_overlay = detect_tutorial_overlay(analysis_path) if analysis_path else False
-    _home_gold = find_gold_button(analysis_path) if analysis_path else None
     # 暗転なし+指なし → 金枠は偽陽性 (カード装飾等)
     if not _has_overlay and not _has_hand:
         _home_gold = None
