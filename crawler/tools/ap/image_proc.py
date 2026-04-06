@@ -2697,13 +2697,14 @@ def find_gold_button(img_path: Path, **_kwargs) -> Optional[tuple[int, int, str]
 # ─── チュートリアルオーバーレイ（暗転）検出 ──────────────────────────
 
 
-def detect_tutorial_overlay(img_path: Path, brightness_threshold: int = 90) -> bool:
+def detect_tutorial_overlay(img_path: Path,
+                            bright_threshold: int = 150,
+                            bright_ratio_max: float = 0.20) -> bool:
     """チュートリアル中の暗転オーバーレイを検出する。
 
     チュートリアル時は指アイコン+金枠のハイライト以外が半透明の暗いオーバーレイで覆われる。
-    2段階判定:
-      方式1: 画面全体の中央値輝度が低い (< brightness_threshold)
-      方式2: 四隅のうち2つ以上が暗い (mean < 80) — ハイライト部分の輝度に影響されない
+    明るいピクセル (輝度 > bright_threshold) の面積比率が低い = 暗転。
+    通常画面は明るい部分が広く分散 (30%以上)、暗転時はハイライトのみ (5〜15%)。
 
     Returns: True = 暗転オーバーレイあり（チュートリアル中の可能性が高い）
     """
@@ -2712,30 +2713,13 @@ def detect_tutorial_overlay(img_path: Path, brightness_threshold: int = 90) -> b
         if img is None:
             return False
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        H, W = gray.shape[:2]
-        median_brightness = int(np.median(gray))
-        # 方式1: 中央値輝度
-        if median_brightness < brightness_threshold:
-            logger.debug("[TutOverlay] 暗転検出 (median=%d < %d)",
-                         median_brightness, brightness_threshold)
+        _bright_ratio = float((gray > bright_threshold).sum()) / gray.size
+        if _bright_ratio < bright_ratio_max:
+            logger.debug("[TutOverlay] 暗転検出 (bright_ratio=%.1f%% < %.0f%%)",
+                         _bright_ratio * 100, bright_ratio_max * 100)
             return True
-        # 方式2: 四隅の暗さ (ハイライト対象が明るくても隅は暗い)
-        # 閾値30: チュートリアル暗転時は隅が < 10 レベル。通常ホーム画面の
-        # フッターナビ背景 (38-57) を誤検出しないよう設定
-        sz = 40
-        corners = [
-            gray[0:sz, 0:sz],           # TL
-            gray[0:sz, W - sz:W],       # TR
-            gray[H - sz:H, 0:sz],       # BL
-            gray[H - sz:H, W - sz:W],   # BR
-        ]
-        dark_count = sum(1 for c in corners if c.mean() < 30)
-        if dark_count >= 2:
-            logger.debug("[TutOverlay] 暗転検出 (dark_corners=%d/4, median=%d)",
-                         dark_count, median_brightness)
-            return True
-        logger.debug("[TutOverlay] 暗転なし (median=%d, dark_corners=%d/4)",
-                     median_brightness, dark_count)
+        logger.debug("[TutOverlay] 暗転なし (bright_ratio=%.1f%%)",
+                     _bright_ratio * 100)
         return False
     except Exception as e:
         logger.debug("detect_tutorial_overlay error: %s", e)
