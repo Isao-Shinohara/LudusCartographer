@@ -2100,6 +2100,7 @@ def _handle_rapid_path(
                 tap_device(_mc_rx, _mc_ry, state, "MINI_CONV_TAP")
                 state.last_action = "MINI_CONV_TAP"
                 state.last_phash = ""
+                state.phash_moving_count = 0  # MOVIE 誤昇格防止
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
                 logger.info("  [PERF] Loop %.0fms (MINI_CONV_RAPID)", _fms)
@@ -2116,6 +2117,7 @@ def _handle_rapid_path(
                     tap_device(_mc_prev[0], _mc_prev[1], state, "MINI_CONV_TAP")
                     state.last_action = "MINI_CONV_TAP"
                     state.last_phash = ""
+                    state.phash_moving_count = 0  # MOVIE 誤昇格防止
                     _fms = (time.time() - _loop_t0) * 1000
                     state.total_loop_ms += _fms
                     logger.info("  [PERF] Loop %.0fms (MINI_CONV_RAPID_RETRY)", _fms)
