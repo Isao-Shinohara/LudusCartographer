@@ -53,7 +53,7 @@ def handle_finger_priority(
 
     # 指テンプレ回転マッチ
     _finger_match = ASSET_MANAGER.match_finger_rotated(analysis_path)
-    if not _finger_match or _finger_match[2] < 0.70:
+    if not _finger_match or _finger_match[2] < 0.85:
         return None
 
     _f_cx, _f_cy, _f_score, _f_dir = (
