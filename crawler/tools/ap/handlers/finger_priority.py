@@ -27,10 +27,10 @@ logger = logging.getLogger("auto_pilot")
 def handle_finger_priority(
     ctx: DetectContext, state: PilotState,
 ) -> Optional[tuple[str, float]]:
-    """指アイコン+金枠の最優先検出。
+    """金枠ハイライト+指アイコンの最優先検出。
 
-    指テンプレ (tutorial_hand_pointer 4方向回転) を検出し、
-    金枠ハイライト対象をタップする。
+    1. 金枠単独検出: 金枠が出ていればそこしかタップ不可 (指テンプレ不要)
+    2. 指テンプレ検出: 金枠なしでも指アイコンがあれば近傍を探索してタップ
 
     CLAUDE.md §0: 指差し・ハイライトは OCR テキスト解析より優先。
     ゲーム仕様: 金枠が出ている時はそこしかタップ不可。
@@ -42,6 +42,14 @@ def handle_finger_priority(
     texts = ctx.texts
     ocr = ctx.ocr
     W, H = ctx.W, ctx.H
+
+    # 【最優先】金枠テンプレマッチ検出 (指テンプレ不要)
+    _gold = find_gold_frame_by_template(analysis_path)
+    if _gold:
+        _gx, _gy, _gw, _gh = _gold
+        logger.info("[FINGER_PRIORITY] 金枠検出(%d,%d %dx%d) → タップ", _gx, _gy, _gw, _gh)
+        tap_device(_gx, _gy, state, "GOLD_FRAME_TAP")
+        return "GOLD_FRAME_TAP", 1.0
 
     # 指テンプレ回転マッチ
     _finger_match = ASSET_MANAGER.match_finger_rotated(analysis_path)
@@ -61,15 +69,6 @@ def handle_finger_priority(
             logger.info("[FINGER_PRIORITY] プレゼントボックス → 一括受取 (%d,%d)", _bulk_x, _bulk_y)
             tap_device(_bulk_x, _bulk_y, state, "PRESENT_BULK_RECEIVE")
             return "PRESENT_BULK_RECEIVE", 2.0
-
-    # 【プライマリ】金枠テンプレマッチ検出 (4隅)
-    _gold = find_gold_frame_by_template(analysis_path)
-    if _gold:
-        _gx, _gy, _gw, _gh = _gold
-        logger.info("[FINGER_PRIORITY] 指(%.3f,%s)(%d,%d) → 金枠(%d,%d %dx%d)",
-                    _f_score, _f_dir, _f_cx, _f_cy, _gx, _gy, _gw, _gh)
-        tap_device(_gx, _gy, state, "FINGER_GOLD_TARGET")
-        return "FINGER_GOLD_TARGET", 1.0
 
     # 【セカンダリ】白ハンドポインタで方向取得 → 近傍アイコン/OCR/金枠探索
     _wh = detect_white_hand_pointer(analysis_path, threshold=0.85)
