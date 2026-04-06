@@ -51,9 +51,10 @@ def handle_finger_priority(
         tap_device(_gx, _gy, state, "GOLD_FRAME_TAP")
         return "GOLD_FRAME_TAP", 1.0
 
-    # 指テンプレ回転マッチ
+    # 指テンプレ回転マッチ (金枠との共検出が必須)
+    # TM_CCORR_NORMED+mask は白い形状に偽陽性が出るため、指テンプレ単独ではタップしない
     _finger_match = ASSET_MANAGER.match_finger_rotated(analysis_path)
-    if not _finger_match or _finger_match[2] < 0.85:
+    if not _finger_match or _finger_match[2] < 0.70:
         return None
 
     _f_cx, _f_cy, _f_score, _f_dir = (
@@ -61,7 +62,7 @@ def handle_finger_priority(
         _finger_match[3] if len(_finger_match) > 3 else "",
     )
 
-    # プレゼントボックス画面: アイテムありなら一括受取
+    # プレゼントボックス画面: アイテムありなら一括受取 (金枠不要)
     if any("プレゼント" in t or "プレセント" in t for t in texts):
         _no_items = any("受け取れるアイテム" in t for t in texts)
         if not _no_items:
@@ -70,76 +71,15 @@ def handle_finger_priority(
             tap_device(_bulk_x, _bulk_y, state, "PRESENT_BULK_RECEIVE")
             return "PRESENT_BULK_RECEIVE", 2.0
 
-    # 【セカンダリ】白ハンドポインタで方向取得 → 近傍アイコン/OCR/金枠探索
-    _wh = detect_white_hand_pointer(analysis_path, threshold=0.85)
-    _hand_pos = (_f_cx, _f_cy)
-    _hand_dir = _f_dir or ""
-    if _wh:
-        _hand_pos = (_wh[0], _wh[1])
-        _hand_dir = _wh[3]
-    _hx, _hy = _hand_pos
-    tap_x, tap_y = _f_cx, _f_cy
+    # 金枠との共検出: 指テンプレ + 金枠の両方が検出された場合のみタップ
+    _gold2 = find_gold_frame_by_template(analysis_path)
+    if not _gold2:
+        logger.debug("[FINGER_PRIORITY] 指(%.2f,%s)(%d,%d) 検出だが金枠なし → スキップ",
+                     _f_score, _f_dir, _f_cx, _f_cy)
+        return None
 
-    # テンプレートマッチで指近傍のアイコンを検索
-    _tmpl_found = False
-    _search_r = 200
-    _aroi = (max(0, _hx - _search_r), max(0, _hy - _search_r),
-             _search_r * 2, _search_r * 2)
-    for _btn_name in ("icon_back",):
-        _m = ASSET_MANAGER.match_single(_btn_name, analysis_path, roi=_aroi)
-        if _m and _m[2] >= 0.65:
-            _ax, _ay = _m[0], _m[1]
-            if (_hand_dir == "up" and _ay > _hy + 30) or \
-               (_hand_dir == "down" and _ay < _hy - 30):
-                continue
-            tap_x, tap_y = _ax, _ay
-            _tmpl_found = True
-            logger.info("[FINGER_PRIORITY] 指(%d,%d,dir=%s) → Asset '%s'(%d,%d) score=%.3f",
-                        _hx, _hy, _hand_dir, _btn_name, tap_x, tap_y, _m[2])
-            break
-
-    # 指の方向にある最近接OCRテキストをタップ
-    if not _tmpl_found:
-        _ocr_found = False
-        if _hand_dir and ocr:
-            _dir_items = []
-            for item in ocr:
-                _tx, _ty = item["center"]
-                _dist = abs(_hx - _tx) + abs(_hy - _ty)
-                if _dist > 200:
-                    continue
-                if _hand_dir == "up" and _ty < _hy:
-                    _dir_items.append((_tx, _ty, _dist, item["text"]))
-                elif _hand_dir == "down" and _ty > _hy:
-                    _dir_items.append((_tx, _ty, _dist, item["text"]))
-                elif _hand_dir == "right" and _tx > _hx:
-                    _dir_items.append((_tx, _ty, _dist, item["text"]))
-                elif _hand_dir == "left" and _tx < _hx:
-                    _dir_items.append((_tx, _ty, _dist, item["text"]))
-            if _dir_items:
-                _dir_items.sort(key=lambda d: d[2])
-                tap_x, tap_y = _dir_items[0][0], _dir_items[0][1]
-                _ocr_found = True
-                logger.info("[FINGER_PRIORITY] 指(%d,%d,dir=%s) → OCR '%s'(%d,%d) dist=%d",
-                            _hx, _hy, _hand_dir, _dir_items[0][3], tap_x, tap_y, _dir_items[0][2])
-
-        # フォールバック: 金枠テンプレマッチ検出
-        if not _ocr_found:
-            _gold2 = find_gold_frame_by_template(analysis_path)
-            if _gold2:
-                _gx, _gy = _gold2[0], _gold2[1]
-                if (_hand_dir == "up" and _gy > _hy + 30) or \
-                   (_hand_dir == "down" and _gy < _hy - 30):
-                    _gold2 = None
-            if _gold2:
-                tap_x, tap_y = _gold2[0], _gold2[1]
-                logger.info("[FINGER_PRIORITY] 指(%d,%d,dir=%s) → 金枠(%d,%d)",
-                            _hx, _hy, _hand_dir, tap_x, tap_y)
-            else:
-                tap_x, tap_y = smart_tap_button(
-                    analysis_path, _hx, _hy, search_r=160, ocr_items=ocr)
-                logger.info("[FINGER_PRIORITY] 指(%d,%d,dir=%s) → smart_tap(%d,%d)",
-                            _hx, _hy, _hand_dir, tap_x, tap_y)
-
-    tap_device(tap_x, tap_y, state, "FINGER_PRIORITY_TAP")
+    _gx, _gy = _gold2[0], _gold2[1]
+    logger.info("[FINGER_PRIORITY] 指(%.2f,%s)(%d,%d) + 金枠(%d,%d) → タップ",
+                _f_score, _f_dir, _f_cx, _f_cy, _gx, _gy)
+    tap_device(_gx, _gy, state, "FINGER_PRIORITY_TAP")
     return "FINGER_PRIORITY_TAP", 1.0
