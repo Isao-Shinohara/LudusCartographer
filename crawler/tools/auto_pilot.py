@@ -808,7 +808,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
     # チュートリアル歩行シーン (チェッカー床): BATTLE/MOVIE 判定より先に検出
     # 低彩度+アイドルアニメで MOVIE 誤判定されるのを防止
-    if not state.post_download and _is_walk_swipe_ready(img_path, state):
+    if _is_walk_swipe_ready(img_path, state):
         logger.info("[SCENE_EARLY] TutorialWalk検出 (チェッカー床+スワイプ指) → 即スワイプ")
         return "TUTORIAL_WALK"
 
@@ -1121,7 +1121,8 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     # 条件1: dist < 5 が3回続く (phash安定)
     # 条件2: 連続待機30回(~18秒)超過時は毎30回ごとにチェック (微動画面の誤MOVIE対策)
     _low_dist_count = getattr(state, "_movie_low_dist_count", 0)
-    if dist < 5:
+    if dist < 5 or dist == 999:
+        # dist=999 は phash 計算失敗 (初回等) — リセットせず維持
         _low_dist_count += 1
     else:
         _low_dist_count = 0
