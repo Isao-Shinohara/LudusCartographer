@@ -2170,8 +2170,8 @@ def _handle_rapid_path(
             state.adv_early_consecutive += 1
             _fms = (time.time() - _loop_t0) * 1000
             state.total_loop_ms += _fms
-            logger.info("  [PERF] Loop %.0fms (ADV_EARLY) [%d/%d]",
-                        _fms, state.adv_early_consecutive, _ADV_EARLY_STALL)
+            logger.debug("  [PERF] Loop %.0fms (ADV_EARLY) [%d/%d]",
+                         _fms, state.adv_early_consecutive, _ADV_EARLY_STALL)
             return True, _skip_rapid
         else:
             # ↓ボタン未検出 (セリフ切り替え中等) → 0.5s 待機してリトライ
