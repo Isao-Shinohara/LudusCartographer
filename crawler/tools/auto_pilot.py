@@ -657,9 +657,8 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
     # ── チェッカー柄歩行モード: 一度入ったら抜けるまで最優先 ──
     # MOVIE 判定より先にチェックし、不要な MOVIE 待機を回避する
-    # post_download 中は動画チェッカー柄の可能性があるため無視
     _CHECKER_EXIT_PATIENCE = 30  # この回数チェッカー床なしが続いたらモード解除 (~15秒)
-    if getattr(state, "_in_checker_walk", False) and not state.post_download:
+    if getattr(state, "_in_checker_walk", False):
         if _is_walk_swipe_ready(img_path, state):
             state._checker_miss_count = 0
             return "TUTORIAL_WALK"
@@ -1042,11 +1041,10 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
 
 def handle_movie(img_path: Path, state: PilotState, dist: int,
-                 cur_phash: str, ocr_results: list = None) -> bool:
+                 cur_phash: str) -> bool:
     """動画シーン専用ハンドラ。指アイコン / GoldSwipe / 金枠ボタン検出なし。
 
-    - post_download + SKIP 表示 → DL完了後ループなので SKIP タップで脱出
-    - それ以外の動画 → 待機のみ (タップで一時停止/再開ループに陥る)
+    動画 → 待機のみ (タップで一時停止/再開ループに陥る)
 
     Returns: True if handled (caller should continue), False for fallthrough.
     """
@@ -1057,42 +1055,6 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
         logger.info("[MOVIE] download_active=True → MOVIEハンドラ脱出 (DL完了チェック優先)")
         state.movie_wait_consecutive = 0; state.movie_static_count = 0
         return False
-
-    # ── DL直後 + SKIP 表示 → DL完了後ループ脱出 ──
-    # ダウンロード完了後に動画がループする現象: SKIP をタップして抜ける
-    # テンプレマッチ優先、OCR フォールバック (ocr_results が渡された場合のみ)
-    if state.post_download:
-        _skip_pos = detect_movie_skip_button(img_path)
-        if _skip_pos:
-            _sk_x, _sk_y = roi_to_device(_skip_pos[0], _skip_pos[1], state.game_roi)
-            logger.info("[MOVIE] DL直後 + SKIP検出(テンプレ) → SKIPタップ (%d,%d)", _sk_x, _sk_y)
-            tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP")
-            state.movie_wait_consecutive = 0; state.movie_static_count = 0
-            state.last_phash = ""
-            return True
-        # OCR フォールバック: テンプレ未検出でも OCR で SKIP テキストを検出
-        if ocr_results:
-            _skip_item = next(
-                (item for item in ocr_results
-                 if "SKIP" in item.get("text", "").upper()
-                 or item.get("text", "").upper() == "SK"),
-                None)
-            if _skip_item:
-                _sk_x, _sk_y = _skip_item["center"]
-                _sk_x, _sk_y = roi_to_device(_sk_x, _sk_y, state.game_roi)
-                logger.info("[MOVIE] DL直後 + SKIP検出(OCR '%s') → SKIPタップ (%d,%d)",
-                            _skip_item["text"], _sk_x, _sk_y)
-                tap_device(_sk_x, _sk_y, state, "MOVIE_SKIP")
-                state.movie_wait_consecutive = 0; state.movie_static_count = 0
-                state.last_phash = ""
-                return True
-        # SKIP 未検出: ミニ会話が見えていたら MOVIE ではない → OCR パスへ脱出
-        _mc = detect_mini_conversation(img_path)
-        if _mc is not None:
-            logger.info("[MOVIE] DL直後 SKIP未検出+ミニ会話検出 → MOVIEハンドラ脱出")
-            state.movie_wait_consecutive = 0; state.movie_static_count = 0
-            return False
-        logger.info("[MOVIE] DL直後だが SKIP 未検出 → 待機")
 
     # ── 待機カウンタ ──
     state.movie_wait_consecutive += 1
@@ -1156,9 +1118,6 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
                 state._movie_low_dist_count = 0
                 state.current_scene = "UNKNOWN"
                 state.last_phash = ""
-                # NOTE: post_download はクリアしない。動画チェッカー柄シーンで
-                # MOVIE_ESCAPE が発火しても、is_tutorial_walk_scene が誤検出するため
-                # post_download ガードは自然TTL切れまで維持する。
                 # MOVIE再検出を抑制: phash_moving_count をリセット
                 state.phash_moving_count = 0
                 state._movie_stable_count = 0
@@ -1176,7 +1135,7 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
             state.phash_moving_count = 0
             state._movie_stable_count = 0
             return False
-        # TutorialWalk チェック: post_download 中でもチェッカー床+指なら即スワイプで脱出
+        # TutorialWalk チェック: チェッカー床+指なら即スワイプで脱出
         if _is_walk_swipe_ready(img_path, state):
             logger.info("[MOVIE_ESCAPE] チェッカー床+スワイプ指検出 → TutorialWalk スワイプで脱出")
             _walk_sx = int(ANALYSIS_W * 0.5)
@@ -2301,11 +2260,6 @@ def main():
     # ── 周回数リセット (起動ごと) ──
     delete_state("grind_cycles")
 
-    # ── SQLite から永続状態を復元 ──
-    if load_state("post_download") == "1":
-        state.post_download = True
-        logger.info("[PERSIST] post_download=True を復元 (前回 DL 中断からの再開)")
-
     # ─── Ctrl+C シグナルハンドラ登録 (レポート自動生成) ───
     global _pilot_state_ref
     _pilot_state_ref = state
@@ -2545,9 +2499,7 @@ def main():
             # チュートリアルウォーク（暗い廊下）は暗転ではない → スワイプで進行
             # バトル等の暗い画面で誤検出しないようテンプレートで除外
             _is_walk = False
-            # post_download 後はお知らせポップアップ等の暗背景を TutorialWalk と誤検出するため除外
             if (state.consecutive_blackouts >= 10
-                    and not state.post_download
                     and _is_walk_swipe_ready(img_path, state)):
                 _walk_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
                 _battle_roi = BATTLE_BTN_ROI
@@ -3490,13 +3442,6 @@ def main():
                     scene, i, dist, state.same_phash_count, len(ocr_results), texts[:8])
         state.last_ocr_texts = texts
 
-        # ── DL直後 SKIP 検出 → handle_movie に統合済み (OCR結果を渡す) ──
-        if state.post_download and scene not in ("BATTLE", "MENU"):
-            if handle_movie(img_path, state, dist, cur_phash, ocr_results=ocr_results):
-                state.last_action = "MOVIE_SKIP"
-                state.last_phash = ""
-                continue
-
         # ── キャラ獲得画面検出: MOVIE と混同しやすいため先に判定 ──
         # 特徴: 左下にキャラ名 + "のキオク"(メモリア名) + 属性アイコン2つ
         # NEW! は初回のみ表示されるため判定に使わない
@@ -3596,7 +3541,6 @@ def main():
             state.reset_for_new_cycle()
             reset_device_cache()
             clear_imread_cache()
-            delete_state("post_download")
             logger.info("[GRIND] 状態リセット完了 → 周回 #%d 開始",
                         state.grind_cycles_completed + 1)
         # 副作用アクション以外なら代替候補を収集
@@ -3828,36 +3772,12 @@ def main():
         # ON: DL画面検出時 → 永続化 (プロセス再起動でも復元される)
         # OFF: DL/動画/ロード以外のシーンに遷移した時 → 削除
         _DL_MOVIE_ACTIONS = frozenset((
-            "DOWNLOAD_WAIT", "MOVIE_WAIT", "MOVIE_SKIP",
+            "DOWNLOAD_WAIT", "MOVIE_WAIT",
             "LOADING_WAIT", "WAIT_FOR_CHANGE",
             "MAIN_STORY_LOADING",
             "DL_COMPLETE_OK", "SYSTEM_DLG_OK",
             "ADV_CHOICE", "SCENE_TAP", "STORY_TAP",
         ))
-        _POST_DL_GRACE = 20  # DL完了後20イテレーションはpost_downloadを維持
-        if action == "DOWNLOAD_WAIT":
-            if not state.post_download:
-                logger.info("[PERSIST] post_download=True (DL画面検出)")
-                state.post_download = True
-                state.post_download_ttl = _POST_DL_GRACE
-                persist_state("post_download", "1")
-            else:
-                # DL中は TTL をリセットし続ける
-                state.post_download_ttl = _POST_DL_GRACE
-        elif action == "DL_COMPLETE_OK":
-            # DL完了ダイアログOK → TTL リセット (この後の動画SKIPに備える)
-            state.post_download_ttl = _POST_DL_GRACE
-            logger.info("[PERSIST] post_download TTL リセット (DL_COMPLETE_OK)")
-        elif state.post_download and action not in _DL_MOVIE_ACTIONS:
-            state.post_download_ttl -= 1
-            if state.post_download_ttl <= 0:
-                logger.info("[PERSIST] post_download クリア (TTL切れ, action=%s)", action)
-                state.post_download = False
-                delete_state("post_download")
-            else:
-                logger.debug("[PERSIST] post_download 維持 (TTL=%d, action=%s)",
-                             state.post_download_ttl, action)
-
         # ── ダウンロード進捗ログ (30秒ごとに生存確認) ──
         if action == "DOWNLOAD_WAIT":
             _now = time.time()

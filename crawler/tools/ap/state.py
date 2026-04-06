@@ -162,9 +162,6 @@ class PilotState:
     adv_confirmed_count: int = 0
     # ─── ADV_EARLY 連続ハンドル回数 (スタック脱出用) ───
     adv_early_consecutive: int = 0
-    # ─── ダウンロード直後フラグ (動画SKIP許可) ───
-    post_download: bool = False
-    post_download_ttl: int = 0  # 残りイテレーション数 (0=即クリア許可)
     # ─── ダウンロード中フラグ (誤タップ保護) ───
     download_active: bool = False
     # ─── テレメトリ (DEBUG レベル) ───

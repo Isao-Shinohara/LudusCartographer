@@ -119,7 +119,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     _is_battle_ui = any(kw in joined for kw in _BATTLE_UI_KWS)
     from tools.ap.image_proc import count_home_nav_templates
     _is_home_screen = count_home_nav_templates(analysis_path) >= 3 if analysis_path else False
-    if analysis_path is not None and not _is_battle_ui and not ctx.adv_result.is_adv and not _is_home_screen and not state.post_download:
+    if analysis_path is not None and not _is_battle_ui and not ctx.adv_result.is_adv and not _is_home_screen:
         _gold = detect_tutorial_gold_swipe(analysis_path)
         if _gold:
             _dir, _sx, _fy, _ty, _dur = _gold
