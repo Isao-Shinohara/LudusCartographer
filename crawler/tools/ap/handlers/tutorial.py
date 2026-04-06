@@ -228,10 +228,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
         # --- 2. チュートリアルダイアログ ▷ は dialog_phase (Phase 2) で ROI 付き検出済み ---
         # 全画面検索はガチャ画面等で誤マッチするため削除
 
-        # --- 4. 動画スキップ (MOVIE_SKIP_TEXT) --- 削除済み
-        # SKIP タップは post_download 時の MOVIE ハンドラのみで実行する
-
-        # --- 5. マップ矢印 → navigation.py (Phase 6) に統合済み ---
+        # --- 4. マップ矢印 → navigation.py (Phase 6) に統合済み ---
 
         # BATTLE_UPPER_GUARD: バトル中は上部テンプレマッチを除外
         if asset_hit and ctx.in_battle_ctx:

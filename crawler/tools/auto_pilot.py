@@ -3500,7 +3500,6 @@ def main():
         if _from_movie_ttl > 0:
             state._from_movie_ttl = _from_movie_ttl - 1
             # MOVIE→UNKNOWN 直後はテンプレタップ抑制して待機
-            # SKIP タップは post_download 時のみ許可 (ガチャ演出・動画の誤SKIPを防止)
             logger.info("[MOVIE→UNKNOWN] テンプレタップ抑制 → MOVIE再判定待ち")
             action, wait_sec = "MOVIE_WAIT", 1.0
         else:
