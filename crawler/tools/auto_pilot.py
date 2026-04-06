@@ -2266,13 +2266,16 @@ def main():
         _reinstall_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
 
     # ─── ゲーム未インストール → 自動インストール ───
-    # NOTE: ADB 接続不良で is_app_installed がタイムアウトすると False を返し
-    # 誤って再インストールが発火する。ログに警告が出ていないか確認すること。
-    if not is_app_installed(_ap_device.DEVICE_SERIAL, APP_PACKAGE):
-        logger.info("[AUTO_INSTALL] ゲーム '%s' 未インストール → Play Store から自動インストール"
-                    " (ADB タイムアウトの場合は誤検知の可能性あり)", APP_PACKAGE)
+    _installed = is_app_installed(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
+    if _installed is None:
+        # ADB タイムアウトで判定不能 → 再インストールせずに続行 (既存アプリがある前提)
+        logger.warning("[AUTO_INSTALL] ADB タイムアウトで判定不能 → インストール済みと仮定して続行")
+    elif not _installed:
+        logger.info("[AUTO_INSTALL] ゲーム '%s' 未インストール → Play Store から自動インストール",
+                    APP_PACKAGE)
         _reinstall_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
-        if not is_app_installed(_ap_device.DEVICE_SERIAL, APP_PACKAGE):
+        _installed_after = is_app_installed(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
+        if not _installed_after:
             logger.error("[ABORT] 自動インストール失敗。手動でインストールしてから再実行してください。")
             sys.exit(1)
         # 新規インストール = fresh start 扱い

@@ -578,20 +578,29 @@ def uninstall_app(serial: str, package: str, timeout: int = 60) -> bool:
         return False
 
 
-def is_app_installed(serial: str, package: str, timeout: int = 10) -> bool:
-    """adb shell pm list packages でインストール済みか確認する。"""
-    try:
-        r = subprocess.run(
-            ["adb", "-s", serial, "shell", "pm", "list", "packages", package],
-            capture_output=True, text=True, timeout=timeout,
-        )
-        return f"package:{package}" in r.stdout
-    except subprocess.TimeoutExpired:
-        logger.warning("[is_app_installed] ADB タイムアウト (%ds) — デバイス接続を確認してください", timeout)
-        return False
-    except FileNotFoundError:
-        logger.warning("[is_app_installed] adb コマンドが見つかりません")
-        return False
+def is_app_installed(serial: str, package: str, timeout: int = 10,
+                     retries: int = 3) -> Optional[bool]:
+    """adb shell pm list packages でインストール済みか確認する。
+
+    Returns: True/False (確定) or None (ADB タイムアウトで判定不能)
+    """
+    import time as _time
+    for attempt in range(retries):
+        try:
+            r = subprocess.run(
+                ["adb", "-s", serial, "shell", "pm", "list", "packages", package],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            return f"package:{package}" in r.stdout
+        except subprocess.TimeoutExpired:
+            logger.warning("[is_app_installed] ADB タイムアウト (%ds) — リトライ %d/%d",
+                           timeout, attempt + 1, retries)
+            _time.sleep(2)
+        except FileNotFoundError:
+            logger.warning("[is_app_installed] adb コマンドが見つかりません")
+            return None
+    logger.error("[is_app_installed] %d回リトライ全失敗 — デバイス接続を確認してください", retries)
+    return None
 
 
 def open_play_store(serial: str, package: str, timeout: int = 10) -> bool:
