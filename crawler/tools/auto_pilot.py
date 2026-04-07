@@ -797,7 +797,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     if state.current_scene == "BATTLE" and dist < 30:
         from tools.ap.image_proc import ASSET_MANAGER as _AM_verify
         _battle_cont_any = False
-        for _btn_cont in ("battle_normal_attack", "battle_skill", "battle_special"):
+        for _btn_cont in ("battle_normal_attack", "battle_skill", "battle_special", "battle_cancel"):
             _bm_cont = _AM_verify.match_single(_btn_cont, img_path, roi=BATTLE_BTN_ROI)
             if _bm_cont and _bm_cont[2] >= 0.60:
                 _battle_cont_any = True
