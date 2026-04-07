@@ -3551,6 +3551,8 @@ def main():
             logger.info("[CHARA_GET] キャラ獲得画面検出 (キオク) → 中央タップ (%d,%d)", _tap_x, _tap_y)
             tap_device(_tap_x, _tap_y, state, "CHARA_GET_TAP")
             state.last_action = "CHARA_GET_TAP"
+            state._gacha_total_wait = 0
+            state._gacha_static_count = 0
             time.sleep(1.0)
             state.last_phash = ""
             continue

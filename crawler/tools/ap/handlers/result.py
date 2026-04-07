@@ -150,6 +150,8 @@ def handle_result_screen(
 
     if subtype == "GACHA":
         logger.info("  ガチャ結果画面検出 (subtype=%s) → ハンドラ処理", subtype)
+        state._gacha_total_wait = 0
+        state._gacha_static_count = 0
         if btn:
             cx, cy = btn["center"]
             logger.info(">>> 【ガチャ結果】 OK (%d,%d) → ダブルタップ", cx, cy)
