@@ -2814,7 +2814,7 @@ def main():
                 _gacha_static = 0
             state._gacha_static_count = _gacha_static
             # 安定判定 OR フォールバック
-            _GACHA_RESULT_CHECK = 10   # 10回待機後にガチャ結果画面チェック
+            _GACHA_RESULT_CHECK = 5    # 5回待機ごとにガチャ結果画面チェック
             _GACHA_MAX_WAIT = 30       # 30回で強制タップ
             _gacha_tap_now = False
             if _gacha_static >= 5:
