@@ -2813,11 +2813,30 @@ def main():
             else:
                 _gacha_static = 0
             state._gacha_static_count = _gacha_static
-            # 安定判定 OR 長時間待機(200回≒30秒)で強制タップ
-            _GACHA_MAX_WAIT = 30  # ~21秒
-            if _gacha_static >= 5 or _gacha_total_wait >= _GACHA_MAX_WAIT:
+            # 安定判定 OR フォールバック
+            _GACHA_RESULT_CHECK = 10   # 10回待機後にガチャ結果画面チェック
+            _GACHA_MAX_WAIT = 30       # 30回で強制タップ
+            _gacha_tap_now = False
+            if _gacha_static >= 5:
+                _gacha_tap_now = True
+                _reason = "安定"
+            elif _gacha_total_wait >= _GACHA_MAX_WAIT:
+                _gacha_tap_now = True
+                _reason = f"長時間待機({_gacha_total_wait}回)"
+            elif _gacha_total_wait >= _GACHA_RESULT_CHECK and _gacha_total_wait % _GACHA_RESULT_CHECK == 0:
+                # 10回ごとにOCRでガチャ結果画面か確認
+                try:
+                    _gr_ocr = run_ocr(str(analysis_path), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
+                    _gr_texts = [r.get("text", "") for r in _gr_ocr]
+                    from tools.ap.handlers.result import is_gacha_single_result
+                    if is_gacha_single_result(_gr_ocr, _gr_texts):
+                        _gacha_tap_now = True
+                        _reason = f"ガチャ結果画面検出(wait={_gacha_total_wait})"
+                        logger.info("[GACHA] OCR: %s", _gr_texts[:6])
+                except Exception as _gr_e:
+                    logger.debug("[GACHA] 結果画面チェック失敗: %s", _gr_e)
+            if _gacha_tap_now:
                 tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "GACHA_TAP")
-                _reason = "安定" if _gacha_static >= 5 else f"長時間待機({_gacha_total_wait}回)"
                 logger.info("[GACHA] %s → タップで進行", _reason)
                 state._gacha_static_count = 0
                 state._gacha_total_wait = 0
