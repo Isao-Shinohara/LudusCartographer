@@ -2837,8 +2837,10 @@ def main():
             elif _gacha_total_wait >= _GACHA_MAX_WAIT:
                 _gacha_tap_now = True
                 _reason = f"長時間待機({_gacha_total_wait}回)"
-            elif _gacha_total_wait >= _GACHA_RESULT_CHECK and _gacha_total_wait % _GACHA_RESULT_CHECK == 0:
-                # 10回ごとにOCRでガチャ結果画面か確認
+            elif (_gacha_total_wait >= _GACHA_RESULT_CHECK
+                  and _gacha_total_wait % _GACHA_RESULT_CHECK == 0
+                  and dist <= 8):
+                # 5回ごと + phash安定時のみOCRでガチャ結果画面か確認
                 try:
                     _gr_ocr = run_ocr(str(analysis_path), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
                     _gr_texts = [r.get("text", "") for r in _gr_ocr]
