@@ -3508,8 +3508,10 @@ def main():
         from tools.ap.image_proc import count_home_nav_templates
         _is_home = count_home_nav_templates(analysis_path) >= 3 if analysis_path else False
         _is_battle = state.current_scene == "BATTLE"
-        if (_is_title or _is_home or _is_battle) and _from_movie_ttl > 0:
-            _reason = "タイトル画面" if _is_title else "ホーム画面" if _is_home else "バトル中"
+        from tools.ap.handlers.result import is_gacha_single_result
+        _is_gacha_single = is_gacha_single_result(ocr_results, texts)
+        if (_is_title or _is_home or _is_battle or _is_gacha_single) and _from_movie_ttl > 0:
+            _reason = "タイトル画面" if _is_title else "ホーム画面" if _is_home else "バトル中" if _is_battle else "ガチャ結果画面"
             logger.info("[MOVIE→UNKNOWN] %s → TTL抑制解除", _reason)
             _from_movie_ttl = 0
             state._from_movie_ttl = 0

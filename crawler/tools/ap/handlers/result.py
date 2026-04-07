@@ -25,6 +25,24 @@ _RESULT_NEXT_Y_RATIO = 0.914
 _FORMATION_KWS = ["パーティ", "編成", "キオク", "ポートレイト", "自動編成"]
 
 
+def is_gacha_single_result(ocr: list, texts: list[str],
+                           W: int = ANALYSIS_W, H: int = ANALYSIS_H) -> bool:
+    """ガチャ結果1枚表示（キャラ紹介画面）の判定。
+    条件: SKIP + 左下にキャラ名/メモリア名テキスト (y>60%, x<50%) + バトルKWなし
+    """
+    _has_skip = any("SKIP" in t for t in texts)
+    if not _has_skip:
+        return False
+    _has_left_bottom_text = any(
+        item["center"][1] > H * 0.6 and item["center"][0] < W * 0.5
+        and item.get("text", "") not in ("SKIP", "NEW", "NEW!", "NEW！", "NEW：", "NEWA")
+        and len(item.get("text", "")) >= 2
+        for item in ocr
+    )
+    _has_battle = any(kw in t for kw in ("通常攻撃", "BREAK", "WAVE", "Turn", "AUTO") for t in texts)
+    return _has_left_bottom_text and not _has_battle
+
+
 def _is_result_screen(ocr: list, texts: list[str],
                       W: int = ANALYSIS_W, H: int = ANALYSIS_H) -> tuple[bool, str]:
     """Result画面判定。戻り値: (is_result, subtype)
@@ -38,16 +56,7 @@ def _is_result_screen(ocr: list, texts: list[str],
     if new_count >= 3:
         return True, "GACHA"
     # ガチャ結果: 1枚表示 (キャラ紹介画面)
-    # SKIP が右上にある + 左下にキャラ名/メモリア名テキスト (y>60%, x<50%) + バトルKWなし
-    _has_skip = any("SKIP" in t for t in texts)
-    _has_left_bottom_text = any(
-        item["center"][1] > H * 0.6 and item["center"][0] < W * 0.5
-        and item.get("text", "") not in ("SKIP", "NEW", "NEW!", "NEW！", "NEW：", "NEWA")
-        and len(item.get("text", "")) >= 2
-        for item in ocr
-    )
-    _has_battle = any(kw in t for kw in ("通常攻撃", "BREAK", "WAVE", "Turn", "AUTO") for t in texts)
-    if _has_skip and _has_left_bottom_text and not _has_battle:
+    if is_gacha_single_result(ocr, texts, W, H):
         return True, "GACHA"
     # バトルResult: Result / EXP / Lv.1 / リザルト
     if (has_text(ocr, "Result") or has_text(ocr, "EXP")
