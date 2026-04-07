@@ -2392,13 +2392,23 @@ def main():
             logger.info("[WATCHDOG] Periodic check (iter=%d). Running physical diagnostics...", i)
             if not check_adb_liveness():
                 logger.warning("[WATCHDOG] Periodic check FAILED → attempting reconnect")
-                subprocess.run(["adb", "kill-server"], timeout=5)
+                try:
+                    subprocess.run(["adb", "kill-server"], timeout=10, capture_output=True)
+                except subprocess.TimeoutExpired:
+                    logger.warning("[WATCHDOG] adb kill-server タイムアウト")
                 time.sleep(2)
-                subprocess.run(["adb", "start-server"], timeout=5)
+                try:
+                    subprocess.run(["adb", "start-server"], timeout=10, capture_output=True)
+                except subprocess.TimeoutExpired:
+                    logger.warning("[WATCHDOG] adb start-server タイムアウト")
                 time.sleep(2)
                 # USB シリアル (`:` なし) には adb connect 不要 (DNS解決失敗する)
                 if _ap_device.DEVICE_SERIAL and ":" in _ap_device.DEVICE_SERIAL:
-                    subprocess.run(["adb", "connect", _ap_device.DEVICE_SERIAL], timeout=5)
+                    try:
+                        subprocess.run(["adb", "connect", _ap_device.DEVICE_SERIAL],
+                                       timeout=10, capture_output=True)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("[WATCHDOG] adb connect タイムアウト — 次ループでリトライ")
                     time.sleep(1)
                 # scrcpy が ADB 再起動で死んだ場合は再起動
                 if _scrcpy_proc is not None and _scrcpy_proc.poll() is not None:
@@ -2966,12 +2976,22 @@ def main():
                 if not check_adb_liveness():
                     # 第3段階: 物理診断失敗 → kill-server + 再接続
                     logger.warning("[WATCHDOG] Physical diagnostics FAILED → adb kill-server + reconnect")
-                    subprocess.run(["adb", "kill-server"], timeout=5)
+                    try:
+                        subprocess.run(["adb", "kill-server"], timeout=10, capture_output=True)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("[WATCHDOG] adb kill-server タイムアウト")
                     time.sleep(2)
-                    subprocess.run(["adb", "start-server"], timeout=5)
+                    try:
+                        subprocess.run(["adb", "start-server"], timeout=10, capture_output=True)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("[WATCHDOG] adb start-server タイムアウト")
                     time.sleep(2)
                     if _ap_device.DEVICE_SERIAL:
-                        subprocess.run(["adb", "connect", _ap_device.DEVICE_SERIAL], timeout=5)
+                        try:
+                            subprocess.run(["adb", "connect", _ap_device.DEVICE_SERIAL],
+                                           timeout=10, capture_output=True)
+                        except subprocess.TimeoutExpired:
+                            logger.warning("[WATCHDOG] adb connect タイムアウト")
                         time.sleep(1)
                     # scrcpy が ADB 再起動で死んだ場合は再起動
                     if _scrcpy_proc is not None and _scrcpy_proc.poll() is not None:
