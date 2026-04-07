@@ -18,6 +18,7 @@ from tools.ap.helpers import has_text, log_milestone
 from tools.ap.image_proc import (
     ASSET_MANAGER,
     find_gold_button,
+    find_gold_frame_by_template,
     detect_tutorial_overlay,
     roi_to_device,
 )
@@ -82,6 +83,11 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     # チュートリアル完了後: 指なし + 暗転なし + 金枠なし
     _has_overlay = detect_tutorial_overlay(analysis_path) if analysis_path else False
     _home_gold = find_gold_button(analysis_path) if analysis_path else None
+    # フォールバック: HSV で未検出ならテンプレマッチでも検出
+    if _home_gold is None and analysis_path:
+        _gft = find_gold_frame_by_template(analysis_path)
+        if _gft is not None:
+            _home_gold = (_gft[0], _gft[1], "template")
     # 指テンプレ検出: 金枠との共検出を必須化 (白い形状への偽陽性防止)
     _has_hand = False
     if analysis_path and _home_gold is not None:
