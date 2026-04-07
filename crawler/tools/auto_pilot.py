@@ -2823,8 +2823,10 @@ def main():
                 state._gacha_total_wait = 0
                 state.last_phash = ""
             else:
-                logger.info("[GACHA] アニメーション待機 (dist=%d static=%d/5)", dist, _gacha_static)
+                logger.info("[GACHA] アニメーション待機 (dist=%d static=%d/5 wait=%d/%d)", dist, _gacha_static, _gacha_total_wait, _GACHA_MAX_WAIT)
                 time.sleep(0.5)
+            # phash を更新して次ループで正しい dist を計算
+            state.last_phash = cur_phash
             _fms = (time.time() - _loop_t0) * 1000
             state.total_loop_ms += _fms
             logger.info("  [PERF] Loop %.0fms (GACHA)", _fms)
