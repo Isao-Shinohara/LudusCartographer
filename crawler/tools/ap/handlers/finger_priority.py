@@ -20,6 +20,7 @@ from tools.ap.image_proc import (
     find_button_in_gold_frame,
     detect_white_hand_pointer,
     smart_tap_button,
+    detect_dialog_corners,
 )
 
 logger = logging.getLogger("auto_pilot")
@@ -45,7 +46,11 @@ def handle_finger_priority(
     W, H = ctx.W, ctx.H
 
     # 【最優先】金枠テンプレマッチ検出 (指テンプレ不要)
+    # ダイアログ四隅検出時は金枠タップを棄却 (ダイアログの金枠装飾への誤タップ防止)
     _gold = find_gold_frame_by_template(analysis_path)
+    if _gold and detect_dialog_corners(analysis_path):
+        logger.info("[FINGER_PRIORITY] 金枠検出だがダイアログ四隅あり → OCRに委譲")
+        _gold = None
     if _gold:
         _gx, _gy, _gw, _gh = _gold
         # 金枠中心タップ3回失敗 → 金枠内のボタンを探索してタップ
