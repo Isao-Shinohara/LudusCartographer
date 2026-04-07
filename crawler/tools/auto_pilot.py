@@ -792,14 +792,18 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     # 毎回テンプレートでバトル UI の実在を確認する。
-    # current_scene は前回の判定結果に過ぎず、画面遷移後も残留する。
-    # 初回検出と同じ条件 (テンプレ 0.60 + キャラアイコン二重確認) で判定し、
-    # 未検出なら UNKNOWN を返し OCR で正確にシーンを再判定する。
+    # 継続チェックはテンプレ1つでも検出できれば BATTLE 維持 (初回の二重確認は不要)。
+    # HoughCircles によるキャラアイコン検出はアニメ中に不安定なため継続チェックでは省略。
     if state.current_scene == "BATTLE" and dist < 30:
         from tools.ap.image_proc import ASSET_MANAGER as _AM_verify
-        _battle_cont = _check_battle_templates(img_path, _AM_verify)
-        if not _battle_cont:
-            logger.info("[SCENE_EARLY] BATTLE継続チェック: テンプレ+キャラアイコン未検出 → UNKNOWN")
+        _battle_cont_any = False
+        for _btn_cont in ("battle_normal_attack", "battle_skill", "battle_special"):
+            _bm_cont = _AM_verify.match_single(_btn_cont, img_path, roi=BATTLE_BTN_ROI)
+            if _bm_cont and _bm_cont[2] >= 0.60:
+                _battle_cont_any = True
+                break
+        if not _battle_cont_any:
+            logger.info("[SCENE_EARLY] BATTLE継続チェック: バトルテンプレ未検出 → UNKNOWN")
             return "UNKNOWN"
         return "BATTLE"
 
