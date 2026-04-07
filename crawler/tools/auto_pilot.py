@@ -2447,11 +2447,22 @@ def main():
         state.wifi_fail_streak = 0  # 成功時リセット
         # ── Portrait 検出: ブラウザ等の外部アプリ → BACK キーで復帰 ──
         if actual_w > 0 and actual_w < actual_h:
-            logger.warning("[PORTRAIT] 縦画面 (%dx%d) → BACK キー", actual_w, actual_h)
-            adb("shell input keyevent 4")  # KEYCODE_BACK
-            time.sleep(1.5)
+            state.portrait_back_streak += 1
+            if state.portrait_back_streak >= 3:
+                # BACK 3回で復帰しない → 通知シェード等。HOME + アプリ起動で強制復帰
+                logger.warning("[PORTRAIT] 縦画面 %d回連続 → HOME + アプリ復帰", state.portrait_back_streak)
+                adb("shell input keyevent 3")  # KEYCODE_HOME
+                time.sleep(1)
+                adb(f"shell am start -n {APP_PACKAGE}/{APP_ACTIVITY}")
+                time.sleep(5)
+                state.portrait_back_streak = 0
+            else:
+                logger.warning("[PORTRAIT] 縦画面 (%dx%d) → BACK キー (%d/3)", actual_w, actual_h, state.portrait_back_streak)
+                adb("shell input keyevent 4")  # KEYCODE_BACK
+                time.sleep(1.5)
             state.last_phash = ""
             continue
+        state.portrait_back_streak = 0  # 横画面復帰でリセット
         # メモリ上に最新画像を保持 + ROI更新 (スロットル: 画面変化時 or 50iter毎)
         try:
             _cached_bgr = pop_last_scrcpy_bgr()
@@ -3419,6 +3430,21 @@ def main():
             time.sleep(1)
             adb("shell input keyevent 82")  # KEYCODE_MENU = swipe unlock
             time.sleep(2)
+            adb(f"shell am start -n {APP_PACKAGE}/{APP_ACTIVITY}")
+            time.sleep(5)
+            state.last_phash = ""
+            continue
+
+        # ── 通知シェード検出: 曜日 + Androidシステム = 通知ドロワー → HOME + アプリ復帰 ──
+        _WEEKDAY_KWS = ("月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日", "日曜日")
+        _is_notification_shade = (
+            any(kw in _ocr_text_joined for kw in _WEEKDAY_KWS)
+            and ("Android" in _ocr_text_joined or "USB" in _ocr_text_joined)
+        )
+        if _is_notification_shade:
+            logger.warning("[NOTIFICATION_SHADE] 通知シェード検出 → HOME + アプリ復帰")
+            adb("shell input keyevent 3")  # KEYCODE_HOME
+            time.sleep(1)
             adb(f"shell am start -n {APP_PACKAGE}/{APP_ACTIVITY}")
             time.sleep(5)
             state.last_phash = ""
