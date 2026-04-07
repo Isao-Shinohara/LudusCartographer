@@ -211,5 +211,5 @@ class PilotState:
         self.grind_cycles_completed = _grind_done
         self.device_w = _dev_w
         self.device_h = _dev_h
-        self.launch_time = _launch
+        self.launch_time = time.time()  # 周回ごとの計測開始時刻をリセット
         self.is_fresh_start = True
