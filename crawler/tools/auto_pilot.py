@@ -1278,7 +1278,13 @@ def handle_battle(analysis_path: Path, state: PilotState, dist: int) -> bool:
                         _fm[0], _fm[1], _rapid_tx, _rapid_ty)
 
     # ── Phase A: アクティブキャラ検出 (赤/ピンク発光) ──
+    # 金枠が出ている場合はスキップ (金枠タップが優先、キャラタップは不要)
     _active_char = detect_active_battle_char(analysis_path, ANALYSIS_W, ANALYSIS_H)
+    if not _rapid_action and not state.character_selected and _active_char is not None:
+        from tools.ap.image_proc import find_gold_frame_by_template as _fgbt_a
+        if _fgbt_a(analysis_path) is not None:
+            logger.debug("[ACTIVE_CHAR] 金枠検出中 → キャラタップスキップ")
+            _active_char = None
     if not _rapid_action and not state.character_selected and _active_char is not None:
         _rapid_tx, _rapid_ty = _active_char[0], _active_char[1]
         _rapid_action = "BATTLE_RAPID_ACTIVE_P1"
@@ -3237,7 +3243,12 @@ def main():
             # ── Phase A: アクティブキャラ検出 (赤/ピンク発光ハロー) ──
             # 【永続ルール】キャラ選択モヤ = 赤/ピンクの発光。明度差で識別。
             _active_char = detect_active_battle_char(analysis_path, ANALYSIS_W, ANALYSIS_H)
-
+            # 金枠が出ている場合はスキップ (金枠タップが優先)
+            if not _rapid_action and not state.character_selected and _active_char is not None:
+                from tools.ap.image_proc import find_gold_frame_by_template as _fgbt_b
+                if _fgbt_b(analysis_path) is not None:
+                    logger.debug("[ACTIVE_CHAR] 金枠検出中 → キャラタップスキップ")
+                    _active_char = None
             if not _rapid_action and not state.character_selected and _active_char is not None:
                 _rapid_tx, _rapid_ty = _active_char[0], _active_char[1]
                 _rapid_action = "BATTLE_RAPID_ACTIVE_P1"
