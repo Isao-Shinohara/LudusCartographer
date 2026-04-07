@@ -794,7 +794,7 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # 毎回テンプレートでバトル UI の実在を確認する。
     # 継続チェックはテンプレ1つでも検出できれば BATTLE 維持 (初回の二重確認は不要)。
     # HoughCircles によるキャラアイコン検出はアニメ中に不安定なため継続チェックでは省略。
-    if state.current_scene == "BATTLE" and dist < 30:
+    if state.current_scene == "BATTLE" and (dist < 30 or dist == 999):
         from tools.ap.image_proc import ASSET_MANAGER as _AM_verify
         _battle_cont_any = False
         for _btn_cont in ("battle_normal_attack", "battle_skill", "battle_special", "battle_cancel"):
