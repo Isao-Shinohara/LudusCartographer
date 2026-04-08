@@ -308,7 +308,6 @@ _PHASE_LABELS: dict[str, str] = {
     "APP_LAUNCH":     "アプリ起動",
     "NOTICE_DISMISS": "ご注意画面",
     "TITLE_TAP":      "タイトル画面",
-    "FIRST_BATTLE":   "初回バトル開始",
     "DL_START":       "ダウンロード開始",
     "DL_END":         "ダウンロード完了",
     "NAME_INPUT":     "名前入力",
@@ -319,7 +318,7 @@ _PHASE_LABELS: dict[str, str] = {
 
 # タイムラインに表示するフェーズの標準順序
 _PHASE_ORDER: list[str] = [
-    "APP_LAUNCH", "NOTICE_DISMISS", "TITLE_TAP", "FIRST_BATTLE",
+    "APP_LAUNCH", "NOTICE_DISMISS", "TITLE_TAP",
     "DL_START", "DL_END", "NAME_INPUT", "HOME_REACHED",
     "GOAL_HOME_REACHED", "GOAL_GRIND_COMPLETE",
 ]
