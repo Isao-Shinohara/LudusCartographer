@@ -73,10 +73,10 @@ def _build_scrcpy_args(device_serial: str) -> list:
     dev_w, dev_h = get_device_resolution()
     land_w = max(dev_w, dev_h)
     land_h = min(dev_w, dev_h)
-    # 映像エンコード解像度: 解析基準幅 (1440) に固定。
-    # フル解像度 (2160) だとUSB帯域を圧迫し scrcpy のコマ落ちが発生する。
-    # 1440 なら解析リサイズが不要で精度劣化なし。720の2倍で一般的な解像度。
-    _MAX_SIZE = ANALYSIS_W
+    # 映像エンコード解像度: 短辺が ANALYSIS_H (720) を下回らないように算出。
+    # scrcpy --max-size は長辺を制限するため、短辺 = land_h * max_size / land_w。
+    # 短辺 >= ANALYSIS_H を保証するには max_size >= land_w * ANALYSIS_H / land_h。
+    _MAX_SIZE = max(ANALYSIS_W, int(land_w * ANALYSIS_H / land_h)) if land_h > 0 else ANALYSIS_W
     logger.info("[SCRCPY] 実機解像度 %dx%d → landscape %dx%d → max-size %d",
                 dev_w, dev_h, land_w, land_h, _MAX_SIZE)
     # scrcpy バイナリ: PATH 検索で絶対パスを解決 (子プロセスの PATH 差異を回避)
