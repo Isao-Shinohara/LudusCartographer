@@ -382,14 +382,28 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
         total = sorted_ms[-1][1] if sorted_ms else 0.0
         rows.append(("**合計**", f"**{_fmt_time(total)}**", ""))
 
-    # 列幅を揃えてテーブル生成
+    # 列幅を揃えてテーブル生成 (全角文字の表示幅を考慮)
+    import unicodedata
+
+    def _display_width(s: str) -> int:
+        """文字列の端末表示幅を返す (全角=2, 半角=1)。"""
+        w = 0
+        for ch in s:
+            eaw = unicodedata.east_asian_width(ch)
+            w += 2 if eaw in ("F", "W") else 1
+        return w
+
+    def _pad(s: str, width: int) -> str:
+        """表示幅ベースで右パディング。"""
+        return s + " " * (width - _display_width(s))
+
     headers = ("フェーズ", "到達時刻", "区間時間")
     col_w = [
-        max(len(headers[i]), *(len(r[i]) for r in rows))
+        max(_display_width(headers[i]), *(_display_width(r[i]) for r in rows))
         for i in range(3)
     ]
     def _row(c0: str, c1: str, c2: str) -> str:
-        return f"| {c0:<{col_w[0]}} | {c1:<{col_w[1]}} | {c2:<{col_w[2]}} |"
+        return f"| {_pad(c0, col_w[0])} | {_pad(c1, col_w[1])} | {_pad(c2, col_w[2])} |"
 
     lines = [
         "## フェーズタイムライン",
