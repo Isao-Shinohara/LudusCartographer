@@ -671,28 +671,55 @@ def swipe_device(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300,
     adb(f"shell input swipe {rx1} {ry1} {rx2} {ry2} {duration_ms}")
 
 
-def check_adb_liveness() -> bool:
-    """
-    ADB 接続の物理的な生存を確認する。
-    echo コマンドのみで軽量チェック (screencap は USB で 3s 超えることがあり除外)。
-    Returns: True=接続正常, False=タイムアウト/エラー(要再起動)
-    """
+def _adb_echo_check() -> bool:
+    """ADB echo で接続確認 (単発)。"""
     _serial_arg = ["-s", DEVICE_SERIAL] if DEVICE_SERIAL else []
     try:
         _r1 = subprocess.run(
             ["adb"] + _serial_arg + ["shell", "echo", "1"],
             capture_output=True, timeout=5, text=True,
         )
-        if _r1.returncode != 0 or _r1.stdout.strip() != "1":
-            logger.warning("[WATCHDOG] echo 応答異常: rc=%d out=%r", _r1.returncode, _r1.stdout.strip())
-            return False
+        return _r1.returncode == 0 and _r1.stdout.strip() == "1"
+    except (subprocess.TimeoutExpired, Exception):
+        return False
+
+
+def _adb_reconnect() -> bool:
+    """ADB reconnect を試行し、復旧したら True を返す。"""
+    _serial_arg = ["-s", DEVICE_SERIAL] if DEVICE_SERIAL else []
+    # USB: adb reconnect, Wi-Fi: adb connect
+    for _cmd_label, _cmd in [
+        ("reconnect", ["adb"] + _serial_arg + ["reconnect"]),
+        ("connect", ["adb", "connect", DEVICE_SERIAL] if DEVICE_SERIAL else []),
+    ]:
+        if not _cmd:
+            continue
+        try:
+            logger.info("[ADB_RECOVER] %s 試行中...", _cmd_label)
+            subprocess.run(_cmd, capture_output=True, timeout=10, text=True)
+            time.sleep(3)
+            if _adb_echo_check():
+                logger.info("[ADB_RECOVER] %s で復旧成功", _cmd_label)
+                return True
+        except (subprocess.TimeoutExpired, Exception) as _e:
+            logger.warning("[ADB_RECOVER] %s 失敗: %s", _cmd_label, _e)
+    return False
+
+
+def check_adb_liveness() -> bool:
+    """
+    ADB 接続の物理的な生存を確認する。
+    echo コマンドのみで軽量チェック (screencap は USB で 3s 超えることがあり除外)。
+    失敗時は reconnect を自動試行する。
+    Returns: True=接続正常, False=復旧不能
+    """
+    if _adb_echo_check():
         return True
-    except subprocess.TimeoutExpired:
-        logger.warning("[WATCHDOG] ADB コマンドタイムアウト — 物理診断失敗")
-        return False
-    except Exception as _e:
-        logger.warning("[WATCHDOG] 物理診断例外: %s", _e)
-        return False
+    logger.warning("[WATCHDOG] ADB 接続失敗 — reconnect を試行")
+    if _adb_reconnect():
+        return True
+    logger.warning("[WATCHDOG] ADB reconnect 失敗 — 物理診断失敗")
+    return False
 
 
 def check_foreground_app() -> bool:

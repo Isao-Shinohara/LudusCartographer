@@ -3587,6 +3587,12 @@ def main():
             and ("Android" in _ocr_text_joined or "USB" in _ocr_text_joined)
         )
         if _is_notification_shade:
+            # ADB 切断で空出力 → 誤判定の可能性があるため、先に接続確認
+            if not check_adb_liveness():
+                logger.warning("[NOTIFICATION_SHADE] ADB 切断中 — 復旧待ち (10秒)")
+                time.sleep(10)
+                state.last_phash = ""
+                continue
             logger.warning("[NOTIFICATION_SHADE] 通知シェード検出 → HOME + アプリ復帰")
             adb("shell input keyevent 3")  # KEYCODE_HOME
             time.sleep(1)
