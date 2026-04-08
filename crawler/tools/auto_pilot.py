@@ -2392,9 +2392,12 @@ def main():
     _dev_w, _dev_h = get_device_resolution()
     logger.info("[DEVICE_RES] wm size: %dx%d / 解析基準: %dx%d (ROI補正で座標変換)",
                 _dev_w, _dev_h, ANALYSIS_W, ANALYSIS_H)
-    # テンプレートをデバイス解像度に合わせてリサイズ
+    # テンプレートをscrcpyキャプチャ解像度に合わせてリサイズ
+    # scrcpy max-size 後の長辺 = max(ANALYSIS_W, land_w * ANALYSIS_H / land_h)
     _land_w = max(_dev_w, _dev_h)
-    ASSET_MANAGER.set_device_scale(_land_w)
+    _land_h = min(_dev_w, _dev_h)
+    _scrcpy_long = max(ANALYSIS_W, int(_land_w * ANALYSIS_H / _land_h)) if _land_h > 0 else ANALYSIS_W
+    ASSET_MANAGER.set_device_scale(_scrcpy_long)
 
     # ─── 初回アプリ起動: mCurrentFocus で正確な前面アプリ判定 ───
     # NOTE: mResumedActivity はバックグラウンドスタックも含む複数行を返すことがあり
