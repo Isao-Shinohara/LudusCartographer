@@ -1427,7 +1427,6 @@ def detect_dialog_corners(img_path: Path) -> bool:
         if img is None:
             return False
         _H, _W = img.shape[:2]
-        _CORNER_THRESHOLD = 0.65
         _RECT_TOLERANCE = int(_W * 0.15)  # 矩形整合性の許容差
         if not _DIALOG_CORNER_TL.exists():
             return False
@@ -1457,8 +1456,7 @@ def detect_dialog_corners(img_path: Path) -> bool:
             "bl": (img[_H // 2:, :_W // 2], 0, _H // 2, _tpl_bl),
             "br": (img[_H // 2:, _W // 2:], _W // 2, _H // 2, _tpl_br),
         }
-        _all_pos = {}   # 全隅のベストマッチ位置 (閾値無視)
-        _passed = {}    # 閾値を超えた隅
+        _all_pos = {}   # 全隅のベストマッチ位置
         for _key, (_roi, _ox, _oy, _tpl) in _rois.items():
             if _roi.shape[0] < _tpl.shape[0] or _roi.shape[1] < _tpl.shape[1]:
                 continue
@@ -1467,17 +1465,13 @@ def detect_dialog_corners(img_path: Path) -> bool:
             _x = _ml[0] + _ox
             _y = _ml[1] + _oy
             _all_pos[_key] = (_x, _y, _mv)
-            if _mv >= _CORNER_THRESHOLD:
-                _passed[_key] = (_x, _y, _mv)
 
-        if len(_passed) < 2:
+        if len(_all_pos) < 4:
             _detail = " ".join(f"{k}={v[2]:.3f}" for k, v in _all_pos.items())
-            logger.debug("[DialogCorners] 閾値超え %d/4 (<%d必要) [%s]",
-                         len(_passed), 2, _detail)
+            logger.debug("[DialogCorners] 4隅マッチ不足 %d/4 [%s]", len(_all_pos), _detail)
             return False
 
         # 矩形整合性チェック: 全隅の位置から長方形を形成しているか
-        if len(_all_pos) < 4:
             return False
         tl_x, tl_y = _all_pos["tl"][0], _all_pos["tl"][1]
         tr_x, tr_y = _all_pos["tr"][0], _all_pos["tr"][1]
@@ -1495,12 +1489,20 @@ def detect_dialog_corners(img_path: Path) -> bool:
             and _x_left_diff <= _RECT_TOLERANCE
             and _x_right_diff <= _RECT_TOLERANCE
         )
-        if _rect_ok:
+        # 最低スコア: 4隅の平均が閾値以上であること (偶然の矩形一致を排除)
+        _MIN_AVG_SCORE = 0.45
+        _avg_score = sum(v[2] for v in _all_pos.values()) / 4
+        if _rect_ok and _avg_score >= _MIN_AVG_SCORE:
             _detail = " ".join(f"{k}={v[2]:.3f}" for k, v in _all_pos.items())
-            logger.debug("[DialogCorners] 検出OK (passed=%d/4) [%s]", len(_passed), _detail)
+            logger.debug("[DialogCorners] 検出OK (avg=%.3f) [%s]", _avg_score, _detail)
             return True
-        logger.debug("[DialogCorners] 矩形不整合 Yt=%d Yb=%d Xl=%d Xr=%d (tol=%d)",
-                     _y_top_diff, _y_bot_diff, _x_left_diff, _x_right_diff, _RECT_TOLERANCE)
+        if not _rect_ok:
+            logger.debug("[DialogCorners] 矩形不整合 Yt=%d Yb=%d Xl=%d Xr=%d (tol=%d)",
+                         _y_top_diff, _y_bot_diff, _x_left_diff, _x_right_diff, _RECT_TOLERANCE)
+        else:
+            _detail = " ".join(f"{k}={v[2]:.3f}" for k, v in _all_pos.items())
+            logger.debug("[DialogCorners] スコア不足 avg=%.3f < %.2f [%s]",
+                         _avg_score, _MIN_AVG_SCORE, _detail)
         return False
     except Exception:
         return False
