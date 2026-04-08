@@ -331,12 +331,18 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
     if not milestones:
         return ["## フェーズタイムライン", "(マイルストーン未記録)"]
 
+    # 途中再開の場合、launch_time がプロセス再起動時刻のため正確な計測不可
+    # → 周回リセット後に is_fresh_start が True に切り替わった時点以降のみ有効
+    _restart_unreliable = not state.is_fresh_start
+
     def _fmt_time(secs: float) -> str:
         m, s = divmod(int(secs), 60)
         h, m = divmod(m, 60)
         if h > 0:
             return f"{h}:{m:02d}:{s:02d}"
         return f"{m}:{s:02d}"
+
+    _unmeasured = "— (再起動のため未計測)"
 
     lines = [
         "## フェーズタイムライン",
@@ -362,21 +368,30 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
     for name in _phases_in_range:
         label = _PHASE_LABELS.get(name, name)
         if name in recorded_names:
-            elapsed = milestones[name]
-            delta = elapsed - prev_time
-            lines.append(f"| {label} | {_fmt_time(elapsed)} | +{_fmt_time(delta)} |")
-            prev_time = elapsed
+            if _restart_unreliable:
+                lines.append(f"| {label} | {_unmeasured} | {_unmeasured} |")
+            else:
+                elapsed = milestones[name]
+                delta = elapsed - prev_time
+                lines.append(f"| {label} | {_fmt_time(elapsed)} | +{_fmt_time(delta)} |")
+                prev_time = elapsed
         else:
-            lines.append(f"| {label} | — | (再起動のため未計測) |")
+            lines.append(f"| {label} | {_unmeasured} | {_unmeasured} |")
     # 標準順序外の記録済みフェーズを末尾に追加
     for name, elapsed in _extra:
         label = _PHASE_LABELS.get(name, name)
-        delta = elapsed - prev_time
-        lines.append(f"| {label} | {_fmt_time(elapsed)} | +{_fmt_time(delta)} |")
-        prev_time = elapsed
+        if _restart_unreliable:
+            lines.append(f"| {label} | {_unmeasured} | {_unmeasured} |")
+        else:
+            delta = elapsed - prev_time
+            lines.append(f"| {label} | {_fmt_time(elapsed)} | +{_fmt_time(delta)} |")
+            prev_time = elapsed
     # 合計行
-    total = sorted_ms[-1][1] if sorted_ms else 0.0
-    lines.append(f"| **合計** | **{_fmt_time(total)}** | |")
+    if _restart_unreliable:
+        lines.append(f"| **合計** | {_unmeasured} | |")
+    else:
+        total = sorted_ms[-1][1] if sorted_ms else 0.0
+        lines.append(f"| **合計** | **{_fmt_time(total)}** | |")
     return lines
 
 
