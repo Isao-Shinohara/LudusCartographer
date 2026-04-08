@@ -338,7 +338,7 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
         h, m = divmod(m, 60)
         if h > 0:
             return f"{h}:{m:02d}:{s:02d}"
-        return f"{m}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
 
     # マイルストーンを到達時刻順にソート
     sorted_ms = sorted(milestones.items(), key=lambda x: x[1])
@@ -362,7 +362,7 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
         if name in recorded_names and not _restart_unreliable:
             elapsed = milestones[name]
             delta = elapsed - prev_time
-            rows.append((label, _fmt_time(elapsed), f"+{_fmt_time(delta)}"))
+            rows.append((label, _fmt_time(elapsed), _fmt_time(delta)))
             prev_time = elapsed
         else:
             rows.append((label, "-", "-"))
@@ -372,7 +372,7 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
             rows.append((label, "-", "-"))
         else:
             delta = elapsed - prev_time
-            rows.append((label, _fmt_time(elapsed), f"+{_fmt_time(delta)}"))
+            rows.append((label, _fmt_time(elapsed), _fmt_time(delta)))
             prev_time = elapsed
     # 合計行
     if _restart_unreliable:
@@ -396,7 +396,7 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
         """表示幅ベースで右パディング。"""
         return s + " " * (width - _display_width(s))
 
-    headers = ("フェーズ", "到達時刻", "区間時間")
+    headers = ("フェーズ", "到達時刻", "所要時間")
     col_w = [
         max(_display_width(headers[i]), *(_display_width(r[i]) for r in rows))
         for i in range(3)
