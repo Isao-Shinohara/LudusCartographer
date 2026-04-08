@@ -317,6 +317,13 @@ _PHASE_LABELS: dict[str, str] = {
     "GOAL_GRIND_COMPLETE": "目的達成: 周回完了",
 }
 
+# タイムラインに表示するフェーズの標準順序
+_PHASE_ORDER: list[str] = [
+    "APP_LAUNCH", "NOTICE_DISMISS", "TITLE_TAP", "FIRST_BATTLE",
+    "DL_START", "DL_END", "NAME_INPUT", "HOME_REACHED",
+    "GOAL_HOME_REACHED", "GOAL_GRIND_COMPLETE",
+]
+
 
 def _build_phase_timeline(state: PilotState) -> list[str]:
     """マイルストーンから Markdown テーブル形式のフェーズタイムラインを生成する。"""
@@ -339,8 +346,30 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
     ]
     # マイルストーンを到達時刻順にソート
     sorted_ms = sorted(milestones.items(), key=lambda x: x[1])
+    recorded_names = {name for name, _ in sorted_ms}
+    # 記録済みフェーズと未記録フェーズを標準順序で統合
+    # 未記録フェーズ: 前後の記録済みフェーズの間に位置するもののみ表示
+    first_recorded = sorted_ms[0][0] if sorted_ms else None
+    last_recorded = sorted_ms[-1][0] if sorted_ms else None
+    _first_idx = _PHASE_ORDER.index(first_recorded) if first_recorded in _PHASE_ORDER else 0
+    _last_idx = _PHASE_ORDER.index(last_recorded) if last_recorded in _PHASE_ORDER else len(_PHASE_ORDER) - 1
+    # 標準順序の範囲内にあるフェーズを列挙
+    _phases_in_range = _PHASE_ORDER[_first_idx:_last_idx + 1]
+    # 標準順序外の記録済みフェーズも含める
+    _extra = [name for name in sorted_ms if name not in _PHASE_ORDER]
+
     prev_time = 0.0
-    for name, elapsed in sorted_ms:
+    for name in _phases_in_range:
+        label = _PHASE_LABELS.get(name, name)
+        if name in recorded_names:
+            elapsed = milestones[name]
+            delta = elapsed - prev_time
+            lines.append(f"| {label} | {_fmt_time(elapsed)} | +{_fmt_time(delta)} |")
+            prev_time = elapsed
+        else:
+            lines.append(f"| {label} | — | (再起動のため未計測) |")
+    # 標準順序外の記録済みフェーズを末尾に追加
+    for name, elapsed in _extra:
         label = _PHASE_LABELS.get(name, name)
         delta = elapsed - prev_time
         lines.append(f"| {label} | {_fmt_time(elapsed)} | +{_fmt_time(delta)} |")
