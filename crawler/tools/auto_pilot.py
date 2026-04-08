@@ -354,7 +354,7 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
     # 標準順序外の記録済みフェーズも含める
     _extra = [(name, elapsed) for name, elapsed in sorted_ms if name not in _PHASE_ORDER]
 
-    # テーブル行を (label, col2, col3) のタプルで収集
+    # テーブル行を (label, delta, elapsed) のタプルで収集
     rows: list[tuple[str, str, str]] = []
     prev_time = 0.0
     for name in _phases_in_range:
@@ -362,7 +362,7 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
         if name in recorded_names and not _restart_unreliable:
             elapsed = milestones[name]
             delta = elapsed - prev_time
-            rows.append((label, _fmt_time(elapsed), _fmt_time(delta)))
+            rows.append((label, _fmt_time(delta), _fmt_time(elapsed)))
             prev_time = elapsed
         else:
             rows.append((label, "-", "-"))
@@ -372,14 +372,14 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
             rows.append((label, "-", "-"))
         else:
             delta = elapsed - prev_time
-            rows.append((label, _fmt_time(elapsed), _fmt_time(delta)))
+            rows.append((label, _fmt_time(delta), _fmt_time(elapsed)))
             prev_time = elapsed
     # 合計行
     if _restart_unreliable:
-        rows.append(("**合計**", "**再起動のため未計測**", ""))
+        rows.append(("**合計**", "", "**再起動のため未計測**"))
     else:
         total = sorted_ms[-1][1] if sorted_ms else 0.0
-        rows.append(("**合計**", f"**{_fmt_time(total)}**", ""))
+        rows.append(("**合計**", "", f"**{_fmt_time(total)}**"))
 
     # 列幅を揃えてテーブル生成 (全角文字の表示幅を考慮)
     import unicodedata
@@ -392,22 +392,29 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
             w += 2 if eaw in ("F", "W") else 1
         return w
 
-    def _pad(s: str, width: int) -> str:
-        """表示幅ベースで右パディング。"""
+    def _pad_left(s: str, width: int) -> str:
+        """表示幅ベースで左パディング（右詰）。"""
+        return " " * (width - _display_width(s)) + s
+
+    def _pad_right(s: str, width: int) -> str:
+        """表示幅ベースで右パディング（左詰）。"""
         return s + " " * (width - _display_width(s))
 
-    headers = ("フェーズ", "到達時刻", "所要時間")
+    headers = ("フェーズ", "所要時間", "起動時間")
+    # 各列の右詰/左詰: フェーズ=左詰, 所要時間=右詰, 起動時間=右詰
     col_w = [
         max(_display_width(headers[i]), *(_display_width(r[i]) for r in rows))
         for i in range(3)
     ]
-    def _row(c0: str, c1: str, c2: str) -> str:
-        return f"| {_pad(c0, col_w[0])} | {_pad(c1, col_w[1])} | {_pad(c2, col_w[2])} |"
+    def _row(c0: str, c1: str, c2: str, is_header: bool = False) -> str:
+        if is_header:
+            return f"| {_pad_right(c0, col_w[0])} | {_pad_right(c1, col_w[1])} | {_pad_right(c2, col_w[2])} |"
+        return f"| {_pad_right(c0, col_w[0])} | {_pad_left(c1, col_w[1])} | {_pad_left(c2, col_w[2])} |"
 
     lines = [
         "## フェーズタイムライン",
         "",
-        _row(*headers),
+        _row(*headers, is_header=True),
         f"|{'-' * (col_w[0] + 2)}|{'-' * (col_w[1] + 2)}|{'-' * (col_w[2] + 2)}|",
     ]
     for r in rows:
