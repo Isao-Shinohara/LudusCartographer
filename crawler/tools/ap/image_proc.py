@@ -1431,10 +1431,22 @@ def detect_dialog_corners(img_path: Path) -> bool:
         _RECT_TOLERANCE = int(_W * 0.15)  # 矩形整合性の許容差
         if not _DIALOG_CORNER_TL.exists():
             return False
-        _tpl_tl = imread_cached(_DIALOG_CORNER_TL)
-        if _tpl_tl is None:
+        _tpl_tl_raw = imread_cached(_DIALOG_CORNER_TL)
+        if _tpl_tl_raw is None:
             return False
-        _tpl_bl = imread_cached(_DIALOG_CORNER_BL) if _DIALOG_CORNER_BL.exists() else cv2.flip(_tpl_tl, 0)
+        _tpl_bl_raw = imread_cached(_DIALOG_CORNER_BL) if _DIALOG_CORNER_BL.exists() else cv2.flip(_tpl_tl_raw, 0)
+        # デバイススケールに合わせてリサイズ
+        _ds = ASSET_MANAGER._device_scale
+        if abs(_ds - 1.0) > 0.01:
+            _nw_tl = max(1, int(_tpl_tl_raw.shape[1] * _ds))
+            _nh_tl = max(1, int(_tpl_tl_raw.shape[0] * _ds))
+            _tpl_tl = cv2.resize(_tpl_tl_raw, (_nw_tl, _nh_tl), interpolation=cv2.INTER_LANCZOS4)
+            _nw_bl = max(1, int(_tpl_bl_raw.shape[1] * _ds))
+            _nh_bl = max(1, int(_tpl_bl_raw.shape[0] * _ds))
+            _tpl_bl = cv2.resize(_tpl_bl_raw, (_nw_bl, _nh_bl), interpolation=cv2.INTER_LANCZOS4)
+        else:
+            _tpl_tl = _tpl_tl_raw
+            _tpl_bl = _tpl_bl_raw
         _tpl_tr = cv2.flip(_tpl_tl, 1)
         _tpl_br = cv2.flip(_tpl_bl, 1)
 
@@ -2944,7 +2956,43 @@ class AssetManager:
 
     def __init__(self):
         self._templates: dict[str, dict] = {}
+        self._device_scale: float = 1.0  # デバイス解像度比 (ANALYSIS_W / 実機長辺)
+        self._scaled_cache: dict[str, tuple] = {}  # name -> (img, mask, edge_img)
         self._load_templates()
+
+    def set_device_scale(self, device_land_w: int) -> None:
+        """デバイスのランドスケープ長辺からテンプレリサイズ比率を設定。
+
+        テンプレートは ANALYSIS_W (1440) 基準で作成されている。
+        デバイス長辺が ANALYSIS_W と異なる場合、analysis 画像上の
+        UI 要素サイズが変わるため、テンプレをリサイズして一致させる。
+        """
+        scale = ANALYSIS_W / device_land_w if device_land_w > 0 else 1.0
+        if abs(scale - self._device_scale) < 0.01:
+            return  # 変化なし
+        self._device_scale = scale
+        self._scaled_cache.clear()
+        if abs(scale - 1.0) > 0.01:
+            logger.info("[AssetManager] デバイススケール設定: %.4f (長辺=%d)", scale, device_land_w)
+
+    def _get_scaled(self, name: str, data: dict) -> tuple:
+        """スケール済みテンプレ (img, mask, edge_img) をキャッシュ付きで返す。"""
+        if abs(self._device_scale - 1.0) < 0.01:
+            return data["img"], data.get("mask"), data.get("edge_img")
+        if name in self._scaled_cache:
+            return self._scaled_cache[name]
+        s = self._device_scale
+        img = data["img"]
+        nw, nh = max(1, int(img.shape[1] * s)), max(1, int(img.shape[0] * s))
+        s_img = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LANCZOS4)
+        s_mask = None
+        if data.get("mask") is not None:
+            s_mask = cv2.resize(data["mask"], (nw, nh), interpolation=cv2.INTER_NEAREST)
+        s_edge = None
+        if data.get("edge_img") is not None:
+            s_edge = cv2.resize(data["edge_img"], (nw, nh), interpolation=cv2.INTER_LANCZOS4)
+        self._scaled_cache[name] = (s_img, s_mask, s_edge)
+        return s_img, s_mask, s_edge
 
     def _load_templates(self) -> None:
         count = 0
@@ -3098,11 +3146,10 @@ class AssetManager:
             _rx, _ry, _rw, _rh = roi
             img = img[_ry:_ry + _rh, _rx:_rx + _rw]
             _roi_ox, _roi_oy = _rx, _ry
-        tmpl = data["img"]
+        tmpl, _mask, _edge_img = self._get_scaled(name, data)
         if tmpl.shape[0] > img.shape[0] or tmpl.shape[1] > img.shape[1]:
             return None
         try:
-            _mask = data.get("mask")
             if _mask is not None:
                 # マスク付きマッチ: ×マーク等の形状部分のみで比較 (背景無視)
                 res = cv2.matchTemplate(img, tmpl, cv2.TM_CCORR_NORMED, mask=_mask)
@@ -3111,9 +3158,9 @@ class AssetManager:
             _, max_val, _, max_loc = cv2.minMaxLoc(res)
             # エッジ重みスコアリング
             _ew = data["edge_weight"]
-            if _ew > 0 and data["edge_img"] is not None:
+            if _ew > 0 and _edge_img is not None:
                 _img_edge = cv2.Canny(img, 50, 150)
-                _tmpl_edge = data["edge_img"]
+                _tmpl_edge = _edge_img
                 if roi is not None:
                     _tmpl_edge_h, _tmpl_edge_w = _tmpl_edge.shape[:2]
                     if _tmpl_edge_h <= _img_edge.shape[0] and _tmpl_edge_w <= _img_edge.shape[1]:

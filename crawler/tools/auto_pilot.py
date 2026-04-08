@@ -2392,6 +2392,9 @@ def main():
     _dev_w, _dev_h = get_device_resolution()
     logger.info("[DEVICE_RES] wm size: %dx%d / 解析基準: %dx%d (ROI補正で座標変換)",
                 _dev_w, _dev_h, ANALYSIS_W, ANALYSIS_H)
+    # テンプレートをデバイス解像度に合わせてリサイズ
+    _land_w = max(_dev_w, _dev_h)
+    ASSET_MANAGER.set_device_scale(_land_w)
 
     # ─── 初回アプリ起動: mCurrentFocus で正確な前面アプリ判定 ───
     # NOTE: mResumedActivity はバックグラウンドスタックも含む複数行を返すことがあり
