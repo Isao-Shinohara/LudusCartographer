@@ -2025,8 +2025,18 @@ def _reinstall_from_play_store(serial: str, package: str) -> None:
             kw in t for t in _ocr_texts for kw in _APP_PAGE_VERIFY_KWS
         )
         if not _on_app_page:
-            logger.warning("[REINSTALL] まどドラのページではない (OCR: %s) → Play Store 再表示",
-                           _ocr_texts[:5])
+            # 通知シェード/ロック画面が展開されている可能性 → 閉じてから再表示
+            _is_shade = any(
+                kw in t for t in _ocr_texts
+                for kw in ("緊急通報", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日", "日曜日")
+            )
+            if _is_shade:
+                logger.warning("[REINSTALL] 通知シェード/ロック画面検出 → 閉じて Play Store 再表示")
+                adb(f"-s {serial} shell service call statusbar 2")  # 通知シェードを閉じる
+                time.sleep(1)
+            else:
+                logger.warning("[REINSTALL] まどドラのページではない (OCR: %s) → Play Store 再表示",
+                               _ocr_texts[:5])
             _adb_key("4")  # BACK
             time.sleep(2)
             open_play_store(serial, package)
