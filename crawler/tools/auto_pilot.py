@@ -2428,6 +2428,22 @@ def main():
                 logger.warning("[STARTUP] 10回待機後もアプリ未検出 → am start を再試行")
                 adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
                 time.sleep(5)
+                # 再試行後の起動確認
+                for _poll2 in range(10):
+                    time.sleep(2)
+                    _focus3 = adb("shell dumpsys window | grep mCurrentFocus")
+                    if APP_PACKAGE in _focus3:
+                        logger.info("[STARTUP] 再試行後アプリ前面確認 (%.1f秒)", (_poll2 + 1) * 2)
+                        _app_started = True
+                        break
+                    _ps2 = adb(f"shell pidof {APP_PACKAGE}")
+                    if _ps2.strip():
+                        logger.info("[STARTUP] 再試行後プロセス検出 PID=%s", _ps2.strip())
+                        _app_started = True
+                        break
+                if not _app_started:
+                    logger.error("[ABORT] アプリ起動失敗。手動で起動してから再実行してください。")
+                    sys.exit(1)
         else:
             logger.info("[STARTUP] アプリ既に前面: %s", APP_PACKAGE)
     except Exception as _e:
