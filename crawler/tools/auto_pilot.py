@@ -1482,15 +1482,13 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
 
     Returns: True if handled, False for fallthrough to OCR.
     """
-    _adv_tap_x = int(ANALYSIS_W * 0.93)
-    _adv_tap_y = int(ANALYSIS_H * 0.91)
-
     # ── ↓ボタンテンプレートマッチ → タップ ──
     # ↓ボタンは画面右下 (y > 80%) にある。右上の ⏭ ボタン (動画スキップ) に
     # 誤マッチしないよう y > 80% に限定
     _adv_next = ASSET_MANAGER.match_single("next_btn", img_path,
                 roi=ADV_NEXT_BTN_ROI)
     if _adv_next:
+        _adv_tap_x, _adv_tap_y = _adv_next[0], _adv_next[1]
         logger.info("[ADV] ↓検出 (score=%.2f) → タップ (%d,%d)", _adv_next[2], _adv_tap_x, _adv_tap_y)
         tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
         state.last_action = "ADV_RAPID_TAP"
@@ -2990,10 +2988,10 @@ def main():
                 # NOTE: detect_adv_advance_icon() 単独ではバトル画面の「通常攻撃」
                 # ボタン領域の明るいピクセルを↓と誤検出するため、ADVツールバー判定
                 # (is_adv) を必須条件にする。↓単独ではADVに入らない。
-                _adv_tap_x = int(ANALYSIS_W * 0.93)
-                _adv_tap_y = int(ANALYSIS_H * 0.91)
                 if _rapid_adv.is_adv:
-                    if ASSET_MANAGER.match_single("next_btn", _early_analysis, roi=ADV_NEXT_BTN_ROI):
+                    _adv_rapid_m = ASSET_MANAGER.match_single("next_btn", _early_analysis, roi=ADV_NEXT_BTN_ROI)
+                    if _adv_rapid_m:
+                        _adv_tap_x, _adv_tap_y = _adv_rapid_m[0], _adv_rapid_m[1]
                         logger.info("[ADV_RAPID][iter %d] ↓検出 → タップ (%d,%d)",
                                     i, _adv_tap_x, _adv_tap_y)
                         tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
@@ -3149,9 +3147,9 @@ def main():
                     logger.info("[%s][iter %d] phash_dist=%d same=%d — polling (%.1fs)...",
                                 state.current_scene, i, dist, state.same_phash_count, _poll)
                 # ── ADV送り待ちアイコン検知: phash 安定中でも1回タップ ──
-                _adv_tap_x = int(ANALYSIS_W * 0.93)
-                _adv_tap_y = int(ANALYSIS_H * 0.91)
-                if ASSET_MANAGER.match_single("next_btn", _early_analysis, roi=ADV_NEXT_BTN_ROI):
+                _adv_early_m = ASSET_MANAGER.match_single("next_btn", _early_analysis, roi=ADV_NEXT_BTN_ROI)
+                if _adv_early_m:
+                    _adv_tap_x, _adv_tap_y = _adv_early_m[0], _adv_early_m[1]
                     logger.info("[ADV][iter %d] ↓検出 → タップ (%d,%d)", i, _adv_tap_x, _adv_tap_y)
                     tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
                     state.last_action = "ADV_RAPID_TAP"
