@@ -4003,9 +4003,6 @@ def main():
                             state.total_blackout_skipped)
                 logger.info("=" * 62)
                 save_evidence(img_path, ocr_results, action, state)
-                if _scrcpy_proc and _scrcpy_proc.poll() is None:
-                    _scrcpy_proc.terminate()
-                    logger.info("[SCRCPY] 終了 PID=%d", _scrcpy_proc.pid)
                 generate_and_copy_report(state, _reason)
                 return
             else:
@@ -4061,10 +4058,6 @@ def main():
 
         i += 1
 
-    # scrcpy プロセスを終了
-    if _scrcpy_proc and _scrcpy_proc.poll() is None:
-        _scrcpy_proc.terminate()
-        logger.info("[SCRCPY] 終了 PID=%d", _scrcpy_proc.pid)
 
 
 if __name__ == "__main__":
