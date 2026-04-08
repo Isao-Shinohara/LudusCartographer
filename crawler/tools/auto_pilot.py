@@ -341,12 +341,6 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
             return f"{h}:{m:02d}:{s:02d}"
         return f"{m}:{s:02d}"
 
-    lines = [
-        "## フェーズタイムライン",
-        "",
-        "| フェーズ | 到達時刻 | 区間時間 |",
-        "|---------|---------|---------|",
-    ]
     # マイルストーンを到達時刻順にソート
     sorted_ms = sorted(milestones.items(), key=lambda x: x[1])
     recorded_names = {name for name, _ in sorted_ms}
@@ -359,33 +353,52 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
     # 標準順序の範囲内にあるフェーズを列挙
     _phases_in_range = _PHASE_ORDER[_first_idx:_last_idx + 1]
     # 標準順序外の記録済みフェーズも含める
-    _extra = [name for name in sorted_ms if name not in _PHASE_ORDER]
+    _extra = [(name, elapsed) for name, elapsed in sorted_ms if name not in _PHASE_ORDER]
 
+    # テーブル行を (label, col2, col3) のタプルで収集
+    rows: list[tuple[str, str, str]] = []
     prev_time = 0.0
     for name in _phases_in_range:
         label = _PHASE_LABELS.get(name, name)
         if name in recorded_names and not _restart_unreliable:
             elapsed = milestones[name]
             delta = elapsed - prev_time
-            lines.append(f"| {label} | {_fmt_time(elapsed)} | +{_fmt_time(delta)} |")
+            rows.append((label, _fmt_time(elapsed), f"+{_fmt_time(delta)}"))
             prev_time = elapsed
         else:
-            lines.append(f"| {label} | - | - |")
-    # 標準順序外の記録済みフェーズを末尾に追加
+            rows.append((label, "-", "-"))
     for name, elapsed in _extra:
         label = _PHASE_LABELS.get(name, name)
         if _restart_unreliable:
-            lines.append(f"| {label} | - | - |")
+            rows.append((label, "-", "-"))
         else:
             delta = elapsed - prev_time
-            lines.append(f"| {label} | {_fmt_time(elapsed)} | +{_fmt_time(delta)} |")
+            rows.append((label, _fmt_time(elapsed), f"+{_fmt_time(delta)}"))
             prev_time = elapsed
     # 合計行
     if _restart_unreliable:
-        lines.append(f"| **合計** | **再起動のため未計測** | |")
+        rows.append(("**合計**", "**再起動のため未計測**", ""))
     else:
         total = sorted_ms[-1][1] if sorted_ms else 0.0
-        lines.append(f"| **合計** | **{_fmt_time(total)}** | |")
+        rows.append(("**合計**", f"**{_fmt_time(total)}**", ""))
+
+    # 列幅を揃えてテーブル生成
+    headers = ("フェーズ", "到達時刻", "区間時間")
+    col_w = [
+        max(len(headers[i]), *(len(r[i]) for r in rows))
+        for i in range(3)
+    ]
+    def _row(c0: str, c1: str, c2: str) -> str:
+        return f"| {c0:<{col_w[0]}} | {c1:<{col_w[1]}} | {c2:<{col_w[2]}} |"
+
+    lines = [
+        "## フェーズタイムライン",
+        "",
+        _row(*headers),
+        f"|{'-' * (col_w[0] + 2)}|{'-' * (col_w[1] + 2)}|{'-' * (col_w[2] + 2)}|",
+    ]
+    for r in rows:
+        lines.append(_row(*r))
     return lines
 
 
