@@ -1417,10 +1417,10 @@ def detect_dialog_nav(img_path: Path,
 
 
 def detect_dialog_corners(img_path: Path) -> bool:
-    """ダイアログ四隅テンプレ (TL の反転で BL も検出) + X座標一致で判定。
+    """ダイアログ四隅テンプレで判定。
 
-    dialog_corner_tl を上下反転して BL 用テンプレートとしても使う。
-    全てのダイアログ判定で共通利用する。
+    4隅をマッチし、2隅以上が閾値を超え、かつ矩形整合性が正しければ True。
+    TL/BL は専用テンプレ、TR/BR は左右反転で生成。
     """
     try:
         img = imread_cached(img_path)
@@ -1428,44 +1428,67 @@ def detect_dialog_corners(img_path: Path) -> bool:
             return False
         _H, _W = img.shape[:2]
         _CORNER_THRESHOLD = 0.65
-        _X_TOLERANCE = int(_W * 0.15)
+        _RECT_TOLERANCE = int(_W * 0.15)  # 矩形整合性の許容差
         if not _DIALOG_CORNER_TL.exists():
             return False
         _tpl_tl = imread_cached(_DIALOG_CORNER_TL)
         if _tpl_tl is None:
             return False
-        # BL: 専用テンプレ。なければ TL の上下反転をフォールバック
         _tpl_bl = imread_cached(_DIALOG_CORNER_BL) if _DIALOG_CORNER_BL.exists() else cv2.flip(_tpl_tl, 0)
-        _corners = {}
-        _scores = {}  # 閾値未満のスコアも記録
-        for _key, _tpl in (("tl", _tpl_tl), ("bl", _tpl_bl)):
-            if _key == "tl":
-                _roi = img[: _H // 2, : _W // 2]
-                _oy = 0
-            else:
-                _roi = img[_H // 2 :, : _W // 2]
-                _oy = _H // 2
-            if (_roi.shape[0] < _tpl.shape[0]
-                    or _roi.shape[1] < _tpl.shape[1]):
+        _tpl_tr = cv2.flip(_tpl_tl, 1)
+        _tpl_br = cv2.flip(_tpl_bl, 1)
+
+        # 4隅を各 ROI でマッチ
+        _rois = {
+            "tl": (img[:_H // 2, :_W // 2], 0, 0, _tpl_tl),
+            "tr": (img[:_H // 2, _W // 2:], _W // 2, 0, _tpl_tr),
+            "bl": (img[_H // 2:, :_W // 2], 0, _H // 2, _tpl_bl),
+            "br": (img[_H // 2:, _W // 2:], _W // 2, _H // 2, _tpl_br),
+        }
+        _all_pos = {}   # 全隅のベストマッチ位置 (閾値無視)
+        _passed = {}    # 閾値を超えた隅
+        for _key, (_roi, _ox, _oy, _tpl) in _rois.items():
+            if _roi.shape[0] < _tpl.shape[0] or _roi.shape[1] < _tpl.shape[1]:
                 continue
             _r = cv2.matchTemplate(_roi, _tpl, cv2.TM_CCOEFF_NORMED)
             _, _mv, _, _ml = cv2.minMaxLoc(_r)
-            _scores[_key] = _mv
+            _x = _ml[0] + _ox
+            _y = _ml[1] + _oy
+            _all_pos[_key] = (_x, _y, _mv)
             if _mv >= _CORNER_THRESHOLD:
-                _corners[_key] = (_ml[0], _oy + _ml[1], _mv)
-        if "tl" in _corners and "bl" in _corners:
-            _dx = abs(_corners["tl"][0] - _corners["bl"][0])
-            if _dx <= _X_TOLERANCE:
-                return True
-            logger.info("[DialogCorners] TL(%d,%d,%.3f) BL(%d,%d,%.3f) X差=%d > %d → 棄却",
-                        _corners["tl"][0], _corners["tl"][1], _corners["tl"][2],
-                        _corners["bl"][0], _corners["bl"][1], _corners["bl"][2],
-                        _dx, _X_TOLERANCE)
-        else:
-            _tl_s = f"TL={_corners['tl'][2]:.3f}" if "tl" in _corners else f"TL=未検出({_scores.get('tl', 0):.3f})"
-            _bl_s = f"BL={_corners['bl'][2]:.3f}" if "bl" in _corners else f"BL=未検出({_scores.get('bl', 0):.3f})"
-            logger.debug("[DialogCorners] %s %s (閾値=%.2f) img=%dx%d",
-                         _tl_s, _bl_s, _CORNER_THRESHOLD, _W, _H)
+                _passed[_key] = (_x, _y, _mv)
+
+        if len(_passed) < 2:
+            _detail = " ".join(f"{k}={v[2]:.3f}" for k, v in _all_pos.items())
+            logger.debug("[DialogCorners] 閾値超え %d/4 (<%d必要) [%s]",
+                         len(_passed), 2, _detail)
+            return False
+
+        # 矩形整合性チェック: 全隅の位置から長方形を形成しているか
+        if len(_all_pos) < 4:
+            return False
+        tl_x, tl_y = _all_pos["tl"][0], _all_pos["tl"][1]
+        tr_x, tr_y = _all_pos["tr"][0], _all_pos["tr"][1]
+        bl_x, bl_y = _all_pos["bl"][0], _all_pos["bl"][1]
+        br_x, br_y = _all_pos["br"][0], _all_pos["br"][1]
+        # 上辺と下辺の Y 座標一致
+        _y_top_diff = abs(tl_y - tr_y)
+        _y_bot_diff = abs(bl_y - br_y)
+        # 左辺と右辺の X 座標一致
+        _x_left_diff = abs(tl_x - bl_x)
+        _x_right_diff = abs(tr_x - br_x)
+        _rect_ok = (
+            _y_top_diff <= _RECT_TOLERANCE
+            and _y_bot_diff <= _RECT_TOLERANCE
+            and _x_left_diff <= _RECT_TOLERANCE
+            and _x_right_diff <= _RECT_TOLERANCE
+        )
+        if _rect_ok:
+            _detail = " ".join(f"{k}={v[2]:.3f}" for k, v in _all_pos.items())
+            logger.debug("[DialogCorners] 検出OK (passed=%d/4) [%s]", len(_passed), _detail)
+            return True
+        logger.debug("[DialogCorners] 矩形不整合 Yt=%d Yb=%d Xl=%d Xr=%d (tol=%d)",
+                     _y_top_diff, _y_bot_diff, _x_left_diff, _x_right_diff, _RECT_TOLERANCE)
         return False
     except Exception:
         return False
