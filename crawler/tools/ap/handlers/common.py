@@ -135,12 +135,7 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
                 except ValueError:
                     pass
                 break
-        if _dl_total_mb >= 100:
-            # 大規模DL: 上書き記録 (前回の小規模DL記録を更新)
-            state.milestone_logged.pop("DL_START", None)
-            state.milestone_logged.pop("DL_END", None)
-            log_milestone(state, "DL_START")
-        elif "DL_START" not in state.milestone_logged:
+        if "DL_START" not in state.milestone_logged:
             log_milestone(state, "DL_START")
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
     # ── DL失敗ダイアログ: OCR がボタンテキスト検出できない場合の安全網 ──
