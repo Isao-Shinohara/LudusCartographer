@@ -75,14 +75,12 @@ def handle_common_guards(ctx: DetectContext, state: PilotState) -> Optional[tupl
             if not any(kw in joined for kw in _dl_any):
                 logger.info("[DL_PROTECT] OCRにDL/完了テキストなし → download_active 解除 (画面遷移済み)")
                 state.download_active = False
-                log_milestone(state, "DL_END")
         else:
             # ホーム到達後: OCRにDLテキストがなければ即解除
             _dl_kws_check = ["Download", "ダウンロード", "追加データ", "MB", "GB"]
             if not any(kw in joined for kw in _dl_kws_check):
                 logger.info("[DL_PROTECT] ホーム後 + DLテキストなし → download_active 解除")
                 state.download_active = False
-                log_milestone(state, "DL_END")
 
     # ── 【#-3a】Loading 画面保護 ──
     # "Now Loading" 等が表示されている間は金枠/指ブロブの誤検出でタップしない
