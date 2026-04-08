@@ -3753,6 +3753,25 @@ def main():
             time.sleep(0.5)
             adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
             time.sleep(5)
+            # 起動確認ループ
+            _grind_started = False
+            for _gp in range(10):
+                time.sleep(2)
+                _gf = adb("shell dumpsys window | grep mCurrentFocus")
+                if APP_PACKAGE in _gf:
+                    logger.info("[GRIND] アプリ前面確認 (%.1f秒)", (_gp + 1) * 2)
+                    _grind_started = True
+                    break
+                _gps = adb(f"shell pidof {APP_PACKAGE}")
+                if _gps.strip():
+                    logger.info("[GRIND] プロセス検出 PID=%s (%.1f秒)", _gps.strip(), (_gp + 1) * 2)
+                    _grind_started = True
+                    break
+                logger.info("[GRIND] 起動待ち (%d/10)", _gp + 1)
+            if not _grind_started:
+                logger.warning("[GRIND] アプリ起動失敗 → am start 再試行")
+                adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
+                time.sleep(5)
             # 周回用状態リセット (全フィールド + 動的属性 + デバイスキャッシュ)
             state.reset_for_new_cycle()
             reset_device_cache()
