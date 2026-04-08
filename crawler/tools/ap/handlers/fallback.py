@@ -336,7 +336,6 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
                     _poll_ph = _poll_new
             else:
                 logger.info(">>> 【NOTICE_DISMISS】 10秒経過 → 続行")
-            log_milestone(state, "NOTICE_DISMISS")
             return "NOTICE_DISMISS", 0.5
         else:
             return "NOTICE_DISMISS", 3.0

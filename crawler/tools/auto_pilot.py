@@ -305,8 +305,7 @@ def detect_and_act(ocr: list, state: PilotState,
 
 # ─── フェーズタイムライン生成 ────────────────────────────
 _PHASE_LABELS: dict[str, str] = {
-    "APP_LAUNCH":     "アプリ起動",
-    "NOTICE_DISMISS": "ご注意画面",
+    "INSTALL_COMPLETE": "インストール完了",
     "TITLE_TAP":      "タイトル画面",
     "DL_START":       "ダウンロード開始",
     "DL_END":         "ダウンロード完了",
@@ -318,7 +317,7 @@ _PHASE_LABELS: dict[str, str] = {
 
 # タイムラインに表示するフェーズの標準順序
 _PHASE_ORDER: list[str] = [
-    "APP_LAUNCH", "NOTICE_DISMISS", "TITLE_TAP",
+    "INSTALL_COMPLETE", "TITLE_TAP",
     "DL_START", "DL_END", "NAME_INPUT", "HOME_REACHED",
     "GOAL_HOME_REACHED", "GOAL_GRIND_COMPLETE",
 ]
@@ -2312,6 +2311,9 @@ def main():
             adb("shell input keyevent KEYCODE_WAKEUP")
             time.sleep(0.5)
 
+    # ─── PilotState 早期作成: インストール時間も計測に含める ───
+    state = PilotState()
+
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
     if args.reinstall:
         # 永続状態をクリア (新規アカウントでは前回の状態は無効)
@@ -2324,6 +2326,7 @@ def main():
         except Exception:
             pass
         _reinstall_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
+        _log_milestone(state, "INSTALL_COMPLETE")
 
     # ─── ゲーム未インストール → 自動インストール ───
     _installed = is_app_installed(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
@@ -2340,6 +2343,7 @@ def main():
             sys.exit(1)
         # 新規インストール = fresh start 扱い
         args.reinstall = True
+        _log_milestone(state, "INSTALL_COMPLETE")
 
     logger.info("=" * 62)
     logger.info("  まどドラ自律操縦 — Auto Pilot (ハイブリッド版)")
@@ -2349,7 +2353,6 @@ def main():
                 POLL_INTERVAL, FORCE_ANALYZE_AFTER, STALL_TIMEOUT)
     logger.info("=" * 62)
 
-    state = PilotState()
     mission.configure_state(state, args)
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -2425,7 +2428,6 @@ def main():
         adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
         time.sleep(5)
 
-    _log_milestone(state, "APP_LAUNCH")
     logger.info("[TOKEN_SAVE] 節約モード稼働中。バトル発光検知で OCR スキップ → 爆速モードで進行します")
 
     # ─── ランドスケープ待機: ポートレートならアプリ起動待ち ───
@@ -3703,6 +3705,7 @@ def main():
             # 2周目以降は常に再インストール
             logger.info("[GRIND] 再インストール開始")
             _reinstall_from_play_store(_ap_device.DEVICE_SERIAL, APP_PACKAGE)
+            _log_milestone(state, "INSTALL_COMPLETE")
             # アプリ起動 (-s モード等で画面オフ/ロックの可能性があるため WAKEUP + ロック解除)
             logger.info("[GRIND] アプリ起動")
             adb("shell input keyevent KEYCODE_WAKEUP")
