@@ -81,8 +81,7 @@ def handle_popup_home(
         if _nav and _nav[0] == "next":
             _nx, _ny = _nav[1], _nav[2]
             for _i in range(_remaining):
-                _dx, _dy = roi_to_device(_nx, _ny, state.game_roi)
-                tap_device(_dx, _dy, state, "POPUP_HOME_PAGING_NEXT")
+                tap_device(_nx, _ny, state, "POPUP_HOME_PAGING_NEXT")
                 logger.info("[POPUP_HOME] ▷タップ (%d/%d)", _i + 1, _remaining)
                 time.sleep(0.5)
 
@@ -94,8 +93,7 @@ def handle_popup_home(
         _close_nav = detect_popup_home_nav(_close_analysis, prefer_close=True)
         if _close_nav and _close_nav[0] == "close":
             _cx, _cy = _close_nav[1], _close_nav[2]
-            _dx, _dy = roi_to_device(_cx, _cy, state.game_roi)
-            tap_device(_dx, _dy, state, "POPUP_HOME_CLOSE")
+            tap_device(_cx, _cy, state, "POPUP_HOME_CLOSE")
             logger.info("[POPUP_HOME] ×閉じ完了 (total=%d pages)", _total_pages)
             return "POPUP_HOME_CLOSE", CLOSE_ACTION_WAIT
 
