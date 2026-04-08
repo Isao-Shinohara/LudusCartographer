@@ -341,8 +341,6 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
             return f"{h}:{m:02d}:{s:02d}"
         return f"{m}:{s:02d}"
 
-    _unmeasured = "— (再起動のため未計測)"
-
     lines = [
         "## フェーズタイムライン",
         "",
@@ -366,28 +364,25 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
     prev_time = 0.0
     for name in _phases_in_range:
         label = _PHASE_LABELS.get(name, name)
-        if name in recorded_names:
-            if _restart_unreliable:
-                lines.append(f"| {label} | {_unmeasured} | {_unmeasured} |")
-            else:
-                elapsed = milestones[name]
-                delta = elapsed - prev_time
-                lines.append(f"| {label} | {_fmt_time(elapsed)} | +{_fmt_time(delta)} |")
-                prev_time = elapsed
+        if name in recorded_names and not _restart_unreliable:
+            elapsed = milestones[name]
+            delta = elapsed - prev_time
+            lines.append(f"| {label} | {_fmt_time(elapsed)} | +{_fmt_time(delta)} |")
+            prev_time = elapsed
         else:
-            lines.append(f"| {label} | {_unmeasured} | {_unmeasured} |")
+            lines.append(f"| {label} | - | - |")
     # 標準順序外の記録済みフェーズを末尾に追加
     for name, elapsed in _extra:
         label = _PHASE_LABELS.get(name, name)
         if _restart_unreliable:
-            lines.append(f"| {label} | {_unmeasured} | {_unmeasured} |")
+            lines.append(f"| {label} | - | - |")
         else:
             delta = elapsed - prev_time
             lines.append(f"| {label} | {_fmt_time(elapsed)} | +{_fmt_time(delta)} |")
             prev_time = elapsed
     # 合計行
     if _restart_unreliable:
-        lines.append(f"| **合計** | {_unmeasured} | |")
+        lines.append(f"| **合計** | **再起動のため未計測** | |")
     else:
         total = sorted_ms[-1][1] if sorted_ms else 0.0
         lines.append(f"| **合計** | **{_fmt_time(total)}** | |")
