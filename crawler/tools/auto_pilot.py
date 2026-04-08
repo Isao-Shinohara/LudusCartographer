@@ -789,6 +789,11 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         _exit_reason = "pause_dist0" if getattr(state, "_movie_pause_count", 0) >= 3 else "stable"
         logger.info("[SCENE_EARLY] MOVIE中phash安定 (%s, stable=%d, pause=%d) → ADV/BATTLE再判定",
                     _exit_reason, state._movie_stable_count, getattr(state, "_movie_pause_count", 0))
+        # MOVIE 安定フォールスルー: ミニ会話が表示されていれば即検出
+        if detect_mini_conversation(img_path) is not None:
+            logger.info("[SCENE_EARLY] MOVIE安定後ミニ会話検出 → UNKNOWN (OCRパスへ)")
+            state.current_scene = "UNKNOWN"
+            return "UNKNOWN"
 
     # BATTLE: 前回シーン == BATTLE + phash 小変化 (シーン継続)
     # 毎回テンプレートでバトル UI の実在を確認する。
