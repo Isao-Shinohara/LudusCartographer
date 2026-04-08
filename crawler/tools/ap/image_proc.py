@@ -2250,12 +2250,19 @@ def detect_popup_home_nav(
             _tpl_c = imread_cached(_POPUP_CLOSE_TEMPLATE)
             if _tpl_c is not None:
                 _g_c = cv2.cvtColor(_tpl_c, cv2.COLOR_BGR2GRAY)
-                _r_c = cv2.matchTemplate(_gray, _g_c, cv2.TM_CCOEFF_NORMED)
+                # 右上 ROI に制限 (x: 右30%, y: 上20%)
+                _cx1 = int(_W * 0.70)
+                _cy1 = 0
+                _cy2 = int(_H * 0.20)
+                _close_roi = _gray[_cy1:_cy2, _cx1:_W]
+                if _close_roi.shape[0] < _g_c.shape[0] or _close_roi.shape[1] < _g_c.shape[1]:
+                    return None
+                _r_c = cv2.matchTemplate(_close_roi, _g_c, cv2.TM_CCOEFF_NORMED)
                 _, _mv_c, _, _ml_c = cv2.minMaxLoc(_r_c)
                 if _mv_c >= threshold:
                     _th_c, _tw_c = _g_c.shape[:2]
-                    _cx = _ml_c[0] + _tw_c // 2
-                    _cy = _ml_c[1] + _th_c // 2
+                    _cx = _ml_c[0] + _cx1 + _tw_c // 2
+                    _cy = _ml_c[1] + _cy1 + _th_c // 2
                     logger.debug("[PopupHomeNav] × 検出 (%d,%d) score=%.3f", _cx, _cy, _mv_c)
                     return ("close", _cx, _cy)
         return None
