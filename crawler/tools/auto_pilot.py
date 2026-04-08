@@ -376,10 +376,10 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
             prev_time = elapsed
     # 合計行
     if _restart_unreliable:
-        rows.append(("**合計**", "", "**再起動のため未計測**"))
+        _total_row = ("合計", "", "再起動のため未計測")
     else:
         total = sorted_ms[-1][1] if sorted_ms else 0.0
-        rows.append(("**合計**", "", f"**{_fmt_time(total)}**"))
+        _total_row = ("合計", "", _fmt_time(total))
 
     # 列幅を揃えてテーブル生成 (全角文字の表示幅を考慮)
     import unicodedata
@@ -402,8 +402,9 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
 
     headers = ("フェーズ", "所要時間", "起動時間")
     # 各列の右詰/左詰: フェーズ=左詰, 所要時間=右詰, 起動時間=右詰
+    _all_rows = rows + [_total_row]
     col_w = [
-        max(_display_width(headers[i]), *(_display_width(r[i]) for r in rows))
+        max(_display_width(headers[i]), *(_display_width(r[i]) for r in _all_rows))
         for i in range(3)
     ]
     def _row(c0: str, c1: str, c2: str, is_header: bool = False) -> str:
@@ -417,8 +418,11 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
         _row(*headers, is_header=True),
         f"|{'-' * (col_w[0] + 2)}|{'-' * (col_w[1] + 2)}|{'-' * (col_w[2] + 2)}|",
     ]
+    _sep = f"|{'-' * (col_w[0] + 2)}|{'-' * (col_w[1] + 2)}|{'-' * (col_w[2] + 2)}|"
     for r in rows:
         lines.append(_row(*r))
+    lines.append(_sep)
+    lines.append(_row(*_total_row))
     return lines
 
 
