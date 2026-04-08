@@ -3801,7 +3801,9 @@ def main():
                     continue
                 # close_btn チェック: ×ボタン + OCR テキストあり → 中央タップより優先
                 # OCR 0件 (WebView 読み込み中等) では誤タップ防止のためスキップ
-                _wfc_close = ASSET_MANAGER.match_single("close_btn", _wfc_img) if _wfc_img else None
+                # ROI: 右上 (x: 右30%, y: 上20%) に制限して誤マッチ防止
+                _wfc_close_roi = (int(ANALYSIS_W * 0.70), 0, int(ANALYSIS_W * 0.30), int(ANALYSIS_H * 0.20))
+                _wfc_close = ASSET_MANAGER.match_single("close_btn", _wfc_img, roi=_wfc_close_roi) if _wfc_img else None
                 if _wfc_close and _wfc_close[2] >= 0.90:
                     _wfc_ocr = run_ocr(str(_wfc_img), lang=OCR_LANG,
                                        min_confidence=OCR_MIN_CONF) if _wfc_img else []
