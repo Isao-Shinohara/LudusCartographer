@@ -107,6 +107,18 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
 
     _HOME_NO_EVIDENCE_THRESHOLD = 5  # ホーム画面で連続N回証拠なしで完了判定
 
+    # ポップアップ等の検知アクションがあった場合はカウンタリセット
+    # (ポップアップに隠れて指/金枠が見えない → 偽の「証拠なし」を防止)
+    _RESET_ACTIONS = {
+        "POPUP_HOME_CLOSE_BTN", "POPUP_HOME_CLOSE_FALLBACK",
+        "POPUP_HOME_PAGING_NEXT", "PAGING_NEXT", "PAGING_CLOSE_DOTS_END",
+        "LOGIN_BONUS_CLOSE", "DIALOG_CLOSE", "CONFIRM_DIALOG_OK",
+        "WFC_CLOSE_BTN", "WFC_CLOSE_BACK_FALLBACK", "WFC_MENU_BACK",
+        "SUB_SCREEN_BACK", "MENU_STALL_BACK", "NOTICE_DISMISS",
+    }
+    if state.last_action in _RESET_ACTIONS:
+        state._home_no_evidence_count = 0
+
     if not _has_tutorial_evidence:
         if not state.tutorial_cleared:
             _no_ev = getattr(state, "_home_no_evidence_count", 0) + 1
