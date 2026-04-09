@@ -3829,15 +3829,34 @@ def main():
                 # ROI: 右上 (x: 右30%, y: 上20%) に制限して誤マッチ防止
                 _wfc_close_roi = (int(ANALYSIS_W * 0.70), 0, int(ANALYSIS_W * 0.30), int(ANALYSIS_H * 0.20))
                 _wfc_close = ASSET_MANAGER.match_single("close_btn", _wfc_img, roi=_wfc_close_roi) if _wfc_img else None
+                _wfc_close_ineffective = getattr(state, "_wfc_close_ineffective", 0)
                 if _wfc_close and _wfc_close[2] >= 0.90:
                     _wfc_ocr = run_ocr(str(_wfc_img), lang=OCR_LANG,
                                        min_confidence=OCR_MIN_CONF) if _wfc_img else []
                     if len(_wfc_ocr) > 0:
+                        # ×ボタンが効かない場合 (phash_dist=0 が続く): icon_back で脱出
+                        if _wfc_close_ineffective >= 2 and _wfc_img:
+                            _back_roi = (0, 0, int(ANALYSIS_W * 0.15), int(ANALYSIS_H * 0.20))
+                            _back_m = ASSET_MANAGER.match_single("icon_back", _wfc_img, roi=_back_roi)
+                            if _back_m and _back_m[2] >= 0.60:
+                                logger.warning(
+                                    "[WFC_ESCAPE] ×ボタン%d回無効 + icon_back(%.2f) → 戻る (%d,%d)",
+                                    _wfc_close_ineffective, _back_m[2], _back_m[0], _back_m[1])
+                                tap_device(_back_m[0], _back_m[1], state, "WFC_CLOSE_BACK_FALLBACK")
+                                state._wfc_consecutive = 0
+                                state._wfc_total_count = 0
+                                state._wfc_close_ineffective = 0
+                                continue
                         logger.info("[WFC_ESCAPE] ×ボタン(%.2f) + OCR(%d件) → タップ (%d,%d)",
                                     _wfc_close[2], len(_wfc_ocr), _wfc_close[0], _wfc_close[1])
                         tap_device(_wfc_close[0], _wfc_close[1], state, "WFC_CLOSE_BTN")
                         state._wfc_consecutive = 0
-                        state._wfc_total_count = 0
+                        # ×タップ後 phash_dist=0 なら無効回数を蓄積 (total_count はリセットしない)
+                        if _wfc_dist == 0 or _wfc_dist == 999:
+                            state._wfc_close_ineffective = _wfc_close_ineffective + 1
+                        else:
+                            state._wfc_close_ineffective = 0
+                            state._wfc_total_count = 0
                         continue
                     else:
                         logger.info("[WFC_ESCAPE] ×ボタン検出だが OCR 0件 → 読み込み待ち、スキップ")
@@ -3902,6 +3921,7 @@ def main():
         else:
             state._wfc_consecutive = 0
             state._wfc_total_count = 0
+            state._wfc_close_ineffective = 0
 
         # ── シーン再評価: 同一アクション連続時にシーン認識を疑う ──
         if action == state.last_action and action not in (
