@@ -479,6 +479,24 @@ def _is_scrcpy_process_alive() -> bool:
     return False
 
 
+def _scrcpy_screen_off_mismatch() -> bool:
+    """既存 scrcpy プロセスの --turn-screen-off と現在の設定が不一致かチェック。"""
+    try:
+        ps = subprocess.run(
+            ["/bin/ps", "aux"], capture_output=True, text=True, timeout=5
+        )
+        for line in ps.stdout.splitlines():
+            if "scrcpy" not in line or "grep" in line:
+                continue
+            if "adb" in line and "scrcpy-server" in line:
+                continue
+            has_flag = "--turn-screen-off" in line
+            return has_flag != _SCRCPY_SCREEN_OFF
+    except Exception:
+        pass
+    return False
+
+
 def manage_scrcpy(force_restart: bool = False) -> Optional[subprocess.Popen]:
     """scrcpy を規定オプションで起動。ウィンドウサイズが不足している場合のみ再起動。
 
@@ -499,6 +517,10 @@ def manage_scrcpy(force_restart: bool = False) -> Optional[subprocess.Popen]:
         if not _is_scrcpy_process_alive():
             logger.info("[SCRCPY] ウィンドウあり(%dx%d)だがプロセス消滅 → 再起動 (--stay-awake 復帰)",
                         win_w, win_h)
+            _need_restart = True
+        elif _scrcpy_screen_off_mismatch():
+            _cur = "ON" if _SCRCPY_SCREEN_OFF else "OFF"
+            logger.info("[SCRCPY] --turn-screen-off オプション不一致 (要求=%s) → 再起動", _cur)
             _need_restart = True
         else:
             # アスペクト比チェック: タイトルバーを除いた描画領域が 2:1 ± 許容範囲か
