@@ -110,11 +110,18 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     # ポップアップ等の検知アクションがあった場合はカウンタリセット
     # (ポップアップに隠れて指/金枠が見えない → 偽の「証拠なし」を防止)
     _RESET_ACTIONS = {
-        "POPUP_HOME_CLOSE_BTN", "POPUP_HOME_CLOSE_FALLBACK",
-        "POPUP_HOME_PAGING_NEXT", "PAGING_NEXT", "PAGING_CLOSE_DOTS_END",
-        "LOGIN_BONUS_CLOSE", "DIALOG_CLOSE", "CONFIRM_DIALOG_OK",
+        # ハンドラ返り値名 (state.last_action に設定される値)
+        "POPUP_HOME_CLOSE", "NOTICE_POPUP_CLOSE", "NOTICE_LIST_CLOSE",
+        "DIALOG_CLOSE", "DIALOG_OK_DIRECT", "DIALOG_OK_ONLY",
+        "DIALOG_OK_FALLBACK", "DIALOG_BOTTOM_FALLBACK", "DIALOG_CONFIRM_OK",
+        "DIALOG_BACK_ESCALATION", "CLOSE_POPUP_BACK",
+        "LOGIN_BONUS_CLOSE", "CONFIRM_DIALOG_OK", "TUTORIAL_POPUP",
+        "SUB_SCREEN_BACK", "MENU_STALL_BACK", "PRESENT_BOX_BACK",
+        # WFC_ESCAPE / MOVIE 遷移
         "WFC_CLOSE_BTN", "WFC_CLOSE_BACK_FALLBACK", "WFC_MENU_BACK",
-        "SUB_SCREEN_BACK", "MENU_STALL_BACK", "NOTICE_DISMISS",
+        "MOVIE_WAIT",
+        # チュートリアル操作
+        "TUTORIAL_TAP_EARLY", "GOLD_FRAME_TAP", "GOLD_BTN_INNER_TAP",
     }
     if state.last_action in _RESET_ACTIONS:
         state._home_no_evidence_count = 0
