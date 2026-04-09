@@ -518,10 +518,6 @@ def manage_scrcpy(force_restart: bool = False) -> Optional[subprocess.Popen]:
             logger.info("[SCRCPY] ウィンドウあり(%dx%d)だがプロセス消滅 → 再起動 (--stay-awake 復帰)",
                         win_w, win_h)
             _need_restart = True
-        elif _scrcpy_screen_off_mismatch():
-            _cur = "ON" if _SCRCPY_SCREEN_OFF else "OFF"
-            logger.info("[SCRCPY] --turn-screen-off オプション不一致 (要求=%s) → 再起動", _cur)
-            _need_restart = True
         else:
             # アスペクト比チェック: タイトルバーを除いた描画領域が 2:1 ± 許容範囲か
             _game_h = max(1, win_h - _TITLE_BAR_H)

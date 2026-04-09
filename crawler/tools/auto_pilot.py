@@ -2309,7 +2309,13 @@ def main():
 
     # ─── scrcpy 早期起動: fresh-install 含めた全工程を画面で確認可能にする ───
     # -s 指定時は --turn-screen-off を反映するため既存ウィンドウがあっても再起動する
-    _scrcpy_proc = manage_scrcpy(force_restart=args.screen_off)
+    # -s なしで既存scrcpyが --turn-screen-off 付きの場合も再起動する
+    from tools.ap.device import _scrcpy_screen_off_mismatch
+    _force = args.screen_off
+    if not _force and _scrcpy_screen_off_mismatch():
+        logger.info("[SCRCPY] --turn-screen-off 不一致 → 再起動予約")
+        _force = True
+    _scrcpy_proc = manage_scrcpy(force_restart=_force)
     if _scrcpy_proc is not None:
         logger.info("[SCRCPY] ウィンドウ生成待ち (3秒)...")
         time.sleep(3)
@@ -2320,6 +2326,9 @@ def main():
         if "OFF" in _screen_state.upper():
             logger.info("[SCREEN_ON] スクリーンがオフ → 起こします")
             adb("shell input keyevent KEYCODE_WAKEUP")
+            time.sleep(0.5)
+            # ロック画面が表示された場合はスワイプで解除
+            adb("shell input swipe 540 1200 540 400 300")
             time.sleep(0.5)
 
     # ─── PilotState 早期作成: インストール時間も計測に含める ───
