@@ -578,6 +578,17 @@ def manage_scrcpy(force_restart: bool = False) -> Optional[subprocess.Popen]:
         # ウィンドウ ID キャッシュをリセット (次回キャプチャ時に再取得)
         global _SCRCPY_WINDOW_ID
         _SCRCPY_WINDOW_ID = 0
+        # --turn-screen-off なしで再起動した場合、デバイス画面を明示的にオンにする
+        # 前回の --turn-screen-off による画面オフ状態はscrcpy終了後も残るため
+        # KEYCODE_WAKEUP だけでは復帰しない場合があるので POWER も送る
+        if not _SCRCPY_SCREEN_OFF:
+            time.sleep(1)
+            adb("shell input keyevent KEYCODE_WAKEUP")
+            adb("shell input keyevent KEYCODE_POWER")
+            time.sleep(0.3)
+            # POWER で画面オフに戻った場合に備えて再度 WAKEUP
+            adb("shell input keyevent KEYCODE_WAKEUP")
+            logger.info("[SCRCPY] デバイス画面をオンに復帰")
         return proc
     except FileNotFoundError:
         logger.warning("[SCRCPY] scrcpy が見つかりません — Stay Awake なしで続行 "
