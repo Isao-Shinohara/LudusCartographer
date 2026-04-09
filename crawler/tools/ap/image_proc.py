@@ -3173,6 +3173,18 @@ class AssetManager:
                     max_val = (1 - _ew) * max_val + _ew * _ev
             if max_val >= data["threshold"]:
                 h, w = tmpl.shape
+                # マスク付きマッチのコントラスト検証: 均一背景での偽陽性を排除
+                if _mask is not None and name == "close_btn":
+                    _py, _px = max_loc[1], max_loc[0]
+                    if _py + h <= img.shape[0] and _px + w <= img.shape[1]:
+                        _patch = img[_py:_py + h, _px:_px + w]
+                        _mask_white = _mask > 0
+                        _mask_black = ~_mask_white
+                        _arm_mean = float(_patch[_mask_white].mean()) if _mask_white.any() else 0
+                        _bg_mean = float(_patch[_mask_black].mean()) if _mask_black.any() else 0
+                        _contrast = abs(_arm_mean - _bg_mean)
+                        if _contrast < 30:
+                            return None
                 cx = max_loc[0] + w // 2 + _roi_ox
                 cy = max_loc[1] + h // 2 + _roi_oy
                 return (cx, cy, max_val)
