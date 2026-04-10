@@ -2370,6 +2370,10 @@ def main():
                     pass
             except Exception as _e:
                 logger.warning("[DASHBOARD] Web サーバー起動失敗: %s", _e)
+        # auto_pilot がどんな死に方をしても PHP サーバーを道連れにする
+        if _dashboard_proc is not None:
+            import atexit
+            atexit.register(lambda: _dashboard_proc.kill() if _dashboard_proc.poll() is None else None)
 
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
     if args.reinstall:
