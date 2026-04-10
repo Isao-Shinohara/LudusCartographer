@@ -38,11 +38,15 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
     # ─── バトル発光 State Machine ───
     # dialog_phase (#0-PRE) はチュートリアルポップアップ時にスキップするため、
     # ここで補完する。
+    # ダイアログ表示中は GLOW_SM を抑制 (DL完了ダイアログ等で誤タップ防止)
     _is_battle_ctx = ctx.in_battle_ctx
     if _is_battle_ctx and analysis_path is not None:
-        _gsm_result = _run_battle_glow_sm(analysis_path, W, H, state, ocr, tag="GLOW_SM")
-        if _gsm_result is not None:
-            return _gsm_result
+        if detect_dialog_corners(analysis_path):
+            logger.info("[GLOW_SM] ダイアログ四隅検出 → バトル発光スキップ")
+        else:
+            _gsm_result = _run_battle_glow_sm(analysis_path, W, H, state, ocr, tag="GLOW_SM")
+            if _gsm_result is not None:
+                return _gsm_result
 
     # ─── Result画面ハンドラ (OCR mode) ───
     if not _is_battle_ctx and analysis_path is not None:
