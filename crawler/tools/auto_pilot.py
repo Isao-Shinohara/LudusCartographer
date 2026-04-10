@@ -3731,6 +3731,10 @@ def main():
             state.last_phash = ""
             continue
 
+        # ── スクリーン記録 (タップ前に「今見えている画面」を記録) ──
+        if recorder is not None:
+            recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash)
+
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         # MOVIE→UNKNOWN 遷移直後: テンプレ誤マッチによるタップを抑制
         # (動画クレジット等で DIALOG_NAV_RIGHT, MINI_CONV が誤発火して一時停止する)
@@ -4113,10 +4117,6 @@ def main():
         if i % 20 == 0 or action.startswith("GOAL_") or action in (
                 "GRIND_QUEST_NAV", "SKIP", "AGREE", "RESULT_TAP"):
             save_evidence(img_path, ocr_results, action, state)
-
-        # ── スクリーン記録 ──
-        if recorder is not None:
-            recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash)
 
         # ── 7) 目的達成チェック ──
         # GOAL_ プレフィックスを持つアクション → ミッションに判定を委譲
