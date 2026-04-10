@@ -3750,7 +3750,8 @@ def main():
 
         # ── スクリーン記録 (タップ前に「今見えている画面」を記録) ──
         if recorder is not None:
-            recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash)
+            _screen_stable = state.same_phash_count >= 2
+            recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash, _screen_stable)
 
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         # MOVIE→UNKNOWN 遷移直後: テンプレ誤マッチによるタップを抑制

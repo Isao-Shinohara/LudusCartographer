@@ -30,6 +30,8 @@ _MIN_CONFIDENCE = 0.3
 _SORT_Y_BUCKET = 50         # Y座標のバケットサイズ (px)
 _CASCADE_MIN_FACE = (40, 40)  # 顔検出の最小サイズ (px)
 _CASCADE_XML = Path(__file__).parent.parent.parent / "assets" / "lbpcascade_animeface.xml"
+_SCENE_CHANGE_PHASH_DIST = 20  # シーン切り替わり判定の phash 距離閾値
+_MIN_BRIGHTNESS = 30            # シーン切り替わり記録の最低輝度 (暗転除外)
 
 # 日本語・英単語を含むトークンのみ採用
 _HAS_TEXT_RE = re.compile(r"[\u3000-\u9fff\u30a0-\u30ffA-Za-z]")
@@ -123,6 +125,7 @@ class ScreenRecorder:
 
         # 画面間リンク用
         self._last_recorded_fp: Optional[str] = None
+        self._last_recorded_phash: str = ""
 
         # 顔検出 (lbpcascade_animeface)
         self._cascade: Optional[cv2.CascadeClassifier] = None
@@ -151,17 +154,24 @@ class ScreenRecorder:
         ocr_results: list[dict],
         scene: str,
         phash: str,
+        screen_stable: bool = True,
     ) -> bool:
         """ユニーク画面なら記録して True、スキップなら False を返す。
 
-        保存条件: テキストあり OR 顔検出 (lbpcascade_animeface)
+        安定フレーム方式:
+        - screen_stable=False (アニメーション/動画途中) → スキップ
+        - 保存条件: A) テキストあり OR B) 顔検出 OR C) シーン切り替わり
         """
 
         # 1. シーンスキップ
         if scene in _SKIP_SCENES:
             return False
 
-        # 2. 保存条件判定: テキストあり OR 顔検出
+        # 2. 安定フレームのみ対象
+        if not screen_stable:
+            return False
+
+        # 3. 保存条件判定
         has_text = False
         normalized = self._normalize_ocr(ocr_results) if ocr_results else ""
         if normalized:
@@ -171,15 +181,28 @@ class ScreenRecorder:
         if not has_text and analysis_path and Path(analysis_path).exists():
             has_face = self._detect_face(Path(analysis_path))
 
-        if not has_text and not has_face:
+        is_scene_change = False
+        if not has_text and not has_face and phash and self._last_recorded_phash:
+            from lc.utils import phash_distance
+            dist = phash_distance(self._last_recorded_phash, phash)
+            if dist >= _SCENE_CHANGE_PHASH_DIST and analysis_path and Path(analysis_path).exists():
+                # 暗転除外: 平均輝度チェック
+                _img = cv2.imread(str(analysis_path))
+                if _img is not None:
+                    _brightness = np.mean(cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY))
+                    if _brightness > _MIN_BRIGHTNESS:
+                        is_scene_change = True
+
+        if not has_text and not has_face and not is_scene_change:
             return False
 
-        # 3. fingerprint 生成
+        # 4. fingerprint 生成
         if has_text:
             content_fp = self._content_fingerprint(normalized)
-        else:
-            # 顔検出のみ (テキストなし) → phash ベース fingerprint
+        elif has_face:
             content_fp = f"face_{phash[:12]}"
+        else:
+            content_fp = f"scene_{phash[:12]}"
 
         # 4. 重複チェック (全セッション横断)
         if content_fp in self._seen_fps:
@@ -214,6 +237,7 @@ class ScreenRecorder:
         # 状態更新
         self._seen_fps.add(content_fp)
         self._last_recorded_fp = content_fp
+        self._last_recorded_phash = phash
         self._last_record_time = time.time()
         self._recorded_count += 1
 

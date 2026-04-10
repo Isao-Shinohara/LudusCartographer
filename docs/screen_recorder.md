@@ -97,19 +97,25 @@ screen_recorder.py (新規・自己完結)
 ### フロー
 
 ```
-maybe_record(analysis_path, ocr_results, scene, phash)
+auto_pilot メインループ:
+  ├─ same_phash_count < 2 → recorder 呼ばない（不安定フレーム）
+  └─ same_phash_count >= 2 → recorder.maybe_record() を呼ぶ
+
+maybe_record(analysis_path, ocr_results, scene, phash, screen_stable):
   │
   ├─ scene が LOADING / MOVIE → スキップ
+  ├─ screen_stable == False → スキップ
   │
-  ├─ 保存条件判定（どちらかを満たす必要がある）
+  ├─ 保存条件判定（いずれかを満たす）
   │   ├── A) テキストあり: OCR 正規化テキストが存在する
-  │   └── B) 顔検出: lbpcascade_animeface でアニメ顔を検出 (平均 8.8ms)
+  │   ├── B) 顔検出: lbpcascade_animeface でアニメ顔を検出
+  │   └── C) シーン切り替わり: phash dist >= 20 かつ 輝度 > 30
   │
-  ├─ A も B も満たさない → スキップ
+  ├─ A,B,C いずれも満たさない → スキップ
   │
   ├─ fingerprint 生成
   │   ├── テキストあり → SHA-256(正規化テキスト) 先頭16文字
-  │   └── 顔検出のみ → face_{phash[:12]}
+  │   └── 顔/シーン切り替わり → face_{phash[:12]} / scene_{phash[:12]}
   │
   ├─ メモリ上の set で既出チェック → 既出ならスキップ
   │
@@ -148,13 +154,21 @@ OCR テキスト正規化:
 
 ### 設計ルール（変更時は本セクションを更新すること）
 
-- **保存条件**: テキストあり OR 顔検出。両方なしの画面は保存しない
+- **安定フレーム方式**: 画面が安定した瞬間（same_phash_count >= 2）のみ記録対象。
+  アニメーション途中・動画再生中のフレームは撮らない
+- **保存条件（安定フレームに対して）**:
+  - A) テキストあり（OCR 正規化テキストが存在する）→ 記録
+  - B) 顔検出（lbpcascade_animeface）→ 記録
+  - C) テキストなし & 顔なし でも、phash が前回記録時から大きく変化（dist >= 20）
+    かつ画面が暗すぎない（平均輝度 > 30）→ シーン切り替わりとして記録
 - **顔検出エンジン**: `lbpcascade_animeface` (XML cascade)。精度不足時は `animeface` (pip) を追加検討
-- **インターバル制限なし**: キャプチャごとに保存判定。重複は fingerprint で排除
+- **インターバル制限なし**: 安定フレームごとに保存判定。重複は fingerprint で排除
 - **対象**: ゲーム起動後のみ。インストール画面・Play Store はスクショ対象外
 - **座標はソート用のみ**: ハッシュに座標を含めない（アニメーション揺れ対策）
 - **数字除外**: ターン番号・ダメージ値・タイマー等の動的数値を無視
 - **記号除外**: OCR ノイズ（`♦`, `●`, `▶` 等）を無視
+- **方式選択の経緯**: 「全部撮って後で間引く」案も検討したが、安定フレーム方式の方が
+  実装コストが低く、取りこぼしが多ければバッファ方式に切り替える判断とした
 
 ---
 
