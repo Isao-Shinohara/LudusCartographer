@@ -29,6 +29,7 @@ _SKIP_SCENES = frozenset({"LOADING", "MOVIE"})
 _MIN_CONFIDENCE = 0.3
 _MIN_RECORD_INTERVAL = 5.0  # 秒 — バトル/ガチャ連写防止
 _SORT_Y_BUCKET = 50         # Y座標のバケットサイズ (px)
+_PHASH_SCENE_CHANGE = 15    # phash 距離がこれ以上なら「シーン変化」と判定
 
 # 日本語・英単語を含むトークンのみ採用
 _HAS_TEXT_RE = re.compile(r"[\u3000-\u9fff\u30a0-\u30ffA-Za-z]")
@@ -122,6 +123,7 @@ class ScreenRecorder:
 
         # 画面間リンク用
         self._last_recorded_fp: Optional[str] = None
+        self._last_recorded_phash: str = ""
 
         # インターバル制御
         self._last_record_time: float = 0.0
@@ -149,31 +151,35 @@ class ScreenRecorder:
         if scene in _SKIP_SCENES:
             return False
 
-        # 2. OCR 空スキップ
-        if not ocr_results:
-            return False
-
-        # 3. インターバル制御
+        # 2. インターバル制御
         now = time.time()
         if now - self._last_record_time < _MIN_RECORD_INTERVAL:
             return False
 
-        # 4. 正規化 + fingerprint
-        normalized = self._normalize_ocr(ocr_results)
-        if not normalized:
+        # 3. fingerprint 生成 (OCR ベース or phash フォールバック)
+        normalized = self._normalize_ocr(ocr_results) if ocr_results else ""
+        if normalized:
+            content_fp = self._content_fingerprint(normalized)
+        elif phash and self._last_recorded_phash:
+            # OCR 空でも phash が大きく変化していればシーン変化として記録
+            from lc.utils import phash_distance
+            dist = phash_distance(self._last_recorded_phash, phash)
+            if dist < _PHASH_SCENE_CHANGE:
+                return False
+            content_fp = f"ph_{phash[:14]}"  # phash ベース fingerprint
+        else:
             return False
-        content_fp = self._content_fingerprint(normalized)
 
-        # 5. 重複チェック (全セッション横断)
+        # 4. 重複チェック (全セッション横断)
         if content_fp in self._seen_fps:
             return False
 
-        # 6. 新規画面 → 記録
-        title = self._make_title(ocr_results)
+        # 5. 新規画面 → 記録
+        title = self._make_title(ocr_results) if ocr_results else f"(シーン {scene})"
         ocr_text = " ".join(
             item.get("text", "") for item in ocr_results
             if item.get("confidence", 0) >= _MIN_CONFIDENCE
-        )
+        ) if ocr_results else ""
 
         # 画像保存
         screenshot_path, thumbnail_path = "", ""
@@ -197,6 +203,7 @@ class ScreenRecorder:
         # 状態更新
         self._seen_fps.add(content_fp)
         self._last_recorded_fp = content_fp
+        self._last_recorded_phash = phash
         self._last_record_time = now
         self._recorded_count += 1
 
