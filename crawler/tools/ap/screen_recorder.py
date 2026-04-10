@@ -211,6 +211,7 @@ class ScreenRecorder:
             screenshot_path=screenshot_path,
             thumbnail_path=thumbnail_path,
             ocr_text=ocr_text,
+            scene=scene,
         )
         self._insert_tappable_items(screen_id, ocr_results)
 
@@ -256,6 +257,12 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: thumbnail_path カラム追加")
+        if "scene" not in cols:
+            self._conn.execute(
+                "ALTER TABLE lc_screens ADD COLUMN scene TEXT"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: scene カラム追加")
 
     # ─── 画像保存 ─────────────────────────────────────
 
@@ -387,13 +394,14 @@ class ScreenRecorder:
         screenshot_path: str,
         thumbnail_path: str,
         ocr_text: str,
+        scene: str = "",
     ) -> int:
         """lc_screens に INSERT し、生成された ID を返す。"""
         cur = self._conn.execute(
             "INSERT INTO lc_screens"
             " (session_id, fingerprint, title, depth, parent_fp,"
-            "  phash, screenshot_path, thumbnail_path, ocr_text, discovered_at)"
-            " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",
+            "  phash, screenshot_path, thumbnail_path, ocr_text, scene, discovered_at)"
+            " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)",
             (
                 self._session_id,
                 fingerprint,
@@ -403,6 +411,7 @@ class ScreenRecorder:
                 screenshot_path,
                 thumbnail_path,
                 ocr_text,
+                scene,
                 datetime.now().isoformat(),
             ),
         )
