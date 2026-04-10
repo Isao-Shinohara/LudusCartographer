@@ -96,7 +96,7 @@ if ($action === 'get_project_screens') {
 
 // --- get_recent_screens アクション (ダッシュボード用) ---
 if ($action === 'get_recent_screens') {
-    $limit = min((int)($_GET['limit'] ?? 50), 200);
+    $limit = min((int)($_GET['limit'] ?? 50), 10000);
     $afterId = (int)($_GET['after_id'] ?? 0);
 
     if ($useDb && $repository instanceof EvidenceRepository) {

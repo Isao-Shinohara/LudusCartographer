@@ -24,19 +24,19 @@
 </div>
 
 <!-- モーダル -->
-<div id="modal" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center p-4" onclick="closeModal(event)">
-    <div class="bg-gray-900 rounded-xl max-w-4xl w-full max-h-[90vh] overflow-auto border border-gray-700" onclick="event.stopPropagation()">
+<div id="modal" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center p-4">
+    <div class="bg-gray-900 rounded-xl max-w-5xl w-full max-h-[95vh] overflow-auto border border-gray-700" onclick="event.stopPropagation()">
         <div class="flex justify-between items-center p-4 border-b border-gray-800">
-            <h3 id="modal-title" class="text-lg font-bold text-brand-light truncate"></h3>
-            <button onclick="document.getElementById('modal').classList.add('hidden'); document.getElementById('modal').classList.remove('flex')"
-                    class="text-gray-500 hover:text-white text-2xl">&times;</button>
+            <h3 id="modal-title" class="text-lg font-bold text-brand-light truncate mr-4"></h3>
+            <button id="modal-close-btn" class="text-gray-500 hover:text-white text-2xl flex-shrink-0">&times;</button>
         </div>
         <div class="p-4">
-            <img id="modal-img" src="" class="w-full rounded-lg mb-4" />
+            <img id="modal-img" src="" class="w-full rounded-lg mb-4 bg-gray-800" />
             <div id="modal-ocr" class="bg-gray-800 rounded-lg p-4 text-sm text-gray-300 whitespace-pre-wrap max-h-60 overflow-auto"></div>
-            <div class="mt-3 flex gap-2">
-                <span id="modal-fp" class="text-xs text-gray-600 font-mono"></span>
-                <span id="modal-time" class="text-xs text-gray-600"></span>
+            <div class="mt-3 flex gap-4 text-xs text-gray-600">
+                <span id="modal-scene"></span>
+                <span id="modal-fp" class="font-mono"></span>
+                <span id="modal-time"></span>
             </div>
         </div>
     </div>
@@ -48,6 +48,7 @@
     const API_BASE = 'api/search.php';
     const grid = document.getElementById('grid');
     const stats = document.getElementById('stats');
+    const modal = document.getElementById('modal');
     let allScreens = [];
     let maxId = 0;
 
@@ -60,21 +61,27 @@
         return 'img.php?path=' + encodeURIComponent(path);
     }
 
-    function renderCard(s) {
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    function renderCard(s, idx) {
         const thumb = s.thumbnail_path ? imgUrl(s.thumbnail_path) : (s.screenshot_path ? imgUrl(s.screenshot_path) : '');
         const ocrPreview = (s.ocr_text || '').substring(0, 80);
         return `
             <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer
                         hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all"
-                 onclick="openModal(${JSON.stringify(JSON.stringify(s))})">
+                 data-idx="${idx}">
                 ${thumb
                     ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />`
                     : `<div class="w-full aspect-video bg-gray-800 flex items-center justify-center text-3xl">📱</div>`
                 }
                 <div class="p-2">
-                    <p class="text-xs font-semibold text-gray-200 truncate">${s.name || 'Unknown'}</p>
-                    <p class="text-[10px] text-gray-500 truncate mt-0.5">${ocrPreview}</p>
-                    <p class="text-[10px] text-gray-600 mt-1">${s.last_seen_at || ''}</p>
+                    <p class="text-xs font-semibold text-gray-200 truncate">${escapeHtml(s.name || 'Unknown')}</p>
+                    <p class="text-[10px] text-gray-500 truncate mt-0.5">${escapeHtml(ocrPreview)}</p>
+                    <p class="text-[10px] text-gray-600 mt-1">${escapeHtml(s.last_seen_at || '')}</p>
                 </div>
             </div>
         `;
@@ -86,20 +93,20 @@
             return;
         }
         grid.innerHTML = allScreens.map(renderCard).join('');
-        stats.textContent = `${allScreens.length} 画面`;
+        stats.textContent = allScreens.length + ' 画面';
     }
 
     async function fetchInitial() {
         const game = getGameParam();
-        const params = new URLSearchParams({ action: 'get_recent_screens', limit: '200' });
+        const params = new URLSearchParams({ action: 'get_recent_screens', limit: '10000' });
         if (game) params.set('game', game);
 
         try {
-            const res = await fetch(`${API_BASE}?${params}`);
+            const res = await fetch(API_BASE + '?' + params);
             const data = await res.json();
             allScreens = data.screens || [];
             if (allScreens.length > 0) {
-                maxId = Math.max(...allScreens.map(s => s.id));
+                maxId = Math.max(...allScreens.map(function(s) { return s.id; }));
             }
             renderAll();
         } catch (e) {
@@ -111,64 +118,71 @@
         const game = getGameParam();
         const params = new URLSearchParams({
             action: 'get_recent_screens',
-            limit: '50',
+            limit: '100',
             after_id: String(maxId),
         });
         if (game) params.set('game', game);
 
         try {
-            const res = await fetch(`${API_BASE}?${params}`);
+            const res = await fetch(API_BASE + '?' + params);
             const data = await res.json();
             const newScreens = data.screens || [];
 
             if (newScreens.length > 0) {
-                // 新しい画面を先頭に追加
-                allScreens = [...newScreens, ...allScreens];
-                maxId = Math.max(maxId, ...newScreens.map(s => s.id));
+                allScreens = newScreens.concat(allScreens);
+                maxId = Math.max(maxId, Math.max(...newScreens.map(function(s) { return s.id; })));
                 renderAll();
             }
-        } catch (e) {
-            // ポーリングエラーは無視（次回リトライ）
-        }
+        } catch (e) {}
     }
 
-    // ハートビート (10秒ごと — サーバーに「ブラウザが見ている」を通知)
+    // ハートビート
     function heartbeat() {
-        fetch(`${API_BASE}?action=heartbeat`).catch(() => {});
+        fetch(API_BASE + '?action=heartbeat').catch(function() {});
     }
 
-    // 初回ロード
     fetchInitial();
     heartbeat();
-    // ポーリング開始
     setInterval(poll, POLL_INTERVAL);
     setInterval(heartbeat, 10000);
 
-    // モーダル
-    window.openModal = function(jsonStr) {
-        const s = JSON.parse(jsonStr);
-        const modal = document.getElementById('modal');
+    // モーダル: カードクリック
+    grid.addEventListener('click', function(e) {
+        const card = e.target.closest('[data-idx]');
+        if (!card) return;
+        const idx = parseInt(card.dataset.idx, 10);
+        const s = allScreens[idx];
+        if (!s) return;
+
         document.getElementById('modal-title').textContent = s.name || 'Unknown';
         document.getElementById('modal-img').src = s.screenshot_path ? imgUrl(s.screenshot_path) : '';
         document.getElementById('modal-ocr').textContent = s.ocr_text || '(OCR テキストなし)';
+        document.getElementById('modal-scene').textContent = s.category || '';
         document.getElementById('modal-fp').textContent = 'fp: ' + (s.screen_hash || '');
         document.getElementById('modal-time').textContent = s.last_seen_at || '';
         modal.classList.remove('hidden');
         modal.classList.add('flex');
-    };
+    });
 
-    window.closeModal = function(e) {
-        if (e.target === document.getElementById('modal')) {
-            document.getElementById('modal').classList.add('hidden');
-            document.getElementById('modal').classList.remove('flex');
+    // モーダル閉じ: 背景クリック
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
         }
-    };
+    });
 
-    // ESC でモーダル閉じ
+    // モーダル閉じ: ×ボタン
+    document.getElementById('modal-close-btn').addEventListener('click', function() {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    });
+
+    // モーダル閉じ: ESC
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
-            document.getElementById('modal').classList.add('hidden');
-            document.getElementById('modal').classList.remove('flex');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
         }
     });
 })();
