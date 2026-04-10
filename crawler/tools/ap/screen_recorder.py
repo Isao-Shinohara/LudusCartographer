@@ -167,31 +167,30 @@ class ScreenRecorder:
         if scene in _SKIP_SCENES:
             return False
 
-        # 2. 安定フレームのみ対象
-        if not screen_stable:
-            return False
-
-        # 3. 保存条件判定
-        has_text = False
-        normalized = self._normalize_ocr(ocr_results) if ocr_results else ""
-        if normalized:
-            has_text = True
-
-        has_face = False
-        if not has_text and analysis_path and Path(analysis_path).exists():
-            has_face = self._detect_face(Path(analysis_path))
-
+        # 2. シーン切り替わり判定 (安定/不安定問わず先にチェック)
         is_scene_change = False
-        if not has_text and not has_face and phash and self._last_recorded_phash:
+        if phash and self._last_recorded_phash and analysis_path and Path(analysis_path).exists():
             from lc.utils import phash_distance
             dist = phash_distance(self._last_recorded_phash, phash)
-            if dist >= _SCENE_CHANGE_PHASH_DIST and analysis_path and Path(analysis_path).exists():
-                # 暗転除外: 平均輝度チェック
+            if dist >= _SCENE_CHANGE_PHASH_DIST:
                 _img = cv2.imread(str(analysis_path))
                 if _img is not None:
                     _brightness = np.mean(cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY))
                     if _brightness > _MIN_BRIGHTNESS:
                         is_scene_change = True
+
+        # 3. テキスト・顔検出は安定フレームのみ
+        has_text = False
+        has_face = False
+        if screen_stable:
+            normalized = self._normalize_ocr(ocr_results) if ocr_results else ""
+            if normalized:
+                has_text = True
+
+            if not has_text and analysis_path and Path(analysis_path).exists():
+                has_face = self._detect_face(Path(analysis_path))
+        else:
+            normalized = ""
 
         if not has_text and not has_face and not is_scene_change:
             return False
