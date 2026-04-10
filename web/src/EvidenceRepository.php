@@ -254,6 +254,50 @@ class EvidenceRepository
         return array_map([$this, 'toScreenArray'], $stmt->fetchAll());
     }
 
+    /**
+     * 最新のスクリーンを discovered_at DESC で返す（ダッシュボード用）。
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getRecentScreens(
+        int    $limit     = 50,
+        string $gameTitle = '',
+        int    $afterId   = 0,
+    ): array {
+        $conditions = [];
+        $bindings   = [':limit' => $limit];
+
+        if ($gameTitle !== '') {
+            $conditions[]             = 'sess.game_title = :game_title';
+            $bindings[':game_title']  = $gameTitle;
+        }
+        if ($afterId > 0) {
+            $conditions[]          = 's.id > :after_id';
+            $bindings[':after_id'] = $afterId;
+        }
+
+        $where = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
+
+        $sql = <<<SQL
+            SELECT s.id, s.title, s.depth, s.screenshot_path, s.thumbnail_path,
+                   s.ocr_text, s.discovered_at, s.session_id, s.fingerprint,
+                   COALESCE(sess.game_title, 'Unknown Game') AS game_title
+            FROM lc_screens s
+            LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
+            {$where}
+            ORDER BY s.id DESC
+            LIMIT :limit
+        SQL;
+
+        $stmt = $this->db->prepare($sql);
+        foreach ($bindings as $key => $value) {
+            $type = ($key === ':limit' || $key === ':after_id') ? PDO::PARAM_INT : PDO::PARAM_STR;
+            $stmt->bindValue($key, $value, $type);
+        }
+        $stmt->execute();
+        return array_map([$this, 'toScreenArray'], $stmt->fetchAll());
+    }
+
     // ------------------------------------------------------------------
     // private helpers
     // ------------------------------------------------------------------
@@ -299,7 +343,7 @@ class EvidenceRepository
             'name'            => $raw['title'],
             'category'        => 'depth=' . $raw['depth'],
             'screenshot_path' => $raw['screenshot_path'],
-            'thumbnail_path'  => null,
+            'thumbnail_path'  => $raw['thumbnail_path'] ?? null,
             'ocr_text'        => $raw['ocr_text'],
             'visited_count'   => 1,
             'last_seen_at'    => $raw['discovered_at'],
