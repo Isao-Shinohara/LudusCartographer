@@ -2380,6 +2380,7 @@ def main():
 
     # ─── スクリーン記録 (オプション) ───
     recorder = None
+    _dashboard_proc = None
     if args.screenshot:
         from tools.ap.screen_recorder import ScreenRecorder
         _rec_session = f"ap_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -2389,6 +2390,25 @@ def main():
             session_id=_rec_session,
             game_title="まどドラ",
         )
+        # ─── ライブダッシュボード起動 ───
+        _web_root = Path(__file__).parent.parent.parent / "web" / "public"
+        _dashboard_port = 8080
+        _dashboard_url = f"http://localhost:{_dashboard_port}/dashboard.php"
+        try:
+            import subprocess as _sp
+            _dashboard_proc = _sp.Popen(
+                ["php", "-S", f"localhost:{_dashboard_port}", "-t", str(_web_root)],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+            )
+            logger.info("[DASHBOARD] Web サーバー起動 PID=%d", _dashboard_proc.pid)
+            logger.info("[DASHBOARD] %s", _dashboard_url)
+            # ブラウザで開く
+            try:
+                _sp.Popen(["open", _dashboard_url], stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            except Exception:
+                pass  # open コマンドがない環境でも続行
+        except Exception as _e:
+            logger.warning("[DASHBOARD] Web サーバー起動失敗: %s", _e)
 
     # ── 周回数リセット (起動ごと) ──
     delete_state("grind_cycles")
@@ -2397,10 +2417,16 @@ def main():
     global _pilot_state_ref
     _pilot_state_ref = state
 
+    def _cleanup_dashboard():
+        if _dashboard_proc is not None and _dashboard_proc.poll() is None:
+            _dashboard_proc.terminate()
+            logger.info("[DASHBOARD] Web サーバー停止")
+
     def _sigint_handler(signum, frame):
         logger.info("\n[Ctrl+C] 手動停止 — レポートを生成します...")
         if recorder is not None:
             recorder.close()
+        _cleanup_dashboard()
         generate_and_copy_report(_pilot_state_ref, "手動停止 (Ctrl+C / SIGINT)")
         sys.exit(0)
 
@@ -3750,6 +3776,7 @@ def main():
                 logger.info("=" * 60)
                 if recorder is not None:
                     recorder.close()
+                _cleanup_dashboard()
                 generate_and_copy_report(state, "ホーム画面到達")
                 break
             # 周回モード: 報告 → 待機 → 次の周回開始
@@ -3763,6 +3790,7 @@ def main():
                 logger.info("=" * 60)
                 if recorder is not None:
                     recorder.close()
+                _cleanup_dashboard()
                 break
             from tools.ap.constants import GRIND_CYCLE_INTERVAL
             logger.info("=" * 60)
@@ -4105,6 +4133,7 @@ def main():
                 save_evidence(img_path, ocr_results, action, state)
                 if recorder is not None:
                     recorder.close()
+                _cleanup_dashboard()
                 generate_and_copy_report(state, _reason)
                 return
             else:
