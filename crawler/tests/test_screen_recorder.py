@@ -511,5 +511,123 @@ class TestDbWrite:
         assert row[0] == "completed"
 
 
+# ─── Phase 2: 画像保存テスト ──────────────────────────
+
+class TestScreenshotSave:
+    """WebP + サムネイル画像保存のテスト。"""
+
+    def _create_test_image(self, tmp_path: Path, w: int = 1440, h: int = 720) -> Path:
+        """テスト用 PNG 画像を生成。"""
+        import cv2
+        import numpy as np
+        img = np.random.randint(0, 255, (h, w, 3), dtype=np.uint8)
+        path = tmp_path / "test_analysis.png"
+        cv2.imwrite(str(path), img)
+        return path
+
+    def test_webp_file_created(self, tmp_path):
+        """フルサイズ WebP が生成される。"""
+        img_path = self._create_test_image(tmp_path)
+        rec = _make_recorder(tmp_path)
+        try:
+            ocr = [_make_ocr("テスト画面")]
+            rec.maybe_record(img_path, ocr, "MENU", "abc123")
+
+            webp_files = list((tmp_path / "screenshots" / "test_session").glob("*.webp"))
+            full_files = [f for f in webp_files if "_thumb" not in f.name]
+            assert len(full_files) == 1
+            assert full_files[0].stat().st_size > 0
+        finally:
+            rec.close()
+
+    def test_thumbnail_created(self, tmp_path):
+        """サムネイル WebP が生成される。"""
+        img_path = self._create_test_image(tmp_path)
+        rec = _make_recorder(tmp_path)
+        try:
+            ocr = [_make_ocr("テスト画面")]
+            rec.maybe_record(img_path, ocr, "MENU", "abc123")
+
+            thumb_files = list((tmp_path / "screenshots" / "test_session").glob("*_thumb.webp"))
+            assert len(thumb_files) == 1
+            assert thumb_files[0].stat().st_size > 0
+        finally:
+            rec.close()
+
+    def test_thumbnail_width_320(self, tmp_path):
+        """サムネイルの幅が 320px。"""
+        import cv2
+        img_path = self._create_test_image(tmp_path)
+        rec = _make_recorder(tmp_path)
+        try:
+            ocr = [_make_ocr("テスト画面")]
+            rec.maybe_record(img_path, ocr, "MENU", "abc123")
+
+            thumb_files = list((tmp_path / "screenshots" / "test_session").glob("*_thumb.webp"))
+            thumb = cv2.imread(str(thumb_files[0]))
+            assert thumb.shape[1] == 320  # width
+        finally:
+            rec.close()
+
+    def test_thumbnail_aspect_ratio(self, tmp_path):
+        """サムネイルのアスペクト比が元画像と一致。"""
+        import cv2
+        img_path = self._create_test_image(tmp_path, w=1440, h=720)
+        rec = _make_recorder(tmp_path)
+        try:
+            ocr = [_make_ocr("テスト画面")]
+            rec.maybe_record(img_path, ocr, "MENU", "abc123")
+
+            thumb_files = list((tmp_path / "screenshots" / "test_session").glob("*_thumb.webp"))
+            thumb = cv2.imread(str(thumb_files[0]))
+            # 1440:720 = 2:1 → 320:160
+            assert thumb.shape[1] == 320
+            assert thumb.shape[0] == 160
+        finally:
+            rec.close()
+
+    def test_db_screenshot_path(self, tmp_path):
+        """DB の screenshot_path が正しいパス。"""
+        img_path = self._create_test_image(tmp_path)
+        rec = _make_recorder(tmp_path)
+        try:
+            ocr = [_make_ocr("テスト画面")]
+            rec.maybe_record(img_path, ocr, "MENU", "abc123")
+
+            conn = sqlite3.connect(str(tmp_path / "test.db"))
+            row = conn.execute(
+                "SELECT screenshot_path, thumbnail_path FROM lc_screens"
+                " WHERE session_id = ?", ("test_session",)
+            ).fetchone()
+            conn.close()
+
+            assert row[0].endswith(".webp")
+            assert "_thumb" not in row[0]
+            assert row[1].endswith("_thumb.webp")
+            # ファイルが実在する
+            assert Path(row[0]).exists()
+            assert Path(row[1]).exists()
+        finally:
+            rec.close()
+
+    def test_no_image_still_records_db(self, tmp_path):
+        """analysis_path が None でも DB には記録される（パスは空）。"""
+        rec = _make_recorder(tmp_path)
+        try:
+            ocr = [_make_ocr("テスト画面")]
+            assert rec.maybe_record(None, ocr, "MENU", "abc123") is True
+
+            conn = sqlite3.connect(str(tmp_path / "test.db"))
+            row = conn.execute(
+                "SELECT screenshot_path, thumbnail_path FROM lc_screens"
+                " WHERE session_id = ?", ("test_session",)
+            ).fetchone()
+            conn.close()
+            assert row[0] == ""
+            assert row[1] is None or row[1] == ""
+        finally:
+            rec.close()
+
+
 # ─── インポート用定数参照 ─────────────────────────────
 from tools.ap.screen_recorder import _MIN_RECORD_INTERVAL

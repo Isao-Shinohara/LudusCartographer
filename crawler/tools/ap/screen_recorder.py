@@ -12,11 +12,15 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import shutil
 import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+import cv2
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +103,7 @@ class ScreenRecorder:
         self._conn = sqlite3.connect(str(self._db_path), timeout=10)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
 
         # セッション登録
         self._conn.execute(
@@ -170,13 +175,21 @@ class ScreenRecorder:
             if item.get("confidence", 0) >= _MIN_CONFIDENCE
         )
 
+        # 画像保存
+        screenshot_path, thumbnail_path = "", ""
+        if analysis_path and Path(analysis_path).exists():
+            screenshot_path, thumbnail_path = self._save_screenshot(
+                Path(analysis_path), content_fp
+            )
+
         # DB INSERT
         screen_id = self._insert_screen(
             fingerprint=content_fp,
             title=title,
             parent_fp=self._last_recorded_fp,
             phash=phash,
-            screenshot_path="",  # Phase 2 で実装
+            screenshot_path=screenshot_path,
+            thumbnail_path=thumbnail_path,
             ocr_text=ocr_text,
         )
         self._insert_tappable_items(screen_id, ocr_results)
@@ -210,6 +223,59 @@ class ScreenRecorder:
             logger.warning("[ScreenRecorder] close エラー: %s", e)
         finally:
             self._conn.close()
+
+    # ─── マイグレーション ──────────────────────────────
+
+    def _migrate(self) -> None:
+        """既存 DB に不足カラムを追加する。"""
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_screens)")}
+        if "thumbnail_path" not in cols:
+            self._conn.execute(
+                "ALTER TABLE lc_screens ADD COLUMN thumbnail_path TEXT"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: thumbnail_path カラム追加")
+
+    # ─── 画像保存 ─────────────────────────────────────
+
+    _WEBP_QUALITY = 80
+    _THUMB_WIDTH = 320
+    _THUMB_QUALITY = 60
+
+    def _save_screenshot(
+        self, analysis_path: Path, fingerprint: str
+    ) -> tuple[str, str]:
+        """WebP フルサイズ + サムネイルを保存し、(screenshot_path, thumbnail_path) を返す。"""
+        self._storage_dir.mkdir(parents=True, exist_ok=True)
+
+        img = cv2.imread(str(analysis_path))
+        if img is None:
+            logger.warning("[ScreenRecorder] 画像読込失敗: %s", analysis_path)
+            return "", ""
+
+        # フルサイズ WebP
+        full_path = self._storage_dir / f"{fingerprint}.webp"
+        ok, buf = cv2.imencode(
+            ".webp", img, [cv2.IMWRITE_WEBP_QUALITY, self._WEBP_QUALITY]
+        )
+        if ok:
+            full_path.write_bytes(buf.tobytes())
+        else:
+            logger.warning("[ScreenRecorder] WebP エンコード失敗")
+            return "", ""
+
+        # サムネイル (幅 320px, アスペクト比維持)
+        h, w = img.shape[:2]
+        thumb_h = int(h * self._THUMB_WIDTH / w)
+        thumb = cv2.resize(img, (self._THUMB_WIDTH, thumb_h), interpolation=cv2.INTER_AREA)
+        thumb_path = self._storage_dir / f"{fingerprint}_thumb.webp"
+        ok_t, buf_t = cv2.imencode(
+            ".webp", thumb, [cv2.IMWRITE_WEBP_QUALITY, self._THUMB_QUALITY]
+        )
+        if ok_t:
+            thumb_path.write_bytes(buf_t.tobytes())
+
+        return str(full_path), str(thumb_path)
 
     # ─── 正規化・fingerprint ──────────────────────────
 
@@ -279,14 +345,15 @@ class ScreenRecorder:
         parent_fp: Optional[str],
         phash: str,
         screenshot_path: str,
+        thumbnail_path: str,
         ocr_text: str,
     ) -> int:
         """lc_screens に INSERT し、生成された ID を返す。"""
         cur = self._conn.execute(
             "INSERT INTO lc_screens"
             " (session_id, fingerprint, title, depth, parent_fp,"
-            "  phash, screenshot_path, ocr_text, discovered_at)"
-            " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)",
+            "  phash, screenshot_path, thumbnail_path, ocr_text, discovered_at)"
+            " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",
             (
                 self._session_id,
                 fingerprint,
@@ -294,6 +361,7 @@ class ScreenRecorder:
                 parent_fp,
                 phash,
                 screenshot_path,
+                thumbnail_path,
                 ocr_text,
                 datetime.now().isoformat(),
             ),
