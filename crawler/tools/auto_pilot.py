@@ -2340,23 +2340,36 @@ def main():
     # reinstall より先に起動して、インストール中もブラウザで確認できるようにする
     _dashboard_proc = None
     if args.screenshot:
+        import socket as _sock
+        import subprocess as _sp
         _web_root = Path(__file__).parent.parent.parent / "web" / "public"
         _dashboard_port = 8080
         _dashboard_url = f"http://localhost:{_dashboard_port}/dashboard.php"
+        # ポートが既に使用中かチェック
+        _port_in_use = False
         try:
-            import subprocess as _sp
-            _dashboard_proc = _sp.Popen(
-                ["php", "-S", f"localhost:{_dashboard_port}", "-t", str(_web_root)],
-                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
-            )
-            logger.info("[DASHBOARD] Web サーバー起動 PID=%d", _dashboard_proc.pid)
+            with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as _s:
+                _s.settimeout(0.5)
+                _port_in_use = _s.connect_ex(("localhost", _dashboard_port)) == 0
+        except Exception:
+            pass
+        if _port_in_use:
+            logger.info("[DASHBOARD] ポート %d は既に使用中 → サーバー起動スキップ", _dashboard_port)
             logger.info("[DASHBOARD] %s", _dashboard_url)
+        else:
             try:
-                _sp.Popen(["open", _dashboard_url], stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-            except Exception:
-                pass
-        except Exception as _e:
-            logger.warning("[DASHBOARD] Web サーバー起動失敗: %s", _e)
+                _dashboard_proc = _sp.Popen(
+                    ["php", "-S", f"localhost:{_dashboard_port}", "-t", str(_web_root)],
+                    stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                )
+                logger.info("[DASHBOARD] Web サーバー起動 PID=%d", _dashboard_proc.pid)
+                logger.info("[DASHBOARD] %s", _dashboard_url)
+                try:
+                    _sp.Popen(["open", _dashboard_url], stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+                except Exception:
+                    pass
+            except Exception as _e:
+                logger.warning("[DASHBOARD] Web サーバー起動失敗: %s", _e)
 
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
     if args.reinstall:
