@@ -12,6 +12,7 @@ declare(strict_types=1);
 $allowedRoots = array_filter([
     realpath(__DIR__ . '/../../crawler/evidence'),
     realpath(__DIR__ . '/../../crawler/screenshots'),
+    realpath(__DIR__ . '/../../crawler/storage/screenshots'),
 ]);
 
 $requestedPath = $_GET['path'] ?? '';
