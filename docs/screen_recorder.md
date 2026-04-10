@@ -192,6 +192,133 @@ lc_tappable_items:
 
 ---
 
+## 実装フェーズ
+
+ブランチ: `feature/screen-recorder`
+
+各フェーズは独立してコミット可能。セッションが変わっても引き継げる粒度。
+完了したフェーズは `[x]` に更新する。
+
+### Phase 1: ScreenRecorder コアクラス（正規化 + fingerprint + DB）
+
+- [ ] **未完了**
+
+**ゴール**: `screen_recorder.py` の骨格を作り、テストで正規化・重複判定・DB書き込みが動くことを確認
+
+**成果物**:
+- `crawler/tools/ap/screen_recorder.py`
+  - `__init__`: SQLite 接続、テーブル作成（IF NOT EXISTS）、全セッション既存 fingerprint ロード
+  - `_normalize_ocr(ocr_results)`: OCR テキスト正規化
+  - `_content_fingerprint(normalized)`: SHA-256 先頭16文字
+  - `_make_title(ocr_results)`: 高信頼度テキスト上位3つからタイトル生成
+  - `maybe_record`: スキップ判定 + fingerprint 重複チェック（**画像保存はスタブ — Phase 2 で実装**）
+  - `close`: DB コミット + セッション status 更新
+- `crawler/tests/test_screen_recorder.py`
+  - `_normalize_ocr`: ソート順、数値除外（HP/ターン/時刻）、記号除外、空入力
+  - `_content_fingerprint`: 決定性、異テキスト→異ハッシュ
+  - `maybe_record`: 重複スキップ、LOADING/MOVIE スキップ、空 OCR スキップ、5秒インターバル
+  - セッション横断重複チェック（別セッションの既存 fp がロードされること）
+  - DB 書き込み確認（lc_screens, lc_tappable_items）
+  - parent_fp: 初回は None、2回目以降は直前の fingerprint
+
+**検証コマンド**: `cd crawler && venv/bin/python -m pytest tests/test_screen_recorder.py -v`
+
+**設計メモ**:
+- `maybe_record` は OCR が走った安定フレームでのみ呼ばれる（高速パスでは呼ばれない）
+- session_id は `ap_YYYYMMDD_HHMMSS` 形式（古いクローラーデータと区別可能）
+- SQLite 接続は `timeout=10` で BUSY 対策
+- `_seen_fps: set` に全セッションの fingerprint をロード（蓄積型）
+- `_last_recorded_fp: Optional[str]` で parent_fp を追跡（初回は None）
+
+---
+
+### Phase 2: WebP + サムネイル画像保存
+
+- [ ] **未完了**（Phase 1 完了後に着手）
+
+**ゴール**: Phase 1 のスタブを実画像保存に差し替え。ファイルが正しく生成されることを確認
+
+**成果物**:
+- `screen_recorder.py` に追加:
+  - `_save_screenshot(analysis_path, fingerprint)`: WebP Q80 + 320px サムネイル WebP Q60
+  - `maybe_record` 内で `_save_screenshot` を呼び出す
+  - DB に `screenshot_path`, `thumbnail_path` を書き込む
+  - `thumbnail_path` カラムのマイグレーション（ALTER TABLE）
+  - `__init__` と `_save_screenshot` で `os.makedirs(exist_ok=True)`
+- テスト追加:
+  - WebP ファイルが生成されること
+  - サムネイルの幅が 320px であること
+  - DB の `screenshot_path`, `thumbnail_path` が正しいパスであること
+
+**検証コマンド**: テスト実行 + `ls crawler/storage/screenshots/` でファイル確認
+
+**設計メモ**:
+- `cv2.imencode('.webp', img, [cv2.IMWRITE_WEBP_QUALITY, 80])` でフルサイズ保存
+- サムネイル: `cv2.resize` でアスペクト比維持 (320px幅) → Q60 で保存
+- パス: `storage/screenshots/{session_id}/{fingerprint}.webp` / `{fingerprint}_thumb.webp`
+
+---
+
+### Phase 3: auto_pilot.py への結合
+
+- [ ] **未完了**（Phase 2 完了後に着手）
+
+**ゴール**: `-S` オプションで auto_pilot から ScreenRecorder が動くことを確認
+
+**成果物**:
+- `auto_pilot.py` の変更（4箇所のみ）:
+  1. `parse_args()` (L1548付近): `-S` / `--screenshot` 引数追加
+  2. `main()` (L2283付近): recorder 初期化（`if args.screenshot`）
+  3. メインループ (L4065付近、detect_and_act 後): `recorder.maybe_record(...)` 1行
+  4. 終了パス (return/break/SIGINT): `recorder.close()`
+
+**呼び出しコード**:
+```python
+# 引数: analysis_path, ocr_results は既存変数
+# scene: state.current_scene を使用
+# phash: cur_phash を使用
+if recorder is not None:
+    recorder.maybe_record(analysis_path, ocr_results, state.current_scene, cur_phash)
+```
+
+**検証コマンド**:
+```bash
+# 短時間実行（Ctrl+C で停止）
+cd crawler && venv/bin/python -u tools/auto_pilot.py -S
+# DB 確認
+sqlite3 storage/ludus.db "SELECT count(*), session_id FROM lc_screens GROUP BY session_id"
+```
+
+**設計メモ**:
+- 高速パス（BATTLE_EARLY, ADV_EARLY 等）では recorder は呼ばれない（OCR なし）
+- OCR が走った安定フレームでのみ発火 → カタログ用に綺麗なスクショが得られる
+- recorder は grind モードで全周回を通して1セッション
+
+---
+
+### Phase 4: Web UI 連携
+
+- [ ] **未完了**（Phase 3 完了後に着手）
+
+**ゴール**: 管理画面からスクショの検索・閲覧ができることを確認
+
+**成果物**:
+- `web/public/img.php`: `storage/screenshots/` を許可パスに追加（1行）
+
+**検証コマンド**:
+```bash
+php -S localhost:8080 -t web/public
+# → ブラウザで http://localhost:8080 を開き、テキスト検索・画面閲覧を確認
+```
+
+**確認項目**:
+- テキスト検索（例: 「ガチャ」）で該当画面がヒットする
+- サムネイル一覧が表示される
+- 詳細クリックでフルサイズ WebP が表示される
+- 親画面リンク（parent_fp）が機能する
+
+---
+
 ## レビュー経緯
 
 Opus（設計者）と Gemini（レビュアー）の2回のレビューを経て確定。
