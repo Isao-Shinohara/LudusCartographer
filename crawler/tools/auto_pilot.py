@@ -1546,6 +1546,8 @@ def parse_args():
                         help="adb pair 用ポート番号 (Android 11+)")
     parser.add_argument("-s", "--screen-off", action="store_true",
                         help="scrcpy 起動時に端末の画面をオフにする")
+    parser.add_argument("-S", "--screenshot", action="store_true",
+                        help="スクリーン記録: ユニーク画面をSQLiteに保存")
     # parse_known_args: main.py 経由の場合に --android, --package 等の未知引数を無視
     args, _ = parser.parse_known_args()
     return args
@@ -2376,6 +2378,18 @@ def main():
     mission.configure_state(state, args)
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
+    # ─── スクリーン記録 (オプション) ───
+    recorder = None
+    if args.screenshot:
+        from tools.ap.screen_recorder import ScreenRecorder
+        _rec_session = f"ap_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        recorder = ScreenRecorder(
+            db_path=_STATE_DB_PATH,
+            storage_dir=Path(__file__).parent.parent / "storage" / "screenshots",
+            session_id=_rec_session,
+            game_title="まどドラ",
+        )
+
     # ── 周回数リセット (起動ごと) ──
     delete_state("grind_cycles")
 
@@ -2385,6 +2399,8 @@ def main():
 
     def _sigint_handler(signum, frame):
         logger.info("\n[Ctrl+C] 手動停止 — レポートを生成します...")
+        if recorder is not None:
+            recorder.close()
         generate_and_copy_report(_pilot_state_ref, "手動停止 (Ctrl+C / SIGINT)")
         sys.exit(0)
 
@@ -3732,6 +3748,8 @@ def main():
                 logger.info("=" * 60)
                 logger.info("  ホーム画面到達 — 自動操縦を停止します")
                 logger.info("=" * 60)
+                if recorder is not None:
+                    recorder.close()
                 generate_and_copy_report(state, "ホーム画面到達")
                 break
             # 周回モード: 報告 → 待機 → 次の周回開始
@@ -3743,6 +3761,8 @@ def main():
                 logger.info("  [GRIND] 目標周回数 %d に到達 — 自動操縦を停止します",
                             state.grind_max_cycles)
                 logger.info("=" * 60)
+                if recorder is not None:
+                    recorder.close()
                 break
             from tools.ap.constants import GRIND_CYCLE_INTERVAL
             logger.info("=" * 60)
@@ -4064,6 +4084,10 @@ def main():
                 "GRIND_QUEST_NAV", "SKIP", "AGREE", "RESULT_TAP"):
             save_evidence(img_path, ocr_results, action, state)
 
+        # ── スクリーン記録 ──
+        if recorder is not None:
+            recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash)
+
         # ── 7) 目的達成チェック ──
         # GOAL_ プレフィックスを持つアクション → ミッションに判定を委譲
         if action.startswith("GOAL_"):
@@ -4079,6 +4103,8 @@ def main():
                             state.total_blackout_skipped)
                 logger.info("=" * 62)
                 save_evidence(img_path, ocr_results, action, state)
+                if recorder is not None:
+                    recorder.close()
                 generate_and_copy_report(state, _reason)
                 return
             else:
