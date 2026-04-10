@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 # ─── 定数 ────────────────────────────────────────────
 _SKIP_SCENES = frozenset({"LOADING", "MOVIE"})
 _MIN_CONFIDENCE = 0.3
-_MIN_RECORD_INTERVAL = 5.0  # 秒 — バトル/ガチャ連写防止
 _SORT_Y_BUCKET = 50         # Y座標のバケットサイズ (px)
-_PHASH_SCENE_CHANGE = 15    # phash 距離がこれ以上なら「シーン変化」と判定
+_CASCADE_MIN_FACE = (40, 40)  # 顔検出の最小サイズ (px)
+_CASCADE_XML = Path(__file__).parent.parent.parent / "assets" / "lbpcascade_animeface.xml"
 
 # 日本語・英単語を含むトークンのみ採用
 _HAS_TEXT_RE = re.compile(r"[\u3000-\u9fff\u30a0-\u30ffA-Za-z]")
@@ -123,7 +123,14 @@ class ScreenRecorder:
 
         # 画面間リンク用
         self._last_recorded_fp: Optional[str] = None
-        self._last_recorded_phash: str = ""
+
+        # 顔検出 (lbpcascade_animeface)
+        self._cascade: Optional[cv2.CascadeClassifier] = None
+        if _CASCADE_XML.exists():
+            self._cascade = cv2.CascadeClassifier(str(_CASCADE_XML))
+            logger.info("[ScreenRecorder] 顔検出カスケード読込: %s", _CASCADE_XML.name)
+        else:
+            logger.warning("[ScreenRecorder] カスケードファイル未検出: %s", _CASCADE_XML)
 
         # インターバル制御
         self._last_record_time: float = 0.0
@@ -145,37 +152,41 @@ class ScreenRecorder:
         scene: str,
         phash: str,
     ) -> bool:
-        """ユニーク画面なら記録して True、スキップなら False を返す。"""
+        """ユニーク画面なら記録して True、スキップなら False を返す。
+
+        保存条件: テキストあり OR 顔検出 (lbpcascade_animeface)
+        """
 
         # 1. シーンスキップ
         if scene in _SKIP_SCENES:
             return False
 
-        # 2. インターバル制御
-        now = time.time()
-        if now - self._last_record_time < _MIN_RECORD_INTERVAL:
-            return False
-
-        # 3. fingerprint 生成 (OCR ベース or phash フォールバック)
+        # 2. 保存条件判定: テキストあり OR 顔検出
+        has_text = False
         normalized = self._normalize_ocr(ocr_results) if ocr_results else ""
         if normalized:
-            content_fp = self._content_fingerprint(normalized)
-        elif phash and self._last_recorded_phash:
-            # OCR 空でも phash が大きく変化していればシーン変化として記録
-            from lc.utils import phash_distance
-            dist = phash_distance(self._last_recorded_phash, phash)
-            if dist < _PHASH_SCENE_CHANGE:
-                return False
-            content_fp = f"ph_{phash[:14]}"  # phash ベース fingerprint
-        else:
+            has_text = True
+
+        has_face = False
+        if not has_text and analysis_path and Path(analysis_path).exists():
+            has_face = self._detect_face(Path(analysis_path))
+
+        if not has_text and not has_face:
             return False
+
+        # 3. fingerprint 生成
+        if has_text:
+            content_fp = self._content_fingerprint(normalized)
+        else:
+            # 顔検出のみ (テキストなし) → phash ベース fingerprint
+            content_fp = f"face_{phash[:12]}"
 
         # 4. 重複チェック (全セッション横断)
         if content_fp in self._seen_fps:
             return False
 
         # 5. 新規画面 → 記録
-        title = self._make_title(ocr_results) if ocr_results else f"(シーン {scene})"
+        title = self._make_title(ocr_results) if ocr_results else f"(顔検出 {scene})"
         ocr_text = " ".join(
             item.get("text", "") for item in ocr_results
             if item.get("confidence", 0) >= _MIN_CONFIDENCE
@@ -203,8 +214,7 @@ class ScreenRecorder:
         # 状態更新
         self._seen_fps.add(content_fp)
         self._last_recorded_fp = content_fp
-        self._last_recorded_phash = phash
-        self._last_record_time = now
+        self._last_record_time = time.time()
         self._recorded_count += 1
 
         logger.info(
@@ -283,6 +293,25 @@ class ScreenRecorder:
             thumb_path.write_bytes(buf_t.tobytes())
 
         return str(full_path), str(thumb_path)
+
+    # ─── 顔検出 ──────────────────────────────────────
+
+    def _detect_face(self, img_path: Path) -> bool:
+        """lbpcascade_animeface で顔を検出する。"""
+        if self._cascade is None:
+            return False
+        try:
+            img = cv2.imread(str(img_path))
+            if img is None:
+                return False
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            faces = self._cascade.detectMultiScale(
+                gray, scaleFactor=1.1, minNeighbors=5,
+                minSize=_CASCADE_MIN_FACE,
+            )
+            return len(faces) > 0
+        except Exception:
+            return False
 
     # ─── 正規化・fingerprint ──────────────────────────
 

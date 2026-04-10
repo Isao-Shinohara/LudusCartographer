@@ -306,33 +306,17 @@ class TestMaybeRecord:
         try:
             ocr = [_make_ocr("ホーム画面"), _make_ocr("クエスト")]
             assert rec.maybe_record(None, ocr, "MENU", "abc123") is True
-            # 2回目: インターバル回避のため時間を進める
-            rec._last_record_time -= _MIN_RECORD_INTERVAL
             assert rec.maybe_record(None, ocr, "MENU", "abc123") is False
         finally:
             rec.close()
 
-    def test_interval_skip(self, tmp_path):
-        """5秒以内の連続呼び出しはスキップ。"""
+    def test_different_text_recorded(self, tmp_path):
+        """テキストが異なれば連続でも記録される。"""
         rec = _make_recorder(tmp_path)
         try:
             ocr1 = [_make_ocr("画面A")]
             ocr2 = [_make_ocr("画面B")]
             assert rec.maybe_record(None, ocr1, "MENU", "abc123") is True
-            # 即座に2回目 → インターバルでスキップ
-            assert rec.maybe_record(None, ocr2, "MENU", "def456") is False
-        finally:
-            rec.close()
-
-    def test_interval_passes_after_wait(self, tmp_path):
-        """5秒経過後は記録される。"""
-        rec = _make_recorder(tmp_path)
-        try:
-            ocr1 = [_make_ocr("画面A")]
-            ocr2 = [_make_ocr("画面B")]
-            assert rec.maybe_record(None, ocr1, "MENU", "abc123") is True
-            # インターバルを手動で回避
-            rec._last_record_time -= _MIN_RECORD_INTERVAL
             assert rec.maybe_record(None, ocr2, "MENU", "def456") is True
         finally:
             rec.close()
@@ -376,7 +360,6 @@ class TestParentFp:
             rec.maybe_record(None, ocr1, "MENU", "abc123")
             first_fp = rec._last_recorded_fp
 
-            rec._last_record_time -= _MIN_RECORD_INTERVAL
             ocr2 = [_make_ocr("画面B")]
             rec.maybe_record(None, ocr2, "MENU", "def456")
 
@@ -483,7 +466,6 @@ class TestDbWrite:
         rec = _make_recorder(tmp_path)
         try:
             rec.maybe_record(None, [_make_ocr("ホーム画面")], "MENU", "abc")
-            rec._last_record_time -= _MIN_RECORD_INTERVAL
             rec.maybe_record(None, [_make_ocr("クエスト画面")], "MENU", "def")
 
             conn = sqlite3.connect(str(tmp_path / "test.db"))
@@ -629,5 +611,3 @@ class TestScreenshotSave:
             rec.close()
 
 
-# ─── インポート用定数参照 ─────────────────────────────
-from tools.ap.screen_recorder import _MIN_RECORD_INTERVAL
