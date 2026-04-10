@@ -2336,6 +2336,28 @@ def main():
     # ─── PilotState 早期作成: インストール時間も計測に含める ───
     state = PilotState()
 
+    # ─── ライブダッシュボード (スクリーン記録有効時) ───
+    # reinstall より先に起動して、インストール中もブラウザで確認できるようにする
+    _dashboard_proc = None
+    if args.screenshot:
+        _web_root = Path(__file__).parent.parent.parent / "web" / "public"
+        _dashboard_port = 8080
+        _dashboard_url = f"http://localhost:{_dashboard_port}/dashboard.php"
+        try:
+            import subprocess as _sp
+            _dashboard_proc = _sp.Popen(
+                ["php", "-S", f"localhost:{_dashboard_port}", "-t", str(_web_root)],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+            )
+            logger.info("[DASHBOARD] Web サーバー起動 PID=%d", _dashboard_proc.pid)
+            logger.info("[DASHBOARD] %s", _dashboard_url)
+            try:
+                _sp.Popen(["open", _dashboard_url], stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            except Exception:
+                pass
+        except Exception as _e:
+            logger.warning("[DASHBOARD] Web サーバー起動失敗: %s", _e)
+
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
     if args.reinstall:
         # 永続状態をクリア (新規アカウントでは前回の状態は無効)
@@ -2380,7 +2402,6 @@ def main():
 
     # ─── スクリーン記録 (オプション) ───
     recorder = None
-    _dashboard_proc = None
     if args.screenshot:
         from tools.ap.screen_recorder import ScreenRecorder
         _rec_session = f"ap_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -2390,25 +2411,6 @@ def main():
             session_id=_rec_session,
             game_title="まどドラ",
         )
-        # ─── ライブダッシュボード起動 ───
-        _web_root = Path(__file__).parent.parent.parent / "web" / "public"
-        _dashboard_port = 8080
-        _dashboard_url = f"http://localhost:{_dashboard_port}/dashboard.php"
-        try:
-            import subprocess as _sp
-            _dashboard_proc = _sp.Popen(
-                ["php", "-S", f"localhost:{_dashboard_port}", "-t", str(_web_root)],
-                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
-            )
-            logger.info("[DASHBOARD] Web サーバー起動 PID=%d", _dashboard_proc.pid)
-            logger.info("[DASHBOARD] %s", _dashboard_url)
-            # ブラウザで開く
-            try:
-                _sp.Popen(["open", _dashboard_url], stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-            except Exception:
-                pass  # open コマンドがない環境でも続行
-        except Exception as _e:
-            logger.warning("[DASHBOARD] Web サーバー起動失敗: %s", _e)
 
     # ── 周回数リセット (起動ごと) ──
     delete_state("grind_cycles")
