@@ -154,61 +154,42 @@ class ScreenRecorder:
         ocr_results: list[dict],
         scene: str,
         phash: str,
-        screen_stable: bool = True,
     ) -> bool:
-        """ユニーク画面なら記録して True、スキップなら False を返す。
+        """寛容撮影: 暗転以外は全部保存。間引きはバッチで行う。
 
-        安定フレーム方式:
-        - screen_stable=False (アニメーション/動画途中) → スキップ
-        - 保存条件: A) テキストあり OR B) 顔検出 OR C) シーン切り替わり
+        スキップ条件:
+        - LOADING / MOVIE シーン
+        - 暗転 (平均輝度 <= 30)
+        - 重複 (fingerprint 一致)
         """
 
         # 1. シーンスキップ
         if scene in _SKIP_SCENES:
             return False
 
-        # 2. シーン切り替わり判定 (安定/不安定問わず先にチェック)
-        is_scene_change = False
-        if phash and self._last_recorded_phash and analysis_path and Path(analysis_path).exists():
-            from lc.utils import phash_distance
-            dist = phash_distance(self._last_recorded_phash, phash)
-            if dist >= _SCENE_CHANGE_PHASH_DIST:
-                _img = cv2.imread(str(analysis_path))
-                if _img is not None:
-                    _brightness = np.mean(cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY))
-                    if _brightness > _MIN_BRIGHTNESS:
-                        is_scene_change = True
+        # 2. 暗転スキップ
+        if analysis_path and Path(analysis_path).exists():
+            _img = cv2.imread(str(analysis_path))
+            if _img is not None:
+                _brightness = np.mean(cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY))
+                if _brightness <= _MIN_BRIGHTNESS:
+                    return False
 
-        # 3. テキスト・顔検出は安定フレームのみ
-        has_text = False
-        has_face = False
-        if screen_stable:
-            normalized = self._normalize_ocr(ocr_results) if ocr_results else ""
-            if normalized:
-                has_text = True
-
-            if not has_text and analysis_path and Path(analysis_path).exists():
-                has_face = self._detect_face(Path(analysis_path))
-        else:
-            normalized = ""
-
-        if not has_text and not has_face and not is_scene_change:
-            return False
-
-        # 4. fingerprint 生成
-        if has_text:
+        # 3. fingerprint 生成 (テキストベース or phash ベース)
+        normalized = self._normalize_ocr(ocr_results) if ocr_results else ""
+        if normalized:
             content_fp = self._content_fingerprint(normalized)
-        elif has_face:
-            content_fp = f"face_{phash[:12]}"
+        elif phash:
+            content_fp = f"ph_{phash[:14]}"
         else:
-            content_fp = f"scene_{phash[:12]}"
+            return False
 
         # 4. 重複チェック (全セッション横断)
         if content_fp in self._seen_fps:
             return False
 
         # 5. 新規画面 → 記録
-        title = self._make_title(ocr_results) if ocr_results else f"(顔検出 {scene})"
+        title = self._make_title(ocr_results) if ocr_results else f"({scene})"
         ocr_text = " ".join(
             item.get("text", "") for item in ocr_results
             if item.get("confidence", 0) >= _MIN_CONFIDENCE

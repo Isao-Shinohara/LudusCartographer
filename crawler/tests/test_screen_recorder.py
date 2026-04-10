@@ -274,11 +274,11 @@ class TestMaybeRecord:
         finally:
             rec.close()
 
-    def test_skip_empty_ocr(self, tmp_path):
-        """空 OCR はスキップ。"""
+    def test_record_empty_ocr_with_phash(self, tmp_path):
+        """空 OCR でも phash があれば記録される（寛容撮影）。"""
         rec = _make_recorder(tmp_path)
         try:
-            assert rec.maybe_record(None, [], "MENU", "abc123") is False
+            assert rec.maybe_record(None, [], "MENU", "abc123") is True
         finally:
             rec.close()
 
@@ -321,12 +321,12 @@ class TestMaybeRecord:
         finally:
             rec.close()
 
-    def test_skip_when_all_ocr_filtered(self, tmp_path):
-        """全トークンがフィルタされた場合はスキップ。"""
+    def test_record_when_all_ocr_filtered(self, tmp_path):
+        """全トークンがフィルタされても phash で記録される（寛容撮影）。"""
         rec = _make_recorder(tmp_path)
         try:
             ocr = [_make_ocr("1234"), _make_ocr("♦●")]
-            assert rec.maybe_record(None, ocr, "MENU", "abc123") is False
+            assert rec.maybe_record(None, ocr, "MENU", "abc123") is True
         finally:
             rec.close()
 
