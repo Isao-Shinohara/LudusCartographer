@@ -3748,9 +3748,9 @@ def main():
             state.last_phash = ""
             continue
 
-        # ── スクリーン記録 (タップ前に「今見えている画面」を記録) ──
+        # ── スクリーン記録 (タップ前に「今見えている画面」を強制保存) ──
         if recorder is not None:
-            recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash)
+            recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash, force=True)
 
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         # MOVIE→UNKNOWN 遷移直後: テンプレ誤マッチによるタップを抑制

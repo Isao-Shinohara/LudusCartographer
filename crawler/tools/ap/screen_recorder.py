@@ -154,26 +154,26 @@ class ScreenRecorder:
         ocr_results: list[dict],
         scene: str,
         phash: str,
+        force: bool = False,
     ) -> bool:
         """寛容撮影: 暗転以外は全部保存。間引きはバッチで行う。
 
-        スキップ条件:
-        - LOADING / MOVIE シーン
-        - 暗転 (平均輝度 <= 30)
-        - 重複 (fingerprint 一致)
+        force=True: タップ直前の強制保存。暗転・シーンチェックをスキップし、
+        重複のみで判定。1枚制限なし。
         """
 
-        # 1. シーンスキップ
-        if scene in _SKIP_SCENES:
-            return False
+        if not force:
+            # 1. シーンスキップ
+            if scene in _SKIP_SCENES:
+                return False
 
-        # 2. 暗転スキップ
-        if analysis_path and Path(analysis_path).exists():
-            _img = cv2.imread(str(analysis_path))
-            if _img is not None:
-                _brightness = np.mean(cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY))
-                if _brightness <= _MIN_BRIGHTNESS:
-                    return False
+            # 2. 暗転スキップ
+            if analysis_path and Path(analysis_path).exists():
+                _img = cv2.imread(str(analysis_path))
+                if _img is not None:
+                    _brightness = np.mean(cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY))
+                    if _brightness <= _MIN_BRIGHTNESS:
+                        return False
 
         # 3. fingerprint 生成 (テキストベース or phash ベース)
         normalized = self._normalize_ocr(ocr_results) if ocr_results else ""

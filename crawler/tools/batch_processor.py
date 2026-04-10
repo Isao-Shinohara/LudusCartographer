@@ -18,10 +18,17 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sqlite3
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# crawler/ をモジュール検索パスに追加
+_CRAWLER_ROOT = Path(__file__).parent.parent
+if str(_CRAWLER_ROOT) not in sys.path:
+    sys.path.insert(0, str(_CRAWLER_ROOT))
 
 logger = logging.getLogger(__name__)
 
@@ -346,7 +353,24 @@ class BatchProcessor:
                 continue
 
             try:
-                ocr_results = run_ocr(path, lang="japan")
+                # PaddleOCR は WebP 非対応 → 一時 PNG に変換
+                import cv2
+                import tempfile
+                _ocr_path = path
+                if path.endswith(".webp"):
+                    _img = cv2.imread(path)
+                    if _img is None:
+                        logger.warning("[reocr] 画像読込失敗: %s", path)
+                        continue
+                    _tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                    cv2.imwrite(_tmp.name, _img)
+                    _ocr_path = _tmp.name
+
+                ocr_results = run_ocr(_ocr_path, lang="japan")
+
+                # 一時ファイル削除
+                if _ocr_path != path:
+                    os.unlink(_ocr_path)
                 hq_text = " ".join(
                     item.get("text", "") for item in ocr_results
                     if item.get("confidence", 0) >= 0.3
