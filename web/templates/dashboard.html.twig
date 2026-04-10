@@ -132,10 +132,17 @@
         }
     }
 
+    // ハートビート (10秒ごと — サーバーに「ブラウザが見ている」を通知)
+    function heartbeat() {
+        fetch(`${API_BASE}?action=heartbeat`).catch(() => {});
+    }
+
     // 初回ロード
     fetchInitial();
+    heartbeat();
     // ポーリング開始
     setInterval(poll, POLL_INTERVAL);
+    setInterval(heartbeat, 10000);
 
     // モーダル
     window.openModal = function(jsonStr) {

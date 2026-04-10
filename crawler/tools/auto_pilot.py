@@ -4205,6 +4205,18 @@ def main():
                 if _scrcpy_proc is None or _scrcpy_proc.poll() is not None:
                     logger.info("[SCRCPY] プロセス消滅を検知 — 自動再起動")
                     _scrcpy_proc = manage_scrcpy()
+                # ダッシュボード: ブラウザからのハートビートが途絶えたら停止
+                if _dashboard_proc is not None and _dashboard_proc.poll() is None:
+                    import tempfile
+                    _hb_path = Path(tempfile.gettempdir()) / "lc_dashboard_heartbeat"
+                    try:
+                        _hb_age = time.time() - _hb_path.stat().st_mtime
+                        if _hb_age > 30:
+                            _dashboard_proc.terminate()
+                            _dashboard_proc = None
+                            logger.info("[DASHBOARD] ブラウザ未接続 (%.0f秒) → サーバー停止", _hb_age)
+                    except FileNotFoundError:
+                        pass  # ハートビートファイル未作成 = まだ1度もアクセスなし → 放置
 
         i += 1
 

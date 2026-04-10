@@ -35,6 +35,14 @@ try {
     }
 }
 
+// --- heartbeat アクション (ダッシュボード生存通知) ---
+if ($action === 'heartbeat') {
+    $hbFile = sys_get_temp_dir() . '/lc_dashboard_heartbeat';
+    file_put_contents($hbFile, (string)time());
+    echo json_encode(['ok' => true, 'ts' => time()]);
+    exit;
+}
+
 // --- get_games アクション ---
 if ($action === 'get_games') {
     $games = ($useDb && $repository instanceof EvidenceRepository)
