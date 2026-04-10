@@ -201,7 +201,7 @@ lc_tappable_items:
 
 ### Phase 1: ScreenRecorder コアクラス（正規化 + fingerprint + DB）
 
-- [ ] **未完了**
+- [x] **完了**
 
 **ゴール**: `screen_recorder.py` の骨格を作り、テストで正規化・重複判定・DB書き込みが動くことを確認
 
@@ -234,8 +234,7 @@ lc_tappable_items:
 
 ### Phase 2: WebP + サムネイル画像保存
 
-- [ ] **未完了**（Phase 1 完了後に着手）
-
+- [x] **完了**
 **ゴール**: Phase 1 のスタブを実画像保存に差し替え。ファイルが正しく生成されることを確認
 
 **成果物**:
@@ -261,8 +260,7 @@ lc_tappable_items:
 
 ### Phase 3: auto_pilot.py への結合
 
-- [ ] **未完了**（Phase 2 完了後に着手）
-
+- [x] **完了**
 **ゴール**: `-S` オプションで auto_pilot から ScreenRecorder が動くことを確認
 
 **成果物**:
@@ -298,8 +296,7 @@ sqlite3 storage/ludus.db "SELECT count(*), session_id FROM lc_screens GROUP BY s
 
 ### Phase 4: Web UI 連携
 
-- [ ] **未完了**（Phase 3 完了後に着手）
-
+- [x] **完了**
 **ゴール**: 管理画面からスクショの検索・閲覧ができることを確認
 
 **成果物**:
