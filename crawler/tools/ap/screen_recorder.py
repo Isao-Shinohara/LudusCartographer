@@ -158,8 +158,8 @@ class ScreenRecorder:
     ) -> bool:
         """寛容撮影: 暗転以外は全部保存。間引きはバッチで行う。
 
-        force=True: タップ直前の強制保存。暗転・シーンチェックをスキップし、
-        重複のみで判定。1枚制限なし。
+        force=True: タップ直前の強制保存。暗転・シーンチェック・重複チェックを
+        すべてスキップし、必ず保存する。
         """
 
         if not force:
@@ -175,18 +175,30 @@ class ScreenRecorder:
                     if _brightness <= _MIN_BRIGHTNESS:
                         return False
 
-        # 3. fingerprint 生成 (テキストベース or phash ベース)
-        normalized = self._normalize_ocr(ocr_results) if ocr_results else ""
-        if normalized:
-            content_fp = self._content_fingerprint(normalized)
-        elif phash:
-            content_fp = f"ph_{phash[:14]}"
+        # 3. fingerprint 生成
+        if force:
+            # force (タップ記録): phash 優先 (OCR は古い可能性がある)
+            if phash:
+                content_fp = f"ph_{phash[:14]}"
+            else:
+                content_fp = f"force_{time.time()}"
         else:
-            return False
+            # 通常記録: テキスト優先
+            normalized = self._normalize_ocr(ocr_results) if ocr_results else ""
+            if normalized:
+                content_fp = self._content_fingerprint(normalized)
+            elif phash:
+                content_fp = f"ph_{phash[:14]}"
+            else:
+                return False
 
-        # 4. 重複チェック (全セッション横断)
+        # 4. 重複チェック
+        # force: 直前と同じ phash fp ならスキップ (同画面連打の防止)
         if content_fp in self._seen_fps:
-            return False
+            if not force:
+                return False
+            if content_fp == self._last_recorded_fp:
+                return False
 
         # 5. 新規画面 → 記録
         title = self._make_title(ocr_results) if ocr_results else f"({scene})"

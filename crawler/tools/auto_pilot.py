@@ -426,6 +426,20 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
     return lines
 
 
+# ─── バッチプロセッサ自動実行 ────────────────────────────
+def _run_batch_processor() -> None:
+    """recorder.close() 後にバッチ処理 (グルーピング・間引き・OCR再処理) を実行。"""
+    try:
+        from tools.batch_processor import BatchProcessor
+        bp = BatchProcessor(db_path=_STATE_DB_PATH)
+        try:
+            bp.run_all()
+        finally:
+            bp.close()
+    except Exception as e:
+        logger.warning("[BATCH] バッチプロセッサ実行失敗 (スキップ): %s", e)
+
+
 # ─── レポート生成 + クリップボードコピー ────────────────
 def generate_and_copy_report(state: PilotState, reason: str) -> None:
     """
@@ -1251,7 +1265,8 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
         state._movie_low_dist_count = 0  # チェック実行後リセット (毎フレームチェックしない)
 
     # ── 長時間待機: ハードリミット (探索画面等の誤MOVIE判定を脱出) ──
-    _MOVIE_HARD_LIMIT = 300  # ~3分: これ以上は動画ではない
+    # DL経由時は1分、通常動画は3分（1分超の動画が存在するため）
+    _MOVIE_HARD_LIMIT = 100 if state.download_active else 300
     if state.movie_wait_consecutive >= _MOVIE_HARD_LIMIT:
         logger.warning("[MOVIE] ハードリミット %d 回到達 → 動画ではない、MOVIE強制脱出",
                        state.movie_wait_consecutive)
@@ -2428,6 +2443,7 @@ def main():
             session_id=_rec_session,
             game_title="まどドラ",
         )
+        state.recorder = recorder
 
     # ── 周回数リセット (起動ごと) ──
     delete_state("grind_cycles")
@@ -2440,11 +2456,18 @@ def main():
         if _dashboard_proc is not None and _dashboard_proc.poll() is None:
             _dashboard_proc.terminate()
             logger.info("[DASHBOARD] Web サーバー停止")
+        # ステータスバー復帰
+        try:
+            adb("shell settings put global policy_control null")
+            logger.info("[CLEANUP] ステータスバー復帰")
+        except Exception:
+            pass
 
     def _sigint_handler(signum, frame):
         logger.info("\n[Ctrl+C] 手動停止 — レポートを生成します...")
         if recorder is not None:
             recorder.close()
+            _run_batch_processor()
         _cleanup_dashboard()
         generate_and_copy_report(_pilot_state_ref, "手動停止 (Ctrl+C / SIGINT)")
         sys.exit(0)
@@ -2560,6 +2583,10 @@ def main():
             time.sleep(2)
             adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
         time.sleep(2)
+
+    # ── ステータスバー非表示 (スクショへの「緊急通報のみ」等の写り込み防止) ──
+    adb("shell settings put global policy_control immersive.status=*")
+    logger.info("[STARTUP] ステータスバー非表示 (immersive mode)")
 
     i = 0
     while True:
@@ -2895,6 +2922,7 @@ def main():
         # ADV: 指/GoldSwipe/バトル判定をスキップ
         # UNKNOWN: フルOCR → detect_and_act() (既存フロー)
         _early_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
+        state.last_analysis_path = _early_analysis  # tap_device 内の recorder 用に常に最新化
         _early_scene = detect_scene_early(_early_analysis, state, dist)
         _skip_rapid = False  # True: 早期ハンドラがフォールスルー → インライン RAPID をスキップ
         # SCENE_EARLY が UNKNOWN → ポップアップ等で前シーンが無効化された
@@ -3012,7 +3040,7 @@ def main():
             state._gacha_static_count = _gacha_static
             # 安定判定 OR フォールバック
             _GACHA_RESULT_CHECK = 5    # 5回待機ごとにガチャ結果画面チェック
-            _GACHA_MAX_WAIT = 50       # 50回で強制タップ
+            _GACHA_MAX_WAIT = 300      # ~3分で SKIP 強制タップ
             _gacha_tap_now = False
             if _gacha_static >= 5:
                 _gacha_tap_now = True
@@ -3035,10 +3063,19 @@ def main():
                 except Exception as _gr_e:
                     logger.debug("[GACHA] 結果画面チェック失敗: %s", _gr_e)
             if _gacha_tap_now:
-                tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "GACHA_TAP")
-                logger.info("[GACHA] %s → タップで進行", _reason)
+                # SKIP ボタンがあれば SKIP、なければ中央タップ
+                _skip_btn = detect_movie_skip_button(analysis_path)
+                if _skip_btn:
+                    tap_device(_skip_btn[0], _skip_btn[1], state, "GACHA_SKIP")
+                    logger.info("[GACHA] %s → SKIPで進行 (%d,%d)", _reason, _skip_btn[0], _skip_btn[1])
+                else:
+                    tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "GACHA_TAP")
+                    logger.info("[GACHA] %s → 中央タップで進行", _reason)
                 state._gacha_static_count = 0
-                state._gacha_total_wait = 0
+                # 正常進行（安定/ガチャ結果検出）時のみリセット。
+                # 長時間待機の SKIP 救済後はリセットしない（再突入でも蓄積して脱出）
+                if _reason == "安定" or "ガチャ結果" in _reason:
+                    state._gacha_total_wait = 0
                 state.last_phash = ""
             else:
                 logger.info("[GACHA] アニメーション待機 (dist=%d static=%d/5 wait=%d/%d)", dist, _gacha_static, _gacha_total_wait, _GACHA_MAX_WAIT)
@@ -3626,6 +3663,10 @@ def main():
 
         texts = all_texts(ocr_results)
 
+        # ── state に直近解析情報を更新 (tap_device 内の recorder 用) ──
+        state.last_analysis_path = analysis_path
+        state.last_ocr_results = ocr_results
+
         # ── ineffective_tap_count 更新 (メニュースタック救済用) ──
         # 前回イテレーションでタップしたのに phash/OCR が変化なし → カウントアップ
         # OCR 変化判定:
@@ -3664,17 +3705,23 @@ def main():
             state.ineffective_tap_count += 1
 
         # ── ロック画面検出: "緊急通報のみ" = デバイスがスリープ → 復帰 ──
+        # ステータスバーに「緊急通報のみ」が常時表示されるデバイスがあるため、
+        # ゲームアプリが前面にある場合はロック画面ではない → スキップ
         _ocr_text_joined = " ".join(texts) if texts else ""
         if "緊急通報" in _ocr_text_joined or "通報のみ" in _ocr_text_joined:
-            logger.warning("[LOCK_SCREEN] ロック画面検出 → WAKEUP + UNLOCK")
-            adb("shell input keyevent KEYCODE_WAKEUP")
-            time.sleep(1)
-            adb("shell input keyevent 82")  # KEYCODE_MENU = swipe unlock
-            time.sleep(2)
-            adb(f"shell am start -n {APP_PACKAGE}/{APP_ACTIVITY}")
-            time.sleep(5)
-            state.last_phash = ""
-            continue
+            if not check_foreground_app():
+                # ゲームが前面 → ロック画面ではない（ステータスバーの誤検出）
+                logger.debug("[LOCK_SCREEN] 緊急通報テキスト検出だがゲーム前面 → スキップ")
+            else:
+                logger.warning("[LOCK_SCREEN] ロック画面検出 → WAKEUP + UNLOCK")
+                adb("shell input keyevent KEYCODE_WAKEUP")
+                time.sleep(1)
+                adb("shell input keyevent 82")  # KEYCODE_MENU = swipe unlock
+                time.sleep(2)
+                adb(f"shell am start -n {APP_PACKAGE}/{APP_ACTIVITY}")
+                time.sleep(5)
+                state.last_phash = ""
+                continue
 
         # ── 通知シェード検出: 曜日 + Androidシステム = 通知ドロワー → HOME + アプリ復帰 ──
         _WEEKDAY_KWS = ("月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日", "日曜日")
@@ -3748,9 +3795,9 @@ def main():
             state.last_phash = ""
             continue
 
-        # ── スクリーン記録 (タップ前に「今見えている画面」を強制保存) ──
+        # ── スクリーン記録 (通常: 新規画面の検出・記録) ──
         if recorder is not None:
-            recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash, force=True)
+            recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash)
 
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         # MOVIE→UNKNOWN 遷移直後: テンプレ誤マッチによるタップを抑制
@@ -3799,6 +3846,7 @@ def main():
                 logger.info("=" * 60)
                 if recorder is not None:
                     recorder.close()
+                    _run_batch_processor()
                 _cleanup_dashboard()
                 generate_and_copy_report(state, "ホーム画面到達")
                 break
@@ -3813,6 +3861,7 @@ def main():
                 logger.info("=" * 60)
                 if recorder is not None:
                     recorder.close()
+                    _run_batch_processor()
                 _cleanup_dashboard()
                 break
             from tools.ap.constants import GRIND_CYCLE_INTERVAL

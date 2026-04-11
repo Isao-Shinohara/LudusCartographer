@@ -156,6 +156,10 @@ class PilotState:
     movie_wait_consecutive: int = 0
     # ─── MOVIE 一時停止検知 (phash 静止カウンタ) ───
     movie_static_count: int = 0
+    # ─── スクリーン記録 (tap_device から参照) ───
+    recorder: object = None              # ScreenRecorder インスタンス (None=無効)
+    last_analysis_path: object = None    # 直近の解析画像パス (Path or str)
+    last_ocr_results: list = field(default_factory=list)  # 直近の OCR 結果
     # ─── phash 連続変化カウンタ (動画検出用) ───
     # phash_dist >= 閾値 が連続した回数。動画フレームは常に変化するため高くなる
     phash_moving_count: int = 0

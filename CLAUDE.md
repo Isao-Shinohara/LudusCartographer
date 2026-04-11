@@ -437,7 +437,29 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 
 ---
 
-## 14. 設計哲学
+## 14. DB・スクショのクリーンアップ手順
+
+ユーザーが「DB とスクショをクリーンアップして」と指示した場合、以下を実行する：
+
+1. **ludus.db**: 全テーブルのデータを DELETE → VACUUM（スキーマは保持）
+   ```sql
+   DELETE FROM lc_tappable_items;
+   DELETE FROM lc_screen_groups;
+   DELETE FROM lc_screens;
+   DELETE FROM lc_sessions;
+   DELETE FROM lc_projects;
+   DELETE FROM auto_pilot_state;
+   VACUUM;
+   ```
+2. **screenshots/**: 中身を全削除（ディレクトリは残す）
+3. **reinstall/**: 中身を全削除（ディレクトリは残す）
+4. クリーンアップ後に行数とディスク使用量を確認して報告する
+
+※ evidence/ や fresh_install/ はクリーンアップ対象外（別途指示があれば対応）
+
+---
+
+## 15. 設計哲学
 
 1. **Text-Center > ピクセル補正** — テンプレート画像品質確認が最優先
 2. **StallCounter > アドホックカウンタ** — 宣言的 tick/stalled/reset

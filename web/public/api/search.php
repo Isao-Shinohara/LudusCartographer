@@ -112,6 +112,23 @@ if ($action === 'get_recent_screens') {
     exit;
 }
 
+// --- get_final_screens アクション (決定版ダッシュボード用) ---
+if ($action === 'get_final_screens') {
+    $limit = min((int)($_GET['limit'] ?? 10000), 10000);
+
+    if ($useDb && $repository instanceof EvidenceRepository) {
+        $screens = $repository->getFinalScreens($limit, $gameTitle);
+    } else {
+        $screens = [];
+    }
+
+    echo json_encode(
+        ['screens' => $screens, 'count' => count($screens)],
+        JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+    );
+    exit;
+}
+
 // --- detail アクション ---
 if ($action === 'detail') {
     $id = (int)($_GET['id'] ?? 0);

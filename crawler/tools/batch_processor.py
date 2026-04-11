@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 # ─── 定数 ────────────────────────────────────────────
 _DEFAULT_DB = Path(__file__).parent.parent / "storage" / "ludus.db"
+_SCREENSHOTS_ROOT = Path(__file__).parent.parent / "storage" / "screenshots"
+_FINAL_DIR = _SCREENSHOTS_ROOT / "final"
 _GROUP_GAP_SECONDS = 60  # 同一 scene でもこの秒数以上の空白で別グループ
 _PHASH_CLUSTER_THRESHOLD = 8  # phash 距離がこれ未満なら同一クラスタ
 
@@ -312,6 +314,119 @@ class BatchProcessor:
         logger.info("[deduplicate] 代表画像 %d 枚選出", total_reps)
         return total_reps
 
+    # ─── 間引きファイル移動 ─────────────────────────────
+
+    def move_thinned(self, session_id: Optional[str] = None) -> int:
+        """間引かれた（非代表）画像をセッションディレクトリ内の thinned/ に移動。
+
+        Returns: 移動したファイル数
+        """
+        import shutil
+
+        where = "WHERE is_representative = 0 AND screenshot_path != ''"
+        params: list = []
+        if session_id:
+            where += " AND session_id = ?"
+            params.append(session_id)
+
+        screens = self._conn.execute(
+            f"SELECT id, session_id, screenshot_path, thumbnail_path"
+            f" FROM lc_screens {where}",
+            params,
+        ).fetchall()
+
+        moved = 0
+        for screen in screens:
+            ss_path = Path(screen["screenshot_path"]) if screen["screenshot_path"] else None
+            thumb_path = Path(screen["thumbnail_path"]) if screen["thumbnail_path"] else None
+
+            if ss_path and ss_path.exists():
+                thinned_dir = ss_path.parent / "thinned"
+                thinned_dir.mkdir(exist_ok=True)
+                dst = thinned_dir / ss_path.name
+                shutil.move(str(ss_path), str(dst))
+                # DB のパスも更新
+                if not self._dry_run:
+                    self._conn.execute(
+                        "UPDATE lc_screens SET screenshot_path = ? WHERE id = ?",
+                        (str(dst), screen["id"]),
+                    )
+                moved += 1
+
+            if thumb_path and thumb_path.exists():
+                thinned_dir = thumb_path.parent / "thinned"
+                thinned_dir.mkdir(exist_ok=True)
+                dst_t = thinned_dir / thumb_path.name
+                shutil.move(str(thumb_path), str(dst_t))
+                if not self._dry_run:
+                    self._conn.execute(
+                        "UPDATE lc_screens SET thumbnail_path = ? WHERE id = ?",
+                        (str(dst_t), screen["id"]),
+                    )
+
+        if not self._dry_run:
+            self._conn.commit()
+
+        logger.info("[move_thinned] %d ファイル移動 → thinned/", moved)
+        return moved
+
+    # ─── 統合: 代表画像を final/ にコピー ────────────────
+
+    def integrate(self, session_id: Optional[str] = None) -> int:
+        """代表画像を final/ ディレクトリに統合コピー。
+
+        fingerprint ベースで重複排除し、既に final/ にある画像はスキップ。
+
+        Returns: 新規コピーした画像数
+        """
+        import shutil
+
+        _FINAL_DIR.mkdir(parents=True, exist_ok=True)
+
+        where = "WHERE is_representative = 1 AND screenshot_path != ''"
+        params: list = []
+        if session_id:
+            where += " AND session_id = ?"
+            params.append(session_id)
+
+        screens = self._conn.execute(
+            f"SELECT id, fingerprint, screenshot_path, thumbnail_path"
+            f" FROM lc_screens {where}",
+            params,
+        ).fetchall()
+
+        copied = 0
+        skipped = 0
+        for screen in screens:
+            fp = screen["fingerprint"]
+            ss_path = Path(screen["screenshot_path"]) if screen["screenshot_path"] else None
+
+            if not ss_path or not ss_path.exists():
+                continue
+
+            # fingerprint ベースの決定版ファイル名
+            final_path = _FINAL_DIR / f"{fp}.webp"
+            if final_path.exists():
+                skipped += 1
+                continue
+
+            if not self._dry_run:
+                shutil.copy2(str(ss_path), str(final_path))
+
+                # サムネイルもコピー
+                thumb_path = Path(screen["thumbnail_path"]) if screen["thumbnail_path"] else None
+                if thumb_path and thumb_path.exists():
+                    final_thumb = _FINAL_DIR / f"{fp}_thumb.webp"
+                    shutil.copy2(str(thumb_path), str(final_thumb))
+
+            copied += 1
+
+        logger.info(
+            "[integrate] final/ に %d 枚コピー (%d 枚は既存スキップ)",
+            copied, skipped,
+        )
+        return copied
+
     # ─── Phase 3: PaddleOCR 再処理 ────────────────────
 
     def reocr(self, session_id: Optional[str] = None) -> int:
@@ -412,17 +527,20 @@ class BatchProcessor:
     # ─── 全処理実行 ───────────────────────────────────
 
     def run_all(self, session_id: Optional[str] = None) -> None:
-        """Phase 1-3 を順番に実行。"""
+        """Phase 1-5 を順番に実行。"""
         logger.info("=" * 50)
         logger.info("  バッチプロセッサ開始")
         logger.info("=" * 50)
 
         g = self.group(session_id)
         d = self.deduplicate(session_id)
+        m = self.move_thinned(session_id)
         r = self.reocr(session_id)
+        i = self.integrate(session_id)
 
         logger.info("=" * 50)
-        logger.info("  完了: %dグループ, %d代表, %d OCR再処理", g, d, r)
+        logger.info("  完了: %dグループ, %d代表, %d間引き移動, %d OCR再処理, %d統合",
+                     g, d, m, r, i)
         logger.info("=" * 50)
 
     def close(self) -> None:
@@ -441,28 +559,52 @@ def main():
     parser.add_argument("--db", type=str, default=str(_DEFAULT_DB),
                         help="SQLite DB パス")
     parser.add_argument("--session", type=str, default=None,
-                        help="対象セッション ID")
+                        help="対象セッション ID (未指定時は最新セッション)")
+    parser.add_argument("--all-sessions", action="store_true",
+                        help="全セッション対象")
     parser.add_argument("--group", action="store_true",
                         help="Phase 1: グルーピング + ラベル付け")
     parser.add_argument("--deduplicate", action="store_true",
                         help="Phase 2: phash クラスタリング間引き")
     parser.add_argument("--reocr", action="store_true",
                         help="Phase 3: PaddleOCR 再処理")
+    parser.add_argument("--move-thinned", action="store_true",
+                        help="間引きファイルを thinned/ に移動")
+    parser.add_argument("--integrate", action="store_true",
+                        help="代表画像を final/ に統合コピー")
     parser.add_argument("--dry-run", action="store_true",
                         help="DB 変更なし、結果をログに出力")
     args = parser.parse_args()
 
     bp = BatchProcessor(db_path=Path(args.db), dry_run=args.dry_run)
 
+    # セッション決定: --session > --all-sessions > 最新セッション
+    session_id = args.session
+    if not session_id and not args.all_sessions:
+        row = bp._conn.execute(
+            "SELECT session_id FROM lc_sessions ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+        if row:
+            session_id = row[0]
+            logger.info("[BatchProcessor] 最新セッション: %s", session_id)
+        else:
+            logger.warning("[BatchProcessor] セッションが見つかりません")
+    elif args.all_sessions:
+        session_id = None
+
     try:
         if args.group:
-            bp.group(args.session)
+            bp.group(session_id)
         elif args.deduplicate:
-            bp.deduplicate(args.session)
+            bp.deduplicate(session_id)
+        elif args.move_thinned:
+            bp.move_thinned(session_id)
         elif args.reocr:
-            bp.reocr(args.session)
+            bp.reocr(session_id)
+        elif args.integrate:
+            bp.integrate(session_id)
         else:
-            bp.run_all(args.session)
+            bp.run_all(session_id)
     finally:
         bp.close()
 

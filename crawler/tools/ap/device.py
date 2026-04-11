@@ -662,6 +662,25 @@ def tap_device(x: int, y: int, state, desc: str = "",
     if getattr(state, "tap_suppressed", False):
         logger.info("  [TAP:DENY] (%d,%d) | %s (MOVIE遷移直後タップ抑制)", x, y, desc)
         return
+    # ── スクリーン記録: タップ直前に強制保存 ──
+    _rec = getattr(state, "recorder", None)
+    if _rec is not None:
+        try:
+            _analysis = getattr(state, "last_analysis_path", None)
+            # phash を画像から直接計算 (state.last_phash は "" にリセットされている場合がある)
+            _phash = ""
+            if _analysis and Path(str(_analysis)).exists():
+                from tools.ap.image_proc import compute_phash
+                _phash = compute_phash(str(_analysis)) or ""
+            _rec.maybe_record(
+                _analysis,
+                getattr(state, "last_ocr_results", []),
+                getattr(state, "current_scene", "UNKNOWN"),
+                _phash,
+                force=True,
+            )
+        except Exception:
+            pass
     logger.info(
         "  [TAP:OK] (%d,%d) → (%d,%d) | %s",
         x, y, real_x, real_y, desc

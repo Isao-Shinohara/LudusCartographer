@@ -280,7 +280,8 @@ class EvidenceRepository
 
         $sql = <<<SQL
             SELECT s.id, s.title, s.depth, s.screenshot_path, s.thumbnail_path,
-                   s.ocr_text, s.discovered_at, s.session_id, s.fingerprint,
+                   s.ocr_text, s.ocr_text_hq, s.discovered_at, s.session_id,
+                   s.fingerprint, s.scene,
                    COALESCE(sess.game_title, 'Unknown Game') AS game_title
             FROM lc_screens s
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
@@ -336,15 +337,56 @@ class EvidenceRepository
     }
 
     /** lc_screens の raw 行を API 出力フォーマットに変換する。 */
+    /**
+     * 決定版 (final/) の代表画像を取得する。
+     * is_representative=1 かつ session 横断で fingerprint 重複排除。
+     */
+    public function getFinalScreens(
+        int    $limit     = 10000,
+        string $gameTitle = '',
+    ): array {
+        $conditions = ['s.is_representative = 1'];
+        $bindings   = [':limit' => $limit];
+
+        if ($gameTitle !== '') {
+            $conditions[]             = 'sess.game_title = :game_title';
+            $bindings[':game_title']  = $gameTitle;
+        }
+
+        $where = 'WHERE ' . implode(' AND ', $conditions);
+
+        // fingerprint ごとに最新の1件だけ取得 (セッション横断で重複排除)
+        $sql = <<<SQL
+            SELECT s.id, s.title, s.depth, s.screenshot_path, s.thumbnail_path,
+                   s.ocr_text, s.ocr_text_hq, s.discovered_at, s.session_id,
+                   s.fingerprint, s.scene,
+                   COALESCE(sess.game_title, 'Unknown Game') AS game_title
+            FROM lc_screens s
+            LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
+            {$where}
+            GROUP BY s.fingerprint
+            ORDER BY s.discovered_at DESC
+            LIMIT :limit
+        SQL;
+
+        $stmt = $this->db->prepare($sql);
+        foreach ($bindings as $key => $value) {
+            $type = ($key === ':limit') ? PDO::PARAM_INT : PDO::PARAM_STR;
+            $stmt->bindValue($key, $value, $type);
+        }
+        $stmt->execute();
+        return array_map([$this, 'toScreenArray'], $stmt->fetchAll());
+    }
+
     private function toScreenArray(array $raw): array
     {
         return [
             'id'              => $raw['id'],
             'name'            => $raw['title'],
-            'category'        => 'depth=' . $raw['depth'],
+            'category'        => $raw['scene'] ?? ('depth=' . $raw['depth']),
             'screenshot_path' => $raw['screenshot_path'],
             'thumbnail_path'  => $raw['thumbnail_path'] ?? null,
-            'ocr_text'        => $raw['ocr_text'],
+            'ocr_text'        => $raw['ocr_text_hq'] ?? $raw['ocr_text'],
             'visited_count'   => 1,
             'last_seen_at'    => $raw['discovered_at'],
             'game_name'       => $raw['game_title'] ?? $raw['session_id'],
