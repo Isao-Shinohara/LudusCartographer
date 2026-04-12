@@ -2392,7 +2392,7 @@ def main():
         # auto_pilot がどんな死に方をしても PHP サーバーを道連れにする
         if _dashboard_proc is not None:
             import atexit
-            atexit.register(lambda: _dashboard_proc.kill() if _dashboard_proc.poll() is None else None)
+            atexit.register(lambda p=_dashboard_proc: p.kill() if p.poll() is None else None)
 
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
     if args.reinstall:
