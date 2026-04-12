@@ -36,10 +36,17 @@
 
 <!-- モーダル -->
 <div id="modal" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center p-4">
+    <!-- 前へボタン -->
+    <button id="modal-prev" class="absolute left-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-gray-800/80 hover:bg-gray-700 text-white text-xl flex items-center justify-center transition-colors" title="前へ">&#8249;</button>
+    <!-- 次へボタン -->
+    <button id="modal-next" class="absolute right-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-gray-800/80 hover:bg-gray-700 text-white text-xl flex items-center justify-center transition-colors" title="次へ">&#8250;</button>
     <div class="bg-gray-900 rounded-xl max-w-5xl w-full max-h-[95vh] overflow-auto border border-gray-700" onclick="event.stopPropagation()">
         <div class="flex justify-between items-center p-4 border-b border-gray-800">
-            <h3 id="modal-title" class="text-lg font-bold text-brand-light truncate mr-4"></h3>
-            <button id="modal-close-btn" class="text-gray-500 hover:text-white text-2xl flex-shrink-0">&times;</button>
+            <div class="flex items-center gap-3 min-w-0">
+                <span id="modal-counter" class="text-xs text-gray-500 flex-shrink-0"></span>
+                <h3 id="modal-title" class="text-lg font-bold text-brand-light truncate"></h3>
+            </div>
+            <button id="modal-close-btn" class="text-gray-500 hover:text-white text-2xl flex-shrink-0 ml-4">&times;</button>
         </div>
         <div class="p-4">
             <img id="modal-img" src="" class="w-full rounded-lg mb-4 bg-gray-800" />
@@ -219,31 +226,55 @@
     setInterval(heartbeat, 10000);
 
     // --- モーダル ---
-    grid.addEventListener('click', function(e) {
-        const card = e.target.closest('[data-idx]');
-        if (!card) return;
-        const idx = parseInt(card.dataset.idx, 10);
-        const s = allScreens[idx];
-        if (!s) return;
+    let modalIdx = -1;
 
+    function showModal(idx) {
+        if (idx < 0 || idx >= allScreens.length) return;
+        modalIdx = idx;
+        const s = allScreens[idx];
         document.getElementById('modal-title').textContent = s.name || 'Unknown';
         document.getElementById('modal-img').src = s.screenshot_path ? imgUrl(s.screenshot_path) : '';
         document.getElementById('modal-ocr').textContent = s.ocr_text || '(OCR テキストなし)';
         document.getElementById('modal-scene').textContent = s.category || '';
         document.getElementById('modal-fp').textContent = 'fp: ' + (s.screen_hash || '');
         document.getElementById('modal-time').textContent = s.last_seen_at || '';
+        document.getElementById('modal-counter').textContent = (idx + 1) + ' / ' + allScreens.length;
+        document.getElementById('modal-prev').style.visibility = idx > 0 ? 'visible' : 'hidden';
+        document.getElementById('modal-next').style.visibility = idx < allScreens.length - 1 ? 'visible' : 'hidden';
         modal.classList.remove('hidden');
         modal.classList.add('flex');
+    }
+
+    function closeModal() {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modalIdx = -1;
+    }
+
+    grid.addEventListener('click', function(e) {
+        const card = e.target.closest('[data-idx]');
+        if (!card) return;
+        showModal(parseInt(card.dataset.idx, 10));
+    });
+
+    document.getElementById('modal-prev').addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (modalIdx > 0) showModal(modalIdx - 1);
+    });
+    document.getElementById('modal-next').addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (modalIdx < allScreens.length - 1) showModal(modalIdx + 1);
     });
 
     modal.addEventListener('click', function(e) {
-        if (e.target === modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+        if (e.target === modal) closeModal();
     });
-    document.getElementById('modal-close-btn').addEventListener('click', function() {
-        modal.classList.add('hidden'); modal.classList.remove('flex');
-    });
+    document.getElementById('modal-close-btn').addEventListener('click', closeModal);
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+        if (!modal.classList.contains('flex')) return;
+        if (e.key === 'Escape') closeModal();
+        if (e.key === 'ArrowLeft' && modalIdx > 0) showModal(modalIdx - 1);
+        if (e.key === 'ArrowRight' && modalIdx < allScreens.length - 1) showModal(modalIdx + 1);
     });
 })();
 </script>
