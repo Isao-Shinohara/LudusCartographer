@@ -97,12 +97,25 @@ class BatchProcessor:
             CREATE INDEX IF NOT EXISTS idx_trans_session ON lc_transitions(session_id);
         """)
 
+        # SCC グループテーブル
+        self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS lc_scc_groups (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                label        TEXT,
+                screen_count INTEGER DEFAULT 0,
+                root_fp      TEXT
+            );
+        """)
+
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_screens)")}
         for col, typ in [
             ("group_id", "INTEGER"),
             ("is_representative", "BOOLEAN DEFAULT 0"),
             ("cluster_id", "INTEGER"),
             ("ocr_text_hq", "TEXT"),
+            ("bfs_depth", "INTEGER"),
+            ("scc_id", "INTEGER"),
+            ("scc_label", "TEXT"),
         ]:
             if col not in cols:
                 self._conn.execute(f"ALTER TABLE lc_screens ADD COLUMN {col} {typ}")
@@ -544,6 +557,183 @@ class BatchProcessor:
         logger.info("[reocr] %d 枚の OCR 再処理完了", processed)
         return processed
 
+    # ─── Phase 6: 遷移グラフ構築 (BFS + SCC) ─────────
+
+    def build_graph(self) -> int:
+        """遷移グラフを構築し BFS depth + SCC を付与する。
+
+        Returns: SCC グループ数
+        """
+        import networkx as nx
+        from tools.ap.image_proc import phash_distance
+
+        # --- Step 0: phash 名寄せ ---
+        screens = self._conn.execute(
+            "SELECT fingerprint, phash, scene FROM lc_screens"
+        ).fetchall()
+        if not screens:
+            logger.info("[build_graph] 画面データなし → スキップ")
+            return 0
+
+        fp_to_phash: dict[str, str] = {}
+        fp_to_scene: dict[str, str] = {}
+        for row in screens:
+            fp, ph, sc = row["fingerprint"], row["phash"] or "", row["scene"] or ""
+            fp_to_phash[fp] = ph
+            fp_to_scene[fp] = sc
+
+        # phash 距離 < 8 の fp を代表 fp にマッピング (Union-Find 的)
+        fp_list = list(fp_to_phash.keys())
+        canonical: dict[str, str] = {fp: fp for fp in fp_list}
+
+        def find(x: str) -> str:
+            while canonical[x] != x:
+                canonical[x] = canonical[canonical[x]]
+                x = canonical[x]
+            return x
+
+        for i in range(len(fp_list)):
+            for j in range(i + 1, len(fp_list)):
+                ph_i, ph_j = fp_to_phash[fp_list[i]], fp_to_phash[fp_list[j]]
+                if ph_i and ph_j:
+                    dist = phash_distance(ph_i, ph_j)
+                    if dist < _PHASH_CLUSTER_THRESHOLD:
+                        ri, rj = find(fp_list[i]), find(fp_list[j])
+                        if ri != rj:
+                            canonical[rj] = ri
+
+        def canon(fp: str) -> str:
+            return find(fp) if fp in canonical else fp
+
+        logger.info("[build_graph] Step 0: %d fp → %d 代表fp",
+                    len(fp_list), len(set(find(fp) for fp in fp_list)))
+
+        # --- Step 1: グラフ構築 ---
+        edges_raw = self._conn.execute(
+            "SELECT from_fp, to_fp, action_name FROM lc_transitions"
+            " WHERE to_fp IS NOT NULL"
+        ).fetchall()
+
+        if not edges_raw:
+            logger.info("[build_graph] 遷移データなし → スキップ")
+            return 0
+
+        # 集約 (canonical fp)
+        edge_counts: dict[tuple[str, str], dict] = {}
+        for row in edges_raw:
+            key = (canon(row["from_fp"]), canon(row["to_fp"]))
+            if key[0] == key[1]:
+                continue  # 自己ループ除外
+            if key not in edge_counts:
+                edge_counts[key] = {"count": 0, "actions": set()}
+            edge_counts[key]["count"] += 1
+            edge_counts[key]["actions"].add(row["action_name"] or "")
+
+        G = nx.DiGraph()
+        for (src, tgt), info in edge_counts.items():
+            G.add_edge(src, tgt, count=info["count"], actions=info["actions"])
+
+        logger.info("[build_graph] Step 1: %d ノード, %d エッジ",
+                    G.number_of_nodes(), G.number_of_edges())
+
+        # --- Step 2: LOADING ノードバイパス ---
+        loading_nodes = [n for n in G.nodes() if fp_to_scene.get(n, "") == "LOADING"]
+        for node in loading_nodes:
+            preds = list(G.predecessors(node))
+            succs = list(G.successors(node))
+            for p in preds:
+                for s in succs:
+                    if p != s and not G.has_edge(p, s):
+                        G.add_edge(p, s, count=1, actions={"LOADING_BYPASS"})
+            G.remove_node(node)
+
+        if loading_nodes:
+            logger.info("[build_graph] Step 2: %d LOADING ノードをバイパス", len(loading_nodes))
+
+        # --- Step 3: BFS depth ---
+        # HOME 画面を特定
+        home_fp = None
+        # GOAL_HOME_REACHED のアクションを持つ遷移の to_fp
+        home_row = self._conn.execute(
+            "SELECT to_fp FROM lc_transitions WHERE action_name = 'GOAL_HOME_REACHED' LIMIT 1"
+        ).fetchone()
+        if home_row and home_row["to_fp"]:
+            home_fp = canon(home_row["to_fp"])
+        # フォールバック: scene=MENU で最も出次数が多いノード
+        if home_fp is None or home_fp not in G:
+            menu_nodes = [(n, G.out_degree(n)) for n in G.nodes()
+                          if fp_to_scene.get(n, "") == "MENU"]
+            if menu_nodes:
+                home_fp = max(menu_nodes, key=lambda x: x[1])[0]
+        # 最終フォールバック: 出次数最大のノード
+        if home_fp is None or home_fp not in G:
+            if G.number_of_nodes() > 0:
+                home_fp = max(G.nodes(), key=lambda n: G.out_degree(n))
+
+        depth_map: dict[str, int] = {}
+        if home_fp and home_fp in G:
+            # BFS (無向グラフとして — 到達性を最大化)
+            undirected = G.to_undirected()
+            bfs_edges = nx.bfs_edges(undirected, home_fp)
+            depth_map[home_fp] = 0
+            for parent, child in bfs_edges:
+                depth_map[child] = depth_map[parent] + 1
+
+        logger.info("[build_graph] Step 3: HOME=%s, BFS %d/%d ノードに depth 付与",
+                    (home_fp or "N/A")[:8], len(depth_map), G.number_of_nodes())
+
+        # --- Step 4: 戻るエッジ除外 + SCC ---
+        forward_G = nx.DiGraph()
+        for src, tgt, data in G.edges(data=True):
+            d_src = depth_map.get(src, 999)
+            d_tgt = depth_map.get(tgt, 999)
+            actions = data.get("actions", set())
+            is_back = (d_tgt < d_src) or any("BACK" in a.upper() for a in actions)
+            if not is_back:
+                forward_G.add_edge(src, tgt, **data)
+
+        sccs = list(nx.strongly_connected_components(forward_G))
+        # シングルトン SCC (1ノード) は除外
+        sccs = [s for s in sccs if len(s) > 1]
+        sccs.sort(key=lambda s: min(depth_map.get(fp, 999) for fp in s))
+
+        logger.info("[build_graph] Step 4: %d SCC グループ (2+ノード)", len(sccs))
+
+        # --- Step 5: DB 更新 ---
+        if self._dry_run:
+            return len(sccs)
+
+        # bfs_depth を全画面に UPDATE
+        for fp, depth in depth_map.items():
+            self._conn.execute(
+                "UPDATE lc_screens SET bfs_depth = ? WHERE fingerprint = ?",
+                (depth, fp),
+            )
+
+        # SCC グループ
+        self._conn.execute("DELETE FROM lc_scc_groups")
+        scc_map: dict[str, int] = {}  # fp → scc_id
+        for idx, scc_fps in enumerate(sccs, 1):
+            root_fp = min(scc_fps, key=lambda fp: depth_map.get(fp, 999))
+            self._conn.execute(
+                "INSERT INTO lc_scc_groups (id, label, screen_count, root_fp)"
+                " VALUES (?, ?, ?, ?)",
+                (idx, f"SCC#{idx}", len(scc_fps), root_fp),
+            )
+            for fp in scc_fps:
+                scc_map[fp] = idx
+
+        # scc_id を全画面に UPDATE
+        for fp, scc_id in scc_map.items():
+            self._conn.execute(
+                "UPDATE lc_screens SET scc_id = ?, scc_label = ? WHERE fingerprint = ?",
+                (scc_id, f"SCC#{scc_id}", fp),
+            )
+
+        self._conn.commit()
+        logger.info("[build_graph] Step 5: DB 更新完了")
+        return len(sccs)
+
     # ─── 全処理実行 ───────────────────────────────────
 
     def run_all(self, session_id: Optional[str] = None) -> None:
@@ -557,10 +747,11 @@ class BatchProcessor:
         m = self.move_thinned(session_id)
         r = self.reocr(session_id)
         i = self.integrate(session_id)
+        s = self.build_graph()
 
         logger.info("=" * 50)
-        logger.info("  完了: %dグループ, %d代表, %d間引き移動, %d OCR再処理, %d統合",
-                     g, d, m, r, i)
+        logger.info("  完了: %dグループ, %d代表, %d間引き移動, %d OCR再処理, %d統合, %d SCC",
+                     g, d, m, r, i, s)
         logger.info("=" * 50)
 
     def close(self) -> None:
