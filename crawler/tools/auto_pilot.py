@@ -2353,38 +2353,42 @@ def main():
 
     # ─── ライブダッシュボード (スクリーン記録有効時) ───
     # reinstall より先に起動して、インストール中もブラウザで確認できるようにする
-    _dashboard_proc = None
-    if args.screenshot:
-        import socket as _sock
-        import subprocess as _sp
-        _web_root = Path(__file__).parent.parent.parent / "web" / "public"
-        _dashboard_port = 8080
-        _dashboard_url = f"http://localhost:{_dashboard_port}/dashboard.php"
-        # ポートが既に使用中かチェック
-        _port_in_use = False
+    import socket as _sock
+    import subprocess as _sp
+    _web_root = Path(__file__).parent.parent.parent / "web" / "public"
+    _dashboard_port = 8080
+    _dashboard_url = f"http://localhost:{_dashboard_port}/dashboard.php"
+
+    def _start_dashboard(open_browser: bool = False):
+        """PHP ダッシュボードサーバーを起動して Popen を返す。失敗時は None。"""
         try:
             with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as _s:
                 _s.settimeout(0.5)
-                _port_in_use = _s.connect_ex(("localhost", _dashboard_port)) == 0
+                if _s.connect_ex(("localhost", _dashboard_port)) == 0:
+                    logger.info("[DASHBOARD] ポート %d は既に使用中 → 起動スキップ", _dashboard_port)
+                    return None
         except Exception:
             pass
-        if _port_in_use:
-            logger.info("[DASHBOARD] ポート %d は既に使用中 → サーバー起動スキップ", _dashboard_port)
+        try:
+            proc = _sp.Popen(
+                ["php", "-S", f"localhost:{_dashboard_port}", "-t", str(_web_root)],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+            )
+            logger.info("[DASHBOARD] Web サーバー起動 PID=%d", proc.pid)
             logger.info("[DASHBOARD] %s", _dashboard_url)
-        else:
-            try:
-                _dashboard_proc = _sp.Popen(
-                    ["php", "-S", f"localhost:{_dashboard_port}", "-t", str(_web_root)],
-                    stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
-                )
-                logger.info("[DASHBOARD] Web サーバー起動 PID=%d", _dashboard_proc.pid)
-                logger.info("[DASHBOARD] %s", _dashboard_url)
+            if open_browser:
                 try:
                     _sp.Popen(["open", _dashboard_url], stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
                 except Exception:
                     pass
-            except Exception as _e:
-                logger.warning("[DASHBOARD] Web サーバー起動失敗: %s", _e)
+            return proc
+        except Exception as _e:
+            logger.warning("[DASHBOARD] Web サーバー起動失敗: %s", _e)
+            return None
+
+    _dashboard_proc = None
+    if args.screenshot:
+        _dashboard_proc = _start_dashboard(open_browser=True)
         # auto_pilot がどんな死に方をしても PHP サーバーを道連れにする
         if _dashboard_proc is not None:
             import atexit
@@ -4254,18 +4258,10 @@ def main():
                 if _scrcpy_proc is None or _scrcpy_proc.poll() is not None:
                     logger.info("[SCRCPY] プロセス消滅を検知 — 自動再起動")
                     _scrcpy_proc = manage_scrcpy()
-                # ダッシュボード: ブラウザからのハートビートが途絶えたら停止
-                if _dashboard_proc is not None and _dashboard_proc.poll() is None:
-                    import tempfile
-                    _hb_path = Path(tempfile.gettempdir()) / "lc_dashboard_heartbeat"
-                    try:
-                        _hb_age = time.time() - _hb_path.stat().st_mtime
-                        if _hb_age > 30:
-                            _dashboard_proc.terminate()
-                            _dashboard_proc = None
-                            logger.info("[DASHBOARD] ブラウザ未接続 (%.0f秒) → サーバー停止", _hb_age)
-                    except FileNotFoundError:
-                        pass  # ハートビートファイル未作成 = まだ1度もアクセスなし → 放置
+                # ダッシュボード: プロセスが落ちていたら再起動
+                if _dashboard_proc is not None and _dashboard_proc.poll() is not None:
+                    logger.info("[DASHBOARD] プロセス消滅を検知 — 自動再起動")
+                    _dashboard_proc = _start_dashboard()
 
         i += 1
 
