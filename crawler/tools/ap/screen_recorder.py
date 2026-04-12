@@ -77,6 +77,23 @@ CREATE TABLE IF NOT EXISTS lc_tappable_items (
     text       TEXT    NOT NULL,
     confidence REAL    DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS lc_transitions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT    NOT NULL,
+    from_screen_id  INTEGER NOT NULL,
+    to_screen_id    INTEGER,
+    from_fp         TEXT    NOT NULL,
+    to_fp           TEXT,
+    tap_x           INTEGER,
+    tap_y           INTEGER,
+    tap_label       TEXT,
+    action_name     TEXT,
+    discovered_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_trans_from ON lc_transitions(from_fp);
+CREATE INDEX IF NOT EXISTS idx_trans_to ON lc_transitions(to_fp);
+CREATE INDEX IF NOT EXISTS idx_trans_session ON lc_transitions(session_id);
 """
 
 
@@ -126,6 +143,20 @@ class ScreenRecorder:
         # 画面間リンク用
         self._last_recorded_fp: Optional[str] = None
         self._last_recorded_phash: str = ""
+        self._last_inserted_id: Optional[int] = None
+
+        # 遷移グラフ: タップ→次画面の非同期記録
+        self._pending_transition: Optional[dict] = None
+        # 前セッションの未完了遷移をクリーンアップ (クラッシュ復帰時のゴミ防止)
+        try:
+            self._conn.execute(
+                "DELETE FROM lc_transitions"
+                " WHERE to_screen_id IS NULL AND session_id != ?",
+                (self._session_id,),
+            )
+            self._conn.commit()
+        except Exception:
+            pass  # lc_transitions テーブルが未作成の場合
 
         # 顔検出 (lbpcascade_animeface)
         self._cascade: Optional[cv2.CascadeClassifier] = None
@@ -234,15 +265,74 @@ class ScreenRecorder:
         self._last_record_time = time.time()
         self._recorded_count += 1
 
+        # 遷移グラフ: pending があれば to を確定
+        if self._pending_transition is not None:
+            self._pending_transition["to_screen_id"] = screen_id
+            self._pending_transition["to_fp"] = content_fp
+            self._insert_transition(self._pending_transition)
+            self._pending_transition = None
+
         logger.info(
             "[ScreenRecorder] 新規画面 #%d: fp=%s title='%s' scene=%s",
             self._recorded_count, content_fp[:8], title[:30], scene,
         )
         return True
 
+    def record_tap(
+        self,
+        from_screen_id: int,
+        from_fp: str,
+        tap_x: int,
+        tap_y: int,
+        tap_label: str,
+        action_name: str,
+    ) -> None:
+        """タップ操作を遷移として記録する。to は次の maybe_record() で確定する。"""
+        # 既存の pending があれば to=NULL でフラッシュ (連続タップ対策)
+        if self._pending_transition is not None:
+            self._insert_transition(self._pending_transition)
+
+        self._pending_transition = {
+            "session_id": self._session_id,
+            "from_screen_id": from_screen_id,
+            "to_screen_id": None,
+            "from_fp": from_fp,
+            "to_fp": None,
+            "tap_x": tap_x,
+            "tap_y": tap_y,
+            "tap_label": tap_label,
+            "action_name": action_name,
+            "discovered_at": datetime.now().isoformat(),
+        }
+
+    @staticmethod
+    def _resolve_tap_label(
+        tap_x: int, tap_y: int, ocr_results: list[dict],
+    ) -> str:
+        """タップ座標から半径 50px 以内の最近傍 OCR テキストを返す。"""
+        best_text = ""
+        best_dist = 50.0  # 半径 50px
+        for item in ocr_results:
+            conf = item.get("confidence", 0)
+            if conf < _MIN_CONFIDENCE:
+                continue
+            text = item.get("text", "").strip()
+            if not text:
+                continue
+            cx, cy = item.get("center", [0, 0])
+            dist = ((cx - tap_x) ** 2 + (cy - tap_y) ** 2) ** 0.5
+            if dist < best_dist:
+                best_dist = dist
+                best_text = text
+        return best_text
+
     def close(self) -> None:
         """セッションを完了状態にして DB 接続を閉じる。"""
         try:
+            # pending transition をフラッシュ (to=NULL)
+            if self._pending_transition is not None:
+                self._insert_transition(self._pending_transition)
+                self._pending_transition = None
             self._conn.execute(
                 "UPDATE lc_sessions SET status = 'completed',"
                 " screens_found = ? WHERE session_id = ?",
@@ -436,7 +526,27 @@ class ScreenRecorder:
             (self._session_id,),
         )
         self._conn.commit()
+        self._last_inserted_id = cur.lastrowid
         return cur.lastrowid  # type: ignore[return-value]
+
+    def _insert_transition(self, t: dict) -> None:
+        """lc_transitions に遷移レコードを INSERT する。"""
+        try:
+            self._conn.execute(
+                "INSERT INTO lc_transitions"
+                " (session_id, from_screen_id, to_screen_id, from_fp, to_fp,"
+                "  tap_x, tap_y, tap_label, action_name, discovered_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    t["session_id"], t["from_screen_id"], t["to_screen_id"],
+                    t["from_fp"], t["to_fp"],
+                    t["tap_x"], t["tap_y"], t["tap_label"], t["action_name"],
+                    t["discovered_at"],
+                ),
+            )
+            self._conn.commit()
+        except Exception as e:
+            logger.warning("[ScreenRecorder] transition INSERT エラー: %s", e)
 
     def _insert_tappable_items(
         self, screen_id: int, ocr_results: list[dict]

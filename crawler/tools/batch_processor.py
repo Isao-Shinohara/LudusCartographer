@@ -77,6 +77,26 @@ class BatchProcessor:
         """テーブル・カラムの自動マイグレーション。"""
         self._conn.executescript(_GROUPS_SCHEMA)
 
+        # lc_transitions テーブル (遷移グラフ Phase 1)
+        self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS lc_transitions (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id      TEXT    NOT NULL,
+                from_screen_id  INTEGER NOT NULL,
+                to_screen_id    INTEGER,
+                from_fp         TEXT    NOT NULL,
+                to_fp           TEXT,
+                tap_x           INTEGER,
+                tap_y           INTEGER,
+                tap_label       TEXT,
+                action_name     TEXT,
+                discovered_at   TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_trans_from ON lc_transitions(from_fp);
+            CREATE INDEX IF NOT EXISTS idx_trans_to ON lc_transitions(to_fp);
+            CREATE INDEX IF NOT EXISTS idx_trans_session ON lc_transitions(session_id);
+        """)
+
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_screens)")}
         for col, typ in [
             ("group_id", "INTEGER"),

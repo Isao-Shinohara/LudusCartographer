@@ -662,7 +662,7 @@ def tap_device(x: int, y: int, state, desc: str = "",
     if getattr(state, "tap_suppressed", False):
         logger.info("  [TAP:DENY] (%d,%d) | %s (MOVIE遷移直後タップ抑制)", x, y, desc)
         return
-    # ── スクリーン記録: タップ直前に強制保存 ──
+    # ── スクリーン記録: タップ直前に強制保存 + 遷移記録 ──
     _rec = getattr(state, "recorder", None)
     if _rec is not None:
         try:
@@ -679,6 +679,20 @@ def tap_device(x: int, y: int, state, desc: str = "",
                 _phash,
                 force=True,
             )
+            # 遷移グラフ: from 画面が記録済みなら遷移を登録
+            _last_id = _rec._last_inserted_id
+            _last_fp = _rec._last_recorded_fp
+            if _last_id and _last_fp:
+                _tap_label = _rec._resolve_tap_label(
+                    x, y, getattr(state, "last_ocr_results", [])
+                )
+                _rec.record_tap(
+                    from_screen_id=_last_id,
+                    from_fp=_last_fp,
+                    tap_x=x, tap_y=y,
+                    tap_label=_tap_label,
+                    action_name=desc,
+                )
         except Exception:
             pass
     logger.info(
