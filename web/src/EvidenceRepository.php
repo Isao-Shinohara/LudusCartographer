@@ -16,6 +16,11 @@ class EvidenceRepository
 {
     public function __construct(private PDO $db) {}
 
+    public function getPdo(): PDO
+    {
+        return $this->db;
+    }
+
     // ------------------------------------------------------------------
     // public API
     // ------------------------------------------------------------------

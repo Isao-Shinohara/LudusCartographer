@@ -129,6 +129,80 @@ if ($action === 'get_final_screens') {
     exit;
 }
 
+// --- get_graph アクション (遷移グラフ Cytoscape.js 用) ---
+if ($action === 'get_graph') {
+    $nodes = [];
+    $edges = [];
+    $sccGroups = [];
+
+    if ($useDb && $repository instanceof EvidenceRepository) {
+        $pdo = $repository->getPdo();
+
+        // ノード: 代表画像 (is_representative=1) または全画面
+        $nodeStmt = $pdo->query(
+            "SELECT fingerprint, title, scene, thumbnail_path, screenshot_path,"
+            . " bfs_depth, scc_id, scc_label"
+            . " FROM lc_screens WHERE is_representative = 1"
+            . " ORDER BY bfs_depth ASC, discovered_at ASC"
+        );
+        if ($nodeStmt) {
+            while ($row = $nodeStmt->fetch(PDO::FETCH_ASSOC)) {
+                $imgPath = $row['thumbnail_path'] ?: $row['screenshot_path'] ?: '';
+                $nodes[] = [
+                    'id'          => $row['fingerprint'],
+                    'fingerprint' => $row['fingerprint'],
+                    'title'       => $row['title'] ?: '',
+                    'scene'       => $row['scene'] ?: '',
+                    'thumbnail'   => $imgPath ? ('img.php?path=' . urlencode($imgPath)) : '',
+                    'bfs_depth'   => $row['bfs_depth'] !== null ? (int)$row['bfs_depth'] : null,
+                    'scc_id'      => $row['scc_id'] !== null ? (int)$row['scc_id'] : null,
+                    'scc_label'   => $row['scc_label'] ?: '',
+                ];
+            }
+        }
+
+        // エッジ: fingerprint ベースで集約
+        $edgeStmt = $pdo->query(
+            "SELECT from_fp, to_fp, tap_label, action_name,"
+            . " COUNT(*) as count"
+            . " FROM lc_transitions WHERE to_fp IS NOT NULL"
+            . " GROUP BY from_fp, to_fp"
+        );
+        if ($edgeStmt) {
+            while ($row = $edgeStmt->fetch(PDO::FETCH_ASSOC)) {
+                $isBack = stripos($row['action_name'] ?? '', 'BACK') !== false;
+                $edges[] = [
+                    'source'      => $row['from_fp'],
+                    'target'      => $row['to_fp'],
+                    'tap_label'   => $row['tap_label'] ?: '',
+                    'action_name' => $row['action_name'] ?: '',
+                    'count'       => (int)$row['count'],
+                    'is_back'     => $isBack,
+                ];
+            }
+        }
+
+        // SCC グループ
+        $sccStmt = $pdo->query("SELECT * FROM lc_scc_groups ORDER BY id");
+        if ($sccStmt) {
+            while ($row = $sccStmt->fetch(PDO::FETCH_ASSOC)) {
+                $sccGroups[] = [
+                    'id'           => (int)$row['id'],
+                    'label'        => $row['label'] ?: '',
+                    'screen_count' => (int)$row['screen_count'],
+                    'root_fp'      => $row['root_fp'] ?: '',
+                ];
+            }
+        }
+    }
+
+    echo json_encode(
+        ['nodes' => $nodes, 'edges' => $edges, 'scc_groups' => $sccGroups],
+        JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+    );
+    exit;
+}
+
 // --- detail アクション ---
 if ($action === 'detail') {
     $id = (int)($_GET['id'] ?? 0);

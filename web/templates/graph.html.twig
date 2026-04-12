@@ -1,0 +1,287 @@
+{% extends "layout.html.twig" %}
+
+{% block title %}Map — LudusCartographer{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+    <h2 class="text-2xl font-bold text-brand-light">UI Map</h2>
+    <div class="flex items-center gap-4">
+        <span id="graph-stats" class="text-sm text-gray-400"></span>
+        <button id="btn-fit" class="px-3 py-1 text-xs bg-gray-800 hover:bg-gray-700 rounded text-gray-300 transition-colors">Fit</button>
+        <button id="btn-collapse" class="px-3 py-1 text-xs bg-gray-800 hover:bg-gray-700 rounded text-gray-300 transition-colors">SCC 折りたたみ</button>
+    </div>
+</div>
+
+<div class="flex gap-4" style="height: calc(100vh - 220px);">
+    <!-- グラフ -->
+    <div id="cy" class="flex-1 bg-gray-900 rounded-xl border border-gray-800"></div>
+    <!-- 詳細パネル -->
+    <div id="detail-panel" class="w-80 bg-gray-900 rounded-xl border border-gray-800 p-4 overflow-auto hidden">
+        <img id="detail-img" src="" class="w-full rounded-lg mb-3 bg-gray-800" />
+        <h3 id="detail-title" class="text-sm font-bold text-brand-light mb-2 truncate"></h3>
+        <div class="flex gap-2 mb-3">
+            <span id="detail-scene" class="px-2 py-0.5 text-[10px] rounded bg-gray-800 text-gray-400"></span>
+            <span id="detail-depth" class="px-2 py-0.5 text-[10px] rounded bg-gray-800 text-gray-400"></span>
+            <span id="detail-scc" class="px-2 py-0.5 text-[10px] rounded bg-gray-800 text-gray-400"></span>
+        </div>
+        <h4 class="text-xs text-gray-500 mb-1">Transitions</h4>
+        <ul id="detail-edges" class="text-xs text-gray-400 space-y-1 max-h-40 overflow-auto"></ul>
+    </div>
+</div>
+
+<script src="https://unpkg.com/cytoscape@3/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/dagre@0.8/dist/dagre.min.js"></script>
+<script src="https://unpkg.com/cytoscape-dagre@2/cytoscape-dagre.js"></script>
+<script>
+(function() {
+    const API = 'api/search.php';
+    const SCENE_COLORS = {
+        BATTLE: '#ef4444', ADV: '#3b82f6', MENU: '#22c55e', GACHA: '#eab308',
+        MOVIE: '#8b5cf6', LOADING: '#6b7280', UNKNOWN: '#9ca3af',
+    };
+
+    let cy = null;
+    let graphData = null;
+    let sccCollapsed = false;
+
+    function getGameParam() {
+        return new URLSearchParams(window.location.search).get('game') || '';
+    }
+
+    async function loadGraph() {
+        const game = getGameParam();
+        const params = new URLSearchParams({ action: 'get_graph' });
+        if (game) params.set('game', game);
+
+        try {
+            const res = await fetch(API + '?' + params);
+            graphData = await res.json();
+        } catch (e) {
+            document.getElementById('cy').innerHTML =
+                '<div class="flex items-center justify-center h-full text-gray-600">API エラー</div>';
+            return;
+        }
+
+        if (!graphData.nodes || graphData.nodes.length === 0) {
+            document.getElementById('cy').innerHTML =
+                '<div class="flex items-center justify-center h-full text-gray-600">' +
+                'グラフデータがありません。<br>auto_pilot -S で記録 → バッチ処理を実行してください。</div>';
+            return;
+        }
+
+        renderGraph();
+    }
+
+    function renderGraph() {
+        const elements = [];
+        const nodeSet = new Set();
+
+        // SCC 親ノード (Compound)
+        const sccGroups = graphData.scc_groups || [];
+        for (const scc of sccGroups) {
+            elements.push({
+                data: {
+                    id: 'scc_' + scc.id,
+                    label: scc.label,
+                    type: 'scc',
+                },
+            });
+        }
+
+        // ノード
+        for (const n of graphData.nodes) {
+            nodeSet.add(n.id);
+            const data = {
+                id: n.id,
+                label: (n.title || '').substring(0, 25),
+                scene: n.scene || 'UNKNOWN',
+                bfs_depth: n.bfs_depth,
+                thumbnail: n.thumbnail || '',
+                scc_id: n.scc_id,
+                type: 'screen',
+            };
+            if (n.scc_id) {
+                data.parent = 'scc_' + n.scc_id;
+            }
+            elements.push({ data });
+        }
+
+        // エッジ (両端がノードセットに含まれるもののみ)
+        for (const e of graphData.edges) {
+            if (!nodeSet.has(e.source) || !nodeSet.has(e.target)) continue;
+            elements.push({
+                data: {
+                    id: e.source + '_' + e.target,
+                    source: e.source,
+                    target: e.target,
+                    label: e.tap_label || '',
+                    count: e.count || 1,
+                    is_back: e.is_back || false,
+                },
+            });
+        }
+
+        cy = cytoscape({
+            container: document.getElementById('cy'),
+            elements: elements,
+            style: [
+                // SCC 親ノード
+                {
+                    selector: 'node[type="scc"]',
+                    style: {
+                        'background-color': '#1e1b4b',
+                        'background-opacity': 0.3,
+                        'border-width': 1,
+                        'border-color': '#4c1d95',
+                        'label': 'data(label)',
+                        'text-valign': 'top',
+                        'text-halign': 'center',
+                        'font-size': '10px',
+                        'color': '#7c3aed',
+                        'padding': '20px',
+                        'shape': 'roundrectangle',
+                    },
+                },
+                // 画面ノード
+                {
+                    selector: 'node[type="screen"]',
+                    style: {
+                        'width': 120,
+                        'height': 60,
+                        'shape': 'roundrectangle',
+                        'background-color': function(ele) {
+                            return SCENE_COLORS[ele.data('scene')] || '#6b7280';
+                        },
+                        'background-image': 'data(thumbnail)',
+                        'background-fit': 'cover',
+                        'background-opacity': 0.9,
+                        'border-width': 2,
+                        'border-color': function(ele) {
+                            return SCENE_COLORS[ele.data('scene')] || '#6b7280';
+                        },
+                        'label': 'data(label)',
+                        'text-valign': 'bottom',
+                        'text-halign': 'center',
+                        'font-size': '8px',
+                        'color': '#e5e7eb',
+                        'text-margin-y': 5,
+                        'text-outline-width': 1,
+                        'text-outline-color': '#111827',
+                    },
+                },
+                // エッジ (通常)
+                {
+                    selector: 'edge[!is_back]',
+                    style: {
+                        'width': function(ele) {
+                            return Math.min(Math.max(ele.data('count'), 1), 5);
+                        },
+                        'line-color': '#4b5563',
+                        'target-arrow-color': '#4b5563',
+                        'target-arrow-shape': 'triangle',
+                        'curve-style': 'bezier',
+                        'label': 'data(label)',
+                        'font-size': '7px',
+                        'color': '#9ca3af',
+                        'text-rotation': 'autorotate',
+                        'text-outline-width': 1,
+                        'text-outline-color': '#111827',
+                    },
+                },
+                // エッジ (戻る)
+                {
+                    selector: 'edge[?is_back]',
+                    style: {
+                        'width': 1,
+                        'line-color': '#374151',
+                        'line-style': 'dashed',
+                        'target-arrow-color': '#374151',
+                        'target-arrow-shape': 'triangle',
+                        'curve-style': 'bezier',
+                        'opacity': 0.4,
+                    },
+                },
+            ],
+            layout: {
+                name: 'dagre',
+                rankDir: 'TB',
+                nodeSep: 40,
+                rankSep: 80,
+                edgeSep: 20,
+                animate: false,
+            },
+            minZoom: 0.1,
+            maxZoom: 3,
+        });
+
+        // ノードクリック → 詳細パネル
+        cy.on('tap', 'node[type="screen"]', function(evt) {
+            const n = evt.target.data();
+            const panel = document.getElementById('detail-panel');
+            panel.classList.remove('hidden');
+            document.getElementById('detail-img').src = n.thumbnail || '';
+            document.getElementById('detail-title').textContent = n.label || '';
+            document.getElementById('detail-scene').textContent = n.scene || '';
+            document.getElementById('detail-depth').textContent = n.bfs_depth !== null ? 'depth=' + n.bfs_depth : '';
+            document.getElementById('detail-scc').textContent = n.scc_id ? 'SCC#' + n.scc_id : '';
+
+            // 遷移先一覧
+            const edgeList = document.getElementById('detail-edges');
+            edgeList.innerHTML = '';
+            const outEdges = evt.target.connectedEdges().filter(e => e.source().id() === evt.target.id());
+            outEdges.forEach(function(e) {
+                const li = document.createElement('li');
+                li.textContent = (e.data('label') || e.target().data('label') || '?') +
+                    ' → ' + (e.target().data('label') || e.target().id().substring(0, 8));
+                edgeList.appendChild(li);
+            });
+        });
+
+        // 背景クリック → パネル閉じる
+        cy.on('tap', function(evt) {
+            if (evt.target === cy) {
+                document.getElementById('detail-panel').classList.add('hidden');
+            }
+        });
+
+        // 統計
+        document.getElementById('graph-stats').textContent =
+            graphData.nodes.length + ' ノード, ' +
+            graphData.edges.length + ' エッジ, ' +
+            sccGroups.length + ' SCC';
+    }
+
+    // Fit ボタン
+    document.getElementById('btn-fit').addEventListener('click', function() {
+        if (cy) cy.fit(undefined, 30);
+    });
+
+    // SCC 折りたたみ/展開
+    document.getElementById('btn-collapse').addEventListener('click', function() {
+        if (!cy) return;
+        sccCollapsed = !sccCollapsed;
+        cy.nodes('[type="scc"]').forEach(function(parent) {
+            const children = parent.children();
+            if (sccCollapsed) {
+                children.hide();
+                parent.style({
+                    'width': 60, 'height': 40,
+                    'label': parent.data('label') + ' (' + children.length + ')',
+                    'background-opacity': 0.6,
+                });
+            } else {
+                children.show();
+                parent.style({
+                    'width': '', 'height': '',
+                    'label': parent.data('label'),
+                    'background-opacity': 0.3,
+                });
+            }
+        });
+        this.textContent = sccCollapsed ? 'SCC 展開' : 'SCC 折りたたみ';
+    });
+
+    loadGraph();
+})();
+</script>
+{% endblock %}

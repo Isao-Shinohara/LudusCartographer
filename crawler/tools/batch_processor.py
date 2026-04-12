@@ -557,6 +557,45 @@ class BatchProcessor:
         logger.info("[reocr] %d 枚の OCR 再処理完了", processed)
         return processed
 
+    # ─── SCC ラベル自動生成 ─────────────────────────────
+
+    def _generate_scc_label(
+        self, scc_fps: set[str], fp_to_scene: dict[str, str]
+    ) -> str:
+        """SCC 内の画面の OCR テキストからラベルを自動生成する。"""
+        from collections import Counter
+
+        # 最頻シーン
+        scene_counts = Counter(fp_to_scene.get(fp, "UNKNOWN") for fp in scc_fps)
+        top_scene = scene_counts.most_common(1)[0][0] if scene_counts else "UNKNOWN"
+        scene_label = _SCENE_LABELS.get(top_scene, top_scene)
+
+        # OCR テキスト頻度カウント
+        text_counter: Counter = Counter()
+        for fp in scc_fps:
+            row = self._conn.execute(
+                "SELECT ocr_text_hq, ocr_text FROM lc_screens WHERE fingerprint = ?",
+                (fp,),
+            ).fetchone()
+            if not row:
+                continue
+            ocr = row["ocr_text_hq"] or row["ocr_text"] or ""
+            # スペースで分割してトークン化
+            for token in ocr.split():
+                token = token.strip()
+                # 短すぎる / 数字のみ → スキップ
+                if len(token) < 2 or token.isdigit():
+                    continue
+                text_counter[token] += 1
+
+        if text_counter:
+            # 最頻出トークン (シーンラベルと同じなら次のを使う)
+            for token, _ in text_counter.most_common(5):
+                if token != scene_label and token not in _SCENE_LABELS.values():
+                    return f"{scene_label}:{token}"
+            return scene_label
+        return scene_label
+
     # ─── Phase 6: 遷移グラフ構築 (BFS + SCC) ─────────
 
     def build_graph(self) -> int:
@@ -710,24 +749,32 @@ class BatchProcessor:
                 (depth, fp),
             )
 
-        # SCC グループ
+        # SCC グループ + OCR ラベル自動生成
         self._conn.execute("DELETE FROM lc_scc_groups")
         scc_map: dict[str, int] = {}  # fp → scc_id
         for idx, scc_fps in enumerate(sccs, 1):
             root_fp = min(scc_fps, key=lambda fp: depth_map.get(fp, 999))
+
+            # OCR テキストからラベル自動生成
+            label = self._generate_scc_label(scc_fps, fp_to_scene)
+
             self._conn.execute(
                 "INSERT INTO lc_scc_groups (id, label, screen_count, root_fp)"
                 " VALUES (?, ?, ?, ?)",
-                (idx, f"SCC#{idx}", len(scc_fps), root_fp),
+                (idx, label, len(scc_fps), root_fp),
             )
             for fp in scc_fps:
                 scc_map[fp] = idx
 
-        # scc_id を全画面に UPDATE
+        # scc_id, scc_label を全画面に UPDATE
         for fp, scc_id in scc_map.items():
+            label = self._conn.execute(
+                "SELECT label FROM lc_scc_groups WHERE id = ?", (scc_id,)
+            ).fetchone()
+            scc_label = label["label"] if label else f"SCC#{scc_id}"
             self._conn.execute(
                 "UPDATE lc_screens SET scc_id = ?, scc_label = ? WHERE fingerprint = ?",
-                (scc_id, f"SCC#{scc_id}", fp),
+                (scc_id, scc_label, fp),
             )
 
         self._conn.commit()
