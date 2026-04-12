@@ -72,18 +72,24 @@ CREATE INDEX IF NOT EXISTS idx_trans_session ON lc_transitions(session_id);
    - auto_pilot クラッシュ時のゴミデータ防止
 
 3. `record_tap(from_screen_id, from_fp, tap_x, tap_y, tap_label, action_name)` メソッド追加
-   - `_pending_transition` に from 情報をセット
+   - **既存の `_pending_transition` があれば先にフラッシュ** (`to_screen_id=NULL` で INSERT)
+     - 連続タップで前の pending が上書きされるのを防止
+   - `_pending_transition` に新しい from 情報をセット
    - まだ to は不明（次の maybe_record で確定する）
 
 4. `maybe_record()` 内の `_insert_screen()` 成功後に:
    - `_pending_transition` が存在すれば、to_screen_id と to_fp を確定して INSERT
    - `_pending_transition = None` にリセット
 
-5. `_resolve_tap_label(tap_x, tap_y, ocr_results)` メソッド追加
+5. `close()` で `_pending_transition` のフラッシュ
+   - pending が残っていれば `to_screen_id=NULL` で INSERT してから DB を閉じる
+   - セッション終了・クラッシュ復帰時のデータロスト防止
+
+6. `_resolve_tap_label(tap_x, tap_y, ocr_results)` メソッド追加
    - タップ座標から半径 50px 以内の最も近い OCR テキストを返す
    - `lc_tappable_items` は使わず、maybe_record に渡された ocr_results から直接取得
 
-6. `_last_inserted_id` プロパティ追加
+7. `_last_inserted_id` プロパティ追加
    - `_insert_screen()` の戻り値（lastrowid）を保持
    - `record_tap()` で from_screen_id として使用
 
@@ -109,13 +115,25 @@ if _rec is not None:
 **batch_processor.py への変更:**
 - `_migrate()` に lc_transitions テーブルの CREATE TABLE IF NOT EXISTS を追加
 
+### エッジケースの処理
+
+| ケース | 挙動 | 根拠 |
+|--------|------|------|
+| 初回タップ前に screen 未記録 | device.py の `if _last_id and _last_fp` ガードでスキップ | from がないので記録不可。正常動作 |
+| 連続タップ（画面変わらず） | 1つ目の pending を `to=NULL` でフラッシュ → 2つ目を新規 pending | 上書きによるデータロスト防止 |
+| `force=True` で重複スキップ | `_last_inserted_id` は前の値のまま使用 | 同じ画面からのタップなので前の ID が正しい from |
+| セッション終了時に pending 残り | `close()` で `to=NULL` としてフラッシュ | クラッシュ時のデータロスト防止 |
+| 前セッションのゴミ（to=NULL） | `__init__()` で前セッションの未完了遷移を DELETE | DB 汚染防止 |
+
 ### テスト
 
 - 単体テスト: record_tap → maybe_record の順序で transition が正しく記録されるか
 - to_screen_id が NULL のまま残る遷移（画面が変わらなかったタップ）のテスト
-- _resolve_tap_label の座標→テキスト紐付けテスト
+- 連続タップ: 2回の record_tap の間に maybe_record なし → 1つ目が to=NULL でフラッシュされるか
+- _resolve_tap_label の座標→テキスト紐付けテスト（半径内/半径外）
 - セッション開始時の未完了遷移クリーンアップテスト
 - close() 時に _pending_transition のフラッシュ確認
+- 初回タップ前（_last_inserted_id=None）で record_tap が呼ばれない確認
 
 ### 成果物
 - lc_transitions にセッション中の全タップ遷移が記録される
@@ -354,7 +372,7 @@ SCC グループと BFS 階層に意味のあるラベルを自動付与する�
 
 | 順序 | Phase | 完了条件 | 想定規模 |
 |------|-------|----------|----------|
-| 1st | **Phase 1** | lc_transitions に遷移が記録され、テスト通過 | screen_recorder +70行, device +10行, テスト +100行 |
+| 1st | **Phase 1** | lc_transitions に遷移が記録され、テスト通過 | screen_recorder +90行, device +15行, batch_processor +20行, テスト +120行 |
 | 2nd | **Phase 2** | バッチ実行で bfs_depth, scc_id が全画面に付与される | batch_processor +200行, テスト +120行 |
 | 3rd | **Phase 3** | API が正しい JSON を返す | search.php +60行, テスト +40行 |
 | 4th | **Phase 4** | ブラウザで地図が表示され、操作できる | graph.php +20行, graph.html.twig +300行 |
