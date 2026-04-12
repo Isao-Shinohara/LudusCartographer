@@ -1195,6 +1195,18 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
         time.sleep(1.0)
         return True
 
+    # ── -S モード: 動画中のセリフ変化を OCR でキャプチャ ──
+    # phash が変化 (dist >= 8) かつ recorder が有効なら OCR を走らせて記録
+    _rec = getattr(state, "recorder", None)
+    if _rec is not None and dist >= 8 and img_path:
+        try:
+            from tools.ap.ocr import run_ocr
+            _movie_ocr = run_ocr(str(img_path), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
+            _movie_phash = cur_phash or ""
+            _rec.maybe_record(img_path, _movie_ocr, "MOVIE", _movie_phash)
+        except Exception:
+            pass
+
     # ── 非MOVIEシーン早期脱出: テンプレで確認 ──
     # 条件1: dist < 5 が3回続く (phash安定)
     # 条件2: 連続待機30回(~18秒)超過時は毎30回ごとにチェック (微動画面の誤MOVIE対策)

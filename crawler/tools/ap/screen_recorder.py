@@ -25,7 +25,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # ─── 定数 ────────────────────────────────────────────
-_SKIP_SCENES = frozenset({"LOADING", "MOVIE"})
+_SKIP_SCENES = frozenset({"LOADING"})
 _MIN_CONFIDENCE = 0.3
 _SORT_Y_BUCKET = 50         # Y座標のバケットサイズ (px)
 _CASCADE_MIN_FACE = (40, 40)  # 顔検出の最小サイズ (px)

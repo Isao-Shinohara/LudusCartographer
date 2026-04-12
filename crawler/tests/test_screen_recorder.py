@@ -265,12 +265,12 @@ class TestMaybeRecord:
         finally:
             rec.close()
 
-    def test_skip_movie_scene(self, tmp_path):
-        """MOVIE シーンはスキップ。"""
+    def test_movie_scene_recorded(self, tmp_path):
+        """MOVIE シーンもセリフキャプチャのため記録される。"""
         rec = _make_recorder(tmp_path)
         try:
             ocr = [_make_ocr("SKIP")]
-            assert rec.maybe_record(None, ocr, "MOVIE", "abc123") is False
+            assert rec.maybe_record(None, ocr, "MOVIE", "abc123") is True
         finally:
             rec.close()
 
