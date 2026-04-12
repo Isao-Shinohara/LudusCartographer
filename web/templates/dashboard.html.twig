@@ -158,6 +158,13 @@
             if (newScreens.length > 0) {
                 allScreens = newScreens.concat(allScreens);
                 maxId = Math.max(maxId, Math.max(...newScreens.map(s => s.id)));
+                // モーダル表示中ならインデックスをずらしてナビを更��
+                if (modalIdx >= 0) {
+                    modalIdx += newScreens.length;
+                    document.getElementById('modal-counter').textContent =
+                        (allScreens.length - modalIdx) + ' / ' + allScreens.length;
+                    updateModalNav();
+                }
                 renderAll();
             }
         } catch (e) {}
@@ -226,23 +233,33 @@
     setInterval(heartbeat, 10000);
 
     // --- モーダル ---
+    // allScreens は新しい順（idx=0 が最新）。
+    // ← = 古い方向 (idx+1)、→ = 新しい方向 (idx-1)
     let modalIdx = -1;
 
     function showModal(idx) {
         if (idx < 0 || idx >= allScreens.length) return;
         modalIdx = idx;
         const s = allScreens[idx];
+        const chronoPos = allScreens.length - idx; // 時系列での位置（1 = 最古）
         document.getElementById('modal-title').textContent = s.name || 'Unknown';
         document.getElementById('modal-img').src = s.screenshot_path ? imgUrl(s.screenshot_path) : '';
         document.getElementById('modal-ocr').textContent = s.ocr_text || '(OCR テキストなし)';
         document.getElementById('modal-scene').textContent = s.category || '';
         document.getElementById('modal-fp').textContent = 'fp: ' + (s.screen_hash || '');
         document.getElementById('modal-time').textContent = s.last_seen_at || '';
-        document.getElementById('modal-counter').textContent = (idx + 1) + ' / ' + allScreens.length;
-        document.getElementById('modal-prev').style.visibility = idx > 0 ? 'visible' : 'hidden';
-        document.getElementById('modal-next').style.visibility = idx < allScreens.length - 1 ? 'visible' : 'hidden';
+        document.getElementById('modal-counter').textContent = chronoPos + ' / ' + allScreens.length;
+        updateModalNav();
         modal.classList.remove('hidden');
         modal.classList.add('flex');
+    }
+
+    function updateModalNav() {
+        if (modalIdx < 0) return;
+        // ← 古い方向 (idx+1 が存在するか)
+        document.getElementById('modal-prev').style.visibility = modalIdx < allScreens.length - 1 ? 'visible' : 'hidden';
+        // → 新しい方向 (idx-1 が存在するか、または idx==0 で新着が来る可能性)
+        document.getElementById('modal-next').style.visibility = modalIdx > 0 ? 'visible' : 'hidden';
     }
 
     function closeModal() {
@@ -257,13 +274,15 @@
         showModal(parseInt(card.dataset.idx, 10));
     });
 
+    // ← 古い画像へ (idx が大きい方)
     document.getElementById('modal-prev').addEventListener('click', function(e) {
         e.stopPropagation();
-        if (modalIdx > 0) showModal(modalIdx - 1);
+        if (modalIdx < allScreens.length - 1) showModal(modalIdx + 1);
     });
+    // → 新しい画像へ (idx が小さい方)
     document.getElementById('modal-next').addEventListener('click', function(e) {
         e.stopPropagation();
-        if (modalIdx < allScreens.length - 1) showModal(modalIdx + 1);
+        if (modalIdx > 0) showModal(modalIdx - 1);
     });
 
     modal.addEventListener('click', function(e) {
@@ -273,8 +292,9 @@
     document.addEventListener('keydown', function(e) {
         if (!modal.classList.contains('flex')) return;
         if (e.key === 'Escape') closeModal();
-        if (e.key === 'ArrowLeft' && modalIdx > 0) showModal(modalIdx - 1);
-        if (e.key === 'ArrowRight' && modalIdx < allScreens.length - 1) showModal(modalIdx + 1);
+        // ← 古い方向、→ 新しい方向
+        if (e.key === 'ArrowLeft' && modalIdx < allScreens.length - 1) showModal(modalIdx + 1);
+        if (e.key === 'ArrowRight' && modalIdx > 0) showModal(modalIdx - 1);
     });
 })();
 </script>
