@@ -2630,6 +2630,10 @@ def main():
     adb("shell settings put global policy_control immersive.status=*")
     logger.info("[STARTUP] ステータスバー非表示 (immersive mode)")
     state.game_foreground = True  # ゲーム起動確認済み → スクショ記録を許可
+    # scrcpy フォールバック制御: ゲーム起動直後はロゴ撮影のため高速ループ
+    import tools.ap.device as _ap_device_mod
+    _ap_device_mod._scrcpy_ever_changed = False
+    _ap_device_mod._scrcpy_black_since = 0
 
     i = 0
     while True:
