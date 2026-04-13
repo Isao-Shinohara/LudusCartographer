@@ -3868,6 +3868,7 @@ def main():
                 generate_and_copy_report(state, "ホーム画面到達")
                 break
             # 周回モード: 報告 → 待機 → 次の周回開始
+            # bg_worker は止めない (バックグラウンドで前セッションの処理を継続)
             state.grind_cycles_completed += 1
             persist_state("grind_cycles", str(state.grind_cycles_completed))
             generate_and_copy_report(state, f"周回 #{state.grind_cycles_completed} 完了")

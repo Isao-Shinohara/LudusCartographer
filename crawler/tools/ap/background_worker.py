@@ -417,7 +417,28 @@ class BackgroundWorker:
     # ─── 遷移グラフ構築 ───────────────────────────────────
 
     def _run_graph_build(self) -> None:
-        """BatchProcessor.build_graph() を呼び出して遷移グラフを構築。"""
+        """全セッションの dedup + OCR が完了してから遷移グラフを構築。"""
+        conn = self._get_conn()
+        try:
+            # 未処理が残っていたらスキップ
+            pending_cluster = conn.execute(
+                "SELECT COUNT(*) FROM lc_screens"
+                " WHERE cluster_id IS NULL AND phash IS NOT NULL AND phash != ''"
+            ).fetchone()[0]
+            pending_ocr = conn.execute(
+                "SELECT COUNT(*) FROM lc_screens"
+                " WHERE is_representative = 1 AND ocr_text_hq IS NULL"
+                " AND screenshot_path IS NOT NULL AND screenshot_path != ''"
+            ).fetchone()[0]
+            if pending_cluster > 0 or pending_ocr > 0:
+                logger.debug(
+                    "[BG_WORKER] graph: 待機中 (cluster残=%d, ocr残=%d)",
+                    pending_cluster, pending_ocr,
+                )
+                return
+        finally:
+            conn.close()
+
         try:
             from tools.batch_processor import BatchProcessor
             bp = BatchProcessor(db_path=self._db_path)
