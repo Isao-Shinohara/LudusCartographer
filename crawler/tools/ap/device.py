@@ -39,6 +39,7 @@ SCRCPY_DEVICE = ""   # main() で DEVICE_SERIAL から動的設定
 _SCRCPY_WINDOW_ID: int = 0   # キャッシュ (0=未取得)
 _LAST_SCRCPY_BGR: Optional[np.ndarray] = None  # scrcpy キャプチャの BGR キャッシュ (二重読み防止)
 _scrcpy_black_since: float = 0  # scrcpy 真っ黒が始まった時刻 (0=非黒)
+_scrcpy_ever_changed: bool = False  # phash に一度でも変化があったか
 _SCRCPY_FAIL_COUNT: int = 0  # scrcpy キャプチャ連続失敗回数 (自動復帰用)
 _SCRCPY_FAIL_RESTART_THRESHOLD: int = 3  # N回連続失敗でscrcpy再起動
 _SCRCPY_LAST_RESTART: float = 0.0  # 最後にscrcpyを再起動した時刻
@@ -295,20 +296,23 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
         _find_scrcpy_window_id()
         _LAST_SCRCPY_BGR = None
         return None
-    # 真っ黒チェック: 3秒連続で真っ黒の場合のみ ADB フォールバック
-    # (起動直後のロゴ等を scrcpy の高速キャプチャで撮り逃さないため)
-    global _scrcpy_black_since
+    # 真っ黒チェック: phash 変化後に 3秒連続真っ黒で ADB フォールバック
+    # 起動直後〜最初の画面変化まではフォールバックしない (ロゴ高速キャプチャ)
+    global _scrcpy_black_since, _scrcpy_ever_changed
     if float(bgr.mean()) < 0.5:
-        _now = time.time()
-        if _scrcpy_black_since == 0:
-            _scrcpy_black_since = _now
-        if _now - _scrcpy_black_since >= 3.0:
-            logger.warning("[SCRCPY] キャプチャが真っ黒 3秒超 (mean=%.1f) → ADB フォールバック", float(bgr.mean()))
-            _LAST_SCRCPY_BGR = None
-            return None
-        # 3秒未満 → scrcpy の黒画像をそのまま返す
+        if _scrcpy_ever_changed:
+            # 一度変化があった後の真っ黒 → 3秒でフォールバック
+            _now = time.time()
+            if _scrcpy_black_since == 0:
+                _scrcpy_black_since = _now
+            if _now - _scrcpy_black_since >= 3.0:
+                logger.warning("[SCRCPY] キャプチャが真っ黒 3秒超 (mean=%.1f) → ADB フォールバック", float(bgr.mean()))
+                _LAST_SCRCPY_BGR = None
+                return None
+        # フォールバックしない → scrcpy の黒画像をそのまま返す
     else:
         _scrcpy_black_since = 0
+        _scrcpy_ever_changed = True
     # 最低サイズチェック: ウィンドウが小さすぎる → ADB フォールバック
     # (ランドスケープ確認後のscrcpy再起動で復帰する)
     _MIN_CAPTURE_W = 720
