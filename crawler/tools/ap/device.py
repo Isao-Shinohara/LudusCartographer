@@ -662,17 +662,24 @@ def tap_device(x: int, y: int, state, desc: str = "",
     if getattr(state, "tap_suppressed", False):
         logger.info("  [TAP:DENY] (%d,%d) | %s (MOVIE遷移直後タップ抑制)", x, y, desc)
         return
-    # ── スクリーン記録: タップ直前に強制保存 + 遷移記録 ──
+    # ── スクリーン記録: タップ直前に新規スクショ撮影 + 強制保存 + 遷移記録 ──
     _rec = getattr(state, "recorder", None)
     if _rec is not None:
         try:
-            _analysis = getattr(state, "last_analysis_path", None)
-            # phash を画像から直接計算 (state.last_phash は "" にリセットされている場合がある)
+            # 新しいスクショを撮り直す (キャッシュ画像はテキストアニメ途中の可能性)
+            _fresh_ss, _fw, _fh, _ = take_screenshot(retries=1)
+            if _fresh_ss:
+                from tools.ap.image_proc import prepare_analysis_image
+                _analysis = prepare_analysis_image(_fresh_ss, _fw, _fh)
+                state.last_analysis_path = _analysis
+            else:
+                _analysis = getattr(state, "last_analysis_path", None)
+            # phash を画像から直接計算
             _phash = ""
             if _analysis and Path(str(_analysis)).exists():
                 from tools.ap.image_proc import compute_phash
                 _phash = compute_phash(str(_analysis)) or ""
-            # OCR を最新化 (早期ハンドラが OCR をスキップしている場合に古い結果を防止)
+            # OCR を最新化
             _ocr_for_rec = getattr(state, "last_ocr_results", [])
             if _analysis and Path(str(_analysis)).exists():
                 try:
@@ -683,13 +690,8 @@ def tap_device(x: int, y: int, state, desc: str = "",
                     if _fresh_ocr:
                         _ocr_for_rec = _fresh_ocr
                         state.last_ocr_results = _ocr_for_rec
-                        logger.debug("[TAP_OCR] 更新 %d件: %s", len(_fresh_ocr),
-                                     " | ".join(r.get("text", "")[:20] for r in _fresh_ocr[:3]))
-                    else:
-                        logger.debug("[TAP_OCR] OCR 空 → 既存 %d件を維持 (path=%s)",
-                                     len(_ocr_for_rec), _analysis)
-                except Exception as e:
-                    logger.warning("[TAP_OCR] OCR 例外: %s (path=%s)", e, _analysis)
+                except Exception:
+                    pass
             _rec.maybe_record(
                 _analysis,
                 _ocr_for_rec,
