@@ -1203,9 +1203,12 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
             from tools.ap.ocr import run_ocr
             _movie_ocr = run_ocr(str(img_path), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
             _movie_phash = cur_phash or ""
-            _rec.maybe_record(img_path, _movie_ocr, "MOVIE", _movie_phash)
-        except Exception:
-            pass
+            _recorded = _rec.maybe_record(img_path, _movie_ocr, "MOVIE", _movie_phash)
+            if _recorded:
+                _movie_texts = [r.get("text", "") for r in _movie_ocr[:3]]
+                logger.debug("[MOVIE_REC] 記録: %s", " | ".join(_movie_texts))
+        except Exception as e:
+            logger.warning("[MOVIE_REC] 例外: %s (img=%s)", e, img_path)
 
     # ── 非MOVIEシーン早期脱出: テンプレで確認 ──
     # 条件1: dist < 5 が3回続く (phash安定)
