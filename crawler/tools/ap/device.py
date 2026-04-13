@@ -312,7 +312,8 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
         # フォールバックしない → scrcpy の黒画像をそのまま返す
     else:
         _scrcpy_black_since = 0
-        _scrcpy_ever_changed = True
+        if float(bgr.mean()) >= 5.0:
+            _scrcpy_ever_changed = True
     # 最低サイズチェック: ウィンドウが小さすぎる → ADB フォールバック
     # (ランドスケープ確認後のscrcpy再起動で復帰する)
     _MIN_CAPTURE_W = 720
