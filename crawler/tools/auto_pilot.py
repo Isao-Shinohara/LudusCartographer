@@ -2848,11 +2848,9 @@ def main():
                         time.sleep(0.5)
                         tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "BLACKOUT_RECOVER")
                 else:
-                    if not recorder:
-                        time.sleep(3.0)  # 暗転ポーリング延長 (コールドスタート最適化)
+                    time.sleep(0.2 if recorder else 3.0)
             else:
-                if not recorder:
-                    time.sleep(0.5)
+                time.sleep(0.2 if recorder else 0.5)
             state.last_phash = ""
             state.same_phash_count = 0
             continue
