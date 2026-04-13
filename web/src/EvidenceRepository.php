@@ -287,6 +287,7 @@ class EvidenceRepository
             SELECT s.id, s.title, s.depth, s.screenshot_path, s.thumbnail_path,
                    s.ocr_text, s.ocr_text_hq, s.discovered_at, s.session_id,
                    s.fingerprint, s.scene,
+                   s.is_representative, s.cluster_id,
                    COALESCE(sess.game_title, 'Unknown Game') AS game_title
             FROM lc_screens s
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
@@ -398,6 +399,9 @@ class EvidenceRepository
             'platform'        => 'ios',
             'screen_hash'     => $raw['fingerprint'],
             'game_title'      => $raw['game_title'] ?? 'Unknown Game',
+            'is_representative' => (bool)($raw['is_representative'] ?? false),
+            'cluster_id'      => $raw['cluster_id'] ?? null,
+            'has_hq_ocr'      => !empty($raw['ocr_text_hq'] ?? ''),
         ];
     }
 }

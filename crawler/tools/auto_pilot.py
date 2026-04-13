@@ -2450,6 +2450,7 @@ def main():
 
     # ─── スクリーン記録 (オプション) ───
     recorder = None
+    bg_worker = None
     if args.screenshot:
         from tools.ap.screen_recorder import ScreenRecorder
         _rec_session = f"ap_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -2460,6 +2461,10 @@ def main():
             game_title="まどドラ",
         )
         state.recorder = recorder
+        # バックグラウンドワーカー起動 (間引き + OCR 再処理)
+        from tools.ap.background_worker import BackgroundWorker
+        bg_worker = BackgroundWorker(db_path=_STATE_DB_PATH)
+        bg_worker.start()
 
     # ── 周回数リセット (起動ごと) ──
     delete_state("grind_cycles")
@@ -2481,6 +2486,8 @@ def main():
 
     def _sigint_handler(signum, frame):
         logger.info("\n[Ctrl+C] 手動停止 — レポートを生成します...")
+        if bg_worker is not None:
+            bg_worker.stop()
         if recorder is not None:
             recorder.close()
             _run_batch_processor()
@@ -3860,6 +3867,8 @@ def main():
                 logger.info("=" * 60)
                 logger.info("  ホーム画面到達 — 自動操縦を停止します")
                 logger.info("=" * 60)
+                if bg_worker is not None:
+                    bg_worker.stop()
                 if recorder is not None:
                     recorder.close()
                     _run_batch_processor()
@@ -3875,6 +3884,8 @@ def main():
                 logger.info("  [GRIND] 目標周回数 %d に到達 — 自動操縦を停止します",
                             state.grind_max_cycles)
                 logger.info("=" * 60)
+                if bg_worker is not None:
+                    bg_worker.stop()
                 if recorder is not None:
                     recorder.close()
                     _run_batch_processor()
