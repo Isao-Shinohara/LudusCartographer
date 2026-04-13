@@ -407,7 +407,7 @@ class EvidenceRepository
             'session_id'      => $raw['session_id'] ?? '',
             'is_representative' => (bool)($raw['is_representative'] ?? false),
             'cluster_id'      => $raw['cluster_id'] ?? null,
-            'has_hq_ocr'      => !empty($raw['ocr_text_hq'] ?? ''),
+            'has_hq_ocr'      => ($raw['ocr_text_hq'] ?? null) !== null,
         ];
     }
 }
