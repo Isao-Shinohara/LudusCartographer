@@ -246,6 +246,10 @@ class ScreenRecorder:
                 Path(analysis_path), content_fp
             )
 
+        # 画像保存失敗なら記録しない
+        if not screenshot_path:
+            return False
+
         # DB INSERT
         screen_id = self._insert_screen(
             fingerprint=content_fp,
