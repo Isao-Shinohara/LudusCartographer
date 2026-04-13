@@ -2401,10 +2401,6 @@ def main():
     _dashboard_proc = None
     if args.screenshot:
         _dashboard_proc = _start_dashboard(open_browser=True)
-        # auto_pilot がどんな死に方をしても PHP サーバーを道連れにする
-        if _dashboard_proc is not None:
-            import atexit
-            atexit.register(lambda p=_dashboard_proc: p.kill() if p.poll() is None else None)
 
     # ─── --fresh-install: アンインストール → Play Store 再インストール ───
     if args.reinstall:
@@ -2474,9 +2470,7 @@ def main():
     _pilot_state_ref = state
 
     def _cleanup_dashboard():
-        if _dashboard_proc is not None and _dashboard_proc.poll() is None:
-            _dashboard_proc.terminate()
-            logger.info("[DASHBOARD] Web サーバー停止")
+        # PHP サーバーは自動操縦終了後もダッシュボード閲覧のため残す
         # ステータスバー復帰
         try:
             adb("shell settings put global policy_control null")
