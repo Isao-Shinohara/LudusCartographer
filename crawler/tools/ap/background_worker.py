@@ -472,7 +472,7 @@ class BackgroundWorker:
                             rep_map[_prev_cid] = (ph, title, norm_text)
                             _prev_ph = ph
                             _prev_norm = norm_text
-                        elif _prev_norm and d < _ph_lim and _text_similarity(norm_text, _prev_norm) >= 0.5:
+                        elif _prev_norm and d < _ph_lim and _text_similarity(norm_text, _prev_norm) >= (0.15 if not _has_face else 0.5):
                             # テキスト類似 + phash 近い → OCR 揺れ
                             _merge_to_prev = True
                             conn.execute(
