@@ -356,14 +356,21 @@ class BackgroundWorker:
                         "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
                         (text_match_cid, sid),
                     )
+                elif _is_meaningful:
+                    # テキストがあり、既存と不一致 → 新規クラスタ（採用）
+                    # phash は見ない（背景同じでセリフ違いを採用するため）
+                    conn.execute(
+                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                        (next_cid, sid),
+                    )
+                    rep_map[next_cid] = (ph, title, ocr_text)
+                    next_cid += 1
                 else:
-                    # 2) phash フォールバック
-                    # テキスト空同士は閾値を緩める (動画フレーム等の重複防止)
+                    # テキスト空 → phash フォールバック (閾値 20)
                     best_cid = None
                     best_dist = 999
                     for cid, (rep_ph, rep_t, rep_ocr) in rep_map.items():
-                        # テキスト空同士の緩和は、相手も空の場合のみ適用
-                        _t = 20 if (not _is_meaningful and not rep_ocr) else _PHASH_CLUSTER_THRESHOLD
+                        _t = 20 if not rep_ocr else _PHASH_CLUSTER_THRESHOLD
                         if rep_ph:
                             d = phash_distance(rep_ph, ph)
                             if d < _t and d < best_dist:
@@ -371,26 +378,20 @@ class BackgroundWorker:
                                 best_cid = cid
 
                     if best_cid is not None:
-                        if not _is_meaningful:
-                            # テキスト空: 顔面積が大きい方を代表に昇格
-                            new_face = self._max_face_area(conn, sid)
-                            old_rep_id = self._get_rep_id(conn, best_cid)
-                            old_face = self._max_face_area(conn, old_rep_id) if old_rep_id else 0
-                            if new_face > old_face and old_rep_id:
-                                conn.execute(
-                                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
-                                    (best_cid, sid),
-                                )
-                                conn.execute(
-                                    "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
-                                    (old_rep_id,),
-                                )
-                                rep_map[best_cid] = (ph, title, ocr_text)
-                            else:
-                                conn.execute(
-                                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
-                                    (best_cid, sid),
-                                )
+                        # 顔面積が大きい方を代表に昇格
+                        new_face = self._max_face_area(conn, sid)
+                        old_rep_id = self._get_rep_id(conn, best_cid)
+                        old_face = self._max_face_area(conn, old_rep_id) if old_rep_id else 0
+                        if new_face > old_face and old_rep_id:
+                            conn.execute(
+                                "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                                (best_cid, sid),
+                            )
+                            conn.execute(
+                                "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
+                                (old_rep_id,),
+                            )
+                            rep_map[best_cid] = (ph, title, ocr_text)
                         else:
                             conn.execute(
                                 "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
