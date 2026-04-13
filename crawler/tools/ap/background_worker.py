@@ -200,7 +200,7 @@ class BackgroundWorker:
                     logger.warning("[BG_WORKER] graph 例外: %s", e)
                 last_graph = time.time()
 
-            self._stop_event.wait(timeout=3.0)
+            self._stop_event.wait(timeout=0.5)
 
     # ─── グルーピング ─────────────────────────────────────
 
