@@ -9,10 +9,6 @@
         <h2 class="text-2xl font-bold text-brand-light">Dashboard</h2>
     </div>
     <div class="flex items-center gap-4">
-        <select id="filter-select" class="bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
-            <option value="all">全画像</option>
-            <option value="reps" selected>代表のみ</option>
-        </select>
         <div id="stats" class="text-sm text-gray-400"></div>
         <div id="status" class="flex items-center gap-2">
             <span id="status-dot" class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
@@ -22,7 +18,7 @@
 </div>
 
 <!-- タブ -->
-<div class="flex gap-1 mb-4 border-b border-gray-800">
+<div class="flex items-center gap-1 mb-4 border-b border-gray-800">
     <button id="tab-live" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-brand text-brand-light"
             onclick="switchTab('live')">
         Live
@@ -31,6 +27,10 @@
             onclick="switchTab('final')">
         Final
     </button>
+    <select id="filter-select" class="ml-3 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
+        <option value="all">全画像</option>
+        <option value="reps" selected>代表のみ</option>
+    </select>
 </div>
 
 <!-- グリッド -->
@@ -232,12 +232,14 @@
         if (tab === 'live') {
             statusDot.classList.remove('hidden');
             statusText.textContent = '自動更新中';
+            filterSelect.classList.remove('hidden');
             grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>';
             fetchLiveInitial();
             pollTimer = setInterval(pollLive, POLL_INTERVAL);
         } else {
             statusDot.classList.add('hidden');
             statusText.textContent = '決定版';
+            filterSelect.classList.add('hidden');
             grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>';
             fetchFinal();
         }
