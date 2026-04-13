@@ -38,6 +38,7 @@ DEVICE_SERIAL = ""   # main() で設定される
 SCRCPY_DEVICE = ""   # main() で DEVICE_SERIAL から動的設定
 _SCRCPY_WINDOW_ID: int = 0   # キャッシュ (0=未取得)
 _LAST_SCRCPY_BGR: Optional[np.ndarray] = None  # scrcpy キャプチャの BGR キャッシュ (二重読み防止)
+_scrcpy_ever_bright: bool = False  # 起動後に一度でも非黒画面をキャプチャしたか
 _SCRCPY_FAIL_COUNT: int = 0  # scrcpy キャプチャ連続失敗回数 (自動復帰用)
 _SCRCPY_FAIL_RESTART_THRESHOLD: int = 3  # N回連続失敗でscrcpy再起動
 _SCRCPY_LAST_RESTART: float = 0.0  # 最後にscrcpyを再起動した時刻
@@ -295,10 +296,18 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
         _LAST_SCRCPY_BGR = None
         return None
     # 真っ黒チェック: Quartz が映像を取得できていない場合 (別デスクトップ等)
+    # 起動後に一度でも非黒画面が撮れるまでは ADB フォールバックしない
+    # (起動直後のロゴ画面を scrcpy の高速キャプチャで撮るため)
+    global _scrcpy_ever_bright
     if float(bgr.mean()) < 0.5:
-        logger.warning("[SCRCPY] キャプチャが真っ黒 (mean=%.1f) → ADB フォールバック", float(bgr.mean()))
-        _LAST_SCRCPY_BGR = None
-        return None
+        if _scrcpy_ever_bright:
+            logger.warning("[SCRCPY] キャプチャが真っ黒 (mean=%.1f) → ADB フォールバック", float(bgr.mean()))
+            _LAST_SCRCPY_BGR = None
+            return None
+        # まだ一度も非黒を見ていない → scrcpy の黒画像をそのまま返す
+        logger.debug("[SCRCPY] 起動直後の黒画面 (mean=%.1f) → ADB フォールバックせず継続", float(bgr.mean()))
+    else:
+        _scrcpy_ever_bright = True
     # 最低サイズチェック: ウィンドウが小さすぎる → ADB フォールバック
     # (ランドスケープ確認後のscrcpy再起動で復帰する)
     _MIN_CAPTURE_W = 720
