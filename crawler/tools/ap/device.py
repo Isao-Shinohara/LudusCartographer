@@ -667,14 +667,8 @@ def tap_device(x: int, y: int, state, desc: str = "",
     _rec = getattr(state, "recorder", None)
     if _rec is not None and getattr(state, "game_foreground", False):
         try:
-            # 新しいスクショを撮り直す (キャッシュ画像はテキストアニメ途中の可能性)
-            _fresh_ss, _fw, _fh, _ = take_screenshot(retries=1)
-            if _fresh_ss:
-                from tools.ap.image_proc import prepare_analysis_image
-                _analysis = prepare_analysis_image(_fresh_ss, _fw, _fh)
-                state.last_analysis_path = _analysis
-            else:
-                _analysis = getattr(state, "last_analysis_path", None)
+            # ループ開始時のキャプチャを使用 (撮り直すと画面遷移後を拾うリスク)
+            _analysis = getattr(state, "last_analysis_path", None)
             # 暗転・白飛びスキップ
             if _analysis and Path(str(_analysis)).exists():
                 import numpy as np
