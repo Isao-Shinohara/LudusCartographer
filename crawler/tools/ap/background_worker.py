@@ -37,6 +37,19 @@ _SCENE_LABELS = {
 }
 
 
+def _text_similarity(a: str, b: str) -> float:
+    """2つのテキストの Jaccard 類似度 (トークンベース)。0.0〜1.0。"""
+    if not a or not b:
+        return 0.0
+    tokens_a = set(a.split())
+    tokens_b = set(b.split())
+    if not tokens_a or not tokens_b:
+        return 0.0
+    intersection = tokens_a & tokens_b
+    union = tokens_a | tokens_b
+    return len(intersection) / len(union)
+
+
 def _normalize_text(text: str) -> str:
     """OCR テキストの揺れを正規化して比較用文字列を生成。"""
     import re
@@ -376,14 +389,28 @@ class BackgroundWorker:
                         (text_match_cid, sid),
                     )
                 elif _is_meaningful:
-                    # テキストがあり、既存と不一致 → 新規クラスタ（採用）
-                    # phash は見ない（背景同じでセリフ違いを採用するため）
-                    conn.execute(
-                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
-                        (next_cid, sid),
-                    )
-                    rep_map[next_cid] = (ph, title, ocr_text)
-                    next_cid += 1
+                    # テキスト不一致だが、phash 極近なら類似テキスト判定
+                    # (同一画面の OCR 揺れを間引く。ADV セリフ違いは類似度低→採用)
+                    _similar_cid = None
+                    for cid, (rep_ph, rep_title, rep_norm) in rep_map.items():
+                        if not rep_ph or not rep_norm:
+                            continue
+                        d = phash_distance(rep_ph, ph)
+                        if d < 5 and _text_similarity(norm_text, rep_norm) >= 0.5:
+                            _similar_cid = cid
+                            break
+                    if _similar_cid is not None:
+                        conn.execute(
+                            "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
+                            (_similar_cid, sid),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                            (next_cid, sid),
+                        )
+                        rep_map[next_cid] = (ph, title, norm_text)
+                        next_cid += 1
                 else:
                     # テキスト空 → phash フォールバック (閾値 20)
                     best_cid = None
