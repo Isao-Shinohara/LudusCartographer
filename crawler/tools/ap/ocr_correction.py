@@ -29,12 +29,26 @@ _REGEX_REPLACEMENTS = [
     (r'(?<!\w)図(?!\w)', ''),   # ゴミ文字「図」
     (r'^2ヨ\s*/?', ''),         # ゴミ文字「2ヨ」
     (r'(?<!\w)日(?!\w)', ''),   # ゴミ文字「日」(単独)
-    # 英語の誤認
-    (r'TAREAKER', 'ATTACKER'),
-    (r'TACKER', 'ATTACKER'),
-    (r'ABRE', 'ABRE'),         # これは正しい場合もあるのでスキップ
-    (r'NAGIA', 'MAGIA'),
+    # MAGIA EXEDRA の誤認パターン
+    (r'NIAGIA', 'MAGIA'),
+    (r'IVIAGIA', 'MAGIA'),
+    (r'IIAGIA', 'MAGIA'),
     (r'IMAGIA', 'MAGIA'),
+    (r'NAGIA', 'MAGIA'),
+    # ゲーム用語の誤認
+    (r'TAREAKER', 'ATTACKER'),
+    (r'FTACKER', 'ATTACKER'),
+    (r'TACKER', 'ATTACKER'),
+    (r'UFFEI', 'BUFFER'),
+    (r'IDEFENDERN', 'DEFENDER'),
+    (r'ADEBOAI', 'DEBONAIR'),
+    (r'CRUFFER', 'BUFFER'),
+    # 日本語の誤認
+    (r'まどか、マギカ', 'まどか★マギカ'),
+    (r'まどか、ギカ', 'まどか★マギカ'),
+    (r'まどかマギカ', 'まどか★マギカ'),
+    (r'動画配乍設定', '動画配信設定'),
+    (r'動画配合設定', '動画配信設定'),
     # 連続スペースの正規化
     (r'\s{2,}', ' '),
 ]
