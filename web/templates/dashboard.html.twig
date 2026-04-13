@@ -33,6 +33,7 @@
     <select id="filter-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="all">全画像</option>
         <option value="reps" selected>採用画像</option>
+        <option value="thinned">不採用画像</option>
         <option value="pending">未処理</option>
     </select>
 </div>
@@ -113,12 +114,12 @@
             ? `<span class="inline-block px-1.5 py-0.5 text-[9px] rounded bg-gray-800 text-gray-400">${escapeHtml(s.category)}</span>`
             : '';
         // ステータスドット: 処理済みのみ表示
+        const isThinned = s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative;
         const dots = [];
-        if (s.is_representative) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-emerald-500" title="代表"></span>');
+        if (isThinned) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-gray-500" title="不採用"></span>');
+        if (s.is_representative) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-emerald-500" title="採用"></span>');
         if (s.has_hq_ocr) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-sky-500" title="HQ OCR済"></span>');
         const statusDots = dots.length ? `<span class="flex gap-0.5 items-center">${dots.join('')}</span>` : '';
-        // 間引き画像は暗く表示 (全画像モード時)
-        const isThinned = s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative;
         const dimClass = isThinned ? ' opacity-40' : '';
         return `
             <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer
@@ -145,8 +146,10 @@
         let filtered = allScreens;
         if (filter === 'reps') {
             filtered = allScreens.filter(s => s.is_representative || s.cluster_id === null || s.cluster_id === undefined);
+        } else if (filter === 'thinned') {
+            filtered = allScreens.filter(s => s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative);
         } else if (filter === 'pending') {
-            filtered = allScreens.filter(s => s.cluster_id === null || s.cluster_id === undefined || !s.has_hq_ocr);
+            filtered = allScreens.filter(s => (s.cluster_id === null || s.cluster_id === undefined) || (s.is_representative && !s.has_hq_ocr));
         }
         if (filtered.length === 0) {
             const msg = currentTab === 'live'
