@@ -681,7 +681,7 @@ def tap_device(x: int, y: int, state, desc: str = "",
                 _chk = cv2.imread(str(_analysis))
                 if _chk is not None:
                     _br = np.mean(cv2.cvtColor(_chk, cv2.COLOR_BGR2GRAY))
-                    if _br <= 30 or _br >= 240:
+                    if _br <= 5 or _br >= 240:
                         raise ValueError("brightness skip")
             # phash を画像から直接計算
             _phash = ""

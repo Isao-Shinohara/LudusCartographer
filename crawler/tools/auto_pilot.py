@@ -2805,6 +2805,10 @@ def main():
                 state.consecutive_blackouts = 0
                 state.last_phash = ""
                 continue
+            # -S モード: 暗転中でもスクショ記録を試みる (スプラッシュ等のキャプチャ)
+            if recorder is not None and state.game_foreground and img_path:
+                _dark_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
+                recorder.maybe_record(_dark_analysis, [], state.current_scene, cur_phash)
             state.total_blackout_skipped += 1
             state.consecutive_blackouts += 1
             if state.total_blackout_skipped % 5 == 1:

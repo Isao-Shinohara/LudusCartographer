@@ -31,7 +31,7 @@ _SORT_Y_BUCKET = 50         # Y座標のバケットサイズ (px)
 _CASCADE_MIN_FACE = (40, 40)  # 顔検出の最小サイズ (px)
 _CASCADE_XML = Path(__file__).parent.parent.parent / "assets" / "lbpcascade_animeface.xml"
 _SCENE_CHANGE_PHASH_DIST = 20  # シーン切り替わり判定の phash 距離閾値
-_MIN_BRIGHTNESS = 30            # シーン切り替わり記録の最低輝度 (暗転除外)
+_MIN_BRIGHTNESS = 5             # 完全暗転のみ除外 (暗いスプラッシュ等は記録、間引きで対処)
 _MAX_BRIGHTNESS = 240           # 白飛び除外
 
 # 日本語・英単語を含むトークンのみ採用
