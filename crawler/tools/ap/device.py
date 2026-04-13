@@ -672,9 +672,27 @@ def tap_device(x: int, y: int, state, desc: str = "",
             if _analysis and Path(str(_analysis)).exists():
                 from tools.ap.image_proc import compute_phash
                 _phash = compute_phash(str(_analysis)) or ""
+            # OCR を最新化 (早期ハンドラが OCR をスキップしている場合に古い結果を防止)
+            _ocr_for_rec = getattr(state, "last_ocr_results", [])
+            if _analysis and Path(str(_analysis)).exists():
+                try:
+                    from lc.ocr import run_ocr
+                    from tools.ap.constants import OCR_LANG, OCR_MIN_CONF
+                    _fresh_ocr = run_ocr(str(_analysis), lang=OCR_LANG,
+                                         min_confidence=OCR_MIN_CONF)
+                    if _fresh_ocr:
+                        _ocr_for_rec = _fresh_ocr
+                        state.last_ocr_results = _ocr_for_rec
+                        logger.debug("[TAP_OCR] 更新 %d件: %s", len(_fresh_ocr),
+                                     " | ".join(r.get("text", "")[:20] for r in _fresh_ocr[:3]))
+                    else:
+                        logger.debug("[TAP_OCR] OCR 空 → 既存 %d件を維持 (path=%s)",
+                                     len(_ocr_for_rec), _analysis)
+                except Exception as e:
+                    logger.warning("[TAP_OCR] OCR 例外: %s (path=%s)", e, _analysis)
             _rec.maybe_record(
                 _analysis,
-                getattr(state, "last_ocr_results", []),
+                _ocr_for_rec,
                 getattr(state, "current_scene", "UNKNOWN"),
                 _phash,
                 force=True,
