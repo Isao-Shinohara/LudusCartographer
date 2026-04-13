@@ -2814,18 +2814,25 @@ def main():
                 state.last_phash = ""
                 continue
             # -S モード: 暗転中でもスプラッシュ等をキャプチャ
-            # 条件: brightness > 0.1 かつ OCR でテキスト検出
+            # phash 変化時のみ OCR を実行 (完全暗転の連続は高速スキップ)
             if recorder is not None and state.game_foreground and img_path:
-                _dark_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
                 try:
-                    _dark_img = cv2.imread(str(_dark_analysis))
-                    if _dark_img is not None:
-                        _dark_br = np.mean(cv2.cvtColor(_dark_img, cv2.COLOR_BGR2GRAY))
-                        if _dark_br > 0.1:
-                            _dark_ocr = run_ocr(str(_dark_analysis), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
-                            if _dark_ocr:
-                                _dark_phash = compute_phash(_dark_analysis) or ""
-                                recorder.maybe_record(_dark_analysis, _dark_ocr, state.current_scene, _dark_phash)
+                    _dark_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
+                    _dark_phash = compute_phash(_dark_analysis) or ""
+                    _dark_prev = getattr(state, "_dark_last_phash", "")
+                    _dark_changed = _dark_prev != _dark_phash
+                    state._dark_last_phash = _dark_phash
+                    if _dark_changed and _dark_phash:
+                        _dark_ocr = run_ocr(str(_dark_analysis), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
+                        if _dark_ocr:
+                            recorder.maybe_record(_dark_analysis, _dark_ocr, state.current_scene, _dark_phash)
+                        else:
+                            # OCR テキストなしでも画面変化があれば記録 (ロゴ等)
+                            _dark_img = cv2.imread(str(_dark_analysis))
+                            if _dark_img is not None:
+                                _dark_br = np.mean(cv2.cvtColor(_dark_img, cv2.COLOR_BGR2GRAY))
+                                if _dark_br > 3.0:
+                                    recorder.maybe_record(_dark_analysis, [], state.current_scene, _dark_phash)
                 except Exception:
                     pass
             state.total_blackout_skipped += 1
