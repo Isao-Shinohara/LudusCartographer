@@ -254,6 +254,45 @@ class BackgroundWorker:
         finally:
             conn.close()
 
+    # ─── 顔面積ヘルパー ────────────────────────────────────
+
+    @staticmethod
+    def _max_face_area(conn: sqlite3.Connection, screen_id: int) -> int:
+        """スクリーンの screenshot_path から最大顔面積を返す。検出なし=0。"""
+        row = conn.execute(
+            "SELECT screenshot_path FROM lc_screens WHERE id = ?", (screen_id,)
+        ).fetchone()
+        if not row or not row["screenshot_path"]:
+            return 0
+        path = row["screenshot_path"]
+        if not Path(path).exists():
+            return 0
+        try:
+            import cv2
+            _cascade_path = Path(__file__).parent.parent.parent / "assets" / "lbpcascade_animeface.xml"
+            if not _cascade_path.exists():
+                return 0
+            cascade = cv2.CascadeClassifier(str(_cascade_path))
+            img = cv2.imread(path)
+            if img is None:
+                return 0
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+            if len(faces) == 0:
+                return 0
+            return max(w * h for (_, _, w, h) in faces)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _get_rep_id(conn: sqlite3.Connection, cluster_id: int) -> Optional[int]:
+        """クラスタの代表画像 ID を返す。"""
+        row = conn.execute(
+            "SELECT id FROM lc_screens WHERE cluster_id = ? AND is_representative = 1 LIMIT 1",
+            (cluster_id,),
+        ).fetchone()
+        return row["id"] if row else None
+
     # ─── phash クラスタリング ──────────────────────────────
 
     def _run_incremental_dedup(self) -> None:
@@ -329,10 +368,32 @@ class BackgroundWorker:
                                 best_cid = cid
 
                     if best_cid is not None:
-                        conn.execute(
-                            "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
-                            (best_cid, sid),
-                        )
+                        if not _is_meaningful:
+                            # テキスト空: 顔面積が大きい方を代表に昇格
+                            new_face = self._max_face_area(conn, sid)
+                            old_rep_id = self._get_rep_id(conn, best_cid)
+                            old_face = self._max_face_area(conn, old_rep_id) if old_rep_id else 0
+                            if new_face > old_face and old_rep_id:
+                                # 新画像の方が顔が大きい → 代表交代
+                                conn.execute(
+                                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                                    (best_cid, sid),
+                                )
+                                conn.execute(
+                                    "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
+                                    (old_rep_id,),
+                                )
+                                rep_map[best_cid] = (ph, title)
+                            else:
+                                conn.execute(
+                                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
+                                    (best_cid, sid),
+                                )
+                        else:
+                            conn.execute(
+                                "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
+                                (best_cid, sid),
+                            )
                     else:
                         # 新規クラスタ（採用）
                         conn.execute(
