@@ -186,16 +186,12 @@
     // --- Live タブ ---
     async function fetchLiveInitial() {
         await fetchSessions();
-        // セッション未選択 → 最新セッションを自動選択
+        // 「最新セッション」(value='') → 最新セッションIDで API を呼ぶ
         const sid = currentSessionId || (knownSessions.length > 0 ? knownSessions[0] : '');
-        if (!currentSessionId && sid) {
-            currentSessionId = sid;
-            sessionSelect.value = sid;
-        }
         const game = getGameParam();
         const params = new URLSearchParams({ action: 'get_recent_screens', limit: '10000' });
         if (game) params.set('game', game);
-        if (currentSessionId) params.set('session_id', currentSessionId);
+        if (sid) params.set('session_id', sid);
         try {
             const res = await fetch(API_BASE + '?' + params);
             const data = await res.json();
