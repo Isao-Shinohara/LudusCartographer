@@ -73,7 +73,7 @@ class BackgroundWorker:
         self,
         db_path: Path,
         interval_dedup: float = 15.0,
-        interval_ocr: float = 1.0,
+        interval_ocr: float = 0.5,
         interval_group: float = 30.0,
         interval_graph: float = 120.0,
     ):
