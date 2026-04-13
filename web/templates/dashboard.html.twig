@@ -81,6 +81,8 @@
     let currentTab = 'live';
     let pollTimer = null;
     let currentSessionId = '';  // 空=最新セッション
+    let pollCount = 0;
+    const FULL_REFRESH_EVERY = 5;  // 5回に1回フルリフレッシュ (ステータス更新反映)
     let knownSessions = [];
     const filterSelect = document.getElementById('filter-select');
     const sessionSelect = document.getElementById('session-select');
@@ -206,6 +208,7 @@
     }
 
     async function pollLive() {
+        pollCount++;
         // 新しいセッションが始まったか確認
         const game = getGameParam();
         const sessParams = new URLSearchParams({ action: 'get_sessions' });
@@ -226,18 +229,39 @@
                 sessionSelect.value = '';
                 allScreens = [];
                 maxId = 0;
+                pollCount = 0;
                 fetchLiveInitial();
                 return;
             }
         } catch (e) {}
 
+        // 定期フルリフレッシュ: バックグラウンド処理のステータス変更を反映
+        if (pollCount % FULL_REFRESH_EVERY === 0) {
+            const sid = currentSessionId || (knownSessions.length > 0 ? knownSessions[0] : '');
+            const fullParams = new URLSearchParams({ action: 'get_recent_screens', limit: '10000' });
+            if (game) fullParams.set('game', game);
+            if (sid) fullParams.set('session_id', sid);
+            try {
+                const res = await fetch(API_BASE + '?' + fullParams);
+                const data = await res.json();
+                allScreens = data.screens || [];
+                if (allScreens.length > 0) {
+                    maxId = Math.max(...allScreens.map(s => s.id));
+                }
+                renderAll();
+            } catch (e) {}
+            return;
+        }
+
+        // 差分ポーリング: 新規画像のみ取得
+        const sid = currentSessionId || (knownSessions.length > 0 ? knownSessions[0] : '');
         const params = new URLSearchParams({
             action: 'get_recent_screens',
             limit: '100',
             after_id: String(maxId),
         });
         if (game) params.set('game', game);
-        if (currentSessionId) params.set('session_id', currentSessionId);
+        if (sid) params.set('session_id', sid);
         try {
             const res = await fetch(API_BASE + '?' + params);
             const data = await res.json();
