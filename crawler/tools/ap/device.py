@@ -663,8 +663,9 @@ def tap_device(x: int, y: int, state, desc: str = "",
         logger.info("  [TAP:DENY] (%d,%d) | %s (MOVIE遷移直後タップ抑制)", x, y, desc)
         return
     # ── スクリーン記録: タップ直前に新規スクショ撮影 + 強制保存 + 遷移記録 ──
+    # ゲーム起動前はスクショ記録しない
     _rec = getattr(state, "recorder", None)
-    if _rec is not None:
+    if _rec is not None and getattr(state, "game_foreground", False):
         try:
             # 新しいスクショを撮り直す (キャッシュ画像はテキストアニメ途中の可能性)
             _fresh_ss, _fw, _fh, _ = take_screenshot(retries=1)

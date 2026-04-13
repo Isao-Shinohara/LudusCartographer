@@ -2621,6 +2621,7 @@ def main():
     # ── ステータスバー非表示 (スクショへの「緊急通報のみ」等の写り込み防止) ──
     adb("shell settings put global policy_control immersive.status=*")
     logger.info("[STARTUP] ステータスバー非表示 (immersive mode)")
+    state.game_foreground = True  # ゲーム起動確認済み → スクショ記録を許可
 
     i = 0
     while True:
@@ -3830,7 +3831,7 @@ def main():
             continue
 
         # ── スクリーン記録 (通常: 新規画面の検出・記録) ──
-        if recorder is not None:
+        if recorder is not None and state.game_foreground:
             recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash)
 
         # ── 6) 判定 & アクション (finger blob も渡す) ──

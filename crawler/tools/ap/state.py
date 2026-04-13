@@ -69,6 +69,7 @@ class PilotState:
     battle_wait_count: int = 0
     auto_activated: bool = False
     home_reached: bool = False
+    game_foreground: bool = False  # ゲームアプリが前面に来たら True（スクショ記録ガード）
     tutorial_cleared: bool = False  # True: ホームチュートリアル完了確認済み (指/金枠検出スキップ)
     total_taps: int = 0
     ineffective_tap_count: int = 0  # タップしたのに画面変化なしの連続回数 (メニュースタック救済用)

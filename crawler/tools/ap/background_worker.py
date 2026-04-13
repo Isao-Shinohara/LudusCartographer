@@ -437,8 +437,16 @@ class BackgroundWorker:
         finally:
             conn.close()
 
+    @staticmethod
+    def _is_dark_phash(phash: str) -> bool:
+        """暗転フレーム判定: phash の立ちビット数が少ない (≤8)。"""
+        try:
+            return bin(int(phash, 16)).count('1') <= 8
+        except (ValueError, TypeError):
+            return False
+
     def _merge_clusters_by_phash(self, conn: sqlite3.Connection, phash_distance) -> None:
-        """phash が近いクラスタ同士をマージし、テキスト量最多を代表に。"""
+        """phash が近いクラスタ同士をマージし、テキスト量最多 or 人物面積最大を代表に。"""
         _MERGE_THRESHOLD = 25
 
         reps = conn.execute(
@@ -449,6 +457,11 @@ class BackgroundWorker:
             " ORDER BY cluster_id"
         ).fetchall()
 
+        if len(reps) < 2:
+            return
+
+        # 暗転フレームはマージ対象から除外 (連鎖マージ防止)
+        reps = [r for r in reps if not self._is_dark_phash(r["phash"])]
         if len(reps) < 2:
             return
 
@@ -484,8 +497,12 @@ class BackgroundWorker:
             if len(members) <= 1:
                 continue
 
-            # テキスト量最多の画像を新代表に
-            best = max(members, key=lambda m: m["text_len"])
+            # テキスト量最多の画像を新代表に。テキスト全員空なら顔面積最大
+            has_text = any(m["text_len"] > 10 for m in members)
+            if has_text:
+                best = max(members, key=lambda m: m["text_len"])
+            else:
+                best = max(members, key=lambda m: self._max_face_area(conn, m["id"]))
             target_cid = best["cluster_id"]
 
             for m in members:
