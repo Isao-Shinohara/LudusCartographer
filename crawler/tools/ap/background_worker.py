@@ -440,21 +440,37 @@ class BackgroundWorker:
                     )
                     _prev_cid = text_match_cid
                 elif _is_meaningful:
-                    # 2) テキスト不一致 + phash 近い + テキスト類似(≥0.5) → OCR 揺れ
-                    # 顔なしなら phash 閾値を緩和 (背景アニメ+同じテキスト)
-                    _is_ocr_variation = False
-                    if _prev_cid is not None and _prev_ph and _prev_norm:
+                    # 2a) 直前がテキスト空 + phash 近い → 同じ場面、テキストあり側が代表に
+                    # 2b) 直前がテキストあり + phash 近い + テキスト類似 → OCR 揺れ
+                    _merge_to_prev = False
+                    if _prev_cid is not None and _prev_ph:
                         d = phash_distance(_prev_ph, ph)
                         _has_face = self._max_face_area(conn, sid) > 0
                         _ph_lim = 5 if _has_face else 35
-                        if d < _ph_lim and _text_similarity(norm_text, _prev_norm) >= 0.5:
-                            _is_ocr_variation = True
-                    if _is_ocr_variation:
-                        conn.execute(
-                            "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
-                            (_prev_cid, sid),
-                        )
-                    else:
+                        if not _prev_norm and d < _ph_lim:
+                            # 直前テキスト空 + phash 近い → 統合 (テキストあり側が代表)
+                            _merge_to_prev = True
+                            old_rep_id = self._get_rep_id(conn, _prev_cid)
+                            conn.execute(
+                                "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                                (_prev_cid, sid),
+                            )
+                            if old_rep_id:
+                                conn.execute(
+                                    "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
+                                    (old_rep_id,),
+                                )
+                            rep_map[_prev_cid] = (ph, title, norm_text)
+                            _prev_ph = ph
+                            _prev_norm = norm_text
+                        elif _prev_norm and d < _ph_lim and _text_similarity(norm_text, _prev_norm) >= 0.5:
+                            # テキスト類似 + phash 近い → OCR 揺れ
+                            _merge_to_prev = True
+                            conn.execute(
+                                "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
+                                (_prev_cid, sid),
+                            )
+                    if not _merge_to_prev:
                         conn.execute(
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                             (next_cid, sid),
