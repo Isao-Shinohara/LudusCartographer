@@ -160,6 +160,7 @@ class BackgroundWorker:
         last_ocr = 0.0
         last_group = 0.0
         last_graph = 0.0
+        last_gemini = 0.0
 
         # 起動直後は 5 秒待機
         self._stop_event.wait(timeout=5.0)
@@ -191,6 +192,14 @@ class BackgroundWorker:
                 except Exception as e:
                     logger.warning("[BG_WORKER] dedup 例外: %s", e)
                 last_dedup = time.time()
+
+            # Gemini バッチ修正 (60秒間隔、OCR+間引き完了後)
+            if now - last_gemini >= 60.0:
+                try:
+                    self._run_gemini_batch_correction()
+                except Exception as e:
+                    logger.warning("[BG_WORKER] gemini 例外: %s", e)
+                last_gemini = time.time()
 
             # 遷移グラフ構築 (120秒間隔)
             if now - last_graph >= self._interval_graph:
@@ -701,12 +710,16 @@ class BackgroundWorker:
                     item.get("text", "") for item in ocr_results
                     if item.get("confidence", 0) >= 0.3
                 )
-                # タイトルも HQ OCR 結果で更新 (信頼度上位3つ)
+                # 段階1+2: OCR テキスト修正 (正規表現 + 辞書マッチ)
+                from tools.ap.ocr_correction import correct_ocr_text
+                hq_text = correct_ocr_text(hq_text)
+
+                # タイトルも HQ OCR 結果で更新 (信頼度上位3つ、修正済み)
                 import re
                 _HAS_TEXT = re.compile(r'[\u3040-\u9fff\u30a0-\u30ffA-Za-z]')
                 _PURE_NUM = re.compile(r'^[\d\s.:/%×+\-~]+$')
                 _candidates = sorted(
-                    [(it.get("confidence", 0), it.get("text", "").strip())
+                    [(it.get("confidence", 0), correct_ocr_text(it.get("text", "").strip()))
                      for it in ocr_results
                      if it.get("confidence", 0) >= 0.3
                      and it.get("text", "").strip()
@@ -755,6 +768,74 @@ class BackgroundWorker:
             finally:
                 os.environ.pop("OCR_ENGINE", None)
 
+        finally:
+            conn.close()
+
+    # ─── Gemini バッチ修正 ──────────────────────────────────
+
+    def _run_gemini_batch_correction(self) -> None:
+        """Gemini Flash で代表画像のテキストをバッチ修正 (API キー未設定ならスキップ)。"""
+        import os
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+        if not api_key:
+            return
+
+        conn = self._get_conn()
+        try:
+            # gemini_corrected IS NULL かつ ocr_text_hq IS NOT NULL の代表画像
+            # gemini_corrected カラムがなければ追加
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(lc_screens)")}
+            if "gemini_corrected" not in cols:
+                conn.execute("ALTER TABLE lc_screens ADD COLUMN gemini_corrected BOOLEAN DEFAULT 0")
+                conn.commit()
+
+            rows = conn.execute(
+                "SELECT id, COALESCE(ocr_text_hq, ocr_text, '') AS ocr FROM lc_screens"
+                " WHERE is_representative = 1 AND ocr_text_hq IS NOT NULL"
+                " AND (gemini_corrected IS NULL OR gemini_corrected = 0)"
+                " AND LENGTH(COALESCE(ocr_text_hq, ocr_text, '')) > 5"
+                " ORDER BY discovered_at"
+                " LIMIT 20"
+            ).fetchall()
+
+            if not rows:
+                return
+
+            from tools.ap.ocr_correction import correct_batch_gemini
+            texts = [{r["id"]: r["ocr"]} for r in rows]
+            corrections = correct_batch_gemini(texts)
+
+            updated = 0
+            for row in rows:
+                sid = row["id"]
+                corrected = corrections.get(sid)
+                if corrected and corrected != row["ocr"]:
+                    # タイトルも更新
+                    import re
+                    _HAS_TEXT = re.compile(r'[\u3040-\u9fff\u30a0-\u30ffA-Za-z]')
+                    _PURE_NUM = re.compile(r'^[\d\s.:/%×+\-~]+$')
+                    words = [w.strip() for w in corrected.split()
+                             if w.strip() and _HAS_TEXT.search(w) and not _PURE_NUM.match(w.strip())]
+                    new_title = " / ".join(words[:3]) if words else None
+                    if new_title:
+                        conn.execute(
+                            "UPDATE lc_screens SET ocr_text_hq = ?, title = ?, gemini_corrected = 1 WHERE id = ?",
+                            (corrected, new_title, sid),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE lc_screens SET ocr_text_hq = ?, gemini_corrected = 1 WHERE id = ?",
+                            (corrected, sid),
+                        )
+                    updated += 1
+                else:
+                    conn.execute(
+                        "UPDATE lc_screens SET gemini_corrected = 1 WHERE id = ?", (sid,)
+                    )
+
+            conn.commit()
+            if updated > 0:
+                logger.info("[BG_WORKER] gemini: %d/%d 件修正", updated, len(rows))
         finally:
             conn.close()
 
