@@ -73,7 +73,7 @@ class BackgroundWorker:
         self,
         db_path: Path,
         interval_dedup: float = 15.0,
-        interval_ocr: float = 5.0,
+        interval_ocr: float = 1.0,
         interval_group: float = 30.0,
         interval_graph: float = 120.0,
     ):
@@ -92,9 +92,18 @@ class BackgroundWorker:
 
     def start(self) -> None:
         """デーモンスレッドを起動。"""
-        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="bg_worker")
+        self._thread = threading.Thread(target=self._run_loop_safe, daemon=True, name="bg_worker")
         self._thread.start()
         logger.info("[BG_WORKER] バックグラウンドワーカー起動")
+
+    def _run_loop_safe(self) -> None:
+        """クラッシュ時に自動再起動するラッパー。"""
+        while not self._stop_event.is_set():
+            try:
+                self._run_loop()
+            except Exception as e:
+                logger.error("[BG_WORKER] ワーカースレッドクラッシュ: %s — 5秒後に再起動", e)
+                self._stop_event.wait(timeout=5.0)
 
     def wait_until_idle(self, timeout: float = 600.0) -> None:
         """未処理がなくなるまで待機 (最大 timeout 秒)。"""
