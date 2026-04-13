@@ -2967,10 +2967,6 @@ def main():
         # UNKNOWN: フルOCR → detect_and_act() (既存フロー)
         _early_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
         state.last_analysis_path = _early_analysis  # tap_device 内の recorder 用に常に最新化
-        # スクリーン記録: 全フレームで記録試行 (早期ハンドラで continue される画面もキャプチャ)
-        if recorder is not None and state.game_foreground:
-            recorder.maybe_record(_early_analysis, getattr(state, "last_ocr_results", []),
-                                  state.current_scene, cur_phash)
         _early_scene = detect_scene_early(_early_analysis, state, dist)
         _skip_rapid = False  # True: 早期ハンドラがフォールスルー → インライン RAPID をスキップ
         # SCENE_EARLY が UNKNOWN → ポップアップ等で前シーンが無効化された
