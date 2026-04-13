@@ -3098,14 +3098,9 @@ def main():
                 except Exception as _gr_e:
                     logger.debug("[GACHA] 結果画面チェック失敗: %s", _gr_e)
             if _gacha_tap_now:
-                # SKIP ボタンがあれば SKIP、なければ中央タップ
-                _skip_btn = detect_movie_skip_button(analysis_path)
-                if _skip_btn:
-                    tap_device(_skip_btn[0], _skip_btn[1], state, "GACHA_SKIP")
-                    logger.info("[GACHA] %s → SKIPで進行 (%d,%d)", _reason, _skip_btn[0], _skip_btn[1])
-                else:
-                    tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "GACHA_TAP")
-                    logger.info("[GACHA] %s → 中央タップで進行", _reason)
+                # 中央タップで1体ずつ進行（SKIP は全キャラの演出を飛ばすため使わない）
+                tap_device(int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state, "GACHA_TAP")
+                logger.info("[GACHA] %s → 中央タップで進行", _reason)
                 state._gacha_static_count = 0
                 # 正常進行（安定/ガチャ結果検出）時のみリセット。
                 # 長時間待機の SKIP 救済後はリセットしない（再突入でも蓄積して脱出）
