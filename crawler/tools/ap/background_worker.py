@@ -455,7 +455,7 @@ class BackgroundWorker:
                     if _prev_cid is not None and _prev_ph:
                         d = phash_distance(_prev_ph, ph)
                         _has_face = self._max_face_area(conn, sid) > 0
-                        _ph_lim = 5 if _has_face else 35
+                        _ph_lim = 5 if _has_face else 20
                         if not _prev_norm and d < _ph_lim:
                             # 直前テキスト空 + phash 近い → 統合 (テキストあり側が代表)
                             _merge_to_prev = True
@@ -494,9 +494,8 @@ class BackgroundWorker:
                     _matched = False
                     if _prev_cid is not None and _prev_ph:
                         d = phash_distance(_prev_ph, ph)
-                        # 顔なし+テキスト空 → 閾値 35 (動画演出フレーム等)
                         _has_face = self._max_face_area(conn, sid) > 0
-                        _ph_threshold = 20 if _has_face else 35
+                        _ph_threshold = 20
                         if d < _ph_threshold:
                             # 代表交代判定: テキストあり > テキスト空 > 顔面積
                             old_rep_id = self._get_rep_id(conn, _prev_cid)
