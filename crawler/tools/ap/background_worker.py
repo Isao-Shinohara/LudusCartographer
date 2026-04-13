@@ -431,8 +431,91 @@ class BackgroundWorker:
                 conn.commit()
                 self.dedup_count += processed
                 logger.info("[BG_WORKER] dedup: %d 枚処理 (合計 %d)", processed, self.dedup_count)
+
+            # ── phash マージパス: 近い phash のクラスタを統合 ──
+            self._merge_clusters_by_phash(conn, phash_distance)
         finally:
             conn.close()
+
+    def _merge_clusters_by_phash(self, conn: sqlite3.Connection, phash_distance) -> None:
+        """phash が近いクラスタ同士をマージし、テキスト量最多を代表に。"""
+        _MERGE_THRESHOLD = 25
+
+        reps = conn.execute(
+            "SELECT id, cluster_id, phash, COALESCE(ocr_text_hq, ocr_text, '') AS ocr,"
+            " LENGTH(COALESCE(ocr_text_hq, ocr_text, '')) AS text_len"
+            " FROM lc_screens"
+            " WHERE is_representative = 1 AND phash IS NOT NULL AND phash != ''"
+            " ORDER BY cluster_id"
+        ).fetchall()
+
+        if len(reps) < 2:
+            return
+
+        # Union-Find でマージ
+        parent: dict[int, int] = {r["cluster_id"]: r["cluster_id"] for r in reps}
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a, b):
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        # 全ペア比較 (代表画像同士なので数百枚程度)
+        for i in range(len(reps)):
+            for j in range(i + 1, len(reps)):
+                d = phash_distance(reps[i]["phash"], reps[j]["phash"])
+                if d < _MERGE_THRESHOLD:
+                    union(reps[i]["cluster_id"], reps[j]["cluster_id"])
+
+        # マージが必要なグループを特定
+        groups: dict[int, list] = {}
+        for r in reps:
+            root = find(r["cluster_id"])
+            groups.setdefault(root, []).append(r)
+
+        merged_count = 0
+        for root, members in groups.items():
+            if len(members) <= 1:
+                continue
+
+            # テキスト量最多の画像を新代表に
+            best = max(members, key=lambda m: m["text_len"])
+            target_cid = best["cluster_id"]
+
+            for m in members:
+                if m["cluster_id"] == target_cid:
+                    continue
+                # このクラスタの全画像を target_cid に移動
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 0"
+                    " WHERE cluster_id = ?",
+                    (target_cid, m["cluster_id"]),
+                )
+                merged_count += 1
+
+            # 新代表を確定
+            conn.execute(
+                "UPDATE lc_screens SET is_representative = 1 WHERE id = ?",
+                (best["id"],),
+            )
+            # 旧代表の is_representative を解除 (best 以外)
+            other_ids = [m["id"] for m in members if m["id"] != best["id"]]
+            if other_ids:
+                conn.execute(
+                    f"UPDATE lc_screens SET is_representative = 0"
+                    f" WHERE id IN ({','.join('?' * len(other_ids))})",
+                    other_ids,
+                )
+
+        if merged_count > 0:
+            conn.commit()
+            logger.info("[BG_WORKER] phash merge: %d クラスタ統合", merged_count)
 
     # ─── PaddleOCR 再処理 ─────────────────────────────────
 
