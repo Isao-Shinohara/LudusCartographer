@@ -122,7 +122,7 @@
         if (s.is_representative) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-emerald-500" title="採用"></span>');
         if (s.has_hq_ocr) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-sky-500" title="HQ OCR済"></span>');
         const statusDots = dots.length ? `<span class="flex gap-0.5 items-center">${dots.join('')}</span>` : '';
-        const dimClass = isThinned ? ' opacity-40' : '';
+        const dimClass = (isThinned && filterSelect.value === 'all') ? ' opacity-40' : '';
         return `
             <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer
                         hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}"
