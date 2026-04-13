@@ -1194,7 +1194,6 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
     _rec = getattr(state, "recorder", None)
     if _rec is not None and dist >= 1 and img_path:
         try:
-            from tools.ap.ocr import run_ocr
             _movie_ocr = run_ocr(str(img_path), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
             _movie_phash = cur_phash or ""
             _recorded = _rec.maybe_record(img_path, _movie_ocr, "MOVIE", _movie_phash)
