@@ -952,32 +952,26 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
     # NOTE: AUTO アイコン単独ではバトル画面の AUTO ボタンと区別不能 (score=0.91 で誤一致)
     #        → ADV ツールバー全体も確認して確定する
     if state.current_scene == "ADV" and (dist < 20 or dist == 999):
-        # ADV 継続: ↓ボタン or AUTO が見えれば ADV 維持
+        # ADV 継続: ↓ボタン or AUTO アイコンが見えれば ADV 維持
+        # ↓ボタンなし（セリフ表示途中）でも AUTO 単独で ADV 継続
         _adv_next_cont = ASSET_MANAGER.match_single("next_btn", img_path, roi=ADV_NEXT_BTN_ROI)
         if _adv_next_cont:
             return "ADV"
         from tools.ap.image_proc import ASSET_MANAGER as _AM_adv
-        try:
-            _auto_roi = ADV_TOOLBAR_ROI
-            _auto_m = _AM_adv.match_single("icon_auto", img_path, roi=_auto_roi)
-            if _auto_m and _auto_m[2] >= 0.50:
-                # AUTO あり → ADV ツールバーも確認 (バトル画面の AUTO 誤一致を排除)
-                _adv_check = detect_adv_scene(img_path, roi=state.game_roi)
-                if _adv_check.is_adv:
-                    return "ADV"
-                # ツールバーなし + AUTO あり → BATTLE テンプレートで確認
-                _battle_roi = BATTLE_BTN_ROI
-                _b_atk = _AM_adv.match_single("battle_normal_attack", img_path, roi=_battle_roi)
-                _b_skl = _AM_adv.match_single("battle_skill", img_path, roi=_battle_roi)
-                _b_best = max((_b_atk[2] if _b_atk else 0), (_b_skl[2] if _b_skl else 0))
-                if _b_best >= 0.65:
-                    logger.info("[SCENE_EARLY] ADV継続: AUTO(%.2f)+BATTLEテンプレ(%.2f) → BATTLE",
-                                _auto_m[2], _b_best)
-                    return "BATTLE"
-                # AUTO のみ検出、↓もバトルもなし → セリフ切り替え中、ADV 維持
-                return "ADV"
-        except Exception:
-            pass
+        _auto_roi = ADV_TOOLBAR_ROI
+        _auto_m = _AM_adv.match_single("icon_auto", img_path, roi=_auto_roi)
+        if _auto_m and _auto_m[2] >= 0.50:
+            # AUTO あり → BATTLE テンプレートで確認 (バトル画面の AUTO 誤一致を排除)
+            _battle_roi = BATTLE_BTN_ROI
+            _b_atk = _AM_adv.match_single("battle_normal_attack", img_path, roi=_battle_roi)
+            _b_skl = _AM_adv.match_single("battle_skill", img_path, roi=_battle_roi)
+            _b_best = max((_b_atk[2] if _b_atk else 0), (_b_skl[2] if _b_skl else 0))
+            if _b_best >= 0.65:
+                logger.info("[SCENE_EARLY] ADV継続: AUTO(%.2f)+BATTLEテンプレ(%.2f) → BATTLE",
+                            _auto_m[2], _b_best)
+                return "BATTLE"
+            # AUTO のみ検出 → ADV 継続（セリフ表示途中含む）
+            return "ADV"
 
     # ADV: ↓ボタンテンプレートで直接判定
     # ↓ボタン (next_btn) は ADV シーン固有。バトル/MOVIE には存在しない。
