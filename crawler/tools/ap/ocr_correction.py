@@ -2,9 +2,14 @@
 OCR テキスト自動修正パイプライン。
 
 3段階で修正:
-  1. 正規表現: 定型的な OCR 誤認パターンを高速置換
+  1. 正規表現 + 学習パターン: 定型的な OCR 誤認パターンを高速置換
   2. 辞書マッチ: キャラ名・ゲーム用語のマスターリストと編集距離で修正
   3. Gemini Flash: 文脈依存の修正 (API キー未設定ならスキップ)
+
+学習パターン:
+  - Gemini 修正結果やユーザー指摘から差分を自動抽出
+  - 同じ修正が LEARN_THRESHOLD 回以上出現したら確定パターンに昇格
+  - crawler/storage/ocr_learned_patterns.json に保存
 """
 from __future__ import annotations
 
@@ -14,21 +19,98 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ─── 段階1: 正規表現置換 ─────────────────────────────────
+# ─── 学習パターンファイル ─────────────────────────────────
 
-_REGEX_REPLACEMENTS = [
+_STORAGE_DIR = Path(__file__).parent.parent.parent / "storage"
+_LEARNED_PATTERNS_PATH = _STORAGE_DIR / "ocr_learned_patterns.json"
+_LEARN_THRESHOLD = 3  # 同じ修正が N 回出現したら確定パターンに昇格
+
+
+def _load_learned_patterns() -> dict:
+    """学習パターンを JSON から読み込む。"""
+    if _LEARNED_PATTERNS_PATH.exists():
+        try:
+            with open(_LEARNED_PATTERNS_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"confirmed": {}, "candidates": {}}
+
+
+def _save_learned_patterns(data: dict) -> None:
+    """学習パターンを JSON に保存。"""
+    _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(_LEARNED_PATTERNS_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def learn_from_correction(original: str, corrected: str) -> None:
+    """修正前後の差分からパターンを学習。
+
+    Gemini 修正結果またはユーザー指摘から呼ばれる。
+    同じ修正が LEARN_THRESHOLD 回以上出現したら確定パターンに昇格。
+    """
+    if not original or not corrected or original == corrected:
+        return
+
+    # 単語レベルで差分抽出
+    orig_words = original.split()
+    corr_words = corrected.split()
+    sm = difflib.SequenceMatcher(None, orig_words, corr_words)
+
+    data = _load_learned_patterns()
+    updated = False
+
+    for op, i1, i2, j1, j2 in sm.get_opcodes():
+        if op == "replace":
+            old = " ".join(orig_words[i1:i2])
+            new = " ".join(corr_words[j1:j2])
+            if old and new and old != new and len(old) >= 2:
+                key = f"{old} → {new}"
+                if key in data["confirmed"]:
+                    continue  # 既に確定済み
+                count = data["candidates"].get(key, 0) + 1
+                data["candidates"][key] = count
+                if count >= _LEARN_THRESHOLD:
+                    # 確定パターンに昇格
+                    data["confirmed"][old] = new
+                    del data["candidates"][key]
+                    logger.info("[OCR_LEARN] パターン確定: '%s' → '%s' (%d回)", old, new, count)
+                updated = True
+
+    if updated:
+        _save_learned_patterns(data)
+
+
+def add_user_correction(wrong: str, correct: str) -> None:
+    """ユーザーからの指摘で即座に確定パターンに追加。"""
+    if not wrong or not correct or wrong == correct:
+        return
+    data = _load_learned_patterns()
+    data["confirmed"][wrong] = correct
+    # candidates からも削除
+    key = f"{wrong} → {correct}"
+    data["candidates"].pop(key, None)
+    _save_learned_patterns(data)
+    logger.info("[OCR_LEARN] ユーザー指摘でパターン追加: '%s' → '%s'", wrong, correct)
+
+
+# ─── 段階1: 正規表現 + 学習パターン置換 ──────────────────
+
+_BUILTIN_REPLACEMENTS = [
     # 記号の誤認
-    (r'＋(\d)', r'★\1'),       # ＋0 → ★0 (レアリティ)
+    (r'＋(\d)', r'★\1'),
     (r'＋\s', r'★ '),
-    (r'(?<!\w)臼(?!\w)', ''),   # ゴミ文字「臼」
-    (r'(?<!\w)米(?!\w)', ''),   # ゴミ文字「米」
-    (r'(?<!\w)図(?!\w)', ''),   # ゴミ文字「図」
-    (r'^2ヨ\s*/?', ''),         # ゴミ文字「2ヨ」
-    (r'(?<!\w)日(?!\w)', ''),   # ゴミ文字「日」(単独)
+    (r'(?<!\w)臼(?!\w)', ''),
+    (r'(?<!\w)米(?!\w)', ''),
+    (r'(?<!\w)図(?!\w)', ''),
+    (r'^2ヨ\s*/?', ''),
+    (r'(?<!\w)日(?!\w)', ''),
     # MAGIA EXEDRA の誤認パターン
     (r'NIAGIA', 'MAGIA'),
     (r'IVIAGIA', 'MAGIA'),
@@ -53,25 +135,29 @@ _REGEX_REPLACEMENTS = [
     (r'\s{2,}', ' '),
 ]
 
-_COMPILED_REGEX = [(re.compile(pat), repl) for pat, repl in _REGEX_REPLACEMENTS]
+_COMPILED_BUILTIN = [(re.compile(pat), repl) for pat, repl in _BUILTIN_REPLACEMENTS]
 
 
 def _stage1_regex(text: str) -> str:
-    """段階1: 正規表現で定型的な OCR 誤認を修正。"""
-    for pat, repl in _COMPILED_REGEX:
+    """段階1: 組み込み正規表現 + 学習パターンで修正。"""
+    # 組み込みパターン
+    for pat, repl in _COMPILED_BUILTIN:
         text = pat.sub(repl, text)
+    # 学習パターン (確定済みのみ、単純文字列置換)
+    learned = _load_learned_patterns()
+    for wrong, correct in learned.get("confirmed", {}).items():
+        text = text.replace(wrong, correct)
     return text.strip()
 
 
 # ─── 段階2: 辞書マッチ (編集距離) ────────────────────────
 
-# まどか★マギカ Magia Exedra のキャラ名・用語マスターリスト
 _GAME_DICTIONARY = [
     # キャラ名
     "鹿目まどか", "暁美ほむら", "美樹さやか", "巴マミ", "佐倉杏子",
     "由比鶴乃", "七海やちよ", "環いろは", "秋野かえで", "深月フェリシア",
     "二葉さな", "水波レナ", "御園かりん", "梓みふゆ", "十咎ももこ",
-    "志筑仁美", "キュゥべえ",
+    "志筑仁美", "キュゥべえ", "早乙女和子",
     # UI 用語
     "パーティ", "ホーム", "ショップ", "ガチャ", "クエスト",
     "バトル", "スキル", "通常攻撃", "マギア", "ドッペル",
@@ -86,8 +172,7 @@ _GAME_DICTIONARY = [
 ]
 
 
-def _stage2_dictionary(text: str, dictionary: list[str] = _GAME_DICTIONARY,
-                       max_distance: int = 2) -> str:
+def _stage2_dictionary(text: str, dictionary: list[str] = _GAME_DICTIONARY) -> str:
     """段階2: 辞書マッチで固有名詞の誤認を修正。"""
     words = text.split()
     corrected = []
@@ -95,10 +180,8 @@ def _stage2_dictionary(text: str, dictionary: list[str] = _GAME_DICTIONARY,
         if len(word) < 2:
             corrected.append(word)
             continue
-        # 辞書内で近い語を検索
         matches = difflib.get_close_matches(word, dictionary, n=1, cutoff=0.6)
         if matches and matches[0] != word:
-            # 編集距離を確認
             ratio = difflib.SequenceMatcher(None, word, matches[0]).ratio()
             if ratio >= 0.6 and len(word) >= 3:
                 corrected.append(matches[0])
@@ -109,29 +192,19 @@ def _stage2_dictionary(text: str, dictionary: list[str] = _GAME_DICTIONARY,
 
 # ─── 段階3: Gemini Flash ─────────────────────────────────
 
-_GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 _GEMINI_MODEL = "gemini-2.0-flash-lite"
-_GEMINI_RATE_LIMIT = 4.0  # 1リクエストあたりの最小間隔 (秒) — 15rpm 制限対策
+_GEMINI_RATE_LIMIT = 4.0
 
 
 def _stage3_gemini_batch(texts: list[dict[int, str]]) -> dict[int, str]:
-    """段階3: Gemini Flash で OCR テキストをバッチ修正。
-
-    Args:
-        texts: [{id: ocr_text}, ...] の辞書リスト
-
-    Returns:
-        {id: corrected_text} の辞書。修正不要なら元テキストを返す。
-    """
-    api_key = _GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
+    """段階3: Gemini Flash で OCR テキストをバッチ修正。"""
+    api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         return {}
 
     try:
         import urllib.request
-        import urllib.error
 
-        # バッチプロンプト生成
         items = []
         for item in texts:
             for sid, text in item.items():
@@ -142,7 +215,7 @@ OCR の誤認を修正してください。
 
 ルール:
 - 明らかな誤字のみ修正（意味が通る場合はそのまま）
-- キャラ名: 鹿目まどか、暁美ほむら、美樹さやか、巴マミ、佐倉杏子、由比鶴乃、七海やちよ、環いろは、志筑仁美、キュゥべえ
+- キャラ名: 鹿目まどか、暁美ほむら、美樹さやか、巴マミ、佐倉杏子、由比鶴乃、七海やちよ、環いろは、志筑仁美、キュゥべえ、早乙女和子
 - ゴミ文字（「2ヨ」「臼」「米」「図」等の単独文字）は削除
 - 修正不要ならそのまま返す
 
@@ -167,7 +240,6 @@ OCR の誤認を修正してください。
         with urllib.request.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read())
 
-        # レスポンス解析
         text_resp = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
         corrected_items = json.loads(text_resp)
 
@@ -176,6 +248,13 @@ OCR の誤認を修正してください。
             for item in corrected_items:
                 if isinstance(item, dict) and "id" in item and "text" in item:
                     result_map[item["id"]] = item["text"]
+
+        # Gemini 修正結果からパターンを学習
+        for item_dict in texts:
+            for sid, orig_text in item_dict.items():
+                corrected = result_map.get(sid)
+                if corrected and corrected != orig_text:
+                    learn_from_correction(orig_text, corrected)
 
         return result_map
 
@@ -195,10 +274,9 @@ def correct_ocr_text(text: str) -> str:
 
 def correct_batch_gemini(texts: list[dict[int, str]]) -> dict[int, str]:
     """段階3: Gemini でバッチ修正。API キー未設定なら空辞書を返す。"""
-    api_key = _GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
+    api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         logger.debug("[OCR_CORRECT] GEMINI_API_KEY 未設定 → スキップ")
         return {}
-    # レート制限
     time.sleep(_GEMINI_RATE_LIMIT)
     return _stage3_gemini_batch(texts)
