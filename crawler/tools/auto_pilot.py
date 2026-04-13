@@ -2489,6 +2489,7 @@ def main():
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _sigint_handler)
+    signal.signal(signal.SIGTERM, _sigint_handler)
 
     # ─── scrcpy 再確認: fresh-install 中に死んだ場合のリカバリ ───
     if _scrcpy_proc is not None and _scrcpy_proc.poll() is not None:
