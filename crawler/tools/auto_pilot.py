@@ -2810,23 +2810,21 @@ def main():
                 state.consecutive_blackouts = 0
                 state.last_phash = ""
                 continue
-            # -S モード: 暗転中でもスクショ記録を試みる (スプラッシュ等のキャプチャ)
+            # -S モード: 暗転中でもスプラッシュ等をキャプチャ
+            # 条件: brightness > 0.1 かつ OCR でテキスト検出
             if recorder is not None and state.game_foreground and img_path:
                 _dark_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
-                _dark_phash = ""
-                try:
-                    _dark_phash = compute_phash(_dark_analysis) or ""
-                except Exception:
-                    pass
-                # 輝度をログ出力 (スプラッシュ調査用)
                 try:
                     _dark_img = cv2.imread(str(_dark_analysis))
                     if _dark_img is not None:
                         _dark_br = np.mean(cv2.cvtColor(_dark_img, cv2.COLOR_BGR2GRAY))
-                        logger.debug("[DARK_REC] 暗転中 maybe_record 試行: brightness=%.1f path=%s", _dark_br, _dark_analysis)
+                        if _dark_br > 0.1:
+                            _dark_ocr = run_ocr(str(_dark_analysis), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
+                            if _dark_ocr:
+                                _dark_phash = compute_phash(_dark_analysis) or ""
+                                recorder.maybe_record(_dark_analysis, _dark_ocr, state.current_scene, _dark_phash)
                 except Exception:
                     pass
-                recorder.maybe_record(_dark_analysis, [], state.current_scene, _dark_phash)
             state.total_blackout_skipped += 1
             state.consecutive_blackouts += 1
             if state.total_blackout_skipped % 5 == 1:
