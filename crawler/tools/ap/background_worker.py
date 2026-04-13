@@ -128,21 +128,22 @@ class BackgroundWorker:
                     logger.warning("[BG_WORKER] group 例外: %s", e)
                 last_group = time.time()
 
-            # 間引き処理 (15秒間隔)
-            if now - last_dedup >= self._interval_dedup:
-                try:
-                    self._run_incremental_dedup()
-                except Exception as e:
-                    logger.warning("[BG_WORKER] dedup 例外: %s", e)
-                last_dedup = time.time()
-
-            # OCR 再処理 (5秒間隔/1枚)
+            # OCR 再処理 (5秒間隔/1枚) — 間引きより先に実行
+            # HQ OCR のテキストで間引き精度を上げるため
             if now - last_ocr >= self._interval_ocr:
                 try:
                     self._run_incremental_ocr()
                 except Exception as e:
                     logger.warning("[BG_WORKER] ocr 例外: %s", e)
                 last_ocr = time.time()
+
+            # 間引き処理 (15秒間隔) — OCR 完了後に実行
+            if now - last_dedup >= self._interval_dedup:
+                try:
+                    self._run_incremental_dedup()
+                except Exception as e:
+                    logger.warning("[BG_WORKER] dedup 例外: %s", e)
+                last_dedup = time.time()
 
             # 遷移グラフ構築 (120秒間隔)
             if now - last_graph >= self._interval_graph:
@@ -322,9 +323,11 @@ class BackgroundWorker:
 
         conn = self._get_conn()
         try:
+            # HQ OCR 未完了の画像はスキップ（OCR 完了後に間引く）
             rows = conn.execute(
-                "SELECT id, phash, title, ocr_text FROM lc_screens"
+                "SELECT id, phash, title, COALESCE(ocr_text_hq, ocr_text) AS ocr FROM lc_screens"
                 " WHERE cluster_id IS NULL AND phash IS NOT NULL AND phash != ''"
+                " AND ocr_text_hq IS NOT NULL"
                 " ORDER BY discovered_at"
             ).fetchall()
 
@@ -332,13 +335,13 @@ class BackgroundWorker:
                 return
 
             existing_reps = conn.execute(
-                "SELECT cluster_id, phash, title, ocr_text FROM lc_screens"
+                "SELECT cluster_id, phash, title, COALESCE(ocr_text_hq, ocr_text) AS ocr FROM lc_screens"
                 " WHERE is_representative = 1 AND phash IS NOT NULL"
                 " ORDER BY cluster_id"
             ).fetchall()
             # rep_map: cluster_id → (phash, title, normalized_ocr_text)
             rep_map: dict[int, tuple[str, str, str]] = {
-                r["cluster_id"]: (r["phash"], r["title"] or "", _normalize_text(r["ocr_text"] or ""))
+                r["cluster_id"]: (r["phash"], r["title"] or "", _normalize_text(r["ocr"] or ""))
                 for r in existing_reps
             }
 
@@ -352,7 +355,7 @@ class BackgroundWorker:
                 sid = row["id"]
                 ph = row["phash"]
                 title = row["title"] or ""
-                ocr_text = row["ocr_text"] or ""
+                ocr_text = row["ocr"] or ""
                 norm_text = _normalize_text(ocr_text)
 
                 # テキストが意味のある内容かどうか
@@ -434,12 +437,12 @@ class BackgroundWorker:
     # ─── PaddleOCR 再処理 ─────────────────────────────────
 
     def _run_incremental_ocr(self) -> None:
-        """is_representative=1 かつ ocr_text_hq IS NULL のスクリーンを 1 枚処理。"""
+        """ocr_text_hq IS NULL のスクリーンを 1 枚処理（間引き前なので全画像対象）。"""
         conn = self._get_conn()
         try:
             row = conn.execute(
                 "SELECT id, screenshot_path FROM lc_screens"
-                " WHERE is_representative = 1 AND ocr_text_hq IS NULL"
+                " WHERE ocr_text_hq IS NULL"
                 " AND screenshot_path IS NOT NULL AND screenshot_path != ''"
                 " ORDER BY discovered_at"
                 " LIMIT 1"
@@ -534,7 +537,7 @@ class BackgroundWorker:
                 if self.ocr_count % 50 == 0:
                     remaining = conn.execute(
                         "SELECT COUNT(*) FROM lc_screens"
-                        " WHERE is_representative = 1 AND ocr_text_hq IS NULL"
+                        " WHERE ocr_text_hq IS NULL"
                         " AND screenshot_path IS NOT NULL AND screenshot_path != ''"
                     ).fetchone()[0]
                     logger.info("[BG_WORKER] reocr: %d 枚完了 (残り %d)",
@@ -559,7 +562,7 @@ class BackgroundWorker:
             ).fetchone()[0]
             pending_ocr = conn.execute(
                 "SELECT COUNT(*) FROM lc_screens"
-                " WHERE is_representative = 1 AND ocr_text_hq IS NULL"
+                " WHERE ocr_text_hq IS NULL"
                 " AND screenshot_path IS NOT NULL AND screenshot_path != ''"
             ).fetchone()[0]
             if pending_cluster > 0 or pending_ocr > 0:
