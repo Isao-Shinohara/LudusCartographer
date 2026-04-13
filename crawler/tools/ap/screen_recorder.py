@@ -207,20 +207,19 @@ class ScreenRecorder:
                     if _brightness <= _MIN_BRIGHTNESS or _brightness >= _MAX_BRIGHTNESS:
                         return False
 
-        # 3. fingerprint 生成
+        # 3. fingerprint 生成 (タイムスタンプ付きでファイル名衝突を防止)
+        _ts_suffix = f"_{int(time.time() * 1000) % 1000000}"
         if force:
-            # force (タップ記録): phash 優先 (OCR は古い可能性がある)
             if phash:
-                content_fp = f"ph_{phash[:14]}"
+                content_fp = f"ph_{phash[:14]}{_ts_suffix}"
             else:
                 content_fp = f"force_{time.time()}"
         else:
-            # 通常記録: テキスト優先
             normalized = self._normalize_ocr(ocr_results) if ocr_results else ""
             if normalized:
                 content_fp = self._content_fingerprint(normalized)
             elif phash:
-                content_fp = f"ph_{phash[:14]}"
+                content_fp = f"ph_{phash[:14]}{_ts_suffix}"
             else:
                 return False
 

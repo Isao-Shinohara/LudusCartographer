@@ -56,7 +56,17 @@ if ($mime === null) {
     exit;
 }
 
+$mtime = filemtime($realPath);
+$etag = sprintf('"%x-%x"', $mtime, filesize($realPath));
+
+// ETag / If-None-Match で変更検知
+if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] === $etag) {
+    http_response_code(304);
+    exit;
+}
+
 header('Content-Type: ' . $mime);
-header('Cache-Control: public, max-age=86400');
+header('Cache-Control: public, max-age=3600');
+header('ETag: ' . $etag);
 header('Content-Length: ' . filesize($realPath));
 readfile($realPath);
