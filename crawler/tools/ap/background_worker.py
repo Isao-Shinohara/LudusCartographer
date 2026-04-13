@@ -96,6 +96,31 @@ class BackgroundWorker:
         self._thread.start()
         logger.info("[BG_WORKER] バックグラウンドワーカー起動")
 
+    def wait_until_idle(self, timeout: float = 600.0) -> None:
+        """未処理がなくなるまで待機 (最大 timeout 秒)。"""
+        _start = time.time()
+        while time.time() - _start < timeout:
+            conn = self._get_conn()
+            try:
+                pending_ocr = conn.execute(
+                    "SELECT COUNT(*) FROM lc_screens"
+                    " WHERE ocr_text_hq IS NULL"
+                    " AND screenshot_path IS NOT NULL AND screenshot_path != ''"
+                ).fetchone()[0]
+                pending_cluster = conn.execute(
+                    "SELECT COUNT(*) FROM lc_screens"
+                    " WHERE cluster_id IS NULL AND phash IS NOT NULL AND phash != ''"
+                    " AND ocr_text_hq IS NOT NULL"
+                ).fetchone()[0]
+            finally:
+                conn.close()
+            if pending_ocr == 0 and pending_cluster == 0:
+                logger.info("[BG_WORKER] 全処理完了 (%.0f秒待機)", time.time() - _start)
+                return
+            logger.info("[BG_WORKER] 待機中... OCR残=%d, cluster残=%d", pending_ocr, pending_cluster)
+            time.sleep(5.0)
+        logger.warning("[BG_WORKER] タイムアウト (%.0f秒)", timeout)
+
     def stop(self) -> None:
         """停止シグナルを送り、スレッド終了を待つ。"""
         self._stop_event.set()

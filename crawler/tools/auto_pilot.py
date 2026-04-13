@@ -3874,10 +3874,13 @@ def main():
                 logger.info("=" * 60)
                 logger.info("  ホーム画面到達 — 自動操縦を停止します")
                 logger.info("=" * 60)
-                if bg_worker is not None:
-                    bg_worker.stop()
                 if recorder is not None:
                     recorder.close()
+                if bg_worker is not None:
+                    # バックグラウンド処理の完了を待機
+                    logger.info("[BG_WORKER] バックグラウンド処理の完了を待機中...")
+                    bg_worker.wait_until_idle()
+                    bg_worker.stop()
                 _cleanup_dashboard()
                 generate_and_copy_report(state, "ホーム画面到達")
                 break
@@ -3891,10 +3894,12 @@ def main():
                 logger.info("  [GRIND] 目標周回数 %d に到達 — 自動操縦を停止します",
                             state.grind_max_cycles)
                 logger.info("=" * 60)
-                if bg_worker is not None:
-                    bg_worker.stop()
                 if recorder is not None:
                     recorder.close()
+                if bg_worker is not None:
+                    logger.info("[BG_WORKER] バックグラウンド処理の完了を待機中...")
+                    bg_worker.wait_until_idle()
+                    bg_worker.stop()
                 _cleanup_dashboard()
                 break
             from tools.ap.constants import GRIND_CYCLE_INTERVAL
