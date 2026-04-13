@@ -257,13 +257,18 @@ class BackgroundWorker:
     # ─── phash クラスタリング ──────────────────────────────
 
     def _run_incremental_dedup(self) -> None:
-        """未処理スクリーンに対して phash クラスタリングを実行。"""
+        """未処理スクリーンに対してテキスト優先 + phash フォールバックでクラスタリング。
+
+        1. OCR テキスト (title) が既存代表と一致 → 同一クラスタ（不採用）
+        2. テキストが異なる or 空 → phash 距離で判定（フォールバック）
+        3. どちらも一致しない → 新規クラスタ（採用）
+        """
         from lc.utils import phash_distance
 
         conn = self._get_conn()
         try:
             rows = conn.execute(
-                "SELECT id, phash FROM lc_screens"
+                "SELECT id, phash, title FROM lc_screens"
                 " WHERE cluster_id IS NULL AND phash IS NOT NULL AND phash != ''"
                 " ORDER BY discovered_at"
             ).fetchall()
@@ -272,11 +277,15 @@ class BackgroundWorker:
                 return
 
             existing_reps = conn.execute(
-                "SELECT cluster_id, phash FROM lc_screens"
+                "SELECT cluster_id, phash, title FROM lc_screens"
                 " WHERE is_representative = 1 AND phash IS NOT NULL"
                 " ORDER BY cluster_id"
             ).fetchall()
-            rep_map: dict[int, str] = {r["cluster_id"]: r["phash"] for r in existing_reps}
+            # rep_map: cluster_id → (phash, title)
+            rep_map: dict[int, tuple[str, str]] = {
+                r["cluster_id"]: (r["phash"], r["title"] or "")
+                for r in existing_reps
+            }
 
             max_cid = conn.execute(
                 "SELECT COALESCE(MAX(cluster_id), -1) FROM lc_screens"
@@ -287,28 +296,47 @@ class BackgroundWorker:
             for row in rows:
                 sid = row["id"]
                 ph = row["phash"]
+                title = row["title"] or ""
 
-                best_cid = None
-                best_dist = 999
-                for cid, rep_ph in rep_map.items():
-                    if rep_ph:
-                        d = phash_distance(rep_ph, ph)
-                        if d < best_dist:
-                            best_dist = d
-                            best_cid = cid
+                # 1) テキスト一致チェック（空タイトルやシーン名のみは除外）
+                _is_meaningful = len(title) > 5 and not title.startswith("(")
+                text_match_cid = None
+                if _is_meaningful:
+                    for cid, (rep_ph, rep_title) in rep_map.items():
+                        if rep_title == title:
+                            text_match_cid = cid
+                            break
 
-                if best_dist < _PHASH_CLUSTER_THRESHOLD and best_cid is not None:
+                if text_match_cid is not None:
+                    # テキスト完全一致 → 不採用
                     conn.execute(
                         "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
-                        (best_cid, sid),
+                        (text_match_cid, sid),
                     )
                 else:
-                    conn.execute(
-                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
-                        (next_cid, sid),
-                    )
-                    rep_map[next_cid] = ph
-                    next_cid += 1
+                    # 2) phash フォールバック
+                    best_cid = None
+                    best_dist = 999
+                    for cid, (rep_ph, _) in rep_map.items():
+                        if rep_ph:
+                            d = phash_distance(rep_ph, ph)
+                            if d < best_dist:
+                                best_dist = d
+                                best_cid = cid
+
+                    if best_dist < _PHASH_CLUSTER_THRESHOLD and best_cid is not None:
+                        conn.execute(
+                            "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
+                            (best_cid, sid),
+                        )
+                    else:
+                        # 新規クラスタ（採用）
+                        conn.execute(
+                            "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                            (next_cid, sid),
+                        )
+                        rep_map[next_cid] = (ph, title)
+                        next_cid += 1
 
                 processed += 1
 
