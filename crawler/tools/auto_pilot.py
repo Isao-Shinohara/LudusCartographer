@@ -1541,6 +1541,15 @@ def handle_adv(img_path: Path, state: PilotState, dist: int,
     if _adv_next:
         _adv_tap_x, _adv_tap_y = _adv_next[0], _adv_next[1]
         logger.info("[ADV] ↓検出 (score=%.2f) → タップ (%d,%d)", _adv_next[2], _adv_tap_x, _adv_tap_y)
+        # スクリーン記録用: タップ前に OCR を更新 (早期ハンドラは OCR をスキップするため)
+        if getattr(state, "recorder", None) is not None and img_path:
+            try:
+                from tools.ap.ocr import run_ocr
+                _adv_ocr = run_ocr(str(img_path), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
+                if _adv_ocr:
+                    state.last_ocr_results = _adv_ocr
+            except Exception:
+                pass
         tap_device(_adv_tap_x, _adv_tap_y, state, "ADV_ADVANCE_TAP")
         state.last_action = "ADV_RAPID_TAP"
         state.last_phash = ""
