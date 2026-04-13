@@ -9,6 +9,10 @@
         <h2 class="text-2xl font-bold text-brand-light">Dashboard</h2>
     </div>
     <div class="flex items-center gap-4">
+        <select id="filter-select" class="bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
+            <option value="all">全画像</option>
+            <option value="reps" selected>代表のみ</option>
+        </select>
         <div id="stats" class="text-sm text-gray-400"></div>
         <div id="status" class="flex items-center gap-2">
             <span id="status-dot" class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
@@ -71,6 +75,8 @@
     let maxId = 0;
     let currentTab = 'live';
     let pollTimer = null;
+    const filterSelect = document.getElementById('filter-select');
+    filterSelect.addEventListener('change', renderAll);
 
     function getGameParam() {
         return new URLSearchParams(window.location.search).get('game') || '';
@@ -93,22 +99,17 @@
         const sceneBadge = s.category && s.category !== 'depth=0'
             ? `<span class="inline-block px-1.5 py-0.5 text-[9px] rounded bg-gray-800 text-gray-400">${escapeHtml(s.category)}</span>`
             : '';
-        // ステータスドット: 間引き (cluster) + OCR再処理
-        let dedupDot = '';
-        if (s.cluster_id !== null && s.cluster_id !== undefined) {
-            dedupDot = s.is_representative
-                ? '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500" title="代表"></span>'
-                : '<span class="w-1.5 h-1.5 rounded-full bg-gray-600" title="間引き"></span>';
-        } else {
-            dedupDot = '<span class="w-1.5 h-1.5 rounded-full bg-amber-500/70" title="間引き待ち"></span>';
-        }
-        const ocrDot = s.has_hq_ocr
-            ? '<span class="w-1.5 h-1.5 rounded-full bg-sky-500" title="HQ OCR済"></span>'
-            : '<span class="w-1.5 h-1.5 rounded-full bg-amber-500/70" title="HQ OCR待ち"></span>';
-        const statusDots = `<span class="flex gap-0.5 items-center">${dedupDot}${ocrDot}</span>`;
+        // ステータスドット: 処理済みのみ表示
+        const dots = [];
+        if (s.is_representative) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-emerald-500" title="代表"></span>');
+        if (s.has_hq_ocr) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-sky-500" title="HQ OCR済"></span>');
+        const statusDots = dots.length ? `<span class="flex gap-0.5 items-center">${dots.join('')}</span>` : '';
+        // 間引き画像は暗く表示 (全画像モード時)
+        const isThinned = s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative;
+        const dimClass = isThinned ? ' opacity-40' : '';
         return `
             <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer
-                        hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all"
+                        hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}"
                  data-idx="${idx}">
                 ${thumb
                     ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />`
@@ -127,15 +128,23 @@
     }
 
     function renderAll() {
-        if (allScreens.length === 0) {
+        const filter = filterSelect.value;
+        let filtered = allScreens;
+        if (filter === 'reps') {
+            filtered = allScreens.filter(s => s.is_representative || s.cluster_id === null || s.cluster_id === undefined);
+        }
+        if (filtered.length === 0) {
             const msg = currentTab === 'live'
                 ? 'まだスクリーンが記録されていません。<br><code class="text-brand-light">auto_pilot.py -S</code> で起動してください。'
                 : 'まだ決定版がありません。<br>バッチプロセッサを実行してください。';
             grid.innerHTML = `<div class="col-span-full text-center text-gray-600 py-12">${msg}</div>`;
             return;
         }
-        grid.innerHTML = allScreens.map(renderCard).join('');
-        stats.textContent = allScreens.length + ' 画面';
+        grid.innerHTML = filtered.map((s, i) => renderCard(s, allScreens.indexOf(s))).join('');
+        const repsCount = allScreens.filter(s => s.is_representative).length;
+        stats.textContent = filter === 'all'
+            ? `${allScreens.length} 画面 (代表 ${repsCount})`
+            : `${filtered.length} 画面`;
     }
 
     // --- Live タブ ---
