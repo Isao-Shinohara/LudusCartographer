@@ -675,6 +675,14 @@ def tap_device(x: int, y: int, state, desc: str = "",
                 state.last_analysis_path = _analysis
             else:
                 _analysis = getattr(state, "last_analysis_path", None)
+            # 暗転・白飛びスキップ
+            if _analysis and Path(str(_analysis)).exists():
+                import numpy as np
+                _chk = cv2.imread(str(_analysis))
+                if _chk is not None:
+                    _br = np.mean(cv2.cvtColor(_chk, cv2.COLOR_BGR2GRAY))
+                    if _br <= 30 or _br >= 240:
+                        raise ValueError("brightness skip")
             # phash を画像から直接計算
             _phash = ""
             if _analysis and Path(str(_analysis)).exists():

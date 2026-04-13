@@ -32,6 +32,7 @@ _CASCADE_MIN_FACE = (40, 40)  # 顔検出の最小サイズ (px)
 _CASCADE_XML = Path(__file__).parent.parent.parent / "assets" / "lbpcascade_animeface.xml"
 _SCENE_CHANGE_PHASH_DIST = 20  # シーン切り替わり判定の phash 距離閾値
 _MIN_BRIGHTNESS = 30            # シーン切り替わり記録の最低輝度 (暗転除外)
+_MAX_BRIGHTNESS = 240           # 白飛び除外
 
 # 日本語・英単語を含むトークンのみ採用
 _HAS_TEXT_RE = re.compile(r"[\u3000-\u9fff\u30a0-\u30ffA-Za-z]")
@@ -198,12 +199,12 @@ class ScreenRecorder:
             if scene in _SKIP_SCENES:
                 return False
 
-            # 2. 暗転スキップ
+            # 2. 暗転・白飛びスキップ
             if analysis_path and Path(analysis_path).exists():
                 _img = cv2.imread(str(analysis_path))
                 if _img is not None:
                     _brightness = np.mean(cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY))
-                    if _brightness <= _MIN_BRIGHTNESS:
+                    if _brightness <= _MIN_BRIGHTNESS or _brightness >= _MAX_BRIGHTNESS:
                         return False
 
         # 3. fingerprint 生成
