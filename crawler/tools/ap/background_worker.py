@@ -431,12 +431,14 @@ class BackgroundWorker:
                     )
                     _prev_cid = text_match_cid
                 elif _is_meaningful:
-                    # 2) テキスト不一致 + phash 極近(< 5) + テキスト類似(≥0.5) → OCR 揺れ
-                    # 直前クラスタとのみ比較
+                    # 2) テキスト不一致 + phash 近い + テキスト類似(≥0.5) → OCR 揺れ
+                    # 顔なしなら phash 閾値を緩和 (背景アニメ+同じテキスト)
                     _is_ocr_variation = False
                     if _prev_cid is not None and _prev_ph and _prev_norm:
                         d = phash_distance(_prev_ph, ph)
-                        if d < 5 and _text_similarity(norm_text, _prev_norm) >= 0.5:
+                        _has_face = self._max_face_area(conn, sid) > 0
+                        _ph_lim = 5 if _has_face else 35
+                        if d < _ph_lim and _text_similarity(norm_text, _prev_norm) >= 0.5:
                             _is_ocr_variation = True
                     if _is_ocr_variation:
                         conn.execute(
