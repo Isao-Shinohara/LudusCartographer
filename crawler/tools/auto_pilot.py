@@ -681,6 +681,9 @@ def try_mini_conv_tap(img_path, state: PilotState,
 
     _mc_cx, _mc_cy, _mc_side = _mc
     _log_tag = f"[{tag}] " if tag else ""
+    # -S モード: テキスト表示完了を待つ (1秒ウェイト)
+    if getattr(state, "recorder", None) is not None:
+        time.sleep(1.0)
     logger.info("%s[MINI_CONV] 吹き出し(%s) → タップ (%d,%d)",
                 _log_tag, _mc_side, _mc_cx, _mc_cy)
     tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
