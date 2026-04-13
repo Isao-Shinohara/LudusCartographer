@@ -315,16 +315,20 @@ class BackgroundWorker:
                     )
                 else:
                     # 2) phash フォールバック
+                    # テキスト空同士は閾値を緩める (動画フレーム等の重複防止)
+                    _threshold = 20 if not _is_meaningful else _PHASH_CLUSTER_THRESHOLD
                     best_cid = None
                     best_dist = 999
-                    for cid, (rep_ph, _) in rep_map.items():
+                    for cid, (rep_ph, rep_t) in rep_map.items():
+                        # テキスト空同士の緩和は、相手も空の場合のみ適用
+                        _t = 20 if (not _is_meaningful and (not rep_t or len(rep_t) <= 5 or rep_t.startswith("("))) else _PHASH_CLUSTER_THRESHOLD
                         if rep_ph:
                             d = phash_distance(rep_ph, ph)
-                            if d < best_dist:
+                            if d < _t and d < best_dist:
                                 best_dist = d
                                 best_cid = cid
 
-                    if best_dist < _PHASH_CLUSTER_THRESHOLD and best_cid is not None:
+                    if best_cid is not None:
                         conn.execute(
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
                             (best_cid, sid),
