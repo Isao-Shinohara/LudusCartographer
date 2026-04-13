@@ -29,7 +29,8 @@
     </button>
     <select id="filter-select" class="ml-3 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="all">全画像</option>
-        <option value="reps" selected>代表のみ</option>
+        <option value="reps" selected>採用画像</option>
+        <option value="pending">未処理</option>
     </select>
 </div>
 
@@ -132,6 +133,8 @@
         let filtered = allScreens;
         if (filter === 'reps') {
             filtered = allScreens.filter(s => s.is_representative || s.cluster_id === null || s.cluster_id === undefined);
+        } else if (filter === 'pending') {
+            filtered = allScreens.filter(s => s.cluster_id === null || s.cluster_id === undefined || !s.has_hq_ocr);
         }
         if (filtered.length === 0) {
             const msg = currentTab === 'live'
