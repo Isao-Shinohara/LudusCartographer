@@ -470,10 +470,30 @@ class BackgroundWorker:
                     item.get("text", "") for item in ocr_results
                     if item.get("confidence", 0) >= 0.3
                 )
-                conn.execute(
-                    "UPDATE lc_screens SET ocr_text_hq = ? WHERE id = ?",
-                    (hq_text, sid),
+                # タイトルも HQ OCR 結果で更新 (信頼度上位3つ)
+                import re
+                _HAS_TEXT = re.compile(r'[\u3040-\u9fff\u30a0-\u30ffA-Za-z]')
+                _PURE_NUM = re.compile(r'^[\d\s.:/%×+\-~]+$')
+                _candidates = sorted(
+                    [(it.get("confidence", 0), it.get("text", "").strip())
+                     for it in ocr_results
+                     if it.get("confidence", 0) >= 0.3
+                     and it.get("text", "").strip()
+                     and _HAS_TEXT.search(it.get("text", ""))
+                     and not _PURE_NUM.match(it.get("text", "").strip())],
+                    key=lambda x: -x[0],
                 )
+                hq_title = " / ".join(t for _, t in _candidates[:3]) if _candidates else None
+                if hq_title:
+                    conn.execute(
+                        "UPDATE lc_screens SET ocr_text_hq = ?, title = ? WHERE id = ?",
+                        (hq_text, hq_title, sid),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE lc_screens SET ocr_text_hq = ? WHERE id = ?",
+                        (hq_text, sid),
+                    )
 
                 conn.execute(
                     "DELETE FROM lc_tappable_items WHERE screen_id = ?", (sid,)
