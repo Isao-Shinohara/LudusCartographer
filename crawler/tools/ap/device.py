@@ -667,7 +667,8 @@ def tap_device(x: int, y: int, state, desc: str = "",
     _rec = getattr(state, "recorder", None)
     if _rec is not None and getattr(state, "game_foreground", False):
         try:
-            # ループ開始時のキャプチャを使用 (撮り直すと画面遷移後を拾うリスク)
+            # ループ開始時の画像を使用
+            # (撮り直すと adb tap の非同期処理で画面遷移後を拾うリスクがある)
             _analysis = getattr(state, "last_analysis_path", None)
             # 暗転・白飛びスキップ
             if _analysis and Path(str(_analysis)).exists():
