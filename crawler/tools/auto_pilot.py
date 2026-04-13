@@ -2449,7 +2449,24 @@ def main():
     bg_worker = None
     if args.screenshot:
         from tools.ap.screen_recorder import ScreenRecorder
-        _rec_session = f"ap_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # -r (新規) → 新セッション、それ以外 (再起動/途中再開) → 前回セッション継続
+        _rec_session = None
+        if not args.reinstall:
+            try:
+                _s_conn = sqlite3.connect(str(_STATE_DB_PATH))
+                _s_conn.row_factory = sqlite3.Row
+                _last = _s_conn.execute(
+                    "SELECT session_id FROM lc_sessions ORDER BY started_at DESC LIMIT 1"
+                ).fetchone()
+                if _last:
+                    _rec_session = _last["session_id"]
+                    logger.info("[ScreenRecorder] 前回セッション継続: %s", _rec_session)
+                _s_conn.close()
+            except Exception:
+                pass
+        if not _rec_session:
+            _rec_session = f"ap_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            logger.info("[ScreenRecorder] 新規セッション: %s", _rec_session)
         recorder = ScreenRecorder(
             db_path=_STATE_DB_PATH,
             storage_dir=Path(__file__).parent.parent / "storage" / "screenshots",
