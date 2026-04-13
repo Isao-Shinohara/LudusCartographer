@@ -458,7 +458,10 @@ class BackgroundWorker:
                     _matched = False
                     if _prev_cid is not None and _prev_ph:
                         d = phash_distance(_prev_ph, ph)
-                        if d < 20:
+                        # 顔なし+テキスト空 → 閾値 35 (動画演出フレーム等)
+                        _has_face = self._max_face_area(conn, sid) > 0
+                        _ph_threshold = 20 if _has_face else 35
+                        if d < _ph_threshold:
                             # 代表交代判定: テキストあり > テキスト空 > 顔面積
                             old_rep_id = self._get_rep_id(conn, _prev_cid)
                             _should_promote = False
