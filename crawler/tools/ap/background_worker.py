@@ -459,11 +459,19 @@ class BackgroundWorker:
                     if _prev_cid is not None and _prev_ph:
                         d = phash_distance(_prev_ph, ph)
                         if d < 20:
-                            # 顔面積が大きい方を代表に昇格
-                            new_face = self._max_face_area(conn, sid)
+                            # 代表交代判定: テキストあり > テキスト空 > 顔面積
                             old_rep_id = self._get_rep_id(conn, _prev_cid)
-                            old_face = self._max_face_area(conn, old_rep_id) if old_rep_id else 0
-                            if new_face > old_face and old_rep_id:
+                            _should_promote = False
+                            if _is_meaningful and not _prev_norm:
+                                # テキストありが空代表に入った → 昇格
+                                _should_promote = True
+                            elif not _is_meaningful and not _prev_norm:
+                                # 両方空 → 顔面積で判定
+                                new_face = self._max_face_area(conn, sid)
+                                old_face = self._max_face_area(conn, old_rep_id) if old_rep_id else 0
+                                if new_face > old_face:
+                                    _should_promote = True
+                            if _should_promote and old_rep_id:
                                 conn.execute(
                                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                                     (_prev_cid, sid),
@@ -474,6 +482,7 @@ class BackgroundWorker:
                                 )
                                 rep_map[_prev_cid] = (ph, title, norm_text)
                                 _prev_ph = ph
+                                _prev_norm = norm_text
                             else:
                                 conn.execute(
                                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
