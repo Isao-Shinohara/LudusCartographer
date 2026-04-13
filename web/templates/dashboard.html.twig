@@ -175,7 +175,8 @@
             const data = await res.json();
             knownSessions = (data.sessions || []).map(s => s.session_dir);
             sessionSelect.innerHTML = '<option value="">最新セッション</option>';
-            for (const s of data.sessions || []) {
+            const older = (data.sessions || []).slice(1); // 最新を除外
+            for (const s of older) {
                 const label = s.session_dir.replace('ap_', '').replace(/_/g, ' ');
                 sessionSelect.innerHTML += `<option value="${escapeHtml(s.session_dir)}">${escapeHtml(label)}</option>`;
             }
@@ -220,12 +221,13 @@
             if (latestSessions.length > 0 && latestSessions[0] !== knownSessions[0]) {
                 knownSessions = latestSessions;
                 sessionSelect.innerHTML = '<option value="">最新セッション</option>';
-                for (const s of sessData.sessions || []) {
+                const olderPoll = (sessData.sessions || []).slice(1);
+                for (const s of olderPoll) {
                     const label = s.session_dir.replace('ap_', '').replace(/_/g, ' ');
                     sessionSelect.innerHTML += `<option value="${escapeHtml(s.session_dir)}">${escapeHtml(label)}</option>`;
                 }
-                currentSessionId = latestSessions[0];
-                sessionSelect.value = currentSessionId;
+                currentSessionId = '';
+                sessionSelect.value = '';
                 allScreens = [];
                 maxId = 0;
                 fetchLiveInitial();
