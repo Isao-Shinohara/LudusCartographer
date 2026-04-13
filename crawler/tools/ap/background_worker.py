@@ -388,6 +388,21 @@ class BackgroundWorker:
             ).fetchone()[0]
             next_cid = max_cid + 1
 
+            # 直前クラスタ追跡 (phash 連続性判定用)
+            _prev_cid: Optional[int] = None
+            _prev_ph: str = ""
+            _prev_norm: str = ""
+            # 既存の最後のクラスタを直前として初期化
+            last_screen = conn.execute(
+                "SELECT cluster_id, phash, COALESCE(ocr_text_hq, ocr_text, '') AS ocr"
+                " FROM lc_screens WHERE cluster_id IS NOT NULL"
+                " ORDER BY discovered_at DESC LIMIT 1"
+            ).fetchone()
+            if last_screen:
+                _prev_cid = last_screen["cluster_id"]
+                _prev_ph = last_screen["phash"] or ""
+                _prev_norm = _normalize_text(last_screen["ocr"] or "")
+
             processed = 0
             for row in rows:
                 sid = row["id"]
@@ -396,10 +411,9 @@ class BackgroundWorker:
                 ocr_text = row["ocr"] or ""
                 norm_text = _normalize_text(ocr_text)
 
-                # テキストが意味のある内容かどうか
                 _is_meaningful = len(norm_text) > 10
 
-                # 1) テキスト一致チェック: 正規化後の ocr_text が同じなら同一画面
+                # 1) テキスト一致チェック (グローバル): 同じテキストなら同一画面
                 text_match_cid = None
                 if _is_meaningful:
                     for cid, (rep_ph, rep_title, rep_norm) in rep_map.items():
@@ -408,26 +422,23 @@ class BackgroundWorker:
                             break
 
                 if text_match_cid is not None:
-                    # テキスト完全一致 → 不採用
                     conn.execute(
                         "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
                         (text_match_cid, sid),
                     )
+                    _prev_cid = text_match_cid
                 elif _is_meaningful:
-                    # テキスト不一致だが、phash 極近なら類似テキスト判定
-                    # (同一画面の OCR 揺れを間引く。ADV セリフ違いは類似度低→採用)
-                    _similar_cid = None
-                    for cid, (rep_ph, rep_title, rep_norm) in rep_map.items():
-                        if not rep_ph or not rep_norm:
-                            continue
-                        d = phash_distance(rep_ph, ph)
-                        if d < 5 and _text_similarity(norm_text, rep_norm) >= 0.5:
-                            _similar_cid = cid
-                            break
-                    if _similar_cid is not None:
+                    # 2) テキスト不一致 + phash 極近(< 5) + テキスト類似(≥0.5) → OCR 揺れ
+                    # 直前クラスタとのみ比較
+                    _is_ocr_variation = False
+                    if _prev_cid is not None and _prev_ph and _prev_norm:
+                        d = phash_distance(_prev_ph, ph)
+                        if d < 5 and _text_similarity(norm_text, _prev_norm) >= 0.5:
+                            _is_ocr_variation = True
+                    if _is_ocr_variation:
                         conn.execute(
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
-                            (_similar_cid, sid),
+                            (_prev_cid, sid),
                         )
                     else:
                         conn.execute(
@@ -435,46 +446,46 @@ class BackgroundWorker:
                             (next_cid, sid),
                         )
                         rep_map[next_cid] = (ph, title, norm_text)
+                        _prev_cid = next_cid
+                        _prev_ph = ph
+                        _prev_norm = norm_text
                         next_cid += 1
                 else:
-                    # テキスト空 → phash フォールバック (閾値 20)
-                    best_cid = None
-                    best_dist = 999
-                    for cid, (rep_ph, rep_t, rep_ocr) in rep_map.items():
-                        _t = 20 if not rep_ocr else _PHASH_CLUSTER_THRESHOLD
-                        if rep_ph:
-                            d = phash_distance(rep_ph, ph)
-                            if d < _t and d < best_dist:
-                                best_dist = d
-                                best_cid = cid
-
-                    if best_cid is not None:
-                        # 顔面積が大きい方を代表に昇格
-                        new_face = self._max_face_area(conn, sid)
-                        old_rep_id = self._get_rep_id(conn, best_cid)
-                        old_face = self._max_face_area(conn, old_rep_id) if old_rep_id else 0
-                        if new_face > old_face and old_rep_id:
-                            conn.execute(
-                                "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
-                                (best_cid, sid),
-                            )
-                            conn.execute(
-                                "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
-                                (old_rep_id,),
-                            )
-                            rep_map[best_cid] = (ph, title, norm_text)
-                        else:
-                            conn.execute(
-                                "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
-                                (best_cid, sid),
-                            )
-                    else:
-                        # 新規クラスタ（採用）
+                    # 3) テキスト空 → 直前クラスタとのみ phash 比較 (連続性重視)
+                    _matched = False
+                    if _prev_cid is not None and _prev_ph:
+                        d = phash_distance(_prev_ph, ph)
+                        if d < 20:
+                            # 顔面積が大きい方を代表に昇格
+                            new_face = self._max_face_area(conn, sid)
+                            old_rep_id = self._get_rep_id(conn, _prev_cid)
+                            old_face = self._max_face_area(conn, old_rep_id) if old_rep_id else 0
+                            if new_face > old_face and old_rep_id:
+                                conn.execute(
+                                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                                    (_prev_cid, sid),
+                                )
+                                conn.execute(
+                                    "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
+                                    (old_rep_id,),
+                                )
+                                rep_map[_prev_cid] = (ph, title, norm_text)
+                                _prev_ph = ph
+                            else:
+                                conn.execute(
+                                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
+                                    (_prev_cid, sid),
+                                )
+                            _matched = True
+                    if not _matched:
                         conn.execute(
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                             (next_cid, sid),
                         )
                         rep_map[next_cid] = (ph, title, norm_text)
+                        _prev_cid = next_cid
+                        _prev_ph = ph
+                        _prev_norm = norm_text
                         next_cid += 1
 
                 processed += 1
@@ -483,9 +494,6 @@ class BackgroundWorker:
                 conn.commit()
                 self.dedup_count += processed
                 logger.info("[BG_WORKER] dedup: %d 枚処理 (合計 %d)", processed, self.dedup_count)
-
-            # ── phash マージパス: 近い phash のクラスタを統合 ──
-            self._merge_clusters_by_phash(conn, phash_distance)
         finally:
             conn.close()
 
