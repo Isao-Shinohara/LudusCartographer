@@ -1,8 +1,14 @@
 """
-バックグラウンドワーカー — auto_pilot と並行して間引き・OCR再処理をリアルタイム実行。
+バックグラウンドワーカー — auto_pilot と並行して全バッチ処理をリアルタイム実行。
 
 デーモンスレッドで動作し、auto_pilot のメインループに影響を与えない。
 SQLite WAL モードで並行アクセスする。
+
+処理内容:
+  1. グルーピング (scene + 時間ギャップでグループ化)
+  2. phash クラスタリング (間引き + 代表選出)
+  3. PaddleOCR 再処理 (代表画像のみ)
+  4. 遷移グラフ構築 (BFS + SCC)
 """
 from __future__ import annotations
 
@@ -12,12 +18,23 @@ import sqlite3
 import tempfile
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_PHASH_CLUSTER_THRESHOLD = 8  # batch_processor.py と同じ
+_PHASH_CLUSTER_THRESHOLD = 8
+_GROUP_GAP_SECONDS = 60
+
+_SCENE_LABELS = {
+    "BATTLE": "バトル",
+    "ADV": "ストーリー",
+    "MENU": "メニュー",
+    "MOVIE": "ムービー",
+    "GACHA": "ガチャ",
+    "UNKNOWN": "シーン",
+}
 
 
 class BackgroundWorker:
@@ -28,15 +45,21 @@ class BackgroundWorker:
         db_path: Path,
         interval_dedup: float = 15.0,
         interval_ocr: float = 5.0,
+        interval_group: float = 30.0,
+        interval_graph: float = 120.0,
     ):
         self._db_path = db_path
         self._interval_dedup = interval_dedup
         self._interval_ocr = interval_ocr
+        self._interval_group = interval_group
+        self._interval_graph = interval_graph
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         # 統計
         self.dedup_count = 0
         self.ocr_count = 0
+        self.group_count = 0
+        self.graph_sccs = 0
 
     def start(self) -> None:
         """デーモンスレッドを起動。"""
@@ -49,7 +72,10 @@ class BackgroundWorker:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=10)
-        logger.info("[BG_WORKER] 停止 (dedup=%d, ocr=%d)", self.dedup_count, self.ocr_count)
+        logger.info(
+            "[BG_WORKER] 停止 (group=%d, dedup=%d, ocr=%d, scc=%d)",
+            self.group_count, self.dedup_count, self.ocr_count, self.graph_sccs,
+        )
 
     def _get_conn(self) -> sqlite3.Connection:
         """スレッド専用の DB 接続を生成。"""
@@ -60,8 +86,7 @@ class BackgroundWorker:
         return conn
 
     def _run_loop(self) -> None:
-        """メインループ: 間引き → OCR再処理を交互に実行。"""
-        # OpenCV スレッド数を制限 (CPU 競合防止)
+        """メインループ。"""
         try:
             import cv2
             cv2.setNumThreads(1)
@@ -70,14 +95,24 @@ class BackgroundWorker:
 
         last_dedup = 0.0
         last_ocr = 0.0
+        last_group = 0.0
+        last_graph = 0.0
 
-        # 起動直後は 5 秒待機 (auto_pilot の初期化を邪魔しない)
+        # 起動直後は 5 秒待機
         self._stop_event.wait(timeout=5.0)
 
         while not self._stop_event.is_set():
             now = time.time()
 
-            # 間引き処理 (軽量: phash 比較のみ)
+            # グルーピング (30秒間隔)
+            if now - last_group >= self._interval_group:
+                try:
+                    self._run_incremental_group()
+                except Exception as e:
+                    logger.warning("[BG_WORKER] group 例外: %s", e)
+                last_group = time.time()
+
+            # 間引き処理 (15秒間隔)
             if now - last_dedup >= self._interval_dedup:
                 try:
                     self._run_incremental_dedup()
@@ -85,7 +120,7 @@ class BackgroundWorker:
                     logger.warning("[BG_WORKER] dedup 例外: %s", e)
                 last_dedup = time.time()
 
-            # OCR 再処理 (重量: 1枚ずつ)
+            # OCR 再処理 (5秒間隔/1枚)
             if now - last_ocr >= self._interval_ocr:
                 try:
                     self._run_incremental_ocr()
@@ -93,7 +128,133 @@ class BackgroundWorker:
                     logger.warning("[BG_WORKER] ocr 例外: %s", e)
                 last_ocr = time.time()
 
+            # 遷移グラフ構築 (120秒間隔)
+            if now - last_graph >= self._interval_graph:
+                try:
+                    self._run_graph_build()
+                except Exception as e:
+                    logger.warning("[BG_WORKER] graph 例外: %s", e)
+                last_graph = time.time()
+
             self._stop_event.wait(timeout=3.0)
+
+    # ─── グルーピング ─────────────────────────────────────
+
+    def _run_incremental_group(self) -> None:
+        """group_id が NULL の未グループ化スクリーンをグルーピング。"""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, session_id, scene, discovered_at FROM lc_screens"
+                " WHERE group_id IS NULL"
+                " ORDER BY session_id, discovered_at"
+            ).fetchall()
+
+            if not rows:
+                return
+
+            # lc_screen_groups テーブルを保証
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS lc_screen_groups (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id   TEXT,
+                    label        TEXT,
+                    scene        TEXT,
+                    seq          INTEGER,
+                    started_at   TEXT,
+                    ended_at     TEXT,
+                    screen_count INTEGER DEFAULT 0
+                );
+            """)
+
+            # 既存グループの scene 連番を取得
+            existing_seqs = {}
+            for r in conn.execute(
+                "SELECT session_id, scene, MAX(seq) as max_seq FROM lc_screen_groups"
+                " GROUP BY session_id, scene"
+            ).fetchall():
+                existing_seqs[f"{r['session_id']}_{r['scene']}"] = r["max_seq"]
+
+            groups_created = 0
+            current_session = None
+            current_scene = None
+            current_group: list[dict] = []
+            last_time: Optional[datetime] = None
+
+            def _flush():
+                nonlocal groups_created
+                if not current_group:
+                    return
+
+                scene = current_group[0]["scene"] or "UNKNOWN"
+                sid = current_group[0]["session_id"]
+                key = f"{sid}_{scene}"
+                seq = existing_seqs.get(key, 0) + 1
+                existing_seqs[key] = seq
+
+                label_prefix = _SCENE_LABELS.get(scene, "シーン")
+                label = f"{label_prefix}#{seq}"
+
+                cur = conn.execute(
+                    "INSERT INTO lc_screen_groups"
+                    " (session_id, label, scene, seq, started_at, ended_at, screen_count)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (sid, label, scene, seq,
+                     current_group[0]["discovered_at"],
+                     current_group[-1]["discovered_at"],
+                     len(current_group)),
+                )
+                gid = cur.lastrowid
+                screen_ids = [s["id"] for s in current_group]
+                conn.execute(
+                    f"UPDATE lc_screens SET group_id = ?"
+                    f" WHERE id IN ({','.join('?' * len(screen_ids))})",
+                    [gid] + screen_ids,
+                )
+                groups_created += 1
+
+            for row in rows:
+                row_dict = dict(row)
+                scene = row_dict.get("scene") or "UNKNOWN"
+                sid = row_dict["session_id"]
+                ts_str = row_dict.get("discovered_at") or ""
+                try:
+                    ts = datetime.fromisoformat(ts_str) if ts_str else None
+                except ValueError:
+                    ts = None
+
+                if sid != current_session:
+                    _flush()
+                    current_group = []
+                    current_session = sid
+                    current_scene = None
+                    last_time = None
+
+                time_gap = False
+                if ts and last_time:
+                    gap = (ts - last_time).total_seconds()
+                    if gap > _GROUP_GAP_SECONDS:
+                        time_gap = True
+
+                if scene != current_scene or time_gap:
+                    _flush()
+                    current_group = []
+                    current_scene = scene
+
+                current_group.append(row_dict)
+                last_time = ts
+
+            _flush()
+
+            if groups_created > 0:
+                conn.commit()
+                self.group_count += groups_created
+                logger.info("[BG_WORKER] group: %d グループ作成 (合計 %d)",
+                            groups_created, self.group_count)
+        finally:
+            conn.close()
+
+    # ─── phash クラスタリング ──────────────────────────────
 
     def _run_incremental_dedup(self) -> None:
         """未処理スクリーンに対して phash クラスタリングを実行。"""
@@ -101,7 +262,6 @@ class BackgroundWorker:
 
         conn = self._get_conn()
         try:
-            # cluster_id が NULL の未処理レコードを取得
             rows = conn.execute(
                 "SELECT id, phash FROM lc_screens"
                 " WHERE cluster_id IS NULL AND phash IS NOT NULL AND phash != ''"
@@ -111,7 +271,6 @@ class BackgroundWorker:
             if not rows:
                 return
 
-            # 既存クラスタの代表 phash を取得 (cluster_id → phash マッピング)
             existing_reps = conn.execute(
                 "SELECT cluster_id, phash FROM lc_screens"
                 " WHERE is_representative = 1 AND phash IS NOT NULL"
@@ -119,7 +278,6 @@ class BackgroundWorker:
             ).fetchall()
             rep_map: dict[int, str] = {r["cluster_id"]: r["phash"] for r in existing_reps}
 
-            # 次のクラスタ ID
             max_cid = conn.execute(
                 "SELECT COALESCE(MAX(cluster_id), -1) FROM lc_screens"
             ).fetchone()[0]
@@ -130,7 +288,6 @@ class BackgroundWorker:
                 sid = row["id"]
                 ph = row["phash"]
 
-                # 既存クラスタとの距離を比較
                 best_cid = None
                 best_dist = 999
                 for cid, rep_ph in rep_map.items():
@@ -141,13 +298,11 @@ class BackgroundWorker:
                             best_cid = cid
 
                 if best_dist < _PHASH_CLUSTER_THRESHOLD and best_cid is not None:
-                    # 既存クラスタに割当て
                     conn.execute(
                         "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
                         (best_cid, sid),
                     )
                 else:
-                    # 新規クラスタ作成 (この画像が代表)
                     conn.execute(
                         "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                         (next_cid, sid),
@@ -163,6 +318,8 @@ class BackgroundWorker:
                 logger.info("[BG_WORKER] dedup: %d 枚処理 (合計 %d)", processed, self.dedup_count)
         finally:
             conn.close()
+
+    # ─── PaddleOCR 再処理 ─────────────────────────────────
 
     def _run_incremental_ocr(self) -> None:
         """is_representative=1 かつ ocr_text_hq IS NULL のスクリーンを 1 枚処理。"""
@@ -182,20 +339,17 @@ class BackgroundWorker:
             sid = row["id"]
             path = row["screenshot_path"]
             if not Path(path).exists():
-                # ファイルがない場合はスキップマーク
                 conn.execute(
                     "UPDATE lc_screens SET ocr_text_hq = '' WHERE id = ?", (sid,)
                 )
                 conn.commit()
                 return
 
-            # PaddleOCR で再処理
             os.environ["OCR_ENGINE"] = "paddle"
             try:
                 import cv2
                 from lc.ocr import run_ocr
 
-                # WebP → 一時 PNG 変換 (PaddleOCR は WebP 非対応)
                 _ocr_path = path
                 _tmp_path = None
                 if path.endswith(".webp"):
@@ -213,7 +367,6 @@ class BackgroundWorker:
 
                 ocr_results = run_ocr(_ocr_path, lang="japan")
 
-                # 一時ファイル削除
                 if _tmp_path:
                     try:
                         os.unlink(_tmp_path)
@@ -229,7 +382,6 @@ class BackgroundWorker:
                     (hq_text, sid),
                 )
 
-                # tappable_items も更新
                 conn.execute(
                     "DELETE FROM lc_tappable_items WHERE screen_id = ?", (sid,)
                 )
@@ -247,11 +399,34 @@ class BackgroundWorker:
 
                 conn.commit()
                 self.ocr_count += 1
-                logger.debug("[BG_WORKER] reocr: id=%d done (合計 %d)", sid, self.ocr_count)
+                if self.ocr_count % 50 == 0:
+                    remaining = conn.execute(
+                        "SELECT COUNT(*) FROM lc_screens"
+                        " WHERE is_representative = 1 AND ocr_text_hq IS NULL"
+                        " AND screenshot_path IS NOT NULL AND screenshot_path != ''"
+                    ).fetchone()[0]
+                    logger.info("[BG_WORKER] reocr: %d 枚完了 (残り %d)",
+                                self.ocr_count, remaining)
 
             finally:
-                # OCR エンジンを戻す
                 os.environ.pop("OCR_ENGINE", None)
 
         finally:
             conn.close()
+
+    # ─── 遷移グラフ構築 ───────────────────────────────────
+
+    def _run_graph_build(self) -> None:
+        """BatchProcessor.build_graph() を呼び出して遷移グラフを構築。"""
+        try:
+            from tools.batch_processor import BatchProcessor
+            bp = BatchProcessor(db_path=self._db_path)
+            try:
+                sccs = bp.build_graph()
+                if sccs > 0:
+                    self.graph_sccs = sccs
+                    logger.info("[BG_WORKER] graph: %d SCC 構築完了", sccs)
+            finally:
+                bp.close()
+        except Exception as e:
+            logger.warning("[BG_WORKER] graph 例外: %s", e)

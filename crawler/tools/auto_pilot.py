@@ -2484,7 +2484,6 @@ def main():
             bg_worker.stop()
         if recorder is not None:
             recorder.close()
-            _run_batch_processor()
         _cleanup_dashboard()
         generate_and_copy_report(_pilot_state_ref, "手動停止 (Ctrl+C / SIGINT)")
         sys.exit(0)
@@ -3865,7 +3864,6 @@ def main():
                     bg_worker.stop()
                 if recorder is not None:
                     recorder.close()
-                    _run_batch_processor()
                 _cleanup_dashboard()
                 generate_and_copy_report(state, "ホーム画面到達")
                 break
@@ -3882,7 +3880,6 @@ def main():
                     bg_worker.stop()
                 if recorder is not None:
                     recorder.close()
-                    _run_batch_processor()
                 _cleanup_dashboard()
                 break
             from tools.ap.constants import GRIND_CYCLE_INTERVAL
