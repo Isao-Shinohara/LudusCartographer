@@ -532,10 +532,17 @@ class BackgroundWorker:
                 parent[ra] = rb
 
         # 全ペア比較 (代表画像同士なので数百枚程度)
+        # テキストが両方 meaningful な場合は類似度チェックも必要
         for i in range(len(reps)):
             for j in range(i + 1, len(reps)):
                 d = phash_distance(reps[i]["phash"], reps[j]["phash"])
                 if d < _MERGE_THRESHOLD:
+                    # 両方テキストがある場合、テキスト類似度が低ければマージしない
+                    ocr_i = _normalize_text(reps[i]["ocr"])
+                    ocr_j = _normalize_text(reps[j]["ocr"])
+                    both_meaningful = len(ocr_i) > 10 and len(ocr_j) > 10
+                    if both_meaningful and _text_similarity(ocr_i, ocr_j) < 0.3:
+                        continue  # テキストが全く違う → マージしない
                     union(reps[i]["cluster_id"], reps[j]["cluster_id"])
 
         # マージが必要なグループを特定
