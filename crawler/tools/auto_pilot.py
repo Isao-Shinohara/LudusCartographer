@@ -2818,6 +2818,14 @@ def main():
                     _dark_phash = compute_phash(_dark_analysis) or ""
                 except Exception:
                     pass
+                # 輝度をログ出力 (スプラッシュ調査用)
+                try:
+                    _dark_img = cv2.imread(str(_dark_analysis))
+                    if _dark_img is not None:
+                        _dark_br = np.mean(cv2.cvtColor(_dark_img, cv2.COLOR_BGR2GRAY))
+                        logger.debug("[DARK_REC] 暗転中 maybe_record 試行: brightness=%.1f path=%s", _dark_br, _dark_analysis)
+                except Exception:
+                    pass
                 recorder.maybe_record(_dark_analysis, [], state.current_scene, _dark_phash)
             state.total_blackout_skipped += 1
             state.consecutive_blackouts += 1
