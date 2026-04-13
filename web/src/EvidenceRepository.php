@@ -268,6 +268,7 @@ class EvidenceRepository
         int    $limit     = 50,
         string $gameTitle = '',
         int    $afterId   = 0,
+        string $sessionId = '',
     ): array {
         $conditions = [];
         $bindings   = [':limit' => $limit];
@@ -279,6 +280,10 @@ class EvidenceRepository
         if ($afterId > 0) {
             $conditions[]          = 's.id > :after_id';
             $bindings[':after_id'] = $afterId;
+        }
+        if ($sessionId !== '') {
+            $conditions[]            = 's.session_id = :session_id';
+            $bindings[':session_id'] = $sessionId;
         }
 
         $where = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
@@ -399,6 +404,7 @@ class EvidenceRepository
             'platform'        => 'ios',
             'screen_hash'     => $raw['fingerprint'],
             'game_title'      => $raw['game_title'] ?? 'Unknown Game',
+            'session_id'      => $raw['session_id'] ?? '',
             'is_representative' => (bool)($raw['is_representative'] ?? false),
             'cluster_id'      => $raw['cluster_id'] ?? null,
             'has_hq_ocr'      => !empty($raw['ocr_text_hq'] ?? ''),

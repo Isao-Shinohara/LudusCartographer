@@ -27,7 +27,10 @@
             onclick="switchTab('final')">
         Final
     </button>
-    <select id="filter-select" class="ml-3 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
+    <select id="session-select" class="ml-3 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
+        <option value="">最新セッション</option>
+    </select>
+    <select id="filter-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="all">全画像</option>
         <option value="reps" selected>採用画像</option>
         <option value="pending">未処理</option>
@@ -76,8 +79,17 @@
     let maxId = 0;
     let currentTab = 'live';
     let pollTimer = null;
+    let currentSessionId = '';  // 空=最新セッション
+    let knownSessions = [];
     const filterSelect = document.getElementById('filter-select');
+    const sessionSelect = document.getElementById('session-select');
     filterSelect.addEventListener('change', renderAll);
+    sessionSelect.addEventListener('change', function() {
+        currentSessionId = this.value;
+        allScreens = [];
+        maxId = 0;
+        fetchLiveInitial();
+    });
 
     function getGameParam() {
         return new URLSearchParams(window.location.search).get('game') || '';
@@ -150,11 +162,36 @@
             : `${filtered.length} 画面`;
     }
 
+    // --- セッション一覧取得 ---
+    async function fetchSessions() {
+        const game = getGameParam();
+        const params = new URLSearchParams({ action: 'get_sessions' });
+        if (game) params.set('game', game);
+        try {
+            const res = await fetch(API_BASE + '?' + params);
+            const data = await res.json();
+            knownSessions = (data.sessions || []).map(s => s.session_dir);
+            sessionSelect.innerHTML = '<option value="">最新セッション</option>';
+            for (const s of data.sessions || []) {
+                const label = s.session_dir.replace('ap_', '').replace(/_/g, ' ');
+                sessionSelect.innerHTML += `<option value="${escapeHtml(s.session_dir)}">${escapeHtml(label)}</option>`;
+            }
+        } catch (e) {}
+    }
+
     // --- Live タブ ---
     async function fetchLiveInitial() {
+        await fetchSessions();
+        // セッション未選択 → 最新セッションを自動選択
+        const sid = currentSessionId || (knownSessions.length > 0 ? knownSessions[0] : '');
+        if (!currentSessionId && sid) {
+            currentSessionId = sid;
+            sessionSelect.value = sid;
+        }
         const game = getGameParam();
         const params = new URLSearchParams({ action: 'get_recent_screens', limit: '10000' });
         if (game) params.set('game', game);
+        if (currentSessionId) params.set('session_id', currentSessionId);
         try {
             const res = await fetch(API_BASE + '?' + params);
             const data = await res.json();
@@ -169,13 +206,37 @@
     }
 
     async function pollLive() {
+        // 新しいセッションが始まったか確認
         const game = getGameParam();
+        const sessParams = new URLSearchParams({ action: 'get_sessions' });
+        if (game) sessParams.set('game', game);
+        try {
+            const sessRes = await fetch(API_BASE + '?' + sessParams);
+            const sessData = await sessRes.json();
+            const latestSessions = (sessData.sessions || []).map(s => s.session_dir);
+            if (latestSessions.length > 0 && latestSessions[0] !== knownSessions[0]) {
+                knownSessions = latestSessions;
+                sessionSelect.innerHTML = '<option value="">最新セッション</option>';
+                for (const s of sessData.sessions || []) {
+                    const label = s.session_dir.replace('ap_', '').replace(/_/g, ' ');
+                    sessionSelect.innerHTML += `<option value="${escapeHtml(s.session_dir)}">${escapeHtml(label)}</option>`;
+                }
+                currentSessionId = latestSessions[0];
+                sessionSelect.value = currentSessionId;
+                allScreens = [];
+                maxId = 0;
+                fetchLiveInitial();
+                return;
+            }
+        } catch (e) {}
+
         const params = new URLSearchParams({
             action: 'get_recent_screens',
             limit: '100',
             after_id: String(maxId),
         });
         if (game) params.set('game', game);
+        if (currentSessionId) params.set('session_id', currentSessionId);
         try {
             const res = await fetch(API_BASE + '?' + params);
             const data = await res.json();
@@ -183,7 +244,6 @@
             if (newScreens.length > 0) {
                 allScreens = newScreens.concat(allScreens);
                 maxId = Math.max(maxId, Math.max(...newScreens.map(s => s.id)));
-                // モーダル表示中ならインデックスをずらしてナビを更��
                 if (modalIdx >= 0) {
                     modalIdx += newScreens.length;
                     document.getElementById('modal-counter').textContent =
@@ -194,6 +254,7 @@
             }
         } catch (e) {}
     }
+
 
     // --- Final タブ ---
     async function fetchFinal() {
@@ -236,6 +297,7 @@
             statusDot.classList.remove('hidden');
             statusText.textContent = '自動更新中';
             filterSelect.classList.remove('hidden');
+            sessionSelect.classList.remove('hidden');
             grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>';
             fetchLiveInitial();
             pollTimer = setInterval(pollLive, POLL_INTERVAL);
@@ -243,6 +305,7 @@
             statusDot.classList.add('hidden');
             statusText.textContent = '決定版';
             filterSelect.classList.add('hidden');
+            sessionSelect.classList.add('hidden');
             grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>';
             fetchFinal();
         }

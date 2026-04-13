@@ -98,15 +98,30 @@ if ($action === 'get_project_screens') {
 if ($action === 'get_recent_screens') {
     $limit = min((int)($_GET['limit'] ?? 50), 10000);
     $afterId = (int)($_GET['after_id'] ?? 0);
+    $sessionId = $_GET['session_id'] ?? '';
 
     if ($useDb && $repository instanceof EvidenceRepository) {
-        $screens = $repository->getRecentScreens($limit, $gameTitle, $afterId);
+        $screens = $repository->getRecentScreens($limit, $gameTitle, $afterId, $sessionId);
     } else {
         $screens = [];
     }
 
     echo json_encode(
         ['screens' => $screens, 'count' => count($screens)],
+        JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+    );
+    exit;
+}
+
+// --- get_sessions アクション (セッション一覧) ---
+if ($action === 'get_sessions') {
+    if ($useDb && $repository instanceof EvidenceRepository) {
+        $sessions = $repository->getSessions(100, $gameTitle);
+    } else {
+        $sessions = [];
+    }
+    echo json_encode(
+        ['sessions' => $sessions],
         JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
     );
     exit;
