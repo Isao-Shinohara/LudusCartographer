@@ -406,20 +406,14 @@ class BackgroundWorker:
             ).fetchone()[0]
             next_cid = max_cid + 1
 
-            # 直前クラスタ追跡 (phash 連続性判定用)
+            # 直前クラスタ ID のみ追跡 (phash/text は常に rep_map から取得 → ドリフト防止)
             _prev_cid: Optional[int] = None
-            _prev_ph: str = ""
-            _prev_norm: str = ""
-            # 既存の最後のクラスタを直前として初期化
             last_screen = conn.execute(
-                "SELECT cluster_id, phash, COALESCE(ocr_text_hq, ocr_text, '') AS ocr"
-                " FROM lc_screens WHERE cluster_id IS NOT NULL"
+                "SELECT cluster_id FROM lc_screens WHERE cluster_id IS NOT NULL"
                 " ORDER BY discovered_at DESC LIMIT 1"
             ).fetchone()
             if last_screen:
                 _prev_cid = last_screen["cluster_id"]
-                _prev_ph = last_screen["phash"] or ""
-                _prev_norm = _normalize_text(last_screen["ocr"] or "")
 
             processed = 0
             for row in rows:
@@ -452,11 +446,12 @@ class BackgroundWorker:
                     # 2a) 直前がテキスト空 + phash 近い → 同じ場面、テキストあり側が代表に
                     # 2b) 直前がテキストあり + phash 近い + テキスト類似 → OCR 揺れ
                     _merge_to_prev = False
-                    if _prev_cid is not None and _prev_ph:
-                        d = phash_distance(_prev_ph, ph)
+                    if _prev_cid is not None and _prev_cid in rep_map:
+                        _rep_ph, _rep_title, _rep_norm = rep_map[_prev_cid]
+                        d = phash_distance(_rep_ph, ph) if _rep_ph else 999
                         _has_face = self._max_face_area(conn, sid) > 0
                         _ph_lim = 5 if _has_face else 20
-                        if not _prev_norm and d < _ph_lim:
+                        if not _rep_norm and d < _ph_lim:
                             # 直前テキスト空 + phash 近い → 統合 (テキストあり側が代表)
                             _merge_to_prev = True
                             old_rep_id = self._get_rep_id(conn, _prev_cid)
@@ -470,9 +465,7 @@ class BackgroundWorker:
                                     (old_rep_id,),
                                 )
                             rep_map[_prev_cid] = (ph, title, norm_text)
-                            _prev_ph = ph
-                            _prev_norm = norm_text
-                        elif _prev_norm and d < _ph_lim and _text_similarity(norm_text, _prev_norm) >= 0.5:
+                        elif _rep_norm and d < _ph_lim and _text_similarity(norm_text, _rep_norm) >= 0.5:
                             # テキスト類似 + phash 近い → OCR 揺れ
                             _merge_to_prev = True
                             conn.execute(
@@ -486,25 +479,20 @@ class BackgroundWorker:
                         )
                         rep_map[next_cid] = (ph, title, norm_text)
                         _prev_cid = next_cid
-                        _prev_ph = ph
-                        _prev_norm = norm_text
                         next_cid += 1
                 else:
-                    # 3) テキスト空 → 直前クラスタとのみ phash 比較 (連続性重視)
+                    # 3) テキスト空 → 直前クラスタ代表の phash と比較 (ドリフト防止)
                     _matched = False
-                    if _prev_cid is not None and _prev_ph:
-                        d = phash_distance(_prev_ph, ph)
-                        _has_face = self._max_face_area(conn, sid) > 0
-                        _ph_threshold = 20
-                        if d < _ph_threshold:
+                    if _prev_cid is not None and _prev_cid in rep_map:
+                        _rep_ph, _rep_title, _rep_norm = rep_map[_prev_cid]
+                        d = phash_distance(_rep_ph, ph) if _rep_ph else 999
+                        if d < 20:
                             # 代表交代判定: テキストあり > テキスト空 > 顔面積
                             old_rep_id = self._get_rep_id(conn, _prev_cid)
                             _should_promote = False
-                            if _is_meaningful and not _prev_norm:
-                                # テキストありが空代表に入った → 昇格
+                            if _is_meaningful and not _rep_norm:
                                 _should_promote = True
-                            elif not _is_meaningful and not _prev_norm:
-                                # 両方空 → 顔面積で判定
+                            elif not _is_meaningful and not _rep_norm:
                                 new_face = self._max_face_area(conn, sid)
                                 old_face = self._max_face_area(conn, old_rep_id) if old_rep_id else 0
                                 if new_face > old_face:
@@ -519,8 +507,6 @@ class BackgroundWorker:
                                     (old_rep_id,),
                                 )
                                 rep_map[_prev_cid] = (ph, title, norm_text)
-                                _prev_ph = ph
-                                _prev_norm = norm_text
                             else:
                                 conn.execute(
                                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
@@ -534,8 +520,6 @@ class BackgroundWorker:
                         )
                         rep_map[next_cid] = (ph, title, norm_text)
                         _prev_cid = next_cid
-                        _prev_ph = ph
-                        _prev_norm = norm_text
                         next_cid += 1
 
                 processed += 1
