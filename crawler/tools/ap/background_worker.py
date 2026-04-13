@@ -307,7 +307,7 @@ class BackgroundWorker:
         conn = self._get_conn()
         try:
             rows = conn.execute(
-                "SELECT id, phash, title FROM lc_screens"
+                "SELECT id, phash, title, ocr_text FROM lc_screens"
                 " WHERE cluster_id IS NULL AND phash IS NOT NULL AND phash != ''"
                 " ORDER BY discovered_at"
             ).fetchall()
@@ -316,13 +316,13 @@ class BackgroundWorker:
                 return
 
             existing_reps = conn.execute(
-                "SELECT cluster_id, phash, title FROM lc_screens"
+                "SELECT cluster_id, phash, title, ocr_text FROM lc_screens"
                 " WHERE is_representative = 1 AND phash IS NOT NULL"
                 " ORDER BY cluster_id"
             ).fetchall()
-            # rep_map: cluster_id → (phash, title)
-            rep_map: dict[int, tuple[str, str]] = {
-                r["cluster_id"]: (r["phash"], r["title"] or "")
+            # rep_map: cluster_id → (phash, title, ocr_text)
+            rep_map: dict[int, tuple[str, str, str]] = {
+                r["cluster_id"]: (r["phash"], r["title"] or "", r["ocr_text"] or "")
                 for r in existing_reps
             }
 
@@ -336,13 +336,17 @@ class BackgroundWorker:
                 sid = row["id"]
                 ph = row["phash"]
                 title = row["title"] or ""
+                ocr_text = row["ocr_text"] or ""
 
-                # 1) テキスト一致チェック（空タイトルやシーン名のみは除外）
-                _is_meaningful = len(title) > 5 and not title.startswith("(")
+                # テキストが意味のある内容かどうか
+                _is_meaningful = len(ocr_text) > 10
+                _title_meaningful = len(title) > 5 and not title.startswith("(")
+
+                # 1) テキスト一致チェック: ocr_text が同じなら同一画面
                 text_match_cid = None
                 if _is_meaningful:
-                    for cid, (rep_ph, rep_title) in rep_map.items():
-                        if rep_title == title:
+                    for cid, (rep_ph, rep_title, rep_ocr) in rep_map.items():
+                        if rep_ocr and rep_ocr == ocr_text:
                             text_match_cid = cid
                             break
 
@@ -355,12 +359,11 @@ class BackgroundWorker:
                 else:
                     # 2) phash フォールバック
                     # テキスト空同士は閾値を緩める (動画フレーム等の重複防止)
-                    _threshold = 20 if not _is_meaningful else _PHASH_CLUSTER_THRESHOLD
                     best_cid = None
                     best_dist = 999
-                    for cid, (rep_ph, rep_t) in rep_map.items():
+                    for cid, (rep_ph, rep_t, rep_ocr) in rep_map.items():
                         # テキスト空同士の緩和は、相手も空の場合のみ適用
-                        _t = 20 if (not _is_meaningful and (not rep_t or len(rep_t) <= 5 or rep_t.startswith("("))) else _PHASH_CLUSTER_THRESHOLD
+                        _t = 20 if (not _is_meaningful and not rep_ocr) else _PHASH_CLUSTER_THRESHOLD
                         if rep_ph:
                             d = phash_distance(rep_ph, ph)
                             if d < _t and d < best_dist:
@@ -374,7 +377,6 @@ class BackgroundWorker:
                             old_rep_id = self._get_rep_id(conn, best_cid)
                             old_face = self._max_face_area(conn, old_rep_id) if old_rep_id else 0
                             if new_face > old_face and old_rep_id:
-                                # 新画像の方が顔が大きい → 代表交代
                                 conn.execute(
                                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                                     (best_cid, sid),
@@ -383,7 +385,7 @@ class BackgroundWorker:
                                     "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
                                     (old_rep_id,),
                                 )
-                                rep_map[best_cid] = (ph, title)
+                                rep_map[best_cid] = (ph, title, ocr_text)
                             else:
                                 conn.execute(
                                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
@@ -400,7 +402,7 @@ class BackgroundWorker:
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                             (next_cid, sid),
                         )
-                        rep_map[next_cid] = (ph, title)
+                        rep_map[next_cid] = (ph, title, ocr_text)
                         next_cid += 1
 
                 processed += 1
