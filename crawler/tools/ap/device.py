@@ -662,47 +662,33 @@ def tap_device(x: int, y: int, state, desc: str = "",
     if getattr(state, "tap_suppressed", False):
         logger.info("  [TAP:DENY] (%d,%d) | %s (MOVIE遷移直後タップ抑制)", x, y, desc)
         return
-    # ── スクリーン記録: タップ直前に新規スクショ撮影 + 強制保存 + 遷移記録 ──
-    # ゲーム起動前はスクショ記録しない
+    # ── スクリーン記録: タップ直前の画面を記録 (OCR 再実行なし、高速) ──
     _rec = getattr(state, "recorder", None)
     if _rec is not None and getattr(state, "game_foreground", False):
         try:
-            # ループ開始時の画像を使用
-            # (撮り直すと adb tap の非同期処理で画面遷移後を拾うリスクがある)
             _analysis = getattr(state, "last_analysis_path", None)
             # 暗転・白飛びスキップ
+            _skip_rec = False
             if _analysis and Path(str(_analysis)).exists():
                 import numpy as np
                 _chk = cv2.imread(str(_analysis))
                 if _chk is not None:
                     _br = np.mean(cv2.cvtColor(_chk, cv2.COLOR_BGR2GRAY))
                     if _br <= 5 or _br >= 240:
-                        raise ValueError("brightness skip")
-            # phash を画像から直接計算
-            _phash = ""
-            if _analysis and Path(str(_analysis)).exists():
-                from tools.ap.image_proc import compute_phash
-                _phash = compute_phash(str(_analysis)) or ""
-            # OCR を最新化
-            _ocr_for_rec = getattr(state, "last_ocr_results", [])
-            if _analysis and Path(str(_analysis)).exists():
-                try:
-                    from lc.ocr import run_ocr
-                    from tools.ap.constants import OCR_LANG, OCR_MIN_CONF
-                    _fresh_ocr = run_ocr(str(_analysis), lang=OCR_LANG,
-                                         min_confidence=OCR_MIN_CONF)
-                    if _fresh_ocr:
-                        _ocr_for_rec = _fresh_ocr
-                        state.last_ocr_results = _ocr_for_rec
-                except Exception:
-                    pass
-            _rec.maybe_record(
-                _analysis,
-                _ocr_for_rec,
-                getattr(state, "current_scene", "UNKNOWN"),
-                _phash,
-                force=True,
-            )
+                        _skip_rec = True
+            if not _skip_rec:
+                _phash = ""
+                if _analysis and Path(str(_analysis)).exists():
+                    from tools.ap.image_proc import compute_phash
+                    _phash = compute_phash(str(_analysis)) or ""
+                # OCR はメインループで実行済みの結果を使用 (再実行しない)
+                _rec.maybe_record(
+                    _analysis,
+                    getattr(state, "last_ocr_results", []),
+                    getattr(state, "current_scene", "UNKNOWN"),
+                    _phash,
+                    force=True,
+                )
             # 遷移グラフ: from 画面が記録済みなら遷移を登録
             _last_id = _rec._last_inserted_id
             _last_fp = _rec._last_recorded_fp
