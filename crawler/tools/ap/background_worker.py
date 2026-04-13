@@ -37,6 +37,22 @@ _SCENE_LABELS = {
 }
 
 
+def _normalize_text(text: str) -> str:
+    """OCR テキストの揺れを正規化して比較用文字列を生成。"""
+    import re
+    import unicodedata
+    # Unicode 正規化 (全角英数→半角、半角カナ→全角 等)
+    t = unicodedata.normalize("NFKC", text)
+    # 三点リーダ / 中黒の揺れを統一
+    t = t.replace("…", "...").replace("・・・", "...").replace("・・", "..")
+    # 連続ドット・スペースを正規化
+    t = re.sub(r'\.{2,}', '...', t)
+    t = re.sub(r'\s+', ' ', t).strip()
+    # 記号揺れ: 全角記号を半角に
+    t = t.replace("＋", "+").replace("＆", "&").replace("！", "!").replace("？", "?")
+    return t
+
+
 class BackgroundWorker:
     """auto_pilot と並行動作するバックグラウンド処理ワーカー。"""
 
@@ -320,9 +336,9 @@ class BackgroundWorker:
                 " WHERE is_representative = 1 AND phash IS NOT NULL"
                 " ORDER BY cluster_id"
             ).fetchall()
-            # rep_map: cluster_id → (phash, title, ocr_text)
+            # rep_map: cluster_id → (phash, title, normalized_ocr_text)
             rep_map: dict[int, tuple[str, str, str]] = {
-                r["cluster_id"]: (r["phash"], r["title"] or "", r["ocr_text"] or "")
+                r["cluster_id"]: (r["phash"], r["title"] or "", _normalize_text(r["ocr_text"] or ""))
                 for r in existing_reps
             }
 
@@ -337,16 +353,16 @@ class BackgroundWorker:
                 ph = row["phash"]
                 title = row["title"] or ""
                 ocr_text = row["ocr_text"] or ""
+                norm_text = _normalize_text(ocr_text)
 
                 # テキストが意味のある内容かどうか
-                _is_meaningful = len(ocr_text) > 10
-                _title_meaningful = len(title) > 5 and not title.startswith("(")
+                _is_meaningful = len(norm_text) > 10
 
-                # 1) テキスト一致チェック: ocr_text が同じなら同一画面
+                # 1) テキスト一致チェック: 正規化後の ocr_text が同じなら同一画面
                 text_match_cid = None
                 if _is_meaningful:
-                    for cid, (rep_ph, rep_title, rep_ocr) in rep_map.items():
-                        if rep_ocr and rep_ocr == ocr_text:
+                    for cid, (rep_ph, rep_title, rep_norm) in rep_map.items():
+                        if rep_norm and rep_norm == norm_text:
                             text_match_cid = cid
                             break
 
@@ -391,7 +407,7 @@ class BackgroundWorker:
                                 "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
                                 (old_rep_id,),
                             )
-                            rep_map[best_cid] = (ph, title, ocr_text)
+                            rep_map[best_cid] = (ph, title, norm_text)
                         else:
                             conn.execute(
                                 "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
@@ -403,7 +419,7 @@ class BackgroundWorker:
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                             (next_cid, sid),
                         )
-                        rep_map[next_cid] = (ph, title, ocr_text)
+                        rep_map[next_cid] = (ph, title, norm_text)
                         next_cid += 1
 
                 processed += 1
