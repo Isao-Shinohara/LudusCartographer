@@ -206,12 +206,8 @@ class ScreenRecorder:
 
         _brightness = float(np.mean(cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY)))
 
-        # 完全暗転 (brightness <= 5) のみスキップ。ロゴは暗めでも保存する
-        if _brightness <= _MIN_BRIGHTNESS:
-            self._startup_last_brightness = _brightness
-            if phash:
-                self._startup_last_phash = phash
-            return False
+        # 暗転判定はメインループの is_dark_screen_startup (max==min) で実施済み。
+        # ここに到達した時点で暗転ではないことが保証されている。
 
         # 変化判定: phash または brightness がわずかでも変わったら保存
         _changed = False

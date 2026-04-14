@@ -325,6 +325,24 @@ def is_dark_screen(img_path: Path) -> bool:
     return _is_dark
 
 
+def is_dark_screen_startup(img_path: Path) -> bool:
+    """起動シーン専用の暗転判定 — 全ピクセル同一値 (max==min) で判定。
+
+    起動時はロゴ画面 (ANIPLEX, Pokelabo 等) を暗転と誤判定しないよう、
+    全ピクセルが完全に同一値の場合のみ暗転とみなす。
+    """
+    try:
+        img = cv2.imread(str(img_path))
+        if img is None:
+            return True
+        _is_dark = int(img.max()) == int(img.min())
+        if _is_dark:
+            logger.debug("[DarkScreenStartup] 全ピクセル同一値 (val=%d) → 暗転", int(img.max()))
+        return _is_dark
+    except Exception:
+        return True
+
+
 def prepare_analysis_image(img_path: Path, actual_w: int, actual_h: int) -> Path:
     # actual_w/h (デバイス解像度) ではなく画像ファイルの実サイズで判定する。
     # scrcpy キャプチャは --max-size でリサイズされるためデバイス解像度と異なる。

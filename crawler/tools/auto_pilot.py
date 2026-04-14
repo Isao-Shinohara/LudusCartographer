@@ -191,7 +191,7 @@ _pilot_state_ref: Optional["PilotState"] = None
 
 # ─── 画像処理: ap/image_proc.py から import ───
 from tools.ap.image_proc import (  # noqa: E402
-    detect_game_roi, roi_to_device, is_dark_screen, get_screen_p90, is_tutorial_walk_scene,
+    detect_game_roi, roi_to_device, is_dark_screen, is_dark_screen_startup, get_screen_p90, is_tutorial_walk_scene,
     detect_gacha_orbs, is_gacha_scene,
     prepare_analysis_image,
     detect_white_hand_pointer, create_finger_mask_image,
@@ -2782,7 +2782,12 @@ def main():
                 continue
 
         # ── 2) 暗転検出 ──
-        if is_dark_screen(img_path):
+        # startup_phase 中はロゴ (ANIPLEX, Pokelabo 等) を撮るため
+        # 全ピクセル同一値 (max==min) の厳格判定を使用
+        _is_dark = (is_dark_screen_startup(img_path)
+                    if getattr(state, "startup_phase", False)
+                    else is_dark_screen(img_path))
+        if _is_dark:
             # チュートリアルウォーク（暗い廊下）は暗転ではない → スワイプで進行
             # バトル等の暗い画面で誤検出しないようテンプレートで除外
             _is_walk = False
@@ -2845,8 +2850,9 @@ def main():
 
         # ── 2.3) 暗背景 + OCR 0件連続 → OCR スキップ (トークン節約) ──
         # p90=6〜20 の薄暗い画面で OCR が空振りし続ける場合、phash 変化待ちのみに切り替える
+        # startup_phase 中はロゴ画面を取りこぼさないようスキップしない
         _p90 = get_screen_p90(img_path)
-        if _p90 <= BLACKOUT_BRIGHTNESS:
+        if _p90 <= BLACKOUT_BRIGHTNESS and not getattr(state, "startup_phase", False):
             if state.dark_ocr_empty_count >= 2:
                 # 既に2回以上 OCR 0件 → phash のみで待機
                 try:

@@ -453,10 +453,7 @@ class BackgroundWorker:
                 ocr_text = row["ocr"] or ""
                 norm_text = _normalize_text(ocr_text)
 
-                # 日本語（ひらがな/カタカナ/漢字）を2文字以上含めば meaningful
-                import re
-                _ja_chars = re.findall(r'[\u3040-\u9fff]', norm_text)
-                _is_meaningful = len(_ja_chars) >= 2 or len(norm_text) > 10
+                _is_meaningful = len(norm_text) > 0
 
                 # 1) テキスト一致チェック (グローバル): 同じテキストなら同一画面
                 text_match_cid = None
