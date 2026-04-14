@@ -3808,24 +3808,16 @@ def main():
         state.last_ocr_texts = texts
 
         # ── Android システムダイアログ検出 (「応答していません」等) ──
+        # このダイアログはポートレート表示のため OCR 座標 (analysis 画像ベース) は使えない。
+        # 実機の物理座標で「待機」ボタンを直接タップする。
         _sys_dialog = any("応答していません" in t for t in texts)
         if _sys_dialog:
-            # 「待機」をタップ (「アプリを閉じる」の下にある)
-            _wait_item = next((r for r in ocr_results if "待機" in r.get("text", "")), None)
-            if _wait_item:
-                _wx, _wy = _wait_item["center"]
-                logger.info("[SYS_DIALOG] 「応答していません」→ 待機タップ (%d,%d)", _wx, _wy)
-                adb(f"shell input tap {_wx} {_wy}")
-            else:
-                # OCR で「待機」が取れない場合、「アプリを閉じる」の下をタップ
-                _close_item = next((r for r in ocr_results if "閉じる" in r.get("text", "")), None)
-                if _close_item:
-                    _cx, _cy = _close_item["center"]
-                    _wy = _cy + 120  # 「閉じる」の下に「待機」がある
-                    logger.info("[SYS_DIALOG] 「応答していません」→ 待機推定タップ (%d,%d)", _cx, _wy)
-                    adb(f"shell input tap {_cx} {_wy}")
-                else:
-                    logger.warning("[SYS_DIALOG] 「応答していません」検出だが待機位置不明")
+            # 実機ポートレート座標: 画面中央 x=540, 「待機」は画面高さの約 1/3 付近
+            _dev_w, _dev_h = _ap_device.DEVICE_W, _ap_device.DEVICE_H
+            _wait_x = min(_dev_w, _dev_h) // 2  # ポートレート幅の中央
+            _wait_y = int(max(_dev_w, _dev_h) * 0.32)  # 「待機」の位置
+            logger.info("[SYS_DIALOG] 「応答していません」→ 待機タップ (実機座標 %d,%d)", _wait_x, _wait_y)
+            adb(f"shell input tap {_wait_x} {_wait_y}")
             time.sleep(2)
             state.last_phash = ""
             continue
