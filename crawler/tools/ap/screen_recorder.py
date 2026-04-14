@@ -200,11 +200,6 @@ class ScreenRecorder:
         if not img_path or not Path(img_path).exists():
             return False
 
-        # ADB フォールバック画像はステータスバーが映るため記録しない
-        from tools.ap.device import is_last_screenshot_from_scrcpy
-        if not is_last_screenshot_from_scrcpy():
-            return False
-
         _img = cv2.imread(str(img_path))
         if _img is None:
             return False
@@ -292,11 +287,6 @@ class ScreenRecorder:
 
         # Android システムダイアログはゲーム画面ではないので常にスキップ (force含む)
         if ocr_results and any("応答していません" in r.get("text", "") for r in ocr_results):
-            return False
-
-        # ADB フォールバック画像はステータスバーが映るため記録しない
-        from tools.ap.device import is_last_screenshot_from_scrcpy
-        if not force and not is_last_screenshot_from_scrcpy():
             return False
 
         if not force:

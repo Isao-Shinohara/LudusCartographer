@@ -295,9 +295,10 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
         _find_scrcpy_window_id()
         _LAST_SCRCPY_BGR = None
         return None
-    # 真っ黒チェック: Quartz が映像を取得できていない場合 (別デスクトップ等)
-    if float(bgr.mean()) < 0.5:
-        logger.warning("[SCRCPY] キャプチャが真っ黒 (mean=%.1f) → ADB フォールバック", float(bgr.mean()))
+    # 真っ黒チェック: Quartz が映像を取得できていない場合 (全ピクセル同一 = 映像なし)
+    # mean ではなく std で判定: ロゴ等の暗い画面は明暗差があるため std > 0
+    if float(bgr.std()) < 1.0:
+        logger.warning("[SCRCPY] キャプチャが真っ黒 (std=%.2f) → ADB フォールバック", float(bgr.std()))
         _LAST_SCRCPY_BGR = None
         return None
     # 最低サイズチェック: ウィンドウが小さすぎる → ADB フォールバック
