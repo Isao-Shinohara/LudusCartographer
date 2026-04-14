@@ -285,6 +285,10 @@ class ScreenRecorder:
         すべてスキップし、必ず保存する。
         """
 
+        # Android システムダイアログはゲーム画面ではないので常にスキップ (force含む)
+        if ocr_results and any("応答していません" in r.get("text", "") for r in ocr_results):
+            return False
+
         if not force:
             # 0. タップ後クールダウン: 保存のみスキップ (phash 追跡は呼び出し元で継続)
             if self._last_tap_time > 0 and (time.time() - self._last_tap_time) < self._TAP_COOLDOWN:
