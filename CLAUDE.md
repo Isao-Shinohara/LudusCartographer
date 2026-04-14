@@ -296,14 +296,14 @@ macOS 26 の Vision framework が Terminal フォアグラウンドプロセス�
 SIGBUS クラッシュするため、スクリプト内部で `nohup` バックグラウンド実行する。
 
 ```bash
-# 途中再開
-./crawler/tools/run_autopilot.sh
+# 途中再開 (スクリーン記録有効)
+./crawler/tools/run_autopilot.sh -S -s
 
 # 新規アカウント
-./crawler/tools/run_autopilot.sh -r
+./crawler/tools/run_autopilot.sh -S -s -r
 
 # 3周回
-./crawler/tools/run_autopilot.sh -c 3
+./crawler/tools/run_autopilot.sh -S -s -c 3
 
 # 停止
 pkill -f auto_pilot.py

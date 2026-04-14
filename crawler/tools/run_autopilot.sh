@@ -4,11 +4,17 @@
 # SIGBUS クラッシュするため、nohup でバックグラウンド実行する。
 #
 # 使い方:
-#   ./tools/run_autopilot.sh                  # 途中再開
-#   ./tools/run_autopilot.sh -r               # 新規アカウント (--reinstall)
-#   ./tools/run_autopilot.sh -c 3             # 3周回 (--cycles)
-#   ./tools/run_autopilot.sh -c 0             # 無限周回
+#   ./tools/run_autopilot.sh -S -s            # 途中再開 (スクリーン記録有効)
+#   ./tools/run_autopilot.sh -S -s -r         # 新規アカウント (--reinstall)
+#   ./tools/run_autopilot.sh -S -s -c 3       # 3周回 (--cycles)
+#   ./tools/run_autopilot.sh -S -s -c 0       # 無限周回
 #   ./tools/run_autopilot.sh --help           # ヘルプ表示
+#
+# オプション:
+#   -S, --screenshot   スクリーン記録を有効化（UI地図の構築に必須）
+#   -s, --stop-on-home ホーム画面到達で停止
+#   -r, --reinstall    アプリを再インストールして新規アカウントで開始
+#   -c N, --cycles N   N周回実行 (0 = 無限)
 #
 # Ctrl+C で自動操縦も停止します。
 #

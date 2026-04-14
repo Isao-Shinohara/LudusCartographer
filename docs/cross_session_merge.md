@@ -141,6 +141,8 @@ LudusCartographer は周回ごとにセッションを生成し、各セッシ�
 
 ```bash
 # セッション別クラスタリング（自動）
+# -S: スクリーン記録有効（UI地図構築に必須）
+# -s: ホーム画面到達で停止
 auto_pilot.py -S -s   # BackgroundWorker が session_id 付きで動作
 
 # マスターグラフ再構築（手動）
