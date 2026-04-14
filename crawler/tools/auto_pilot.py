@@ -3807,6 +3807,29 @@ def main():
                     scene, i, dist, state.same_phash_count, len(ocr_results), texts[:8])
         state.last_ocr_texts = texts
 
+        # ── Android システムダイアログ検出 (「応答していません」等) ──
+        _sys_dialog = any("応答していません" in t for t in texts)
+        if _sys_dialog:
+            # 「待機」をタップ (「アプリを閉じる」の下にある)
+            _wait_item = next((r for r in ocr_results if "待機" in r.get("text", "")), None)
+            if _wait_item:
+                _wx, _wy = _wait_item["center"]
+                logger.info("[SYS_DIALOG] 「応答していません」→ 待機タップ (%d,%d)", _wx, _wy)
+                adb(f"shell input tap {_wx} {_wy}")
+            else:
+                # OCR で「待機」が取れない場合、「アプリを閉じる」の下をタップ
+                _close_item = next((r for r in ocr_results if "閉じる" in r.get("text", "")), None)
+                if _close_item:
+                    _cx, _cy = _close_item["center"]
+                    _wy = _cy + 120  # 「閉じる」の下に「待機」がある
+                    logger.info("[SYS_DIALOG] 「応答していません」→ 待機推定タップ (%d,%d)", _cx, _wy)
+                    adb(f"shell input tap {_cx} {_wy}")
+                else:
+                    logger.warning("[SYS_DIALOG] 「応答していません」検出だが待機位置不明")
+            time.sleep(2)
+            state.last_phash = ""
+            continue
+
         # ── キャラ獲得画面検出: MOVIE と混同しやすいため先に判定 ──
         # 特徴: 左下にキャラ名 + "のキオク"(メモリア名) + 属性アイコン2つ
         # NEW! は初回のみ表示されるため判定に使わない
