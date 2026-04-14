@@ -38,16 +38,20 @@ _SCENE_LABELS = {
 
 
 def _text_similarity(a: str, b: str) -> float:
-    """2つのテキストの Jaccard 類似度 (トークンベース)。0.0〜1.0。"""
+    """2つのテキストの類似度 (文字レベル)。0.0〜1.0。
+
+    difflib.SequenceMatcher を使い、日本語テキストでも正しく動作する。
+    短文 (5文字以下) は完全一致のみ 1.0 を返す (OCR 誤読の誤マージ防止)。
+    """
     if not a or not b:
         return 0.0
-    tokens_a = set(a.split())
-    tokens_b = set(b.split())
-    if not tokens_a or not tokens_b:
+    if a == b:
+        return 1.0
+    # 短文ガード: 5文字以下は完全一致のみ
+    if min(len(a), len(b)) <= 5:
         return 0.0
-    intersection = tokens_a & tokens_b
-    union = tokens_a | tokens_b
-    return len(intersection) / len(union)
+    from difflib import SequenceMatcher
+    return SequenceMatcher(None, a, b, autojunk=False).ratio()
 
 
 def _normalize_text(text: str) -> str:
@@ -63,6 +67,8 @@ def _normalize_text(text: str) -> str:
     t = re.sub(r'\s+', ' ', t).strip()
     # 記号揺れ: 全角記号を半角に
     t = t.replace("＋", "+").replace("＆", "&").replace("！", "!").replace("？", "?")
+    # 句読点・記号を除去 (OCR 誤読が多い文末記号の揺れを吸収)
+    t = re.sub(r'[、。,.!?…・\-―~～\s]+$', '', t)
     return t
 
 
