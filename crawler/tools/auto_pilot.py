@@ -1192,20 +1192,6 @@ def handle_movie(img_path: Path, state: PilotState, dist: int,
         time.sleep(1.0)
         return True
 
-    # ── -S モード: 動画中のセリフ変化を OCR でキャプチャ ──
-    # phash が変化 (dist >= 8) かつ recorder が有効なら OCR を走らせて記録
-    _rec = getattr(state, "recorder", None)
-    if _rec is not None and dist >= 1 and img_path:
-        try:
-            _movie_ocr = run_ocr(str(img_path), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
-            _movie_phash = cur_phash or ""
-            _recorded = _rec.maybe_record(img_path, _movie_ocr, "MOVIE", _movie_phash)
-            if _recorded:
-                _movie_texts = [r.get("text", "") for r in _movie_ocr[:3]]
-                logger.debug("[MOVIE_REC] 記録: %s", " | ".join(_movie_texts))
-        except Exception as e:
-            logger.warning("[MOVIE_REC] 例外: %s (img=%s)", e, img_path)
-
     # ── 非MOVIEシーン早期脱出: テンプレで確認 ──
     # 条件1: dist < 5 が3回続く (phash安定)
     # 条件2: 連続待機30回(~18秒)超過時は毎30回ごとにチェック (微動画面の誤MOVIE対策)
@@ -2103,8 +2089,8 @@ def _reinstall_from_play_store(serial: str, package: str) -> None:
                 for kw in ("緊急通報", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日", "日曜日")
             )
             if _is_shade:
-                logger.warning("[REINSTALL] 通知シェード/ロック画面検出 → 閉じて Play Store 再表示")
-                adb(f"-s {serial} shell service call statusbar 2")  # 通知シェードを閉じる
+                logger.warning("[REINSTALL] 通知シェード/ロック画面検出 → 上スワイプで閉じて Play Store 再表示")
+                adb(f"-s {serial} shell input swipe 540 1000 540 100 200")  # 上スワイプで通知シェードを閉じる
                 time.sleep(1)
             else:
                 logger.warning("[REINSTALL] まどドラのページではない (OCR: %s) → Play Store 再表示",
@@ -2484,7 +2470,7 @@ def main():
         state.recorder = recorder
         # バックグラウンドワーカー起動 (間引き + OCR 再処理)
         from tools.ap.background_worker import BackgroundWorker
-        bg_worker = BackgroundWorker(db_path=_STATE_DB_PATH)
+        bg_worker = BackgroundWorker(db_path=_STATE_DB_PATH, session_id=_rec_session)
         bg_worker.start()
 
     # ── 周回数リセット (起動ごと) ──
@@ -2602,6 +2588,13 @@ def main():
     _was_portrait = False
     for _orient_wait in range(10):
         _ss_check = take_screenshot()
+        # 起動シーン記録: -r / 新規周回時のみランドスケープ待機中にロゴ等をキャプチャ
+        if recorder is not None and args.reinstall and _ss_check[0] is not None and _ss_check[1] > _ss_check[2]:
+            try:
+                _startup_ph = compute_phash(_ss_check[0])
+            except Exception:
+                _startup_ph = ""
+            recorder.record_startup(_ss_check[0], _startup_ph)
         if _ss_check[0] is not None and _ss_check[1] > _ss_check[2]:
             logger.info("[STARTUP] ランドスケープ確認 (%dx%d)", _ss_check[1], _ss_check[2])
             # ポートレートを経由した場合のみ scrcpy 再起動 (ウィンドウ縮小復帰)
@@ -2627,15 +2620,11 @@ def main():
         time.sleep(2)
 
     # ── ステータスバー非表示 (スクショへの「緊急通報のみ」等の写り込み防止) ──
-    adb("shell settings put global policy_control immersive.status=*")
-    logger.info("[STARTUP] ステータスバー非表示 (immersive mode)")
+    adb("shell settings put global policy_control immersive.full=*")
+    logger.info("[STARTUP] ステータスバー+ナビバー非表示 (immersive.full mode)")
     state.game_foreground = True  # ゲーム起動確認済み → スクショ記録を許可
-
-    # scrcpy フォールバック制御: メインループ開始直前にリセット
-    # (ランドスケープ確認の take_screenshot で _scrcpy_ever_changed が True になるため)
-    import tools.ap.device as _ap_device_mod
-    _ap_device_mod._scrcpy_ever_changed = False
-    _ap_device_mod._scrcpy_black_since = 0
+    # 起動シーン記録: -r (新規) のみ有効。途中再開はタイトル画面を通らないため不要
+    state.startup_phase = args.reinstall if recorder is not None else False
 
     i = 0
     while True:
@@ -2819,28 +2808,7 @@ def main():
                 state.consecutive_blackouts = 0
                 state.last_phash = ""
                 continue
-            # -S モード: 暗転中でもスプラッシュ等をキャプチャ
-            # phash 変化時のみ OCR を実行 (完全暗転の連続は高速スキップ)
-            if recorder is not None and state.game_foreground and img_path:
-                try:
-                    _dark_analysis = prepare_analysis_image(img_path, actual_w, actual_h)
-                    _dark_phash = compute_phash(_dark_analysis) or ""
-                    _dark_prev = getattr(state, "_dark_last_phash", "")
-                    _dark_changed = _dark_prev != _dark_phash
-                    state._dark_last_phash = _dark_phash
-                    if _dark_changed and _dark_phash:
-                        _dark_ocr = run_ocr(str(_dark_analysis), lang=OCR_LANG, min_confidence=OCR_MIN_CONF)
-                        if _dark_ocr:
-                            recorder.maybe_record(_dark_analysis, _dark_ocr, state.current_scene, _dark_phash)
-                        else:
-                            # OCR テキストなしでも画面変化があれば記録 (ロゴ等)
-                            _dark_img = cv2.imread(str(_dark_analysis))
-                            if _dark_img is not None:
-                                _dark_br = np.mean(cv2.cvtColor(_dark_img, cv2.COLOR_BGR2GRAY))
-                                if _dark_br > 3.0:
-                                    recorder.maybe_record(_dark_analysis, [], state.current_scene, _dark_phash)
-                except Exception:
-                    pass
+            # (スプラッシュ撮影は起動時の _capture_startup_screens で対応)
             state.total_blackout_skipped += 1
             state.consecutive_blackouts += 1
             if state.total_blackout_skipped % 5 == 1:
@@ -2898,6 +2866,9 @@ def main():
                     # fall through to normal processing
                 else:
                     # 画面変化なし → OCR スキップして待機
+                    # 起動シーン中はロゴキャプチャのため record_startup を呼ぶ
+                    if recorder is not None and getattr(state, "startup_phase", False):
+                        recorder.record_startup(img_path, cur_phash)
                     state.last_phash = cur_phash
                     state.last_screen_change_time = time.time()  # Watchdog抑制
                     time.sleep(0.5)
@@ -3861,9 +3832,24 @@ def main():
             state.last_phash = ""
             continue
 
-        # ── スクリーン記録 (通常: 新規画面の検出・記録) ──
+        # ── スクリーン記録 ──
         if recorder is not None and state.game_foreground:
-            recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash)
+            # 起動シーン終了判定: タイトル画面 or MENU到達で通常記録に移行
+            _startup_just_ended = False
+            if getattr(state, "startup_phase", False) and scene == "MENU":
+                state.startup_phase = False
+                _startup_just_ended = True
+                logger.info("[STARTUP] MENU画面到達 → 起動シーン記録モード終了")
+            if getattr(state, "startup_phase", False):
+                # 起動シーン記録: タイトル画面到達まで phash/brightness 変化で撮影
+                recorder.record_startup(img_path, cur_phash)
+            # NOTE: メインループの maybe_record を復帰。
+            # タップ後2秒間は保存スキップ (tap_device の force 記録と重複防止)。
+            # 間引き側でテキスト長い方を代表に採用するため、セリフ途中/完了の逆転も解消。
+            elif not _startup_just_ended:
+                from tools.ap.device import get_raw_screenshot_path
+                recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash,
+                                      original_path=get_raw_screenshot_path())
 
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         # MOVIE→UNKNOWN 遷移直後: テンプレ誤マッチによるタップを抑制
@@ -3979,6 +3965,11 @@ def main():
             state.reset_for_new_cycle()
             reset_device_cache()
             clear_imread_cache()
+            # 新規周回 → 起動シーン記録モード ON
+            if recorder is not None:
+                state.startup_phase = True
+                recorder._startup_last_phash = ""
+                recorder._startup_last_brightness = 0.0
             logger.info("[GRIND] 状態リセット完了 → 周回 #%d 開始",
                         state.grind_cycles_completed + 1)
         # 副作用アクション以外なら代替候補を収集

@@ -12,6 +12,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -38,8 +39,6 @@ DEVICE_SERIAL = ""   # main() で設定される
 SCRCPY_DEVICE = ""   # main() で DEVICE_SERIAL から動的設定
 _SCRCPY_WINDOW_ID: int = 0   # キャッシュ (0=未取得)
 _LAST_SCRCPY_BGR: Optional[np.ndarray] = None  # scrcpy キャプチャの BGR キャッシュ (二重読み防止)
-_scrcpy_black_since: float = 0  # scrcpy 真っ黒が始まった時刻 (0=非黒)
-_scrcpy_ever_changed: bool = False  # phash に一度でも変化があったか
 _SCRCPY_FAIL_COUNT: int = 0  # scrcpy キャプチャ連続失敗回数 (自動復帰用)
 _SCRCPY_FAIL_RESTART_THRESHOLD: int = 3  # N回連続失敗でscrcpy再起動
 _SCRCPY_LAST_RESTART: float = 0.0  # 最後にscrcpyを再起動した時刻
@@ -296,24 +295,11 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
         _find_scrcpy_window_id()
         _LAST_SCRCPY_BGR = None
         return None
-    # 真っ黒チェック: phash 変化後に 3秒連続真っ黒で ADB フォールバック
-    # 起動直後〜最初の画面変化まではフォールバックしない (ロゴ高速キャプチャ)
-    global _scrcpy_black_since, _scrcpy_ever_changed
+    # 真っ黒チェック: Quartz が映像を取得できていない場合 (別デスクトップ等)
     if float(bgr.mean()) < 0.5:
-        if _scrcpy_ever_changed:
-            # 一度変化があった後の真っ黒 → 3秒でフォールバック
-            _now = time.time()
-            if _scrcpy_black_since == 0:
-                _scrcpy_black_since = _now
-            if _now - _scrcpy_black_since >= 3.0:
-                logger.warning("[SCRCPY] キャプチャが真っ黒 3秒超 (mean=%.1f) → ADB フォールバック", float(bgr.mean()))
-                _LAST_SCRCPY_BGR = None
-                return None
-        # フォールバックしない → scrcpy の黒画像をそのまま返す
-    else:
-        _scrcpy_black_since = 0
-        if float(bgr.mean()) >= 5.0:
-            _scrcpy_ever_changed = True
+        logger.warning("[SCRCPY] キャプチャが真っ黒 (mean=%.1f) → ADB フォールバック", float(bgr.mean()))
+        _LAST_SCRCPY_BGR = None
+        return None
     # 最低サイズチェック: ウィンドウが小さすぎる → ADB フォールバック
     # (ランドスケープ確認後のscrcpy再起動で復帰する)
     _MIN_CAPTURE_W = 720
@@ -391,6 +377,23 @@ def _take_screenshot_adb(path: Path, retries: int = 3,
     return None, 0, 0, _retried
 
 
+# ── 生画像保持: リサイズ前の実機解像度画像を保存 (スクリーン記録用) ──
+_RAW_SCREENSHOT_PATH = Path(tempfile.gettempdir()) / "ap_raw_screenshot.png"
+
+
+def _save_raw_copy(path: Path) -> None:
+    """リサイズ前のスクショを別パスにコピー (スクリーン記録で高解像度保存するため)。"""
+    try:
+        shutil.copy2(str(path), str(_RAW_SCREENSHOT_PATH))
+    except Exception:
+        pass
+
+
+def get_raw_screenshot_path() -> Optional[Path]:
+    """最新の生画像パスを返す。存在しなければ None。"""
+    return _RAW_SCREENSHOT_PATH if _RAW_SCREENSHOT_PATH.exists() else None
+
+
 def _ensure_analysis_size(path: Path) -> None:
     """スクショファイルが ANALYSIS_W x ANALYSIS_H でなければリサイズして上書き。
 
@@ -432,6 +435,7 @@ def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[
     _scrcpy = _take_screenshot_scrcpy(path)
     if _scrcpy is not None:
         _SCRCPY_FAIL_COUNT = 0
+        _save_raw_copy(_scrcpy[0])
         _ensure_analysis_size(_scrcpy[0])
         return _scrcpy[0], _scrcpy[1], _scrcpy[2], 0
 
@@ -452,6 +456,7 @@ def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[
     # ── Tier 2: adb screencap フォールバック ──
     _result = _take_screenshot_adb(path, retries=retries, min_bytes=min_bytes)
     if _result[0] is not None:
+        _save_raw_copy(_result[0])
         _ensure_analysis_size(_result[0])
     return _result
 
@@ -677,11 +682,18 @@ def tap_device(x: int, y: int, state, desc: str = "",
     if getattr(state, "tap_suppressed", False):
         logger.info("  [TAP:DENY] (%d,%d) | %s (MOVIE遷移直後タップ抑制)", x, y, desc)
         return
-    # ── スクリーン記録: タップ直前の画面を記録 (OCR 再実行なし、高速) ──
+    # ── スクリーン記録: タップ直前の画面を記録 ──
     _rec = getattr(state, "recorder", None)
     if _rec is not None and getattr(state, "game_foreground", False):
         try:
-            _analysis = getattr(state, "last_analysis_path", None)
+            # -S モード: セリフ表示完了を待ってからスクショ取得
+            time.sleep(1.0)
+            _tap_img, _tap_w, _tap_h, _ = take_screenshot()
+            if _tap_img is not None:
+                from tools.ap.image_proc import prepare_analysis_image
+                _analysis = prepare_analysis_image(Path(_tap_img), _tap_w, _tap_h)
+            else:
+                _analysis = getattr(state, "last_analysis_path", None)
             # 暗転・白飛びスキップ
             _skip_rec = False
             if _analysis and Path(str(_analysis)).exists():
@@ -696,14 +708,19 @@ def tap_device(x: int, y: int, state, desc: str = "",
                 if _analysis and Path(str(_analysis)).exists():
                     from tools.ap.image_proc import compute_phash
                     _phash = compute_phash(str(_analysis)) or ""
-                # OCR はメインループで実行済みの結果を使用 (再実行しない)
+                # タップ直前の新しい画像で OCR も再実行
+                from lc.ocr import run_ocr
+                _tap_ocr = run_ocr(str(_analysis)) if _analysis else []
                 _rec.maybe_record(
                     _analysis,
-                    getattr(state, "last_ocr_results", []),
+                    _tap_ocr,
                     getattr(state, "current_scene", "UNKNOWN"),
                     _phash,
                     force=True,
+                    original_path=get_raw_screenshot_path(),
                 )
+            # タップ後クールダウン開始 (通常記録を2秒間抑制)
+            _rec._last_tap_time = time.time()
             # 遷移グラフ: from 画面が記録済みなら遷移を登録
             _last_id = _rec._last_inserted_id
             _last_fp = _rec._last_recorded_fp

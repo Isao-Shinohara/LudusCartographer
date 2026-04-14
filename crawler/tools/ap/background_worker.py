@@ -72,12 +72,14 @@ class BackgroundWorker:
     def __init__(
         self,
         db_path: Path,
+        session_id: Optional[str] = None,
         interval_dedup: float = 15.0,
         interval_ocr: float = 0.5,
         interval_group: float = 30.0,
         interval_graph: float = 120.0,
     ):
         self._db_path = db_path
+        self._session_id = session_id
         self._interval_dedup = interval_dedup
         self._interval_ocr = interval_ocr
         self._interval_group = interval_group
@@ -161,6 +163,7 @@ class BackgroundWorker:
         last_group = 0.0
         last_graph = 0.0
         last_gemini = 0.0
+        last_merge = 0.0
 
         # 起動直後は 5 秒待機
         self._stop_event.wait(timeout=5.0)
@@ -209,6 +212,14 @@ class BackgroundWorker:
                     logger.warning("[BG_WORKER] graph 例外: %s", e)
                 last_graph = time.time()
 
+            # クロスセッションマージ (300秒間隔)
+            if now - last_merge >= 300.0:
+                try:
+                    self._run_cross_session_merge()
+                except Exception as e:
+                    logger.warning("[BG_WORKER] merge 例外: %s", e)
+                last_merge = time.time()
+
             self._stop_event.wait(timeout=0.5)
 
     # ─── グルーピング ─────────────────────────────────────
@@ -217,10 +228,15 @@ class BackgroundWorker:
         """group_id が NULL の未グループ化スクリーンをグルーピング。"""
         conn = self._get_conn()
         try:
+            _grp_where = " WHERE group_id IS NULL"
+            _grp_params = ()
+            if self._session_id:
+                _grp_where += " AND session_id = ?"
+                _grp_params = (self._session_id,)
             rows = conn.execute(
                 "SELECT id, session_id, scene, discovered_at FROM lc_screens"
-                " WHERE group_id IS NULL"
-                " ORDER BY session_id, discovered_at"
+                + _grp_where + " ORDER BY session_id, discovered_at",
+                _grp_params,
             ).fetchall()
 
             if not rows:
@@ -380,11 +396,20 @@ class BackgroundWorker:
         conn = self._get_conn()
         try:
             # HQ OCR 未完了の画像はスキップ（OCR 完了後に間引く）
+            # セッション分離: 自セッション内のみクラスタリング (誤マージ防止)
+            _sid_filter = ""
+            _sid_params: tuple = ()
+            if self._session_id:
+                _sid_filter = " AND session_id = ?"
+                _sid_params = (self._session_id,)
+
             rows = conn.execute(
                 "SELECT id, phash, title, COALESCE(ocr_text_hq, ocr_text) AS ocr FROM lc_screens"
                 " WHERE cluster_id IS NULL AND phash IS NOT NULL AND phash != ''"
                 " AND ocr_text_hq IS NOT NULL"
-                " ORDER BY discovered_at"
+                + _sid_filter +
+                " ORDER BY discovered_at",
+                _sid_params,
             ).fetchall()
 
             if not rows:
@@ -393,7 +418,9 @@ class BackgroundWorker:
             existing_reps = conn.execute(
                 "SELECT cluster_id, phash, title, COALESCE(ocr_text_hq, ocr_text) AS ocr FROM lc_screens"
                 " WHERE is_representative = 1 AND phash IS NOT NULL"
-                " ORDER BY cluster_id"
+                + _sid_filter +
+                " ORDER BY cluster_id",
+                _sid_params,
             ).fetchall()
             # rep_map: cluster_id → (phash, title, normalized_ocr_text)
             rep_map: dict[int, tuple[str, str, str]] = {
@@ -401,6 +428,7 @@ class BackgroundWorker:
                 for r in existing_reps
             }
 
+            # cluster_id はグローバルに一意 (セッション横断で重複しない)
             max_cid = conn.execute(
                 "SELECT COALESCE(MAX(cluster_id), -1) FROM lc_screens"
             ).fetchone()[0]
@@ -410,7 +438,9 @@ class BackgroundWorker:
             _prev_cid: Optional[int] = None
             last_screen = conn.execute(
                 "SELECT cluster_id FROM lc_screens WHERE cluster_id IS NOT NULL"
-                " ORDER BY discovered_at DESC LIMIT 1"
+                + _sid_filter +
+                " ORDER BY discovered_at DESC LIMIT 1",
+                _sid_params,
             ).fetchone()
             if last_screen:
                 _prev_cid = last_screen["cluster_id"]
@@ -437,10 +467,32 @@ class BackgroundWorker:
                             break
 
                 if text_match_cid is not None:
-                    conn.execute(
-                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
-                        (text_match_cid, sid),
-                    )
+                    # テキスト一致: OCR テキストが長い方を代表に採用
+                    old_rep_id = self._get_rep_id(conn, text_match_cid)
+                    _old_text_len = 0
+                    if old_rep_id:
+                        _old_row = conn.execute(
+                            "SELECT LENGTH(COALESCE(ocr_text_hq, ocr_text, '')) AS tlen FROM lc_screens WHERE id = ?",
+                            (old_rep_id,),
+                        ).fetchone()
+                        _old_text_len = _old_row["tlen"] if _old_row else 0
+                    _new_text_len = len(ocr_text)
+                    if _new_text_len > _old_text_len and old_rep_id:
+                        # 新しい方がテキスト長い → 代表交代
+                        conn.execute(
+                            "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                            (text_match_cid, sid),
+                        )
+                        conn.execute(
+                            "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
+                            (old_rep_id,),
+                        )
+                        rep_map[text_match_cid] = (ph, title, norm_text)
+                    else:
+                        conn.execute(
+                            "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
+                            (text_match_cid, sid),
+                        )
                     _prev_cid = text_match_cid
                 elif _is_meaningful:
                     # 2a) 直前がテキスト空 + phash 近い → 同じ場面、テキストあり側が代表に
@@ -466,12 +518,31 @@ class BackgroundWorker:
                                 )
                             rep_map[_prev_cid] = (ph, title, norm_text)
                         elif _rep_norm and d < _ph_lim and _text_similarity(norm_text, _rep_norm) >= 0.5:
-                            # テキスト類似 + phash 近い → OCR 揺れ
+                            # テキスト類似 + phash 近い → OCR 揺れ (テキスト長い方を代表に)
                             _merge_to_prev = True
-                            conn.execute(
-                                "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
-                                (_prev_cid, sid),
-                            )
+                            old_rep_id = self._get_rep_id(conn, _prev_cid)
+                            _old_tlen = 0
+                            if old_rep_id:
+                                _old_row = conn.execute(
+                                    "SELECT LENGTH(COALESCE(ocr_text_hq, ocr_text, '')) AS tlen FROM lc_screens WHERE id = ?",
+                                    (old_rep_id,),
+                                ).fetchone()
+                                _old_tlen = _old_row["tlen"] if _old_row else 0
+                            if len(ocr_text) > _old_tlen and old_rep_id:
+                                conn.execute(
+                                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                                    (_prev_cid, sid),
+                                )
+                                conn.execute(
+                                    "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
+                                    (old_rep_id,),
+                                )
+                                rep_map[_prev_cid] = (ph, title, norm_text)
+                            else:
+                                conn.execute(
+                                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
+                                    (_prev_cid, sid),
+                                )
                     if not _merge_to_prev:
                         conn.execute(
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
@@ -486,17 +557,26 @@ class BackgroundWorker:
                     if _prev_cid is not None and _prev_cid in rep_map:
                         _rep_ph, _rep_title, _rep_norm = rep_map[_prev_cid]
                         d = phash_distance(_rep_ph, ph) if _rep_ph else 999
-                        if d < 20:
+                        if d < 40:
                             # 代表交代判定: テキストあり > テキスト空 > 顔面積
                             old_rep_id = self._get_rep_id(conn, _prev_cid)
                             _should_promote = False
                             if _is_meaningful and not _rep_norm:
                                 _should_promote = True
                             elif not _is_meaningful and not _rep_norm:
-                                new_face = self._max_face_area(conn, sid)
-                                old_face = self._max_face_area(conn, old_rep_id) if old_rep_id else 0
-                                if new_face > old_face:
-                                    _should_promote = True
+                                # 暗い画像群: brightness が高い方を代表に (ロゴのフェードイン/アウト対策)
+                                new_br = self._get_brightness(conn, sid)
+                                old_br = self._get_brightness(conn, old_rep_id) if old_rep_id else 0
+                                if new_br < 80 and old_br < 80:
+                                    # 両方暗い → brightness が高い方を採用
+                                    if new_br > old_br:
+                                        _should_promote = True
+                                else:
+                                    # 明るい画像群 → 顔面積で判定
+                                    new_face = self._max_face_area(conn, sid)
+                                    old_face = self._max_face_area(conn, old_rep_id) if old_rep_id else 0
+                                    if new_face > old_face:
+                                        _should_promote = True
                             if _should_promote and old_rep_id:
                                 conn.execute(
                                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
@@ -532,6 +612,23 @@ class BackgroundWorker:
             conn.close()
 
     @staticmethod
+    def _get_brightness(conn: sqlite3.Connection, screen_id: int) -> float:
+        """スクリーンショットの平均輝度を返す。"""
+        try:
+            row = conn.execute(
+                "SELECT screenshot_path FROM lc_screens WHERE id = ?", (screen_id,)
+            ).fetchone()
+            if row and row["screenshot_path"]:
+                import cv2
+                import numpy as np
+                img = cv2.imread(row["screenshot_path"])
+                if img is not None:
+                    return float(np.mean(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)))
+        except Exception:
+            pass
+        return 0.0
+
+    @staticmethod
     def _is_dark_phash(phash: str) -> bool:
         """暗転フレーム判定: phash の立ちビット数が少ない (≤8)。"""
         try:
@@ -543,12 +640,19 @@ class BackgroundWorker:
         """phash が近いクラスタ同士をマージし、テキスト量最多 or 人物面積最大を代表に。"""
         _MERGE_THRESHOLD = 25
 
+        _merge_sid_filter = ""
+        _merge_sid_params: tuple = ()
+        if self._session_id:
+            _merge_sid_filter = " AND session_id = ?"
+            _merge_sid_params = (self._session_id,)
         reps = conn.execute(
             "SELECT id, cluster_id, phash, COALESCE(ocr_text_hq, ocr_text, '') AS ocr,"
             " LENGTH(COALESCE(ocr_text_hq, ocr_text, '')) AS text_len"
             " FROM lc_screens"
             " WHERE is_representative = 1 AND phash IS NOT NULL AND phash != ''"
-            " ORDER BY cluster_id"
+            + _merge_sid_filter +
+            " ORDER BY cluster_id",
+            _merge_sid_params,
         ).fetchall()
 
         if len(reps) < 2:
@@ -668,18 +772,19 @@ class BackgroundWorker:
 
                 _ocr_path = path
                 _tmp_path = None
-                if path.endswith(".webp"):
-                    _img = cv2.imread(path)
-                    if _img is None:
-                        conn.execute(
-                            "UPDATE lc_screens SET ocr_text_hq = '' WHERE id = ?", (sid,)
-                        )
-                        conn.commit()
-                        return
-                    _tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-                    cv2.imwrite(_tmp.name, _img)
-                    _ocr_path = _tmp.name
-                    _tmp_path = _tmp.name
+                # HQ OCR: 2x拡大 + PNG変換で精度向上 (バッチ処理なので負荷許容)
+                _img = cv2.imread(path)
+                if _img is None:
+                    conn.execute(
+                        "UPDATE lc_screens SET ocr_text_hq = '' WHERE id = ?", (sid,)
+                    )
+                    conn.commit()
+                    return
+                _img_2x = cv2.resize(_img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+                _tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                cv2.imwrite(_tmp.name, _img_2x)
+                _ocr_path = _tmp.name
+                _tmp_path = _tmp.name
 
                 ocr_results = run_ocr(_ocr_path, lang="japan")
 
@@ -851,7 +956,7 @@ class BackgroundWorker:
             from tools.batch_processor import BatchProcessor
             bp = BatchProcessor(db_path=self._db_path)
             try:
-                sccs = bp.build_graph()
+                sccs = bp.build_graph(session_id=self._session_id)
                 if sccs > 0:
                     self.graph_sccs = sccs
                     logger.info("[BG_WORKER] graph: %d SCC 構築完了", sccs)
@@ -859,3 +964,32 @@ class BackgroundWorker:
                 bp.close()
         except Exception as e:
             logger.warning("[BG_WORKER] graph 例外: %s", e)
+
+    # ─── クロスセッションマージ ───────────────────────────
+
+    def _run_cross_session_merge(self) -> None:
+        """セッショングラフ構築完了後にマスターグラフにマージ。"""
+        conn = self._get_conn()
+        try:
+            # session_graphs に存在するが node_mappings にない = 未マージ
+            pending = conn.execute(
+                "SELECT sg.session_id FROM lc_session_graphs sg"
+                " WHERE NOT EXISTS ("
+                "   SELECT 1 FROM lc_node_mappings nm"
+                "   WHERE nm.session_id = sg.session_id"
+                " )"
+            ).fetchall()
+            if not pending:
+                return
+        finally:
+            conn.close()
+
+        from tools.cross_session_merger import CrossSessionMerger
+        merger = CrossSessionMerger(db_path=self._db_path)
+        try:
+            for row in pending:
+                sid = row["session_id"]
+                new_nodes = merger.merge_to_master(sid)
+                logger.info("[BG_WORKER] merge: session=%s, +%d nodes", sid, new_nodes)
+        finally:
+            merger.close()

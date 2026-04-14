@@ -192,10 +192,27 @@ def handle_dialog_screen(
 
         # ▷ を確定回数分タップ（途中の再検出は不要）
         if _remaining > 0 and _dlg_type in ("next", "bottom"):
+            _recorder = getattr(state, "recorder", None)
             for _np in range(_remaining):
                 tap_device(_dlg_x, _dlg_y, state, "NOTICE_PAGING_NEXT")
                 logger.info("[NOTICE_POPUP] ▷タップ (%d/%d)", _np + 1, _remaining)
-                time.sleep(0.5)
+                time.sleep(0.1)
+                # 各ページをスクリーン記録
+                if _recorder is not None:
+                    _pg_ss = take_screenshot()
+                    if _pg_ss[0] is not None:
+                        _pg_analysis = prepare_analysis_image(
+                            Path(_pg_ss[0]), _pg_ss[1], _pg_ss[2])
+                        try:
+                            _pg_phash = compute_phash(_pg_ss[0])
+                        except Exception:
+                            _pg_phash = ""
+                        from lc.ocr import run_ocr
+                        _pg_ocr = run_ocr(str(_pg_analysis)) if _pg_analysis else []
+                        from tools.ap.device import get_raw_screenshot_path
+                        _recorder.maybe_record(
+                            _pg_analysis, _pg_ocr, "NOTICE_POPUP", _pg_phash,
+                            original_path=get_raw_screenshot_path())
 
         # 最終ページ → × で閉じる（右上固定座標）
         time.sleep(0.3)

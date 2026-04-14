@@ -107,6 +107,62 @@ class BatchProcessor:
             );
         """)
 
+        # マスターグラフテーブル (クロスセッションマージ用)
+        self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS lc_master_nodes (
+                master_fp                TEXT PRIMARY KEY,
+                representative_screen_id INTEGER,
+                title                    TEXT,
+                scene                    TEXT,
+                phash                    TEXT,
+                ocr_text                 TEXT,
+                bfs_depth                INTEGER,
+                scc_id                   INTEGER,
+                scc_label                TEXT,
+                visit_count              INTEGER DEFAULT 1,
+                first_seen_at            TEXT,
+                last_seen_at             TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS lc_master_edges (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_master_fp  TEXT    NOT NULL,
+                to_master_fp    TEXT    NOT NULL,
+                tap_label       TEXT,
+                action_name     TEXT,
+                count           INTEGER DEFAULT 1,
+                avg_duration    REAL,
+                min_duration    REAL,
+                first_seen_at   TEXT,
+                last_seen_at    TEXT,
+                UNIQUE(from_master_fp, to_master_fp, tap_label)
+            );
+            CREATE INDEX IF NOT EXISTS idx_master_edge_from ON lc_master_edges(from_master_fp);
+            CREATE INDEX IF NOT EXISTS idx_master_edge_to ON lc_master_edges(to_master_fp);
+
+            CREATE TABLE IF NOT EXISTS lc_node_mappings (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id   TEXT    NOT NULL,
+                session_fp   TEXT    NOT NULL,
+                master_fp    TEXT    NOT NULL,
+                match_method TEXT    NOT NULL,
+                match_score  REAL    DEFAULT 1.0,
+                created_at   TEXT    DEFAULT (datetime('now')),
+                UNIQUE(session_id, session_fp)
+            );
+            CREATE INDEX IF NOT EXISTS idx_nm_session ON lc_node_mappings(session_id);
+            CREATE INDEX IF NOT EXISTS idx_nm_master ON lc_node_mappings(master_fp);
+
+            CREATE TABLE IF NOT EXISTS lc_session_graphs (
+                session_id  TEXT PRIMARY KEY,
+                node_count  INTEGER DEFAULT 0,
+                edge_count  INTEGER DEFAULT 0,
+                scc_count   INTEGER DEFAULT 0,
+                home_fp     TEXT,
+                built_at    TEXT
+            );
+        """)
+
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_screens)")}
         for col, typ in [
             ("group_id", "INTEGER"),
@@ -598,17 +654,26 @@ class BatchProcessor:
 
     # ─── Phase 6: 遷移グラフ構築 (BFS + SCC) ─────────
 
-    def build_graph(self) -> int:
+    def build_graph(self, session_id: Optional[str] = None) -> int:
         """遷移グラフを構築し BFS depth + SCC を付与する。
+
+        session_id 指定時はそのセッションのみ対象。未指定時は全セッション。
 
         Returns: SCC グループ数
         """
         import networkx as nx
         from tools.ap.image_proc import phash_distance
 
+        _bg_sid_filter = ""
+        _bg_sid_params: tuple = ()
+        if session_id:
+            _bg_sid_filter = " WHERE session_id = ?"
+            _bg_sid_params = (session_id,)
+
         # --- Step 0: phash 名寄せ ---
         screens = self._conn.execute(
-            "SELECT fingerprint, phash, scene FROM lc_screens"
+            "SELECT fingerprint, phash, scene FROM lc_screens" + _bg_sid_filter,
+            _bg_sid_params,
         ).fetchall()
         if not screens:
             logger.info("[build_graph] 画面データなし → スキップ")
@@ -648,9 +713,12 @@ class BatchProcessor:
                     len(fp_list), len(set(find(fp) for fp in fp_list)))
 
         # --- Step 1: グラフ構築 ---
+        _trans_where = " WHERE to_fp IS NOT NULL"
+        if session_id:
+            _trans_where += " AND session_id = ?"
         edges_raw = self._conn.execute(
-            "SELECT from_fp, to_fp, action_name FROM lc_transitions"
-            " WHERE to_fp IS NOT NULL"
+            "SELECT from_fp, to_fp, action_name FROM lc_transitions" + _trans_where,
+            _bg_sid_params,
         ).fetchall()
 
         if not edges_raw:
@@ -693,8 +761,12 @@ class BatchProcessor:
         # HOME 画面を特定
         home_fp = None
         # GOAL_HOME_REACHED のアクションを持つ遷移の to_fp
+        _home_where = " WHERE action_name = 'GOAL_HOME_REACHED'"
+        if session_id:
+            _home_where += " AND session_id = ?"
         home_row = self._conn.execute(
-            "SELECT to_fp FROM lc_transitions WHERE action_name = 'GOAL_HOME_REACHED' LIMIT 1"
+            "SELECT to_fp FROM lc_transitions" + _home_where + " LIMIT 1",
+            _bg_sid_params,
         ).fetchone()
         if home_row and home_row["to_fp"]:
             home_fp = canon(home_row["to_fp"])
@@ -775,6 +847,17 @@ class BatchProcessor:
             self._conn.execute(
                 "UPDATE lc_screens SET scc_id = ?, scc_label = ? WHERE fingerprint = ?",
                 (scc_id, scc_label, fp),
+            )
+
+        # セッション別グラフ構築結果を保存
+        if session_id:
+            from datetime import datetime
+            self._conn.execute(
+                "INSERT OR REPLACE INTO lc_session_graphs"
+                " (session_id, node_count, edge_count, scc_count, home_fp, built_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (session_id, G.number_of_nodes(), G.number_of_edges(),
+                 len(sccs), home_fp, datetime.now().isoformat()),
             )
 
         self._conn.commit()

@@ -169,9 +169,16 @@ class ScreenRecorder:
 
         # インターバル制御
         self._last_record_time: float = 0.0
+        # タップ後の保存抑制 (phash 追跡は継続)
+        self._last_tap_time: float = 0.0
+        self._TAP_COOLDOWN: float = 2.0  # タップ後この秒数は通常記録をスキップ
 
         # 統計
         self._recorded_count: int = 0
+
+        # 起動シーン記録用
+        self._startup_last_phash: str = ""
+        self._startup_last_brightness: float = 0.0
 
         logger.info(
             "[ScreenRecorder] 初期化: session=%s, 既存fp=%d件, storage=%s",
@@ -180,6 +187,89 @@ class ScreenRecorder:
 
     # ─── public API ───────────────────────────────────
 
+    def record_startup(
+        self,
+        img_path: Optional[Path],
+        phash: str,
+    ) -> bool:
+        """起動シーン専用記録: 暗転→ロゴ等の変化を検出して記録する。
+
+        完全暗転 (brightness <= _MIN_BRIGHTNESS) はスキップしつつ基準値として保持。
+        phash または brightness に変化があった場合のみ記録する。
+        """
+        if not img_path or not Path(img_path).exists():
+            return False
+
+        _img = cv2.imread(str(img_path))
+        if _img is None:
+            return False
+
+        _brightness = float(np.mean(cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY)))
+
+        # 完全暗転 (brightness <= 5) のみスキップ。ロゴは暗めでも保存する
+        if _brightness <= _MIN_BRIGHTNESS:
+            self._startup_last_brightness = _brightness
+            if phash:
+                self._startup_last_phash = phash
+            return False
+
+        # 変化判定: phash または brightness がわずかでも変わったら保存
+        _changed = False
+        if phash and self._startup_last_phash:
+            from lc.utils import phash_distance
+            _dist = phash_distance(self._startup_last_phash, phash)
+            _changed = _dist >= 3  # 微小な変化でも検出
+        elif not self._startup_last_phash:
+            _changed = True  # 初回の非暗転フレーム
+
+        if not _changed and abs(_brightness - self._startup_last_brightness) > 5:
+            _changed = True  # brightness の微小変化でも検出
+
+        if not _changed:
+            return False
+
+        # 基準値を更新
+        self._startup_last_phash = phash if phash else self._startup_last_phash
+        self._startup_last_brightness = _brightness
+
+        # fingerprint 生成
+        _ts_suffix = f"_{int(time.time() * 1000) % 1000000}"
+        if phash:
+            content_fp = f"startup_ph_{phash[:14]}{_ts_suffix}"
+        else:
+            content_fp = f"startup_{time.time()}"
+
+        # 保存
+        title = "(STARTUP)"
+        screenshot_path, thumbnail_path = self._save_screenshot(
+            Path(img_path), content_fp
+        )
+        if not screenshot_path:
+            return False
+
+        screen_id = self._insert_screen(
+            fingerprint=content_fp,
+            title=title,
+            parent_fp=self._last_recorded_fp,
+            phash=phash,
+            screenshot_path=screenshot_path,
+            thumbnail_path=thumbnail_path,
+            ocr_text="",
+            scene="STARTUP",
+        )
+        if screen_id:
+            self._seen_fps.add(content_fp)
+            self._last_recorded_fp = content_fp
+            self._last_recorded_phash = phash
+            self._last_inserted_id = screen_id
+            self._recorded_count += 1
+            logger.info(
+                "[ScreenRecorder] STARTUP記録 #%d: brightness=%.1f, phash=%s",
+                self._recorded_count, _brightness, phash[:8] if phash else "N/A",
+            )
+            return True
+        return False
+
     def maybe_record(
         self,
         analysis_path: Optional[Path],
@@ -187,6 +277,7 @@ class ScreenRecorder:
         scene: str,
         phash: str,
         force: bool = False,
+        original_path: Optional[Path] = None,
     ) -> bool:
         """寛容撮影: 暗転以外は全部保存。間引きはバッチで行う。
 
@@ -195,6 +286,10 @@ class ScreenRecorder:
         """
 
         if not force:
+            # 0. タップ後クールダウン: 保存のみスキップ (phash 追跡は呼び出し元で継続)
+            if self._last_tap_time > 0 and (time.time() - self._last_tap_time) < self._TAP_COOLDOWN:
+                return False
+
             # 1. シーンスキップ
             if scene in _SKIP_SCENES:
                 return False
@@ -238,11 +333,12 @@ class ScreenRecorder:
             if item.get("confidence", 0) >= _MIN_CONFIDENCE
         ) if ocr_results else ""
 
-        # 画像保存
+        # 画像保存 (生画像優先: 実機解像度で保存し、バッチOCRの精度を向上)
+        _save_path = original_path if original_path and Path(original_path).exists() else analysis_path
         screenshot_path, thumbnail_path = "", ""
-        if analysis_path and Path(analysis_path).exists():
+        if _save_path and Path(_save_path).exists():
             screenshot_path, thumbnail_path = self._save_screenshot(
-                Path(analysis_path), content_fp
+                Path(_save_path), content_fp
             )
 
         # 画像保存失敗なら記録しない
@@ -387,6 +483,9 @@ class ScreenRecorder:
             logger.warning("[ScreenRecorder] 画像読込失敗: %s", analysis_path)
             return "", ""
 
+        # OS UI 除去: ステータスバー/ナビバーの黒帯を自動クロップ
+        img = self._crop_os_bars(img)
+
         # フルサイズ WebP
         full_path = self._storage_dir / f"{fingerprint}.webp"
         ok, buf = cv2.imencode(
@@ -410,6 +509,61 @@ class ScreenRecorder:
             thumb_path.write_bytes(buf_t.tobytes())
 
         return str(full_path), str(thumb_path)
+
+    @staticmethod
+    def _crop_os_bars(img: np.ndarray) -> np.ndarray:
+        """ステータスバー/ナビバーの黒帯を除去してゲーム領域のみ返す。
+
+        上端・下端から行平均輝度が低い（< 15）帯を検出してクロップ。
+        scrcpy キャプチャでは通常不要だが、ADB screencap 時の OS UI を除去する。
+        """
+        h, w = img.shape[:2]
+        if h < 100:
+            return img
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        row_means = np.mean(gray, axis=1)
+
+        # 上端: 輝度 < 15 の連続行をスキップ (最大 h の 10%)
+        top = 0
+        max_bar = int(h * 0.1)
+        for i in range(min(max_bar, h)):
+            if row_means[i] < 15:
+                top = i + 1
+            else:
+                break
+
+        # 下端: 同様
+        bottom = h
+        for i in range(h - 1, max(h - max_bar, 0), -1):
+            if row_means[i] < 15:
+                bottom = i
+            else:
+                break
+
+        # 左端・右端も同様 (ナビバーが横に出る場合)
+        col_means = np.mean(gray, axis=0)
+        left = 0
+        max_side = int(w * 0.1)
+        for i in range(min(max_side, w)):
+            if col_means[i] < 15:
+                left = i + 1
+            else:
+                break
+
+        right = w
+        for i in range(w - 1, max(w - max_side, 0), -1):
+            if col_means[i] < 15:
+                right = i
+            else:
+                break
+
+        # クロップが意味ある場合のみ適用 (少なくとも元の80%は残す)
+        cropped_h = bottom - top
+        cropped_w = right - left
+        if cropped_h >= h * 0.8 and cropped_w >= w * 0.8 and (top > 0 or bottom < h or left > 0 or right < w):
+            return img[top:bottom, left:right]
+        return img
 
     # ─── 顔検出 ──────────────────────────────────────
 

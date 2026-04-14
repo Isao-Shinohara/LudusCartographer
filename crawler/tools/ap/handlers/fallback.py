@@ -348,6 +348,10 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     if _is_title_screen:
         logger.info("  タイトル画面検出 → TAP TO START タップ")
         log_milestone(state, "TITLE_TAP")
+        # 起動シーン記録モード終了
+        if getattr(state, "startup_phase", False):
+            state.startup_phase = False
+            logger.info("[STARTUP] タイトル画面到達 → 起動シーン記録モード終了")
         _tt_x, _tt_y = roi_to_device(int(W * 0.5), int(H * 0.87), state.game_roi)
         tap_device(_tt_x, _tt_y, state, "TITLE_TAP_START")
         return "TITLE_TAP", 2.0
