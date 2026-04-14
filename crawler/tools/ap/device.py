@@ -295,11 +295,9 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
         _find_scrcpy_window_id()
         _LAST_SCRCPY_BGR = None
         return None
-    # 真っ黒チェック: Quartz が映像を取得できていない場合
-    # 判定: 最大値と最小値の差が小さい = ほぼ単色 = 映像なし
-    _px_range = int(bgr.max()) - int(bgr.min())
-    if _px_range < 3:
-        logger.warning("[SCRCPY] キャプチャが単色 (range=%d) → ADB フォールバック", _px_range)
+    # 真っ黒チェック: Quartz が映像を取得できていない場合 (全ピクセル同一値)
+    if bgr.max() == bgr.min():
+        logger.warning("[SCRCPY] キャプチャが全ピクセル同一 (val=%d) → ADB フォールバック", int(bgr.max()))
         _LAST_SCRCPY_BGR = None
         return None
     # 最低サイズチェック: ウィンドウが小さすぎる → ADB フォールバック
