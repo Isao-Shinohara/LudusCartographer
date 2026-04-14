@@ -609,8 +609,9 @@ class BackgroundWorker:
                 self.dedup_count += processed
                 logger.info("[BG_WORKER] dedup: %d 枚処理 (合計 %d)", processed, self.dedup_count)
 
-                # phash が近いクラスタ同士をマージ (OCR 揺れ対策)
-                self._merge_clusters_by_phash(conn, phash_distance)
+                # NOTE: _merge_clusters_by_phash は毎回呼ぶと連鎖マージで暴走する。
+                # クロスセッションマージ時のみ使用する。インクリメンタル dedup では無効化。
+                # self._merge_clusters_by_phash(conn, phash_distance)
         finally:
             conn.close()
 
