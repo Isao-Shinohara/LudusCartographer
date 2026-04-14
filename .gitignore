@@ -84,6 +84,12 @@ logs/
 crawler/evidence/
 crawler/storage/evidence/
 crawler/storage/fresh_install/
+crawler/storage/screenshots/
+crawler/storage/reinstall/
+crawler/storage/ludus.db
+crawler/storage/ludus.db-shm
+crawler/storage/ludus.db-wal
+crawler/storage/auto_pilot_report.md
 crawler/screenshots/*.png
 
 # --- AI ツール設定 ---
