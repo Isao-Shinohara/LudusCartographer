@@ -3062,6 +3062,19 @@ def main():
             state._movie_from_scene = state.current_scene
             state.current_scene = "MOVIE"
             if handle_movie(img_path, state, dist, cur_phash):
+                # MOVIE 中もスクリーン記録 (セリフ変化をキャプチャ)
+                # NOTE: MOVIE パスは OCR 前なので analysis_path/ocr_results は未設定。
+                # img_path (リサイズ済み) を使い、OCR は空で記録する。
+                if recorder is not None and state.game_foreground:
+                    from tools.ap.device import get_raw_screenshot_path
+                    _raw = get_raw_screenshot_path()
+                    _raw_snap = None
+                    if _raw and _raw.exists():
+                        _raw_snap = Path(str(_raw) + ".snap.png")
+                        import shutil
+                        shutil.copy2(str(_raw), str(_raw_snap))
+                    recorder.maybe_record(img_path, [], "MOVIE", cur_phash,
+                                          original_path=_raw_snap)
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
                 logger.info("  [PERF] Loop %.0fms (MOVIE_EARLY)", _fms)
