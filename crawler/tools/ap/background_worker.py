@@ -547,41 +547,6 @@ class BackgroundWorker:
                                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
                                     (_prev_cid, sid),
                                 )
-                    # 直前クラスタとマッチしなかった場合、全クラスタから phash 近傍を検索
-                    # (OCR 揺れで間に別画面が入ったケースの救済)
-                    if not _merge_to_prev and ph:
-                        for cid, (rep_ph, rep_title, rep_norm) in rep_map.items():
-                            if not rep_ph or cid == _prev_cid:
-                                continue
-                            d_global = phash_distance(rep_ph, ph)
-                            if d_global < 10 and _text_similarity(norm_text, rep_norm) >= 0.2:
-                                _merge_to_prev = True
-                                old_rep_id = self._get_rep_id(conn, cid)
-                                _old_tlen = 0
-                                if old_rep_id:
-                                    _old_row = conn.execute(
-                                        "SELECT LENGTH(COALESCE(ocr_text_hq, ocr_text, '')) AS tlen FROM lc_screens WHERE id = ?",
-                                        (old_rep_id,),
-                                    ).fetchone()
-                                    _old_tlen = _old_row["tlen"] if _old_row else 0
-                                if len(ocr_text) > _old_tlen and old_rep_id:
-                                    conn.execute(
-                                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
-                                        (cid, sid),
-                                    )
-                                    conn.execute(
-                                        "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
-                                        (old_rep_id,),
-                                    )
-                                    rep_map[cid] = (ph, title, norm_text)
-                                else:
-                                    conn.execute(
-                                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
-                                        (cid, sid),
-                                    )
-                                _prev_cid = cid
-                                break
-
                     if not _merge_to_prev:
                         conn.execute(
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
