@@ -394,6 +394,15 @@ def get_raw_screenshot_path() -> Optional[Path]:
     return _RAW_SCREENSHOT_PATH if _RAW_SCREENSHOT_PATH.exists() else None
 
 
+# 最後のスクショのソース ("scrcpy" or "adb")
+_last_screenshot_source: list[str] = [""]
+
+
+def is_last_screenshot_from_scrcpy() -> bool:
+    """最後のスクショが scrcpy キャプチャかどうか。"""
+    return _last_screenshot_source[0] == "scrcpy"
+
+
 def _ensure_analysis_size(path: Path) -> None:
     """スクショファイルが ANALYSIS_W x ANALYSIS_H でなければリサイズして上書き。
 
@@ -435,6 +444,7 @@ def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[
     _scrcpy = _take_screenshot_scrcpy(path)
     if _scrcpy is not None:
         _SCRCPY_FAIL_COUNT = 0
+        _last_screenshot_source[0] = "scrcpy"
         _save_raw_copy(_scrcpy[0])
         _ensure_analysis_size(_scrcpy[0])
         return _scrcpy[0], _scrcpy[1], _scrcpy[2], 0
@@ -456,6 +466,7 @@ def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[
     # ── Tier 2: adb screencap フォールバック ──
     _result = _take_screenshot_adb(path, retries=retries, min_bytes=min_bytes)
     if _result[0] is not None:
+        _last_screenshot_source[0] = "adb"
         _save_raw_copy(_result[0])
         _ensure_analysis_size(_result[0])
     return _result
