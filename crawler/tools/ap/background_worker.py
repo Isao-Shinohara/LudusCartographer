@@ -561,7 +561,7 @@ class BackgroundWorker:
                     if _prev_cid is not None and _prev_cid in rep_map:
                         _rep_ph, _rep_title, _rep_norm = rep_map[_prev_cid]
                         d = phash_distance(_rep_ph, ph) if _rep_ph else 999
-                        if d < 40:
+                        if d < 20:
                             # 代表交代判定: テキストあり > テキスト空 > 顔面積
                             old_rep_id = self._get_rep_id(conn, _prev_cid)
                             _should_promote = False
