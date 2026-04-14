@@ -728,7 +728,6 @@ def tap_device(x: int, y: int, state, desc: str = "",
                     getattr(state, "current_scene", "UNKNOWN"),
                     _phash,
                     force=True,
-                    original_path=get_raw_screenshot_path(),
                 )
             # タップ後クールダウン開始 (通常記録を2秒間抑制)
             _rec._last_tap_time = time.time()

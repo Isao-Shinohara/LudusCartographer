@@ -209,10 +209,8 @@ def handle_dialog_screen(
                             _pg_phash = ""
                         from lc.ocr import run_ocr
                         _pg_ocr = run_ocr(str(_pg_analysis)) if _pg_analysis else []
-                        from tools.ap.device import get_raw_screenshot_path
                         _recorder.maybe_record(
-                            _pg_analysis, _pg_ocr, "NOTICE_POPUP", _pg_phash,
-                            original_path=get_raw_screenshot_path())
+                            _pg_analysis, _pg_ocr, "NOTICE_POPUP", _pg_phash)
 
         # 最終ページ → × で閉じる（右上固定座標）
         time.sleep(0.3)

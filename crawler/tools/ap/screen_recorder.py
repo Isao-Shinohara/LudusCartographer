@@ -277,7 +277,6 @@ class ScreenRecorder:
         scene: str,
         phash: str,
         force: bool = False,
-        original_path: Optional[Path] = None,
     ) -> bool:
         """寛容撮影: 暗転以外は全部保存。間引きはバッチで行う。
 
@@ -337,12 +336,11 @@ class ScreenRecorder:
             if item.get("confidence", 0) >= _MIN_CONFIDENCE
         ) if ocr_results else ""
 
-        # 画像保存 (生画像優先: 実機解像度で保存し、バッチOCRの精度を向上)
-        _save_path = original_path if original_path and Path(original_path).exists() else analysis_path
+        # 画像保存 (analysis_path を直接保存: OCR と画像の一致を保証)
         screenshot_path, thumbnail_path = "", ""
-        if _save_path and Path(_save_path).exists():
+        if analysis_path and Path(analysis_path).exists():
             screenshot_path, thumbnail_path = self._save_screenshot(
-                Path(_save_path), content_fp
+                Path(analysis_path), content_fp
             )
 
         # 画像保存失敗なら記録しない
@@ -487,8 +485,7 @@ class ScreenRecorder:
             logger.warning("[ScreenRecorder] 画像読込失敗: %s", analysis_path)
             return "", ""
 
-        # OS UI 除去: ステータスバー/ナビバーの黒帯を自動クロップ
-        img = self._crop_os_bars(img)
+
 
         # フルサイズ WebP
         full_path = self._storage_dir / f"{fingerprint}.webp"

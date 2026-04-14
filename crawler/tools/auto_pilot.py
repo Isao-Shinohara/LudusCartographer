@@ -3066,15 +3066,7 @@ def main():
                 # NOTE: MOVIE パスは OCR 前なので analysis_path/ocr_results は未設定。
                 # img_path (リサイズ済み) を使い、OCR は空で記録する。
                 if recorder is not None and state.game_foreground:
-                    from tools.ap.device import get_raw_screenshot_path
-                    _raw = get_raw_screenshot_path()
-                    _raw_snap = None
-                    if _raw and _raw.exists():
-                        _raw_snap = Path(str(_raw) + ".snap.png")
-                        import shutil
-                        shutil.copy2(str(_raw), str(_raw_snap))
-                    recorder.maybe_record(img_path, [], "MOVIE", cur_phash,
-                                          original_path=_raw_snap)
+                    recorder.maybe_record(img_path, [], "MOVIE", cur_phash)
                 _fms = (time.time() - _loop_t0) * 1000
                 state.total_loop_ms += _fms
                 logger.info("  [PERF] Loop %.0fms (MOVIE_EARLY)", _fms)
@@ -3875,16 +3867,7 @@ def main():
             # タップ後2秒間は保存スキップ (tap_device の force 記録と重複防止)。
             # 間引き側でテキスト長い方を代表に採用するため、セリフ途中/完了の逆転も解消。
             elif not _startup_just_ended:
-                # 生画像のスナップショットを取る (tap_device 内の take_screenshot で上書きされるため)
-                from tools.ap.device import get_raw_screenshot_path
-                _raw = get_raw_screenshot_path()
-                _raw_snap = None
-                if _raw and _raw.exists():
-                    _raw_snap = Path(str(_raw) + ".snap.png")
-                    import shutil
-                    shutil.copy2(str(_raw), str(_raw_snap))
-                recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash,
-                                      original_path=_raw_snap)
+                recorder.maybe_record(analysis_path, ocr_results, scene, cur_phash)
 
         # ── 6) 判定 & アクション (finger blob も渡す) ──
         # MOVIE→UNKNOWN 遷移直後: テンプレ誤マッチによるタップを抑制
