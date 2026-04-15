@@ -40,6 +40,10 @@
     <select id="session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="">最新セッション</option>
     </select>
+    <select id="sort-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
+        <option value="desc" selected>新しい順</option>
+        <option value="asc">古い順</option>
+    </select>
     <!-- Final 採用/不採用アクション (右詰) -->
     <div id="final-actions" class="hidden ml-auto flex items-center gap-2">
         <span id="final-pending-count" class="text-xs text-gray-400"></span>
@@ -144,7 +148,9 @@
     let pendingChanges = {};  // Final タブ: master_fp → target user_excluded
     const filterSelect = document.getElementById('filter-select');
     const sessionSelect = document.getElementById('session-select');
+    const sortSelect = document.getElementById('sort-select');
     filterSelect.addEventListener('change', renderAll);
+    sortSelect.addEventListener('change', renderAll);
     sessionSelect.addEventListener('change', function() {
         currentSessionId = this.value;
         allScreens = [];
@@ -227,6 +233,10 @@
             filtered = allScreens.filter(s => s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative);
         } else if (filter === 'pending') {
             filtered = allScreens.filter(s => (s.cluster_id === null || s.cluster_id === undefined) || (s.is_representative && !s.has_hq_ocr));
+        }
+        // ソート
+        if (sortSelect.value === 'asc') {
+            filtered = [...filtered].reverse();
         }
         filteredScreens = filtered;
         if (filtered.length === 0) {
@@ -432,6 +442,7 @@
             filterSelect.innerHTML = '<option value="reps" selected>採用</option><option value="all">すべて</option><option value="thinned">不採用</option><option value="pending">未処理</option>';
             filterSelect.onchange = renderAll;
             sessionSelect.classList.remove('hidden');
+            sortSelect.classList.remove('hidden');
             grid.classList.remove('hidden');
             mergeContainer.classList.add('hidden');
             grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>';
@@ -445,6 +456,7 @@
             filterSelect.innerHTML = '<option value="adopted" selected>採用</option><option value="all">すべて</option>';
             filterSelect.onchange = function() { showExcluded = this.value === 'all'; renderAll(); };
             sessionSelect.classList.add('hidden');
+            sortSelect.classList.remove('hidden');
             grid.classList.remove('hidden');
             mergeContainer.classList.add('hidden');
             grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>';
@@ -456,6 +468,7 @@
             stats.textContent = '';
             filterSelect.classList.add('hidden');
             sessionSelect.classList.add('hidden');
+            sortSelect.classList.add('hidden');
             grid.classList.add('hidden');
             mergeContainer.classList.remove('hidden');
             fetchMergeTab();
