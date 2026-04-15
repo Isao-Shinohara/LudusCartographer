@@ -1133,7 +1133,16 @@
         const btn = e.target.closest('.exclude-btn');
         if (btn) {
             e.stopPropagation();
-            togglePending(btn.dataset.masterFp);
+            const fp = btn.dataset.masterFp;
+            togglePending(fp);
+            if (currentTab === 'final') {
+                if (fp in pendingChanges) {
+                    selectedForGroup.add(fp);
+                } else {
+                    selectedForGroup.delete(fp);
+                }
+                updateGroupSelectUI();
+            }
             return;
         }
         const card = e.target.closest('[data-idx]');
@@ -1148,7 +1157,8 @@
                 } else {
                     selectedForGroup.add(s.master_fp);
                 }
-                renderAll();
+                // 除外トグルも連動
+                togglePending(s.master_fp);
                 updateGroupSelectUI();
             }
             return;
