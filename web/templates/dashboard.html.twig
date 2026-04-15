@@ -779,7 +779,7 @@
             const data = await res.json();
             _clusterSiblings = data.siblings || [];
             if (_clusterSiblings.length <= 1) {
-                clusterGrid.innerHTML = '<span class="text-xs text-gray-600">クラスタ内に他の画像はありません</span>';
+                clusterGrid.innerHTML = '<span class="text-xs text-gray-600 whitespace-nowrap">クラスタ内に他の画像はありません</span>';
                 return;
             }
             _clusterOriginalRepId = (_clusterSiblings.find(s => s.is_representative == 1) || {}).id || null;
