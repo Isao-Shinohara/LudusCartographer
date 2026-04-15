@@ -518,6 +518,26 @@ class CrossSessionMerger:
             # アンカーなし → 全ノード新規追加
             return self._add_all_as_new(session_id)
 
+        # manual_group: マッチ先がグループ非代表なら代表にリダイレクト
+        group_redirect = {}
+        group_rows = self._conn.execute(
+            "SELECT master_fp, manual_group_id FROM lc_master_nodes"
+            " WHERE manual_group_id IS NOT NULL AND is_group_representative = 0"
+        ).fetchall()
+        for gr in group_rows:
+            rep = self._conn.execute(
+                "SELECT master_fp FROM lc_master_nodes"
+                " WHERE manual_group_id = ? AND is_group_representative = 1",
+                (gr["manual_group_id"],),
+            ).fetchone()
+            if rep:
+                group_redirect[gr["master_fp"]] = rep["master_fp"]
+
+        if group_redirect:
+            for s_fp, (m_fp, method, score) in list(node_mapping.items()):
+                if m_fp in group_redirect:
+                    node_mapping[s_fp] = (group_redirect[m_fp], method, score)
+
         # DB 更新
         now = datetime.now().isoformat()
         new_count = 0
