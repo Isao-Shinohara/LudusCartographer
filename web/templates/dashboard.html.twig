@@ -95,7 +95,7 @@
 <!-- 固定フッター (画面数) -->
 <div id="dashboard-footer" class="fixed bottom-0 left-0 right-0 z-30 bg-gray-900/90 border-t border-gray-800 py-1.5">
     <div class="max-w-7xl mx-auto px-4 flex justify-between">
-        <span id="final-select-count" class="text-xs text-gray-400"></span>
+        <span id="final-select-count" class="text-xs text-gray-400 hidden"></span>
         <span id="stats" class="text-xs text-gray-500"></span>
     </div>
 </div>
@@ -1058,11 +1058,12 @@
         const mergeBtn = document.getElementById('final-merge-group-btn');
         if (selectedForGroup.size >= 1) {
             countEl.textContent = `${selectedForGroup.size} 件選択中`;
+            countEl.classList.remove('hidden');
         } else {
             countEl.textContent = '';
+            countEl.classList.add('hidden');
         }
         mergeBtn.disabled = selectedForGroup.size < 2;
-        countEl.classList.remove('hidden');
     }
 
     function showMergeGroupDialog() {
