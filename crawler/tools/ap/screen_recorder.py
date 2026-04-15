@@ -31,8 +31,8 @@ _SORT_Y_BUCKET = 50         # Y座標のバケットサイズ (px)
 _CASCADE_MIN_FACE = (40, 40)  # 顔検出の最小サイズ (px)
 _CASCADE_XML = Path(__file__).parent.parent.parent / "assets" / "lbpcascade_animeface.xml"
 _SCENE_CHANGE_PHASH_DIST = 20  # シーン切り替わり判定の phash 距離閾値
-_DARK_P95 = 50      # 95パーセンタイル≦この値 → 全ピクセル暗め → 除外
-_BRIGHT_P5 = 180    # 5パーセンタイル≧この値 → 全ピクセル明るめ → 除外
+_DARK_P99 = 70      # 最も明るいピクセル(p99)が暗い → 全体暗め → 除外
+_BRIGHT_P1 = 180    # 最も暗いピクセル(p1)が明るい → 全体明るめ → 除外
 
 # 日本語・英単語を含むトークンのみ採用
 _HAS_TEXT_RE = re.compile(r"[\u3000-\u9fff\u30a0-\u30ffA-Za-z]")
@@ -208,7 +208,7 @@ class ScreenRecorder:
 
         # 全ピクセル暗め / 全ピクセル明るめ → スキップ
         _gray = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY)
-        if np.percentile(_gray, 95) <= _DARK_P95 or np.percentile(_gray, 5) >= _BRIGHT_P5:
+        if np.percentile(_gray, 99) <= _DARK_P99 or np.percentile(_gray, 1) >= _BRIGHT_P1:
             return False
 
         # 変化判定: phash または brightness がわずかでも変わったら保存
@@ -303,7 +303,7 @@ class ScreenRecorder:
                 _img = cv2.imread(str(analysis_path))
                 if _img is not None:
                     _gray = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY)
-                    if np.percentile(_gray, 95) <= _DARK_P95 or np.percentile(_gray, 5) >= _BRIGHT_P5:
+                    if np.percentile(_gray, 99) <= _DARK_P99 or np.percentile(_gray, 1) >= _BRIGHT_P1:
                         return False
 
         # 3. fingerprint 生成 (タイムスタンプ付きでファイル名衝突を防止)
