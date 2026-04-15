@@ -91,7 +91,10 @@
                 </div>
                 <!-- クラスタ兄弟 (Final タブのみ) -->
                 <div id="modal-cluster" class="hidden mt-4">
-                    <h4 class="text-xs font-bold text-gray-400 mb-2">同クラスタの画像</h4>
+                    <div class="flex items-center justify-between mb-2">
+                        <h4 class="text-xs font-bold text-gray-400">同クラスタの画像</h4>
+                        <button id="cluster-promote-btn" class="hidden px-3 py-1 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded transition-colors">代表を変更</button>
+                    </div>
                     <div id="modal-cluster-grid" class="grid grid-cols-4 sm:grid-cols-6 gap-2"></div>
                 </div>
             </div>
@@ -653,57 +656,109 @@
         }
     }
 
+    let _clusterSiblings = [];
+    let _clusterSelectedId = null;
+    let _clusterOriginalRepId = null;
+    let _clusterMasterFp = null;
+
     async function fetchClusterSiblings(screenId, masterFp) {
         const clusterGrid = document.getElementById('modal-cluster-grid');
+        const promoteBtn = document.getElementById('cluster-promote-btn');
+        _clusterMasterFp = masterFp;
+        _clusterSelectedId = null;
+        promoteBtn.classList.add('hidden');
         try {
             const res = await fetch(API_BASE + '?action=get_cluster_siblings&screen_id=' + screenId);
             const data = await res.json();
-            const siblings = data.siblings || [];
-            if (siblings.length <= 1) {
+            _clusterSiblings = data.siblings || [];
+            if (_clusterSiblings.length <= 1) {
                 clusterGrid.innerHTML = '<span class="text-xs text-gray-600">クラスタ内に他の画像はありません</span>';
                 return;
             }
-            clusterGrid.innerHTML = siblings.map(sib => {
-                const thumb = sib.thumbnail_path ? imgUrl(sib.thumbnail_path) : (sib.screenshot_path ? imgUrl(sib.screenshot_path) : '');
-                const isRep = sib.is_representative == 1;
-                const border = isRep ? 'border-emerald-500' : 'border-gray-700 hover:border-brand/50';
-                const label = isRep ? '<span class="text-[9px] text-emerald-400">代表</span>' : '';
-                const promoteBtn = (!isRep && masterFp)
-                    ? `<button class="promote-btn text-[9px] px-1 py-0.5 bg-brand/20 hover:bg-brand/40 text-brand-light rounded transition-colors" data-screen-id="${sib.id}" data-master-fp="${escapeHtml(masterFp)}">代表にする</button>`
-                    : '';
-                return `<div class="border ${border} rounded overflow-hidden bg-gray-900">
-                    ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
-                    <div class="p-1 flex items-center justify-between">
-                        ${label}${promoteBtn}
-                    </div>
-                </div>`;
-            }).join('');
-            // 昇格ボタン
-            clusterGrid.querySelectorAll('.promote-btn').forEach(btn => {
-                btn.addEventListener('click', async (e) => {
-                    e.stopPropagation();
-                    const fp = btn.dataset.masterFp;
-                    const sid = btn.dataset.screenId;
-                    btn.textContent = '処理中...';
-                    btn.disabled = true;
-                    try {
-                        const res = await fetch(API_BASE + '?action=promote_representative&master_fp=' + encodeURIComponent(fp) + '&screen_id=' + sid);
-                        const result = await res.json();
-                        if (result.ok) {
-                            // Final タブを再取得して反映
-                            await fetchFinal();
-                            // モーダルを現在位置で再表示
-                            if (modalIdx >= 0 && modalIdx < filteredScreens.length) {
-                                showModal(modalIdx);
-                            }
-                        }
-                    } catch (e) {}
-                });
-            });
+            _clusterOriginalRepId = (_clusterSiblings.find(s => s.is_representative == 1) || {}).id || null;
+            renderClusterGrid();
         } catch (e) {
             clusterGrid.innerHTML = '<span class="text-xs text-red-500">取得エラー</span>';
         }
     }
+
+    function renderClusterGrid() {
+        const clusterGrid = document.getElementById('modal-cluster-grid');
+        const promoteBtn = document.getElementById('cluster-promote-btn');
+        const selectedId = _clusterSelectedId || _clusterOriginalRepId;
+        clusterGrid.innerHTML = _clusterSiblings.map(sib => {
+            const thumb = sib.thumbnail_path ? imgUrl(sib.thumbnail_path) : (sib.screenshot_path ? imgUrl(sib.screenshot_path) : '');
+            const isSelected = sib.id == selectedId;
+            const border = isSelected ? 'border-2 border-emerald-500' : 'border border-gray-700 hover:border-brand/50 cursor-pointer';
+            return `<div class="cluster-sib ${border} rounded overflow-hidden bg-gray-900" data-sib-id="${sib.id}">
+                ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
+            </div>`;
+        }).join('');
+        // 選択が変わっていたら更新ボタン表示
+        if (_clusterSelectedId && _clusterSelectedId != _clusterOriginalRepId) {
+            promoteBtn.classList.remove('hidden');
+        } else {
+            promoteBtn.classList.add('hidden');
+        }
+        // タップで選択
+        clusterGrid.querySelectorAll('.cluster-sib').forEach(el => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const sibId = parseInt(el.dataset.sibId);
+                _clusterSelectedId = sibId;
+                // モーダルのメイン画像を選択した画像に切替
+                const sib = _clusterSiblings.find(s => s.id == sibId);
+                if (sib) {
+                    const imgSrc = sib.screenshot_path ? imgUrl(sib.screenshot_path) : '';
+                    document.getElementById('modal-img').src = imgSrc;
+                }
+                renderClusterGrid();
+            });
+        });
+    }
+
+    document.getElementById('cluster-promote-btn').addEventListener('click', function() {
+        if (!_clusterSelectedId || !_clusterMasterFp) return;
+        const sib = _clusterSiblings.find(s => s.id == _clusterSelectedId);
+        const origSib = _clusterSiblings.find(s => s.id == _clusterOriginalRepId);
+        const body = document.getElementById('confirm-body');
+        body.innerHTML = `
+            <p class="text-sm text-gray-300 mb-3">代表画像を変更しますか？</p>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <p class="text-[10px] text-gray-500 mb-1">現在の代表</p>
+                    ${origSib && origSib.thumbnail_path ? `<img src="${imgUrl(origSib.thumbnail_path)}" class="w-full aspect-video object-cover rounded bg-gray-800" />` : ''}
+                </div>
+                <div>
+                    <p class="text-[10px] text-emerald-400 mb-1">新しい代表</p>
+                    ${sib && sib.thumbnail_path ? `<img src="${imgUrl(sib.thumbnail_path)}" class="w-full aspect-video object-cover rounded bg-gray-800" />` : ''}
+                </div>
+            </div>`;
+        // 確認ポップアップの OK を代表変更用に一時差し替え
+        const popup = document.getElementById('confirm-popup');
+        const okBtn = document.getElementById('confirm-ok');
+        const origHandler = okBtn._promoteHandler;
+        if (origHandler) okBtn.removeEventListener('click', origHandler);
+        const handler = async function() {
+            popup.classList.add('hidden');
+            popup.classList.remove('flex');
+            okBtn.removeEventListener('click', handler);
+            try {
+                const res = await fetch(API_BASE + '?action=promote_representative&master_fp=' + encodeURIComponent(_clusterMasterFp) + '&screen_id=' + _clusterSelectedId);
+                const result = await res.json();
+                if (result.ok) {
+                    await fetchFinal();
+                    if (modalIdx >= 0 && modalIdx < filteredScreens.length) {
+                        showModal(modalIdx);
+                    }
+                }
+            } catch (e) {}
+        };
+        okBtn._promoteHandler = handler;
+        okBtn.addEventListener('click', handler);
+        popup.classList.remove('hidden');
+        popup.classList.add('flex');
+    });
 
     function updateModalNav() {
         if (modalIdx < 0) return;
