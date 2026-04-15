@@ -1125,6 +1125,17 @@
         if (e.target === this) hideConfirmDialog();
     });
 
+    // グリッドカード外クリックで選択リセット
+    document.addEventListener('click', function(e) {
+        if (currentTab !== 'final' || selectedForGroup.size === 0) return;
+        if (e.target.closest('[data-idx]') || e.target.closest('#final-actions') || e.target.closest('#confirm-popup') || e.target.closest('#modal') || e.target.closest('#preview-overlay')) return;
+        selectedForGroup.clear();
+        pendingChanges = {};
+        renderAll();
+        updateGroupSelectUI();
+        updateFinalActionBar();
+    });
+
     grid.addEventListener('click', function(e) {
         const card = e.target.closest('[data-idx]');
         if (!card) return;
