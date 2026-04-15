@@ -444,6 +444,7 @@ class EvidenceRepository
             FROM lc_session_graphs sg
             JOIN lc_sessions s ON s.session_id = sg.session_id
             JOIN lc_node_mappings nm ON nm.session_id = sg.session_id
+            WHERE s.status != 'archived'
             GROUP BY sg.session_id
             ORDER BY sg.built_at DESC
         SQL;
@@ -558,5 +559,81 @@ class EvidenceRepository
         )->execute([$newScreenId, $masterFp]);
 
         return ['ok' => true, 'master_fp' => $masterFp, 'new_screen_id' => $newScreenId];
+    }
+
+    // ─── セッション削除 ─────────────────────────────
+
+    public function deleteSession(string $sessionId): array
+    {
+        // 代表画像のIDを保持 (master_nodes が参照)
+        $repIds = $this->db->prepare(
+            "SELECT id FROM lc_screens WHERE session_id = ? AND is_representative = 1"
+        );
+        $repIds->execute([$sessionId]);
+        $keepIds = array_column($repIds->fetchAll(\PDO::FETCH_ASSOC), 'id');
+
+        // 1. 不採用スクリーンのファイルパスを取得して削除
+        $stmt = $this->db->prepare(
+            "SELECT screenshot_path, thumbnail_path FROM lc_screens"
+            . " WHERE session_id = ? AND is_representative = 0"
+        );
+        $stmt->execute([$sessionId]);
+        $deletedFiles = 0;
+        foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+            foreach (['screenshot_path', 'thumbnail_path'] as $col) {
+                if (!empty($row[$col]) && file_exists($row[$col])) {
+                    @unlink($row[$col]);
+                    $deletedFiles++;
+                }
+            }
+        }
+
+        // 2. 不採用 lc_tappable_items 削除
+        if ($keepIds) {
+            $placeholders = implode(',', array_fill(0, count($keepIds), '?'));
+            $this->db->prepare(
+                "DELETE FROM lc_tappable_items WHERE screen_id IN ("
+                . "SELECT id FROM lc_screens WHERE session_id = ? AND id NOT IN ($placeholders))"
+            )->execute(array_merge([$sessionId], $keepIds));
+        } else {
+            $this->db->prepare(
+                "DELETE FROM lc_tappable_items WHERE screen_id IN ("
+                . "SELECT id FROM lc_screens WHERE session_id = ?)"
+            )->execute([$sessionId]);
+        }
+
+        // 3. 不採用 lc_screens 削除
+        $this->db->prepare(
+            "DELETE FROM lc_screens WHERE session_id = ? AND is_representative = 0"
+        )->execute([$sessionId]);
+        $deletedScreens = $this->db->prepare("SELECT changes()")->fetchColumn();
+
+        // 4. lc_transitions 削除
+        $this->db->prepare(
+            "DELETE FROM lc_transitions WHERE session_id = ?"
+        )->execute([$sessionId]);
+
+        // 5. lc_screen_groups 削除
+        $this->db->prepare(
+            "DELETE FROM lc_screen_groups WHERE session_id = ?"
+        )->execute([$sessionId]);
+
+        // 6. lc_session_graphs 削除
+        $this->db->prepare(
+            "DELETE FROM lc_session_graphs WHERE session_id = ?"
+        )->execute([$sessionId]);
+
+        // 7. セッションを archived に更新
+        $this->db->prepare(
+            "UPDATE lc_sessions SET status = 'archived' WHERE session_id = ?"
+        )->execute([$sessionId]);
+
+        return [
+            'ok' => true,
+            'session_id' => $sessionId,
+            'deleted_screens' => (int)$deletedScreens,
+            'deleted_files' => $deletedFiles,
+            'kept_screens' => count($keepIds),
+        ];
     }
 }

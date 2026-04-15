@@ -266,6 +266,18 @@ if ($action === 'execute_merge') {
     exit;
 }
 
+// --- delete_session アクション ---
+if ($action === 'delete_session') {
+    $sessionId = $_GET['session_id'] ?? '';
+    if ($sessionId === '' || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'invalid request']);
+        exit;
+    }
+    $result = $repository->deleteSession($sessionId);
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
 // --- get_graph アクション (遷移グラフ Cytoscape.js 用) ---
 if ($action === 'get_graph') {
     $nodes = [];

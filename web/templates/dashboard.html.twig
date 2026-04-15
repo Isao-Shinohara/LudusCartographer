@@ -457,8 +457,12 @@
                             <span class="text-xs text-gray-500 ml-3">${s.node_count} ノード / ${s.edge_count} エッジ</span>
                             <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.built_at || '')}</span>
                         </div>
-                        <button class="merge-preview-btn px-3 py-1.5 bg-brand/20 hover:bg-brand/40 text-brand-light text-xs rounded transition-colors"
-                                data-session-id="${escapeHtml(s.session_id)}">プレビュー</button>
+                        <div class="flex items-center gap-2">
+                            <button class="merge-preview-btn px-3 py-1.5 bg-brand/20 hover:bg-brand/40 text-brand-light text-xs rounded transition-colors"
+                                    data-session-id="${escapeHtml(s.session_id)}">プレビュー</button>
+                            <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.node_count}">削除</button>
+                        </div>
                     </div>`;
                 }
                 html += '</div>';
@@ -476,7 +480,11 @@
                             <span class="text-sm font-mono text-gray-500">${escapeHtml(s.session_id)}</span>
                             <span class="text-xs text-gray-600 ml-3">${s.mapped_nodes} ノードマッピング済</span>
                         </div>
-                        <span class="text-xs text-green-700">完了</span>
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs text-green-700">完了</span>
+                            <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.mapped_nodes}">削除</button>
+                        </div>
                     </div>`;
                 }
                 html += '</div>';
@@ -486,6 +494,10 @@
             // プレビューボタン
             mc.querySelectorAll('.merge-preview-btn').forEach(btn => {
                 btn.addEventListener('click', () => showMergePreview(btn.dataset.sessionId));
+            });
+            // 削除ボタン
+            mc.querySelectorAll('.delete-session-btn').forEach(btn => {
+                btn.addEventListener('click', () => confirmDeleteSession(btn.dataset.sessionId, btn.dataset.nodeCount));
             });
         } catch (e) {
             mc.innerHTML = '<div class="text-center text-red-500 py-12">API エラー</div>';
@@ -597,6 +609,51 @@
             }
         } catch (e) {
             btn.textContent = 'エラー';
+        }
+    }
+
+    function confirmDeleteSession(sessionId, nodeCount) {
+        const body = document.getElementById('confirm-body');
+        body.innerHTML = `
+            <p class="text-sm text-gray-300 mb-2">セッション <code class="text-brand-light">${escapeHtml(sessionId)}</code> を削除しますか？</p>
+            <ul class="text-xs text-gray-400 space-y-1 ml-4 list-disc">
+                <li>不採用の画像・スクリーンショットファイルを物理削除</li>
+                <li>遷移データ・グループ情報を削除</li>
+                <li>採用済み画像（マスターノード参照）は保持</li>
+            </ul>
+            <p class="text-xs text-red-400 mt-3">この操作は取り消せません。</p>`;
+        const popup = document.getElementById('confirm-popup');
+        const okBtn = document.getElementById('confirm-ok');
+        const prev = okBtn._deleteHandler;
+        if (prev) okBtn.removeEventListener('click', prev);
+        const handler = async function() {
+            popup.classList.add('hidden');
+            popup.classList.remove('flex');
+            okBtn.removeEventListener('click', handler);
+            await executeDeleteSession(sessionId);
+        };
+        okBtn._deleteHandler = handler;
+        okBtn.addEventListener('click', handler);
+        popup.classList.remove('hidden');
+        popup.classList.add('flex');
+    }
+
+    async function executeDeleteSession(sessionId) {
+        const mc = document.getElementById('merge-container');
+        mc.innerHTML = '<div class="text-center text-gray-600 py-12">削除中...</div>';
+        try {
+            const res = await fetch(API_BASE + '?action=delete_session&session_id=' + encodeURIComponent(sessionId));
+            const data = await res.json();
+            if (data.ok) {
+                mc.innerHTML = `<div class="text-center text-green-500 py-12">
+                    削除完了: ${data.deleted_screens} 画面削除, ${data.deleted_files} ファイル削除, ${data.kept_screens} 画面保持
+                </div>`;
+                setTimeout(() => fetchMergeTab(), 2000);
+            } else {
+                mc.innerHTML = `<div class="text-center text-red-500 py-12">エラー: ${escapeHtml(data.error || '不明')}</div>`;
+            }
+        } catch (e) {
+            mc.innerHTML = '<div class="text-center text-red-500 py-12">削除失敗</div>';
         }
     }
 
