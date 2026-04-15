@@ -297,11 +297,8 @@ class ScreenRecorder:
             if scene in _SKIP_SCENES:
                 return False
 
-            # 2. 全ピクセル暗め / 全ピクセル明るめ → スキップ (OCR テキストありなら保存)
-            _has_ocr_text = bool(ocr_results and any(
-                r.get("text", "").strip() for r in ocr_results
-            ))
-            if not _has_ocr_text and analysis_path and Path(analysis_path).exists():
+            # 2. 全ピクセル暗め / 全ピクセル明るめ → スキップ (テキスト有無問わず)
+            if analysis_path and Path(analysis_path).exists():
                 _img = cv2.imread(str(analysis_path))
                 if _img is not None:
                     if _is_too_dark_or_bright(cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY)):
