@@ -34,6 +34,21 @@ def _make_ocr(text: str, confidence: float = 0.9,
     }
 
 
+_test_img_counter = 0
+
+def _make_test_image(tmp_path: Path, brightness: int = 128,
+                     w: int = 1440, h: int = 720) -> Path:
+    """テスト用 PNG 画像を生成。brightness で明るさを指定 (0-255)。"""
+    global _test_img_counter
+    import cv2
+    import numpy as np
+    _test_img_counter += 1
+    img = np.full((h, w, 3), brightness, dtype=np.uint8)
+    path = tmp_path / f"test_{_test_img_counter}.png"
+    cv2.imwrite(str(path), img)
+    return path
+
+
 def _make_recorder(tmp_path: Path, session_id: str = "test_session",
                    game_title: str = "TestGame") -> ScreenRecorder:
     """テスト用 ScreenRecorder を生成。"""
@@ -260,8 +275,9 @@ class TestMaybeRecord:
         """LOADING シーンはスキップ。"""
         rec = _make_recorder(tmp_path)
         try:
+            img = _make_test_image(tmp_path)
             ocr = [_make_ocr("Now Loading")]
-            assert rec.maybe_record(None, ocr, "LOADING", "abc123") is False
+            assert rec.maybe_record(img, ocr, "LOADING", "abc123") is False
         finally:
             rec.close()
 
@@ -269,8 +285,9 @@ class TestMaybeRecord:
         """MOVIE シーンもセリフキャプチャのため記録される。"""
         rec = _make_recorder(tmp_path)
         try:
+            img = _make_test_image(tmp_path, brightness=128)
             ocr = [_make_ocr("SKIP")]
-            assert rec.maybe_record(None, ocr, "MOVIE", "abc123") is True
+            assert rec.maybe_record(img, ocr, "MOVIE", "abc123") is True
         finally:
             rec.close()
 
@@ -278,7 +295,26 @@ class TestMaybeRecord:
         """空 OCR でも phash があれば記録される（寛容撮影）。"""
         rec = _make_recorder(tmp_path)
         try:
-            assert rec.maybe_record(None, [], "MENU", "abc123") is True
+            img = _make_test_image(tmp_path, brightness=128)
+            assert rec.maybe_record(img, [], "MENU", "abc123") is True
+        finally:
+            rec.close()
+
+    def test_skip_too_dark(self, tmp_path):
+        """暗すぎる画面は記録されない。"""
+        rec = _make_recorder(tmp_path)
+        try:
+            img = _make_test_image(tmp_path, brightness=10)
+            assert rec.maybe_record(img, [], "UNKNOWN", "abc123") is False
+        finally:
+            rec.close()
+
+    def test_skip_too_bright(self, tmp_path):
+        """白すぎる画面は記録されない。"""
+        rec = _make_recorder(tmp_path)
+        try:
+            img = _make_test_image(tmp_path, brightness=230)
+            assert rec.maybe_record(img, [], "UNKNOWN", "abc123") is False
         finally:
             rec.close()
 
@@ -286,8 +322,9 @@ class TestMaybeRecord:
         """BATTLE シーンは記録される。"""
         rec = _make_recorder(tmp_path)
         try:
+            img = _make_test_image(tmp_path)
             ocr = [_make_ocr("ATTACKER"), _make_ocr("AUTO")]
-            assert rec.maybe_record(None, ocr, "BATTLE", "abc123") is True
+            assert rec.maybe_record(img, ocr, "BATTLE", "abc123") is True
         finally:
             rec.close()
 
@@ -295,8 +332,9 @@ class TestMaybeRecord:
         """GACHA シーンは記録される。"""
         rec = _make_recorder(tmp_path)
         try:
+            img = _make_test_image(tmp_path)
             ocr = [_make_ocr("栗根こころ"), _make_ocr("SKIP")]
-            assert rec.maybe_record(None, ocr, "GACHA", "abc123") is True
+            assert rec.maybe_record(img, ocr, "GACHA", "abc123") is True
         finally:
             rec.close()
 
@@ -304,9 +342,10 @@ class TestMaybeRecord:
         """同一テキストの2回目はスキップ。"""
         rec = _make_recorder(tmp_path)
         try:
+            img = _make_test_image(tmp_path)
             ocr = [_make_ocr("ホーム画面"), _make_ocr("クエスト")]
-            assert rec.maybe_record(None, ocr, "MENU", "abc123") is True
-            assert rec.maybe_record(None, ocr, "MENU", "abc123") is False
+            assert rec.maybe_record(img, ocr, "MENU", "abc123") is True
+            assert rec.maybe_record(img, ocr, "MENU", "abc123") is False
         finally:
             rec.close()
 
@@ -314,10 +353,11 @@ class TestMaybeRecord:
         """テキストが異なれば連続でも記録される。"""
         rec = _make_recorder(tmp_path)
         try:
+            img = _make_test_image(tmp_path)
             ocr1 = [_make_ocr("画面A")]
             ocr2 = [_make_ocr("画面B")]
-            assert rec.maybe_record(None, ocr1, "MENU", "abc123") is True
-            assert rec.maybe_record(None, ocr2, "MENU", "def456") is True
+            assert rec.maybe_record(img, ocr1, "MENU", "abc123") is True
+            assert rec.maybe_record(img, ocr2, "MENU", "def456") is True
         finally:
             rec.close()
 
@@ -325,8 +365,9 @@ class TestMaybeRecord:
         """全トークンがフィルタされても phash で記録される（寛容撮影）。"""
         rec = _make_recorder(tmp_path)
         try:
+            img = _make_test_image(tmp_path)
             ocr = [_make_ocr("1234"), _make_ocr("♦●")]
-            assert rec.maybe_record(None, ocr, "MENU", "abc123") is True
+            assert rec.maybe_record(img, ocr, "MENU", "abc123") is True
         finally:
             rec.close()
 
@@ -339,8 +380,9 @@ class TestParentFp:
         """1枚目の parent_fp は None。"""
         rec = _make_recorder(tmp_path)
         try:
+            img = _make_test_image(tmp_path)
             ocr = [_make_ocr("画面A")]
-            rec.maybe_record(None, ocr, "MENU", "abc123")
+            rec.maybe_record(img, ocr, "MENU", "abc123")
 
             conn = sqlite3.connect(str(tmp_path / "test.db"))
             row = conn.execute(
@@ -356,12 +398,13 @@ class TestParentFp:
         """2枚目の parent_fp は1枚目の fingerprint。"""
         rec = _make_recorder(tmp_path)
         try:
+            img = _make_test_image(tmp_path)
             ocr1 = [_make_ocr("画面A")]
-            rec.maybe_record(None, ocr1, "MENU", "abc123")
+            rec.maybe_record(img, ocr1, "MENU", "abc123")
             first_fp = rec._last_recorded_fp
 
             ocr2 = [_make_ocr("画面B")]
-            rec.maybe_record(None, ocr2, "MENU", "def456")
+            rec.maybe_record(img, ocr2, "MENU", "def456")
 
             conn = sqlite3.connect(str(tmp_path / "test.db"))
             rows = conn.execute(
@@ -384,28 +427,30 @@ class TestCrossSession:
     def test_loads_existing_fingerprints(self, tmp_path):
         """別セッションで記録済みの fingerprint がロードされ、重複スキップされる。"""
         # セッション1で記録
+        img = _make_test_image(tmp_path)
         rec1 = _make_recorder(tmp_path, session_id="session_1")
         ocr = [_make_ocr("共通画面")]
-        rec1.maybe_record(None, ocr, "MENU", "abc123")
+        rec1.maybe_record(img, ocr, "MENU", "abc123")
         rec1.close()
 
         # セッション2: 同じ画面はスキップされるはず
         rec2 = _make_recorder(tmp_path, session_id="session_2")
         try:
-            assert rec2.maybe_record(None, ocr, "MENU", "def456") is False
+            assert rec2.maybe_record(img, ocr, "MENU", "def456") is False
         finally:
             rec2.close()
 
     def test_new_screen_in_new_session(self, tmp_path):
         """別セッションで新しい画面は記録される。"""
+        img = _make_test_image(tmp_path)
         rec1 = _make_recorder(tmp_path, session_id="session_1")
-        rec1.maybe_record(None, [_make_ocr("画面A")], "MENU", "abc123")
+        rec1.maybe_record(img, [_make_ocr("画面A")], "MENU", "abc123")
         rec1.close()
 
         rec2 = _make_recorder(tmp_path, session_id="session_2")
         try:
             new_ocr = [_make_ocr("画面B")]
-            assert rec2.maybe_record(None, new_ocr, "MENU", "def456") is True
+            assert rec2.maybe_record(img, new_ocr, "MENU", "def456") is True
         finally:
             rec2.close()
 
@@ -418,8 +463,9 @@ class TestDbWrite:
         """lc_screens にレコードが INSERT される。"""
         rec = _make_recorder(tmp_path)
         try:
+            img = _make_test_image(tmp_path)
             ocr = [_make_ocr("テスト画面", confidence=0.95)]
-            rec.maybe_record(None, ocr, "MENU", "phash_abc")
+            rec.maybe_record(img, ocr, "MENU", "phash_abc")
 
             conn = sqlite3.connect(str(tmp_path / "test.db"))
             row = conn.execute(
@@ -442,11 +488,12 @@ class TestDbWrite:
         """lc_tappable_items にレコードが INSERT される。"""
         rec = _make_recorder(tmp_path)
         try:
+            img = _make_test_image(tmp_path)
             ocr = [
                 _make_ocr("ボタンA", confidence=0.9),
                 _make_ocr("ボタンB", confidence=0.8),
             ]
-            rec.maybe_record(None, ocr, "MENU", "abc123")
+            rec.maybe_record(img, ocr, "MENU", "abc123")
 
             conn = sqlite3.connect(str(tmp_path / "test.db"))
             rows = conn.execute(
@@ -465,8 +512,9 @@ class TestDbWrite:
         """lc_sessions.screens_found がインクリメントされる。"""
         rec = _make_recorder(tmp_path)
         try:
-            rec.maybe_record(None, [_make_ocr("ホーム画面")], "MENU", "abc")
-            rec.maybe_record(None, [_make_ocr("クエスト画面")], "MENU", "def")
+            img = _make_test_image(tmp_path)
+            rec.maybe_record(img, [_make_ocr("ホーム画面")], "MENU", "abc")
+            rec.maybe_record(img, [_make_ocr("クエスト画面")], "MENU", "def")
 
             conn = sqlite3.connect(str(tmp_path / "test.db"))
             row = conn.execute(
@@ -481,7 +529,8 @@ class TestDbWrite:
     def test_session_status_completed_on_close(self, tmp_path):
         """close() でセッション status が 'completed' になる。"""
         rec = _make_recorder(tmp_path)
-        rec.maybe_record(None, [_make_ocr("画面")], "MENU", "abc")
+        img = _make_test_image(tmp_path)
+        rec.maybe_record(img, [_make_ocr("画面")], "MENU", "abc")
         rec.close()
 
         conn = sqlite3.connect(str(tmp_path / "test.db"))
@@ -592,21 +641,21 @@ class TestScreenshotSave:
         finally:
             rec.close()
 
-    def test_no_image_still_records_db(self, tmp_path):
-        """analysis_path が None でも DB には記録される（パスは空）。"""
+    def test_normal_brightness_recorded(self, tmp_path):
+        """通常の明るさの画像は記録される。"""
         rec = _make_recorder(tmp_path)
         try:
+            img = _make_test_image(tmp_path, brightness=128)
             ocr = [_make_ocr("テスト画面")]
-            assert rec.maybe_record(None, ocr, "MENU", "abc123") is True
+            assert rec.maybe_record(img, ocr, "MENU", "abc123") is True
 
             conn = sqlite3.connect(str(tmp_path / "test.db"))
             row = conn.execute(
-                "SELECT screenshot_path, thumbnail_path FROM lc_screens"
+                "SELECT screenshot_path FROM lc_screens"
                 " WHERE session_id = ?", ("test_session",)
             ).fetchone()
             conn.close()
-            assert row[0] == ""
-            assert row[1] is None or row[1] == ""
+            assert row[0].endswith(".webp")
         finally:
             rec.close()
 
