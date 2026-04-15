@@ -3833,31 +3833,6 @@ def main():
             state.last_phash = ""
             continue
 
-        # ── キャラ獲得画面検出: MOVIE と混同しやすいため先に判定 ──
-        # 特徴: 左下にキャラ名 + "のキオク"(メモリア名) + 属性アイコン2つ
-        # NEW! は初回のみ表示されるため判定に使わない
-        # 判定: "XXXのキオク" パターン (OCR単体で "のキオク" を含むテキスト)
-        # 除外: OK ボタンがある / 交換所説明 / 長文テキスト (ガチャ説明ダイアログ)
-        _kioku_item = next(
-            (item for item in ocr_results
-             if "のキオク" in item.get("text", "") and len(item.get("text", "")) <= 15),
-            None)
-        _has_ok_btn = any("OK" in t for t in texts)
-        _has_result = any("Result" in t or "result" in t for t in texts)
-        # キャラ詳細画面は CHARA_GET ではない (詳細/限界突破/スキル/3D 等が見える)
-        _is_chara_detail = any(kw in t for t in texts for kw in ("詳細", "限界突破", "スキル"))
-        if _kioku_item and not _has_ok_btn and not _has_result and not _is_chara_detail and scene not in ("BATTLE",):
-            _tap_x, _tap_y = roi_to_device(
-                int(ANALYSIS_W * 0.5), int(ANALYSIS_H * 0.5), state.game_roi)
-            logger.info("[CHARA_GET] キャラ獲得画面検出 (キオク) → 中央タップ (%d,%d)", _tap_x, _tap_y)
-            tap_device(_tap_x, _tap_y, state, "CHARA_GET_TAP")
-            state.last_action = "CHARA_GET_TAP"
-            state._gacha_total_wait = 0
-            state._gacha_static_count = 0
-            time.sleep(1.0)
-            state.last_phash = ""
-            continue
-
         # ── スクリーン記録 ──
         if recorder is not None and state.game_foreground:
             # 起動シーン終了判定: タイトル画面 or MENU到達で通常記録に移行
