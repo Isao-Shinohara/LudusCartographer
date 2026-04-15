@@ -43,7 +43,6 @@
     <!-- Final 採用/不採用アクション (右詰) -->
     <div id="final-actions" class="hidden ml-auto flex items-center gap-2">
         <span id="final-pending-count" class="text-xs text-gray-400"></span>
-        <button id="final-cleanup-btn" class="px-3 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors hidden">除外済みを削除</button>
         <button id="final-reset-btn" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>リセット</button>
         <button id="final-apply-btn" class="px-3 py-1 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>更新</button>
     </div>
@@ -370,25 +369,11 @@
             const data = await res.json();
             allScreens = data.screens || [];
             renderAll();
-            checkCleanable();
         } catch (e) {
             grid.innerHTML = '<div class="col-span-full text-center text-red-500 py-12">API エラー</div>';
         }
     }
 
-    async function checkCleanable() {
-        const btn = document.getElementById('final-cleanup-btn');
-        try {
-            const res = await fetch(API_BASE + '?action=get_cleanable_excluded');
-            const data = await res.json();
-            if (data.count > 0) {
-                btn.textContent = `除外済みを削除 (${data.count})`;
-                btn.classList.remove('hidden');
-            } else {
-                btn.classList.add('hidden');
-            }
-        } catch (e) { btn.classList.add('hidden'); }
-    }
 
     // --- タブ切り替え ---
     window.switchTab = function(tab) {
@@ -513,7 +498,12 @@
                 }
                 html += '</div>';
             }
-            html += '</div></div>';
+            html += '</div>';
+            // 不要データ整理
+            html += '<div><h3 class="text-lg font-bold text-gray-400 mb-3">データ整理</h3>';
+            html += '<div id="merge-cleanup-area" class="text-sm text-gray-500">確認中...</div>';
+            html += '</div>';
+            html += '</div>';
             mc.innerHTML = html;
             // プレビューボタン
             mc.querySelectorAll('.merge-preview-btn').forEach(btn => {
@@ -523,6 +513,8 @@
             mc.querySelectorAll('.delete-session-btn').forEach(btn => {
                 btn.addEventListener('click', () => confirmDeleteSession(btn.dataset.sessionId, btn.dataset.nodeCount));
             });
+            // 不要データ整理の件数確認
+            checkCleanableInMerge();
         } catch (e) {
             mc.innerHTML = '<div class="text-center text-red-500 py-12">API エラー</div>';
         }
@@ -670,6 +662,29 @@
         }
     }
 
+    async function checkCleanableInMerge() {
+        const area = document.getElementById('merge-cleanup-area');
+        if (!area) return;
+        try {
+            const res = await fetch(API_BASE + '?action=get_cleanable_excluded');
+            const data = await res.json();
+            if (data.count > 0) {
+                area.innerHTML = `<div class="flex items-center justify-between bg-gray-900 border border-gray-800 rounded-lg p-4">
+                    <div>
+                        <span class="text-gray-300">Final で除外済み＋セッション削除済みの画像が ${data.count} 件あります</span>
+                        <p class="text-xs text-gray-500 mt-1">マスターノード・エッジ・画像ファイルを完全に削除できます</p>
+                    </div>
+                    <button id="merge-cleanup-btn" class="px-3 py-1.5 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors">不要データを整理 (${data.count})</button>
+                </div>`;
+                document.getElementById('merge-cleanup-btn').addEventListener('click', confirmCleanupExcluded);
+            } else {
+                area.innerHTML = '<p class="text-gray-600 text-sm">整理対象のデータはありません</p>';
+            }
+        } catch (e) {
+            area.innerHTML = '<p class="text-gray-600 text-sm">確認できませんでした</p>';
+        }
+    }
+
     async function confirmCleanupExcluded() {
         const res = await fetch(API_BASE + '?action=get_cleanable_excluded');
         const data = await res.json();
@@ -691,7 +706,7 @@
             try {
                 const r = await fetch(API_BASE + '?action=cleanup_excluded');
                 const result = await r.json();
-                if (result.ok) await fetchFinal();
+                if (result.ok) await fetchMergeTab();
             } catch (e) {}
         });
     }
@@ -953,7 +968,6 @@
 
     document.getElementById('final-apply-btn').addEventListener('click', showConfirmPopup);
     document.getElementById('final-reset-btn').addEventListener('click', resetPending);
-    document.getElementById('final-cleanup-btn').addEventListener('click', confirmCleanupExcluded);
     document.getElementById('confirm-cancel').addEventListener('click', hideConfirmDialog);
     document.getElementById('confirm-popup').addEventListener('click', function(e) {
         if (e.target === this) hideConfirmDialog();
