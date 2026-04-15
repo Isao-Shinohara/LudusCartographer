@@ -44,8 +44,8 @@
         </div>
     </div>
     <div id="final-actions" class="hidden ml-auto flex items-center gap-2">
-        <span id="final-select-count" class="text-xs text-gray-400"></span>
-        <button id="final-merge-group-btn" class="px-3 py-1 bg-violet-900/50 hover:bg-violet-800/60 text-violet-300 text-xs rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed" disabled>統合</button>
+        <span id="final-select-hint" class="text-xs text-gray-500">Shift+クリックで選択</span>
+        <button id="final-merge-group-btn" class="px-3 py-1 bg-violet-900/50 hover:bg-violet-800/60 text-violet-300 text-xs rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed" disabled>⊕ 統合</button>
         <button id="final-adopt-btn" class="px-3 py-1 bg-emerald-900/60 hover:bg-emerald-800/70 text-emerald-300 text-xs rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed" disabled>✓ 採用</button>
         <button id="final-exclude-btn" class="px-3 py-1 bg-amber-900/40 hover:bg-amber-800/50 text-amber-400/80 text-xs rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed" disabled>✕ 不採用</button>
         <button id="final-reset-btn" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-500 text-xs rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed" disabled>リセット</button>
@@ -94,7 +94,8 @@
 
 <!-- 固定フッター (画面数) -->
 <div id="dashboard-footer" class="fixed bottom-0 left-0 right-0 z-30 bg-gray-900/90 border-t border-gray-800 py-1.5">
-    <div class="max-w-7xl mx-auto px-4 flex justify-end">
+    <div class="max-w-7xl mx-auto px-4 flex justify-between">
+        <span id="final-select-count" class="text-xs text-gray-400"></span>
         <span id="stats" class="text-xs text-gray-500"></span>
     </div>
 </div>
@@ -1055,16 +1056,12 @@
     function updateGroupSelectUI() {
         const countEl = document.getElementById('final-select-count');
         const mergeBtn = document.getElementById('final-merge-group-btn');
-        if (selectedForGroup.size >= 2) {
+        if (selectedForGroup.size >= 1) {
             countEl.textContent = `${selectedForGroup.size} 件選択中`;
-            mergeBtn.disabled = false;
-        } else if (selectedForGroup.size === 1) {
-            countEl.textContent = '1 件選択中';
-            mergeBtn.disabled = true;
         } else {
-            countEl.textContent = 'Shift+クリックで選択';
-            mergeBtn.disabled = true;
+            countEl.textContent = '';
         }
+        mergeBtn.disabled = selectedForGroup.size < 2;
         countEl.classList.remove('hidden');
     }
 
