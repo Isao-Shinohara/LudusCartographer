@@ -710,7 +710,7 @@
         const items = data.items || [];
         if (items.length === 0) return;
         let html = `<p class="text-sm text-gray-300 mb-3">除外済み＋セッション削除済みの ${items.length} 件を完全削除しますか？</p>`;
-        html += '<div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3 max-h-64 overflow-y-auto">';
+        html += '<div class="grid gap-3 max-h-64 overflow-y-auto" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))">';
         for (const item of items) {
             const thumb = item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
             html += `<div class="bg-gray-800 rounded overflow-hidden">
@@ -963,13 +963,13 @@
         let html = '';
         if (toExclude.length > 0) {
             html += `<p class="text-sm text-gray-300 mb-2">${toExclude.length} 件を除外</p>`;
-            html += '<div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3 max-h-64 overflow-y-auto mb-4">';
+            html += '<div class="grid gap-3 max-h-64 overflow-y-auto" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr)) mb-4">';
             for (const [fp] of toExclude) html += _confirmCard(fp);
             html += '</div>';
         }
         if (toAdopt.length > 0) {
             html += `<p class="text-sm text-gray-300 mb-2">${toAdopt.length} 件を採用に戻す</p>`;
-            html += '<div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3 max-h-64 overflow-y-auto">';
+            html += '<div class="grid gap-3 max-h-64 overflow-y-auto" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))">';
             for (const [fp] of toAdopt) html += _confirmCard(fp);
             html += '</div>';
         }
