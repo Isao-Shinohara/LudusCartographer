@@ -713,10 +713,7 @@
         html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto p-1 confirm-img-area">';
         for (const item of items) {
             const thumb = item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
-            html += `<div class="bg-gray-800 rounded overflow-hidden w-40 flex-shrink-0">
-                ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" />` : '<div class="w-full aspect-video bg-gray-700"></div>'}
-                <p class="text-[9px] text-gray-500 p-1 truncate">${escapeHtml(item.title || '')}</p>
-            </div>`;
+            html += _thumbCard(thumb, item.title || '');
         }
         html += '</div>';
         html += '<p class="text-xs text-red-400 mt-3">マスターノード・エッジ・画像ファイルを物理削除します。<br>この操作は取り消せません。</p>';
@@ -959,13 +956,20 @@
         popup.classList.remove('flex');
     }
 
+    function _thumbCard(thumb, title, opts) {
+        const clickable = opts && opts.clickable;
+        const dataAttr = opts && opts.dataFp ? ` data-master-fp="${escapeHtml(opts.dataFp)}"` : '';
+        const clickCls = clickable ? ' cursor-pointer hover:ring-2 hover:ring-brand/50 confirm-preview-card' : '';
+        return `<div class="bg-gray-800 rounded overflow-hidden w-40 flex-shrink-0 transition-all${clickCls}"${dataAttr}>
+            ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" />` : '<div class="w-full aspect-video bg-gray-700"></div>'}
+            <p class="text-[10px] text-gray-500 p-1.5 truncate">${escapeHtml(title)}</p>
+        </div>`;
+    }
+
     function _confirmCard(fp) {
         const item = allScreens.find(s => s.master_fp === fp);
         const thumb = item && item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
-        return `<div class="bg-gray-800 rounded overflow-hidden cursor-pointer hover:ring-2 hover:ring-brand/50 transition-all confirm-preview-card w-40 flex-shrink-0" data-master-fp="${escapeHtml(fp)}">
-            ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" />` : '<div class="w-full aspect-video bg-gray-700"></div>'}
-            <p class="text-[10px] text-gray-500 p-1.5 truncate">${escapeHtml(item ? (item.name || '') : '')}</p>
-        </div>`;
+        return _thumbCard(thumb, item ? (item.name || '') : '', { clickable: true, dataFp: fp });
     }
 
     function showConfirmPopup() {
