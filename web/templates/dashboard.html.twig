@@ -463,7 +463,7 @@
         } else if (tab === 'final') {
             finalActions.classList.remove('hidden');
             statusDot.classList.add('hidden');
-            statusText.textContent = '決定版';
+            statusText.textContent = '';
             filterSelect.classList.remove('hidden');
             filterSelect.innerHTML = '<option value="adopted" selected>採用</option><option value="all">すべて</option>';
             filterSelect.onchange = function() { showExcluded = this.value === 'all'; renderAll(); };
@@ -477,7 +477,7 @@
         } else if (tab === 'merge') {
             finalActions.classList.add('hidden');
             statusDot.classList.add('hidden');
-            statusText.textContent = 'マージ管理';
+            statusText.textContent = '';
             stats.textContent = '';
             filterSelect.classList.add('hidden');
             sessionSelect.classList.add('hidden');
