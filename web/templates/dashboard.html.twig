@@ -25,9 +25,9 @@
     </button>
     <select id="filter-select" class="ml-3 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="reps" selected>採用</option>
-        <option value="all">すべて</option>
         <option value="thinned">不採用</option>
         <option value="pending">未処理</option>
+        <option value="all">すべて</option>
     </select>
     <select id="sort-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="desc" selected>降順</option>
@@ -94,8 +94,8 @@
 
 <!-- 固定フッター (画面数) -->
 <div id="dashboard-footer" class="fixed bottom-0 left-0 right-0 z-30 bg-gray-900/90 border-t border-gray-800 py-1.5">
-    <div class="max-w-7xl mx-auto px-4 flex justify-between">
-        <span id="final-select-count" class="text-sm text-brand-light"></span>
+    <div class="max-w-7xl mx-auto px-4 flex justify-end gap-4">
+        <span id="final-select-count" class="text-xs text-gray-500"></span>
         <span id="stats" class="text-xs text-gray-500"></span>
     </div>
 </div>
@@ -460,7 +460,7 @@
             statusDot.classList.remove('hidden');
             statusText.textContent = '自動更新中';
             filterSelect.classList.remove('hidden');
-            filterSelect.innerHTML = '<option value="reps" selected>採用</option><option value="all">すべて</option><option value="thinned">不採用</option><option value="pending">未処理</option>';
+            filterSelect.innerHTML = '<option value="reps" selected>採用</option><option value="thinned">不採用</option><option value="pending">未処理</option><option value="all">すべて</option>';
             filterSelect.onchange = renderAll;
             sessionSelect.classList.remove('hidden');
             sortSelect.classList.remove('hidden');
@@ -474,8 +474,8 @@
             statusDot.classList.add('hidden');
             statusText.textContent = '';
             filterSelect.classList.remove('hidden');
-            filterSelect.innerHTML = '<option value="adopted" selected>採用</option><option value="all">すべて</option><option value="excluded">不採用</option>';
-            filterSelect.onchange = function() { showExcluded = this.value === 'all' || this.value === 'excluded'; renderAll(); };
+            filterSelect.innerHTML = '<option value="adopted" selected>採用</option><option value="excluded">不採用</option><option value="all">すべて</option>';
+            filterSelect.onchange = function() { showExcluded = this.value === 'all' || this.value === 'excluded'; renderAll(); updateFinalActionBar(); };
             sessionSelect.classList.add('hidden');
             sortSelect.classList.remove('hidden');
             grid.classList.remove('hidden');
