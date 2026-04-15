@@ -1,0 +1,5 @@
+{
+    "action": "INFO",
+    "threshold": 0.70,
+    "note": "サブ画面ヘッダーの i (情報) アイコン。icon_back との間にタイトルテキストがある。"
+}

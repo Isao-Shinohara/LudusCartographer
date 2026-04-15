@@ -356,6 +356,46 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         tap_device(_tt_x, _tt_y, state, "TITLE_TAP_START")
         return "TITLE_TAP", 2.0
 
+    # ─── チュートリアル復帰: サブ画面から戻る ───
+    # ホーム未到達 + 指アイコン/金枠/チュートリアルダイアログなし + 画面安定
+    # → icon_back + header_info_icon + 間にテキストがあるサブ画面なら戻る
+    _tut_back_count = getattr(state, "_tutorial_no_guide_count", 0)
+    if not state.home_reached and state.same_phash_count >= 2 and ctx.analysis_path:
+        _header_roi = (0, 0, int(W * 0.35), int(H * 0.12))
+        _back_m = ASSET_MANAGER.match_single("icon_back", str(ctx.analysis_path), roi=_header_roi)
+        _info_m = ASSET_MANAGER.match_single("header_info_icon", str(ctx.analysis_path), roi=_header_roi)
+        if _back_m and _back_m[2] >= 0.60 and _info_m and _info_m[2] >= 0.60:
+            # icon_back と header_info_icon の間にテキストがあるか確認
+            _back_x = _back_m[0]
+            _info_x = _info_m[0]
+            _header_text = any(
+                _back_x < item.get("center", [0])[0] < _info_x
+                and item.get("center", [0, 0])[1] < H * 0.12
+                for item in ocr
+            )
+            if _header_text:
+                _tut_back_count += 1
+                state._tutorial_no_guide_count = _tut_back_count
+                if _tut_back_count >= 3:
+                    _bx, _by = roi_to_device(_back_m[0], _back_m[1], state.game_roi)
+                    logger.info(
+                        "[TUTORIAL_BACK] ガイドなしサブ画面 %d回検出 → 戻る (%d,%d)"
+                        " [back=%.2f, info=%.2f]",
+                        _tut_back_count, _bx, _by, _back_m[2], _info_m[2])
+                    tap_device(_bx, _by, state, "TUTORIAL_BACK_TO_HOME")
+                    state._tutorial_no_guide_count = 0
+                    return "TUTORIAL_BACK_TO_HOME", 1.0
+                else:
+                    logger.info(
+                        "[TUTORIAL_BACK] ガイドなしサブ画面検出 (%d/3) — 様子見",
+                        _tut_back_count)
+            else:
+                state._tutorial_no_guide_count = 0
+        else:
+            state._tutorial_no_guide_count = 0
+    else:
+        state._tutorial_no_guide_count = 0
+
     # ─── フォールバック: 何も見つからない ───
     logger.info(">>> 画面が安定するまで待機 (OCR %d件)", len(ocr))
     return "WAIT_FOR_CHANGE", 0
