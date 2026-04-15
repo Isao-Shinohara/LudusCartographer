@@ -47,11 +47,10 @@
     <!-- Final 採用/不採用アクション (右詰) -->
     <div id="final-actions" class="hidden ml-auto flex items-center gap-2">
         <span id="final-select-count" class="text-xs text-gray-400 hidden"></span>
-        <button id="final-merge-group-btn" class="px-3 py-1 bg-blue-700 hover:bg-blue-600 text-white text-xs font-bold rounded transition-colors hidden">統合</button>
-        <span class="text-gray-700">|</span>
         <span id="final-pending-count" class="text-xs text-gray-400"></span>
-        <button id="final-reset-btn" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>リセット</button>
+        <button id="final-merge-group-btn" class="px-3 py-1 bg-blue-700 hover:bg-blue-600 text-white text-xs font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>統合</button>
         <button id="final-apply-btn" class="px-3 py-1 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>更新</button>
+        <button id="final-reset-btn" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>リセット</button>
     </div>
 </div>
 
@@ -1067,11 +1066,11 @@
         if (selectedForGroup.size >= 2) {
             countEl.textContent = `${selectedForGroup.size} 件選択中`;
             countEl.classList.remove('hidden');
-            mergeBtn.classList.remove('hidden');
+            mergeBtn.disabled = false;
         } else {
             countEl.textContent = selectedForGroup.size === 1 ? '1 件選択中 (Shift+クリックで追加)' : '';
             countEl.classList.toggle('hidden', selectedForGroup.size === 0);
-            mergeBtn.classList.add('hidden');
+            mergeBtn.disabled = true;
         }
     }
 
