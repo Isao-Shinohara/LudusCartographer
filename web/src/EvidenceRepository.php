@@ -168,7 +168,7 @@ class EvidenceRepository
      */
     public function getSessions(int $limit = 20, string $gameTitle = ''): array
     {
-        $conditions = [];
+        $conditions = ["status != 'archived'"];
         $bindings   = [':limit' => $limit];
 
         if ($gameTitle !== '') {
@@ -270,7 +270,7 @@ class EvidenceRepository
         int    $afterId   = 0,
         string $sessionId = '',
     ): array {
-        $conditions = [];
+        $conditions = ["COALESCE(sess.status, '') != 'archived'"];
         $bindings   = [':limit' => $limit];
 
         if ($gameTitle !== '') {
