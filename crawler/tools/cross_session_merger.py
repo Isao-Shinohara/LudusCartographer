@@ -698,6 +698,28 @@ class CrossSessionMerger:
         self._conn.commit()
         return len(reps)
 
+    def _resolve_fp_to_master(self, fp: str, session_id: str,
+                              fp_map: dict[str, str]) -> Optional[str]:
+        """session_fp をマスター fp に変換。不採用画面はクラスタ代表経由で変換。"""
+        if fp in fp_map:
+            return fp_map[fp]
+        # 不採用画面 → 同クラスタの代表画面の fp を取得 → fp_map で変換
+        row = self._conn.execute(
+            "SELECT cluster_id FROM lc_screens"
+            " WHERE fingerprint = ? AND session_id = ?",
+            (fp, session_id),
+        ).fetchone()
+        if not row or row["cluster_id"] is None:
+            return None
+        rep = self._conn.execute(
+            "SELECT fingerprint FROM lc_screens"
+            " WHERE cluster_id = ? AND session_id = ? AND is_representative = 1",
+            (row["cluster_id"], session_id),
+        ).fetchone()
+        if not rep:
+            return None
+        return fp_map.get(rep["fingerprint"])
+
     def _merge_edges(
         self, session_id: str,
         node_mapping: dict[str, tuple[str, str, float]],
@@ -729,8 +751,10 @@ class CrossSessionMerger:
         ).fetchall())
 
         for e in edges:
-            m_from = fp_map.get(e["from_fp"], e["from_fp"])
-            m_to = fp_map.get(e["to_fp"], e["to_fp"])
+            m_from = self._resolve_fp_to_master(e["from_fp"], session_id, fp_map)
+            m_to = self._resolve_fp_to_master(e["to_fp"], session_id, fp_map)
+            if not m_from or not m_to:
+                continue
             if m_from not in master_fps or m_to not in master_fps:
                 continue
             if m_from == m_to:
@@ -778,10 +802,12 @@ class CrossSessionMerger:
             if r["master_fp"] not in G:
                 G.add_node(r["master_fp"])
 
-        # ROOT 検出: first_seen_at が最古のノード（スプラッシュ/ロゴ画面）
+        # ROOT 検出: エッジを持つノードのうち first_seen_at が最古
         root = self._conn.execute(
-            "SELECT master_fp FROM lc_master_nodes"
-            " ORDER BY first_seen_at ASC LIMIT 1"
+            "SELECT m.master_fp FROM lc_master_nodes m"
+            " WHERE EXISTS (SELECT 1 FROM lc_master_edges e"
+            "   WHERE e.from_master_fp = m.master_fp OR e.to_master_fp = m.master_fp)"
+            " ORDER BY m.first_seen_at ASC LIMIT 1"
         ).fetchone()
         home_fp = root["master_fp"] if root else None
 
@@ -790,7 +816,8 @@ class CrossSessionMerger:
             if G.number_of_nodes() > 0:
                 home_fp = max(G.nodes(), key=lambda n: G.out_degree(n))
 
-        # BFS depth
+        # BFS depth (前回の値をリセット)
+        self._conn.execute("UPDATE lc_master_nodes SET bfs_depth = NULL, scc_id = NULL, scc_label = NULL")
         depth_map: dict[str, int] = {}
         if home_fp and home_fp in G:
             undirected = G.to_undirected()
