@@ -473,6 +473,7 @@
             grid.classList.remove('hidden');
             mergeContainer.classList.add('hidden');
             grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>';
+            updateGroupSelectUI();
             fetchFinal();
         } else if (tab === 'merge') {
             finalActions.classList.add('hidden');
@@ -1137,8 +1138,7 @@
                 } else {
                     selectedForGroup.add(s.master_fp);
                 }
-                // 除外トグルも連動
-                togglePending(s.master_fp);
+                renderAll();
                 updateGroupSelectUI();
             }
             return;
