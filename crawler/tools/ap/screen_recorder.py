@@ -31,11 +31,21 @@ _SORT_Y_BUCKET = 50         # Y座標のバケットサイズ (px)
 _CASCADE_MIN_FACE = (40, 40)  # 顔検出の最小サイズ (px)
 _CASCADE_XML = Path(__file__).parent.parent.parent / "assets" / "lbpcascade_animeface.xml"
 _SCENE_CHANGE_PHASH_DIST = 20  # シーン切り替わり判定の phash 距離閾値
-_DARK_MAX = 70      # 最も明るいピクセル(max)≦この値 → 全ピクセル暗い → 除外
-_BRIGHT_MIN = 180   # 最も暗いピクセル(min)≧この値 → 全ピクセル明るい → 除外
+_DARK_MAX = 70       # 最も明るいピクセル(max)≦この値 → 全ピクセル暗い → 除外
+_BRIGHT_MIN = 180    # 白画面判定の輝度閾値
+_BRIGHT_RATIO = 0.999  # この割合以上のピクセルが _BRIGHT_MIN 以上なら白画面
+
 def _is_too_dark_or_bright(gray: "np.ndarray") -> bool:
-    """画面全体の min/max で全ピクセル暗い/明るいかを判定。"""
-    return int(np.max(gray)) <= _DARK_MAX or int(np.min(gray)) >= _BRIGHT_MIN
+    """全ピクセル暗い/明るいかを判定。
+    暗画面: max <= _DARK_MAX
+    白画面: 99.9% 以上のピクセルが _BRIGHT_MIN 以上 (scrcpy 角丸ノイズを無視)
+    """
+    if int(np.max(gray)) <= _DARK_MAX:
+        return True
+    bright_ratio = np.count_nonzero(gray >= _BRIGHT_MIN) / gray.size
+    if bright_ratio >= _BRIGHT_RATIO:
+        return True
+    return False
 
 # 日本語・英単語を含むトークンのみ採用
 _HAS_TEXT_RE = re.compile(r"[\u3000-\u9fff\u30a0-\u30ffA-Za-z]")
