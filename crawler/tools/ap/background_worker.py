@@ -1002,7 +1002,17 @@ class BackgroundWorker:
         try:
             for row in pending:
                 sid = row["session_id"]
+                # プレビューでマッチ内訳をログ出力
+                preview = merger.preview_merge(sid)
+                sm = preview["summary"]
+                logger.info(
+                    "[BG_WORKER] merge preview: session=%s, screens=%d, "
+                    "anchor=%d, k_hop=%d, transition=%d, new=%d",
+                    sid, preview["session_screens"],
+                    sm["anchor"], sm["k_hop"], sm["transition"], sm["new"],
+                )
+                # マージ実行
                 new_nodes = merger.merge_to_master(sid)
-                logger.info("[BG_WORKER] merge: session=%s, +%d nodes", sid, new_nodes)
+                logger.info("[BG_WORKER] merge done: session=%s, +%d new nodes", sid, new_nodes)
         finally:
             merger.close()
