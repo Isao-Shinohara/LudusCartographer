@@ -200,7 +200,8 @@
         if (s.has_hq_ocr) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-sky-500" title="HQ OCR済"></span>');
         if (s.is_representative) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-emerald-500" title="採用"></span>');
         const statusDots = dots.length ? `<span class="flex gap-0.5 items-center">${dots.join('')}</span>` : '';
-        const dimClass = (isThinned && filterSelect.value === 'all') ? ' opacity-40' : '';
+        const isExcluded = currentTab === 'final' && s.user_excluded;
+        const dimClass = ((isThinned && filterSelect.value === 'all') || isExcluded) ? ' opacity-40' : '';
         // ペンディング変更を考慮した表示状態
         const hasPending = s.master_fp && (s.master_fp in pendingChanges);
         const effectiveExcluded = hasPending ? pendingChanges[s.master_fp] : s.user_excluded;
@@ -208,12 +209,11 @@
         const isGroupSelected = currentTab === 'final' && s.master_fp && selectedForGroup.has(s.master_fp);
         const groupSelectMark = isGroupSelected ? ' ring-2 ring-blue-500' : '';
         const excludedBorder = '';
-        const excludedOpacity = effectiveExcluded ? ' opacity-30' : '';
         return `
             <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer relative
                         hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${excludedBorder}${pendingMark}${groupSelectMark}"
                  data-idx="${idx}">
-                <div class="${excludedOpacity}">
+                <div>
                 ${thumb
                     ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />`
                     : `<div class="w-full aspect-video bg-gray-800 flex items-center justify-center text-3xl">📱</div>`
@@ -235,10 +235,12 @@
         const filter = filterSelect.value;
         let filtered = allScreens;
         if (currentTab === 'final') {
-            // Final: 除外済みはフィルタで切替
-            if (!showExcluded) {
+            if (filter === 'excluded') {
+                filtered = allScreens.filter(s => s.user_excluded);
+            } else if (filter === 'adopted') {
                 filtered = allScreens.filter(s => !s.user_excluded);
             }
+            // 'all' はそのまま全件
         } else if (filter === 'reps') {
             filtered = allScreens.filter(s => s.is_representative || s.cluster_id === null || s.cluster_id === undefined);
         } else if (filter === 'thinned') {
@@ -472,8 +474,8 @@
             statusDot.classList.add('hidden');
             statusText.textContent = '';
             filterSelect.classList.remove('hidden');
-            filterSelect.innerHTML = '<option value="adopted" selected>採用</option><option value="all">すべて</option>';
-            filterSelect.onchange = function() { showExcluded = this.value === 'all'; renderAll(); };
+            filterSelect.innerHTML = '<option value="adopted" selected>採用</option><option value="all">すべて</option><option value="excluded">不採用</option>';
+            filterSelect.onchange = function() { showExcluded = this.value === 'all' || this.value === 'excluded'; renderAll(); };
             sessionSelect.classList.add('hidden');
             sortSelect.classList.remove('hidden');
             grid.classList.remove('hidden');
