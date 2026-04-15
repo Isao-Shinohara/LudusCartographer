@@ -43,6 +43,7 @@
     <!-- Final 採用/不採用アクション (右詰) -->
     <div id="final-actions" class="hidden ml-auto flex items-center gap-2">
         <span id="final-pending-count" class="text-xs text-gray-400"></span>
+        <button id="final-cleanup-btn" class="px-3 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors hidden">除外済みを削除</button>
         <button id="final-reset-btn" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>リセット</button>
         <button id="final-apply-btn" class="px-3 py-1 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>更新</button>
     </div>
@@ -362,9 +363,24 @@
             const data = await res.json();
             allScreens = data.screens || [];
             renderAll();
+            checkCleanable();
         } catch (e) {
             grid.innerHTML = '<div class="col-span-full text-center text-red-500 py-12">API エラー</div>';
         }
+    }
+
+    async function checkCleanable() {
+        const btn = document.getElementById('final-cleanup-btn');
+        try {
+            const res = await fetch(API_BASE + '?action=get_cleanable_excluded');
+            const data = await res.json();
+            if (data.count > 0) {
+                btn.textContent = `除外済みを削除 (${data.count})`;
+                btn.classList.remove('hidden');
+            } else {
+                btn.classList.add('hidden');
+            }
+        } catch (e) { btn.classList.add('hidden'); }
     }
 
     // --- タブ切り替え ---
@@ -657,6 +673,46 @@
         }
     }
 
+    async function confirmCleanupExcluded() {
+        const res = await fetch(API_BASE + '?action=get_cleanable_excluded');
+        const data = await res.json();
+        const items = data.items || [];
+        if (items.length === 0) return;
+        const body = document.getElementById('confirm-body');
+        let html = `<p class="text-sm text-gray-300 mb-3">除外済み＋セッション削除済みの ${items.length} 件を完全削除しますか？</p>`;
+        html += '<div class="grid grid-cols-4 gap-2 max-h-60 overflow-auto">';
+        for (const item of items) {
+            const thumb = item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
+            html += `<div class="bg-gray-800 rounded overflow-hidden">
+                ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" />` : '<div class="w-full aspect-video bg-gray-700"></div>'}
+                <p class="text-[9px] text-gray-500 p-1 truncate">${escapeHtml(item.title || '')}</p>
+            </div>`;
+        }
+        html += '</div>';
+        html += '<p class="text-xs text-red-400 mt-3">マスターノード・エッジ・画像ファイルを物理削除します。この操作は取り消せません。</p>';
+        body.innerHTML = html;
+        const popup = document.getElementById('confirm-popup');
+        const okBtn = document.getElementById('confirm-ok');
+        const prev = okBtn._cleanupHandler;
+        if (prev) okBtn.removeEventListener('click', prev);
+        const handler = async function() {
+            popup.classList.add('hidden');
+            popup.classList.remove('flex');
+            okBtn.removeEventListener('click', handler);
+            try {
+                const res = await fetch(API_BASE + '?action=cleanup_excluded');
+                const result = await res.json();
+                if (result.ok) {
+                    await fetchFinal();
+                }
+            } catch (e) {}
+        };
+        okBtn._cleanupHandler = handler;
+        okBtn.addEventListener('click', handler);
+        popup.classList.remove('hidden');
+        popup.classList.add('flex');
+    }
+
     // --- ハートビート ---
     function heartbeat() {
         fetch(API_BASE + '?action=heartbeat').catch(function() {});
@@ -921,6 +977,7 @@
 
     document.getElementById('final-apply-btn').addEventListener('click', showConfirmPopup);
     document.getElementById('final-reset-btn').addEventListener('click', resetPending);
+    document.getElementById('final-cleanup-btn').addEventListener('click', confirmCleanupExcluded);
     document.getElementById('confirm-ok').addEventListener('click', applyPendingChanges);
     document.getElementById('confirm-cancel').addEventListener('click', function() {
         document.getElementById('confirm-popup').classList.add('hidden');

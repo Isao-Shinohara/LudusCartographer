@@ -278,6 +278,31 @@ if ($action === 'delete_session') {
     exit;
 }
 
+// --- get_cleanable_excluded アクション ---
+if ($action === 'get_cleanable_excluded') {
+    if ($useDb && $repository instanceof EvidenceRepository) {
+        $items = $repository->getCleanableExcluded();
+    } else {
+        $items = [];
+    }
+    echo json_encode(
+        ['items' => $items, 'count' => count($items)],
+        JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+    );
+    exit;
+}
+
+// --- cleanup_excluded アクション ---
+if ($action === 'cleanup_excluded') {
+    if (!($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'invalid request']);
+        exit;
+    }
+    $result = $repository->cleanupExcluded();
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
 // --- get_graph アクション (遷移グラフ Cytoscape.js 用) ---
 if ($action === 'get_graph') {
     $nodes = [];

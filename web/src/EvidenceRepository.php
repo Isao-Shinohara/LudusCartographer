@@ -636,4 +636,69 @@ class EvidenceRepository
             'kept_screens' => count($keepIds),
         ];
     }
+
+    // ─── 除外済みマスターノードのクリーンアップ ──────
+
+    public function getCleanableExcluded(): array
+    {
+        $sql = <<<SQL
+            SELECT m.master_fp, m.title, s.screenshot_path, s.thumbnail_path,
+                   sess.session_id, sess.status AS session_status
+            FROM lc_master_nodes m
+            JOIN lc_screens s ON s.id = m.representative_screen_id
+            JOIN lc_sessions sess ON sess.session_id = s.session_id
+            WHERE m.user_excluded = 1 AND sess.status = 'archived'
+        SQL;
+        return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    public function cleanupExcluded(): array
+    {
+        $targets = $this->getCleanableExcluded();
+        if (empty($targets)) {
+            return ['ok' => true, 'deleted_nodes' => 0, 'deleted_files' => 0];
+        }
+
+        $deletedFiles = 0;
+        $fps = [];
+        foreach ($targets as $t) {
+            $fps[] = $t['master_fp'];
+            // スクリーンショットファイル削除
+            foreach (['screenshot_path', 'thumbnail_path'] as $col) {
+                if (!empty($t[$col]) && file_exists($t[$col])) {
+                    @unlink($t[$col]);
+                    $deletedFiles++;
+                }
+            }
+        }
+
+        $placeholders = implode(',', array_fill(0, count($fps), '?'));
+
+        // lc_master_edges 削除 (from/to いずれかが対象)
+        $this->db->prepare(
+            "DELETE FROM lc_master_edges WHERE from_master_fp IN ($placeholders) OR to_master_fp IN ($placeholders)"
+        )->execute(array_merge($fps, $fps));
+
+        // lc_node_mappings 削除
+        $this->db->prepare(
+            "DELETE FROM lc_node_mappings WHERE master_fp IN ($placeholders)"
+        )->execute($fps);
+
+        // 代表 lc_screens 削除
+        $this->db->prepare(
+            "DELETE FROM lc_screens WHERE id IN ("
+            . "SELECT representative_screen_id FROM lc_master_nodes WHERE master_fp IN ($placeholders))"
+        )->execute($fps);
+
+        // lc_master_nodes 削除
+        $this->db->prepare(
+            "DELETE FROM lc_master_nodes WHERE master_fp IN ($placeholders)"
+        )->execute($fps);
+
+        return [
+            'ok' => true,
+            'deleted_nodes' => count($fps),
+            'deleted_files' => $deletedFiles,
+        ];
+    }
 }
