@@ -204,15 +204,10 @@
         const groupSelectMark = isGroupSelected ? ' ring-2 ring-blue-500' : '';
         const excludedBorder = '';
         const excludedOpacity = effectiveExcluded ? ' opacity-30' : '';
-        // Final タブ: 除外トグルボタン
-        const excludeBtn = (currentTab === 'final' && s.master_fp)
-            ? `<button class="exclude-btn absolute top-1 right-1 w-4 h-4 rounded-full border ${effectiveExcluded ? 'border-gray-600/60 bg-transparent' : 'border-emerald-500/50 bg-emerald-500/40'} flex items-center justify-center transition-colors z-20 opacity-70 hover:opacity-100" data-master-fp="${escapeHtml(s.master_fp)}" title="${effectiveExcluded ? '採用に戻す' : '除外する'}">${effectiveExcluded ? '' : '<span class="w-1.5 h-1.5 rounded-full bg-emerald-300/80"></span>'}</button>`
-            : '';
         return `
             <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer relative
                         hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${excludedBorder}${pendingMark}${groupSelectMark}"
                  data-idx="${idx}">
-                ${excludeBtn}
                 <div class="${excludedOpacity}">
                 ${thumb
                     ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />`
@@ -1137,21 +1132,6 @@
     });
 
     grid.addEventListener('click', function(e) {
-        const btn = e.target.closest('.exclude-btn');
-        if (btn) {
-            e.stopPropagation();
-            const fp = btn.dataset.masterFp;
-            togglePending(fp);
-            if (currentTab === 'final') {
-                if (fp in pendingChanges) {
-                    selectedForGroup.add(fp);
-                } else {
-                    selectedForGroup.delete(fp);
-                }
-                updateGroupSelectUI();
-            }
-            return;
-        }
         const card = e.target.closest('[data-idx]');
         if (!card) return;
         // Shift+クリック: 統合選択モード (Final タブのみ)
