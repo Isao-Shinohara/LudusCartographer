@@ -60,27 +60,6 @@
     </div>
 </div>
 
-<!-- 画像プレビュー (確認ポップアップ上) -->
-<div id="preview-overlay" class="fixed inset-0 bg-black/80 z-[70] hidden items-start justify-center p-4 pt-8" onclick="this.classList.add('hidden');this.classList.remove('flex');">
-    <div class="bg-gray-900 rounded-xl border border-gray-700 max-w-4xl w-full" onclick="event.stopPropagation()">
-        <div class="flex justify-between items-center p-4 border-b border-gray-800">
-            <h3 id="preview-title" class="text-lg font-bold text-brand-light truncate"></h3>
-            <button onclick="document.getElementById('preview-overlay').classList.add('hidden');document.getElementById('preview-overlay').classList.remove('flex');" class="text-gray-500 hover:text-white text-2xl">&times;</button>
-        </div>
-        <div class="p-4">
-            <img id="preview-img" src="" class="w-full rounded-lg bg-gray-800 mb-4" />
-            <div class="relative">
-                <div id="preview-ocr" class="bg-gray-800 rounded-lg px-3 pb-4 pt-2 pr-10 text-sm text-gray-300 whitespace-pre-wrap h-[5.5rem] overflow-y-auto" style="-webkit-mask-image:linear-gradient(to bottom,black 70%,transparent 100%);mask-image:linear-gradient(to bottom,black 70%,transparent 100%);"></div>
-            </div>
-            <div class="mt-3 flex gap-4 text-xs text-gray-600">
-                <span id="preview-scene"></span>
-                <span id="preview-fp" class="font-mono"></span>
-                <span id="preview-time"></span>
-            </div>
-        </div>
-    </div>
-</div>
-
 <!-- グリッド (Live / Final) -->
 <div id="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
     <div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>
@@ -948,15 +927,6 @@
         popup.classList.remove('flex');
     }
 
-    function _confirmCard(fp) {
-        const item = allScreens.find(s => s.master_fp === fp);
-        const thumb = item && item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
-        return `<div class="bg-gray-800 rounded overflow-hidden cursor-pointer confirm-preview-card" data-master-fp="${escapeHtml(fp)}">
-            ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" />` : '<div class="w-full aspect-video bg-gray-700"></div>'}
-            <p class="text-[9px] text-gray-500 p-1 truncate">${escapeHtml(item ? (item.name || '') : '')}</p>
-        </div>`;
-    }
-
     function showConfirmPopup() {
         const entries = Object.entries(pendingChanges);
         if (entries.length === 0) return;
@@ -966,37 +936,30 @@
         if (toExclude.length > 0) {
             html += `<p class="text-sm text-gray-300 mb-2">${toExclude.length} 件を除外</p>`;
             html += '<div class="grid grid-cols-4 gap-3 max-h-64 overflow-y-auto mb-4">';
-            for (const [fp] of toExclude) html += _confirmCard(fp);
+            for (const [fp] of toExclude) {
+                const item = allScreens.find(s => s.master_fp === fp);
+                const thumb = item && item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
+                html += `<div class="bg-gray-800 rounded overflow-hidden">
+                    ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" />` : '<div class="w-full aspect-video bg-gray-700"></div>'}
+                    <p class="text-[9px] text-gray-500 p-1 truncate">${escapeHtml(item ? (item.name || '') : '')}</p>
+                </div>`;
+            }
             html += '</div>';
         }
         if (toAdopt.length > 0) {
             html += `<p class="text-sm text-gray-300 mb-2">${toAdopt.length} 件を採用に戻す</p>`;
             html += '<div class="grid grid-cols-4 gap-3 max-h-64 overflow-y-auto">';
-            for (const [fp] of toAdopt) html += _confirmCard(fp);
+            for (const [fp] of toAdopt) {
+                const item = allScreens.find(s => s.master_fp === fp);
+                const thumb = item && item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
+                html += `<div class="bg-gray-800 rounded overflow-hidden">
+                    ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" />` : '<div class="w-full aspect-video bg-gray-700"></div>'}
+                    <p class="text-[9px] text-gray-500 p-1 truncate">${escapeHtml(item ? (item.name || '') : '')}</p>
+                </div>`;
+            }
             html += '</div>';
         }
         showConfirmDialog(html, applyPendingChanges);
-        // カードクリックでプレビュー
-        document.querySelectorAll('.confirm-preview-card').forEach(card => {
-            card.addEventListener('click', function(e) {
-                e.stopPropagation();
-                showPreviewOverlay(this.dataset.masterFp);
-            });
-        });
-    }
-
-    function showPreviewOverlay(masterFp) {
-        const item = allScreens.find(s => s.master_fp === masterFp);
-        if (!item) return;
-        document.getElementById('preview-title').textContent = item.name || '';
-        document.getElementById('preview-img').src = item.screenshot_path ? imgUrl(item.screenshot_path) : '';
-        document.getElementById('preview-ocr').textContent = item.ocr_text || '';
-        document.getElementById('preview-scene').textContent = item.category || '';
-        document.getElementById('preview-fp').textContent = 'fp: ' + (item.screen_hash || '');
-        document.getElementById('preview-time').textContent = item.last_seen_at || '';
-        const overlay = document.getElementById('preview-overlay');
-        overlay.classList.remove('hidden');
-        overlay.classList.add('flex');
     }
 
     async function applyPendingChanges() {
