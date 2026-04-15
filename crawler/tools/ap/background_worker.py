@@ -520,10 +520,7 @@ class BackgroundWorker:
                                     (old_rep_id,),
                                 )
                             rep_map[_prev_cid] = (ph, title, norm_text)
-                        elif _rep_norm and d < _ph_lim and (
-                            _text_similarity(norm_text, _rep_norm) >= 0.5
-                            or (d < 10 and _text_similarity(norm_text, _rep_norm) >= 0.2)
-                        ):
+                        elif _rep_norm and d < 5 and _text_similarity(norm_text, _rep_norm) >= 0.5:
                             # テキスト類似 + phash 近い → OCR 揺れ (テキスト長い方を代表に)
                             # phash が非常に近い (< 10) 場合はテキスト類似度を緩和 (OCR 誤読救済)
                             _merge_to_prev = True
