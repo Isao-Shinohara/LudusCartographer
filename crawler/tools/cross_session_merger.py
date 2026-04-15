@@ -821,6 +821,18 @@ class CrossSessionMerger:
                     (idx, f"SCC#{idx}", fp),
                 )
 
+        # sort_order: bfs_depth ASC (NULL→末尾), first_seen_at ASC
+        all_nodes = self._conn.execute(
+            "SELECT master_fp, bfs_depth, first_seen_at FROM lc_master_nodes"
+            " ORDER BY CASE WHEN bfs_depth IS NULL THEN 9999 ELSE bfs_depth END ASC,"
+            " first_seen_at ASC"
+        ).fetchall()
+        for i, r in enumerate(all_nodes):
+            self._conn.execute(
+                "UPDATE lc_master_nodes SET sort_order = ? WHERE master_fp = ?",
+                (i, r["master_fp"]),
+            )
+
     def _get_node_info(self, fp: str, session_id: str) -> Optional[dict]:
         """セッション内のノード情報を取得。"""
         row = self._conn.execute(

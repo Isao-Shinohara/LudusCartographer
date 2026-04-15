@@ -122,7 +122,8 @@ class BatchProcessor:
                 visit_count              INTEGER DEFAULT 1,
                 first_seen_at            TEXT,
                 last_seen_at             TEXT,
-                user_excluded            INTEGER DEFAULT 0
+                user_excluded            INTEGER DEFAULT 0,
+                sort_order               INTEGER DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS lc_master_edges (

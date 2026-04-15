@@ -377,7 +377,7 @@ class EvidenceRepository
             JOIN lc_screens s ON s.id = m.representative_screen_id
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
             WHERE m.user_excluded = 0 {$gameFilter}
-            ORDER BY COALESCE(m.bfs_depth, 9999) ASC, m.first_seen_at ASC
+            ORDER BY m.sort_order ASC
             LIMIT :limit
         SQL;
 
@@ -490,7 +490,7 @@ class EvidenceRepository
             JOIN lc_screens s ON s.id = m.representative_screen_id
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
             WHERE 1=1 {$gameFilter}
-            ORDER BY COALESCE(m.bfs_depth, 9999) ASC, m.first_seen_at ASC
+            ORDER BY m.sort_order ASC
             LIMIT :limit
         SQL;
         $stmt = $this->db->prepare($sql);
