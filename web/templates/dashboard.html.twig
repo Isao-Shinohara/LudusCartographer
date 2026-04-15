@@ -167,7 +167,7 @@
         const excludedOpacity = effectiveExcluded ? ' opacity-30' : '';
         // Final タブ: 除外トグルボタン
         const excludeBtn = (currentTab === 'final' && s.master_fp)
-            ? `<button class="exclude-btn absolute top-1 right-1 w-10 h-5 rounded-full ${effectiveExcluded ? 'bg-gray-600' : 'bg-emerald-600'} flex items-center transition-colors z-20 shadow-md p-0.5" data-master-fp="${escapeHtml(s.master_fp)}" title="${effectiveExcluded ? '採用に戻す' : '除外する'}"><span class="w-4 h-4 rounded-full bg-white shadow transition-transform ${effectiveExcluded ? '' : 'translate-x-5'}"></span></button>`
+            ? `<button class="exclude-btn absolute top-1 right-1 w-5 h-5 rounded-full border-2 ${effectiveExcluded ? 'border-gray-500 bg-transparent' : 'border-emerald-500 bg-emerald-500'} flex items-center justify-center transition-colors z-20 shadow-md" data-master-fp="${escapeHtml(s.master_fp)}" title="${effectiveExcluded ? '採用に戻す' : '除外する'}">${effectiveExcluded ? '' : '<span class="w-2 h-2 rounded-full bg-white"></span>'}</button>`
             : '';
         return `
             <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer relative
