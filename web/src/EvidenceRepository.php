@@ -356,27 +356,27 @@ class EvidenceRepository
         int    $limit     = 10000,
         string $gameTitle = '',
     ): array {
-        $conditions = ['s.is_representative = 1'];
-        $bindings   = [':limit' => $limit];
+        $bindings = [':limit' => $limit];
 
+        // lc_master_nodes (クロスセッションマージ済み) から取得
+        $gameFilter = '';
         if ($gameTitle !== '') {
-            $conditions[]             = 'sess.game_title = :game_title';
-            $bindings[':game_title']  = $gameTitle;
+            $gameFilter = 'AND COALESCE(sess.game_title, \'Unknown Game\') = :game_title';
+            $bindings[':game_title'] = $gameTitle;
         }
 
-        $where = 'WHERE ' . implode(' AND ', $conditions);
-
-        // fingerprint ごとに最新の1件だけ取得 (セッション横断で重複排除)
         $sql = <<<SQL
-            SELECT s.id, s.title, s.depth, s.screenshot_path, s.thumbnail_path,
-                   s.ocr_text, s.ocr_text_hq, s.discovered_at, s.session_id,
-                   s.fingerprint, s.scene,
-                   COALESCE(sess.game_title, 'Unknown Game') AS game_title
-            FROM lc_screens s
+            SELECT s.id, m.title, s.depth, s.screenshot_path, s.thumbnail_path,
+                   s.ocr_text, s.ocr_text_hq, m.last_seen_at AS discovered_at,
+                   s.session_id, m.master_fp AS fingerprint, m.scene,
+                   COALESCE(sess.game_title, 'Unknown Game') AS game_title,
+                   m.visit_count, m.bfs_depth,
+                   1 AS is_representative, s.cluster_id
+            FROM lc_master_nodes m
+            JOIN lc_screens s ON s.id = m.representative_screen_id
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
-            {$where}
-            GROUP BY s.fingerprint
-            ORDER BY s.discovered_at DESC
+            WHERE 1=1 {$gameFilter}
+            ORDER BY m.bfs_depth ASC, m.last_seen_at DESC
             LIMIT :limit
         SQL;
 
