@@ -372,11 +372,12 @@ class EvidenceRepository
                    COALESCE(sess.game_title, 'Unknown Game') AS game_title,
                    m.visit_count, m.bfs_depth,
                    1 AS is_representative, s.cluster_id,
-                   m.user_excluded, m.master_fp
+                   m.user_excluded, m.master_fp,
+                   m.manual_group_id, m.is_group_representative
             FROM lc_master_nodes m
             JOIN lc_screens s ON s.id = m.representative_screen_id
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
-            WHERE m.user_excluded = 0 {$gameFilter}
+            WHERE m.user_excluded = 0 AND m.is_group_representative = 1 {$gameFilter}
             ORDER BY m.sort_order ASC
             LIMIT :limit
         SQL;
@@ -411,6 +412,7 @@ class EvidenceRepository
             'has_hq_ocr'      => ($raw['ocr_text_hq'] ?? null) !== null,
             'user_excluded'   => (bool)($raw['user_excluded'] ?? false),
             'master_fp'       => $raw['master_fp'] ?? null,
+            'manual_group_id' => $raw['manual_group_id'] ?? null,
         ];
     }
 
@@ -485,11 +487,12 @@ class EvidenceRepository
                    COALESCE(sess.game_title, 'Unknown Game') AS game_title,
                    m.visit_count, m.bfs_depth,
                    1 AS is_representative, s.cluster_id,
-                   m.user_excluded, m.master_fp
+                   m.user_excluded, m.master_fp,
+                   m.manual_group_id, m.is_group_representative
             FROM lc_master_nodes m
             JOIN lc_screens s ON s.id = m.representative_screen_id
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
-            WHERE 1=1 {$gameFilter}
+            WHERE m.is_group_representative = 1 {$gameFilter}
             ORDER BY m.sort_order ASC
             LIMIT :limit
         SQL;
@@ -700,5 +703,62 @@ class EvidenceRepository
             'deleted_nodes' => count($fps),
             'deleted_files' => $deletedFiles,
         ];
+    }
+
+    // ─── 手動グループ統合 ────────────────────────────
+
+    public function mergeManualGroup(array $masterFps, string $representativeFp): array
+    {
+        if (count($masterFps) < 2) {
+            return ['error' => '2件以上選択してください'];
+        }
+        if (!in_array($representativeFp, $masterFps)) {
+            return ['error' => '代表は選択した中から選んでください'];
+        }
+
+        // 新しい group_id を発行
+        $maxGroup = $this->db->query(
+            "SELECT COALESCE(MAX(manual_group_id), 0) FROM lc_master_nodes"
+        )->fetchColumn();
+        $groupId = $maxGroup + 1;
+
+        $placeholders = implode(',', array_fill(0, count($masterFps), '?'));
+
+        // 全メンバーに group_id を設定
+        $this->db->prepare(
+            "UPDATE lc_master_nodes SET manual_group_id = ?, is_group_representative = 0"
+            . " WHERE master_fp IN ($placeholders)"
+        )->execute(array_merge([$groupId], $masterFps));
+
+        // 代表を設定
+        $this->db->prepare(
+            "UPDATE lc_master_nodes SET is_group_representative = 1 WHERE master_fp = ?"
+        )->execute([$representativeFp]);
+
+        return ['ok' => true, 'group_id' => $groupId, 'count' => count($masterFps)];
+    }
+
+    public function unmergeManualGroup(int $groupId): array
+    {
+        $this->db->prepare(
+            "UPDATE lc_master_nodes SET manual_group_id = NULL, is_group_representative = 1"
+            . " WHERE manual_group_id = ?"
+        )->execute([$groupId]);
+        return ['ok' => true, 'group_id' => $groupId];
+    }
+
+    public function getManualGroupMembers(int $groupId): array
+    {
+        $sql = <<<SQL
+            SELECT m.master_fp, m.title, m.is_group_representative,
+                   s.screenshot_path, s.thumbnail_path
+            FROM lc_master_nodes m
+            LEFT JOIN lc_screens s ON s.id = m.representative_screen_id
+            WHERE m.manual_group_id = ?
+            ORDER BY m.is_group_representative DESC, m.first_seen_at ASC
+        SQL;
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([$groupId]);
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
     }
 }

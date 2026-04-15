@@ -123,7 +123,9 @@ class BatchProcessor:
                 first_seen_at            TEXT,
                 last_seen_at             TEXT,
                 user_excluded            INTEGER DEFAULT 0,
-                sort_order               INTEGER DEFAULT 0
+                sort_order               INTEGER DEFAULT 0,
+                manual_group_id          INTEGER DEFAULT NULL,
+                is_group_representative  INTEGER DEFAULT 1
             );
 
             CREATE TABLE IF NOT EXISTS lc_master_edges (

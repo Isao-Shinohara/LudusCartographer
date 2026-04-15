@@ -303,6 +303,43 @@ if ($action === 'cleanup_excluded') {
     exit;
 }
 
+// --- merge_manual_group アクション ---
+if ($action === 'merge_manual_group') {
+    $masterFps = json_decode($_GET['master_fps'] ?? '[]', true);
+    $repFp = $_GET['representative_fp'] ?? '';
+    if (!$masterFps || !$repFp || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'invalid request']);
+        exit;
+    }
+    $result = $repository->mergeManualGroup($masterFps, $repFp);
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
+// --- unmerge_manual_group アクション ---
+if ($action === 'unmerge_manual_group') {
+    $groupId = (int)($_GET['group_id'] ?? 0);
+    if ($groupId <= 0 || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'invalid request']);
+        exit;
+    }
+    $result = $repository->unmergeManualGroup($groupId);
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
+// --- get_manual_group_members アクション ---
+if ($action === 'get_manual_group_members') {
+    $groupId = (int)($_GET['group_id'] ?? 0);
+    if ($groupId <= 0 || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['members' => []]);
+        exit;
+    }
+    $members = $repository->getManualGroupMembers($groupId);
+    echo json_encode(['members' => $members], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
 // --- get_graph アクション (遷移グラフ Cytoscape.js 用) ---
 if ($action === 'get_graph') {
     $nodes = [];

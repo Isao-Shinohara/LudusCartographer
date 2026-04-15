@@ -46,6 +46,9 @@
     </select>
     <!-- Final 採用/不採用アクション (右詰) -->
     <div id="final-actions" class="hidden ml-auto flex items-center gap-2">
+        <span id="final-select-count" class="text-xs text-gray-400 hidden"></span>
+        <button id="final-merge-group-btn" class="px-3 py-1 bg-blue-700 hover:bg-blue-600 text-white text-xs font-bold rounded transition-colors hidden">統合</button>
+        <span class="text-gray-700">|</span>
         <span id="final-pending-count" class="text-xs text-gray-400"></span>
         <button id="final-reset-btn" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>リセット</button>
         <button id="final-apply-btn" class="px-3 py-1 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>更新</button>
@@ -146,6 +149,7 @@
     const FULL_REFRESH_EVERY = 5;  // 5回に1回フルリフレッシュ (ステータス更新反映)
     let knownSessions = [];
     let pendingChanges = {};  // Final タブ: master_fp → target user_excluded
+    let selectedForGroup = new Set();  // Final タブ: 統合選択中の master_fp
     const filterSelect = document.getElementById('filter-select');
     const sessionSelect = document.getElementById('session-select');
     const sortSelect = document.getElementById('sort-select');
@@ -190,6 +194,8 @@
         const hasPending = s.master_fp && (s.master_fp in pendingChanges);
         const effectiveExcluded = hasPending ? pendingChanges[s.master_fp] : s.user_excluded;
         const pendingMark = hasPending ? ' ring-2 ring-yellow-500/50' : '';
+        const isGroupSelected = currentTab === 'final' && s.master_fp && selectedForGroup.has(s.master_fp);
+        const groupSelectMark = isGroupSelected ? ' ring-2 ring-blue-500' : '';
         const excludedBorder = '';
         const excludedOpacity = effectiveExcluded ? ' opacity-30' : '';
         // Final タブ: 除外トグルボタン
@@ -198,7 +204,7 @@
             : '';
         return `
             <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer relative
-                        hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${excludedBorder}${pendingMark}"
+                        hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${excludedBorder}${pendingMark}${groupSelectMark}"
                  data-idx="${idx}">
                 ${excludeBtn}
                 <div class="${excludedOpacity}">
@@ -433,6 +439,7 @@
         const mergeContainer = document.getElementById('merge-container');
         const finalActions = document.getElementById('final-actions');
         pendingChanges = {};
+        selectedForGroup.clear();
         updateFinalActionBar();
         if (tab === 'live') {
             finalActions.classList.add('hidden');
@@ -1046,7 +1053,78 @@
     }
 
     document.getElementById('final-apply-btn').addEventListener('click', showConfirmPopup);
-    document.getElementById('final-reset-btn').addEventListener('click', resetPending);
+    document.getElementById('final-reset-btn').addEventListener('click', function() {
+        resetPending();
+        selectedForGroup.clear();
+        renderAll();
+        updateGroupSelectUI();
+    });
+    document.getElementById('final-merge-group-btn').addEventListener('click', showMergeGroupDialog);
+
+    function updateGroupSelectUI() {
+        const countEl = document.getElementById('final-select-count');
+        const mergeBtn = document.getElementById('final-merge-group-btn');
+        if (selectedForGroup.size >= 2) {
+            countEl.textContent = `${selectedForGroup.size} 件選択中`;
+            countEl.classList.remove('hidden');
+            mergeBtn.classList.remove('hidden');
+        } else {
+            countEl.textContent = selectedForGroup.size === 1 ? '1 件選択中 (Shift+クリックで追加)' : '';
+            countEl.classList.toggle('hidden', selectedForGroup.size === 0);
+            mergeBtn.classList.add('hidden');
+        }
+    }
+
+    function showMergeGroupDialog() {
+        if (selectedForGroup.size < 2) return;
+        const fps = [...selectedForGroup];
+        let html = `<p class="text-sm text-gray-300 mb-3">${fps.length} 件を統合します。代表を選択してください。</p>`;
+        html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto p-1">';
+        for (const fp of fps) {
+            const item = allScreens.find(s => s.master_fp === fp);
+            const thumb = item && item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
+            html += `<div class="bg-gray-800 rounded overflow-hidden w-40 flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-emerald-500 transition-all group-rep-card" data-master-fp="${escapeHtml(fp)}">
+                ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" />` : '<div class="w-full aspect-video bg-gray-700"></div>'}
+                <p class="text-[10px] text-gray-500 p-1.5 truncate">${escapeHtml(item ? (item.name || '') : '')}</p>
+            </div>`;
+        }
+        html += '</div>';
+        html += '<p class="text-xs text-gray-500 mt-3">クリックで代表を選択</p>';
+        showConfirmDialog(html, function() {});  // OK は代表選択後に動的設定
+        // 代表選択のクリックハンドラ
+        document.querySelectorAll('.group-rep-card').forEach(card => {
+            card.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const repFp = this.dataset.masterFp;
+                // 選択状態の表示
+                document.querySelectorAll('.group-rep-card').forEach(c => c.classList.remove('ring-2', 'ring-emerald-500'));
+                this.classList.add('ring-2', 'ring-emerald-500');
+                // OK ハンドラを設定
+                const okBtn = document.getElementById('confirm-ok');
+                const prev = okBtn._currentHandler;
+                if (prev) okBtn.removeEventListener('click', prev);
+                const handler = async function() {
+                    hideConfirmDialog();
+                    const params = new URLSearchParams({
+                        action: 'merge_manual_group',
+                        master_fps: JSON.stringify(fps),
+                        representative_fp: repFp,
+                    });
+                    try {
+                        const res = await fetch(API_BASE + '?' + params);
+                        const result = await res.json();
+                        if (result.ok) {
+                            selectedForGroup.clear();
+                            updateGroupSelectUI();
+                            await fetchFinal();
+                        }
+                    } catch (e) {}
+                };
+                okBtn._currentHandler = handler;
+                okBtn.addEventListener('click', handler);
+            });
+        });
+    }
     document.getElementById('confirm-cancel').addEventListener('click', hideConfirmDialog);
     document.getElementById('confirm-popup').addEventListener('click', function(e) {
         if (e.target === this) hideConfirmDialog();
@@ -1061,6 +1139,21 @@
         }
         const card = e.target.closest('[data-idx]');
         if (!card) return;
+        // Shift+クリック: 統合選択モード (Final タブのみ)
+        if (e.shiftKey && currentTab === 'final') {
+            const idx = parseInt(card.dataset.idx, 10);
+            const s = filteredScreens[idx];
+            if (s && s.master_fp) {
+                if (selectedForGroup.has(s.master_fp)) {
+                    selectedForGroup.delete(s.master_fp);
+                } else {
+                    selectedForGroup.add(s.master_fp);
+                }
+                renderAll();
+                updateGroupSelectUI();
+            }
+            return;
+        }
         showModal(parseInt(card.dataset.idx, 10));
     });
 
