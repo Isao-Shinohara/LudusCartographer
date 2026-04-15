@@ -284,6 +284,11 @@ export ANDROID_SERIAL=f6b8cef7
 - `.env` や認証情報ファイルをコミットすること
 - セッション終了時に `STATUS.md` を更新しないこと
 - ユーザーの確認なしに実機で連続操作を実行すること
+- **ユーザーの明示的な指示なしにデータを削除・変更しないこと（厳格・最重要）**
+  - DB のレコード削除（DELETE, VACUUM）、スクリーンショットファイルの削除、セッションのクリーンアップ等のデータ操作は **ユーザーが「クリーンアップして」「削除して」等と明示的に指示した場合のみ** 実行する
+  - 「新規で開始して」は `-r` フラグの付与を意味するが、**既存データの削除は含まない**。クリーンアップが必要な場合はユーザーに確認してから実行する
+  - コード修正と同様に「調査→報告→承認→実行」の順を厳守する
+  - 一度削除したデータは復元不可能であり、ユーザーの作業成果を毀損するリスクがある
 
 ---
 
@@ -456,8 +461,14 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 
 ユーザーが「DB とスクショをクリーンアップして」と指示した場合、以下を実行する：
 
-1. **ludus.db**: 全テーブルのデータを DELETE → VACUUM（スキーマは保持）
+1. **crawler/storage/ludus.db**: 全テーブルのデータを DELETE → VACUUM（スキーマは保持）
    ```sql
+   DELETE FROM lc_node_mappings;
+   DELETE FROM lc_master_edges;
+   DELETE FROM lc_master_nodes;
+   DELETE FROM lc_session_graphs;
+   DELETE FROM lc_scc_groups;
+   DELETE FROM lc_transitions;
    DELETE FROM lc_tappable_items;
    DELETE FROM lc_screen_groups;
    DELETE FROM lc_screens;
@@ -466,11 +477,13 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
    DELETE FROM auto_pilot_state;
    VACUUM;
    ```
-2. **screenshots/**: 中身を全削除（ディレクトリは残す）
-3. **reinstall/**: 中身を全削除（ディレクトリは残す）
-4. クリーンアップ後に行数とディスク使用量を確認して報告する
-
-※ evidence/ や fresh_install/ はクリーンアップ対象外（別途指示があれば対応）
+   ※ `crawler/ludus.db` は未使用。本体は `crawler/storage/ludus.db`
+2. **crawler/storage/screenshots/**: 中身を全削除（ディレクトリは残す）
+3. **crawler/storage/reinstall/**: 中身を全削除（ディレクトリは残す）
+4. **crawler/storage/evidence/**: 中身を全削除（ディレクトリは残す）
+5. **crawler/evidence/**: 中身を全削除（ディレクトリは残す）
+6. **crawler/screenshots/**: 中身を全削除（ディレクトリは残す）
+7. クリーンアップ後に行数とディスク使用量を確認して報告する
 
 ### 起動コマンドの使い分け（厳格）
 
