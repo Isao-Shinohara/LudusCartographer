@@ -36,7 +36,7 @@
     </select>
     <select id="filter-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="reps" selected>採用</option>
-        <option value="all">全画像</option>
+        <option value="all">すべて</option>
         <option value="thinned">不採用</option>
         <option value="pending">未処理</option>
     </select>
@@ -422,7 +422,7 @@
             statusDot.classList.remove('hidden');
             statusText.textContent = '自動更新中';
             filterSelect.classList.remove('hidden');
-            filterSelect.innerHTML = '<option value="reps" selected>採用</option><option value="all">全画像</option><option value="thinned">不採用</option><option value="pending">未処理</option>';
+            filterSelect.innerHTML = '<option value="reps" selected>採用</option><option value="all">すべて</option><option value="thinned">不採用</option><option value="pending">未処理</option>';
             filterSelect.onchange = renderAll;
             sessionSelect.classList.remove('hidden');
             grid.classList.remove('hidden');
@@ -435,7 +435,7 @@
             statusDot.classList.add('hidden');
             statusText.textContent = '決定版';
             filterSelect.classList.remove('hidden');
-            filterSelect.innerHTML = '<option value="adopted" selected>採用のみ</option><option value="all">全て (除外含む)</option>';
+            filterSelect.innerHTML = '<option value="adopted" selected>採用</option><option value="all">すべて</option>';
             filterSelect.onchange = function() { showExcluded = this.value === 'all'; renderAll(); };
             sessionSelect.classList.add('hidden');
             grid.classList.remove('hidden');
