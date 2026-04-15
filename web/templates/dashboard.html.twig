@@ -920,8 +920,9 @@
         const excludeBtn = document.getElementById('final-exclude-btn');
         const resetBtn = document.getElementById('final-reset-btn');
         const hasSelection = selectedForGroup.size > 0;
-        adoptBtn.disabled = !hasSelection;
-        excludeBtn.disabled = !hasSelection;
+        const filter = filterSelect.value;
+        adoptBtn.disabled = !hasSelection || filter === 'adopted';
+        excludeBtn.disabled = !hasSelection || filter === 'excluded';
         resetBtn.disabled = !hasSelection;
     }
 
