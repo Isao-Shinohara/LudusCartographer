@@ -33,14 +33,9 @@ _CASCADE_XML = Path(__file__).parent.parent.parent / "assets" / "lbpcascade_anim
 _SCENE_CHANGE_PHASH_DIST = 20  # シーン切り替わり判定の phash 距離閾値
 _DARK_MAX = 70      # 最も明るいピクセル(max)≦この値 → 全ピクセル暗い → 除外
 _BRIGHT_MIN = 180   # 最も暗いピクセル(min)≧この値 → 全ピクセル明るい → 除外
-_CROP_MARGIN = 0.1  # 明暗判定で端を除外する割合 (各辺10% = 内側80%)
-
 def _is_too_dark_or_bright(gray: "np.ndarray") -> bool:
-    """中央領域の min/max で全体的に暗い/明るいかを判定。"""
-    h, w = gray.shape
-    m = _CROP_MARGIN
-    crop = gray[int(h * m):int(h * (1 - m)), int(w * m):int(w * (1 - m))]
-    return int(np.max(crop)) <= _DARK_MAX or int(np.min(crop)) >= _BRIGHT_MIN
+    """画面全体の min/max で全ピクセル暗い/明るいかを判定。"""
+    return int(np.max(gray)) <= _DARK_MAX or int(np.min(gray)) >= _BRIGHT_MIN
 
 # 日本語・英単語を含むトークンのみ採用
 _HAS_TEXT_RE = re.compile(r"[\u3000-\u9fff\u30a0-\u30ffA-Za-z]")
