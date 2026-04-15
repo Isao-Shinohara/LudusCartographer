@@ -49,7 +49,8 @@
     <div id="final-actions" class="hidden ml-auto flex items-center gap-2">
         <span id="final-select-count" class="text-xs text-gray-400"></span>
         <button id="final-merge-group-btn" class="px-3 py-1 bg-blue-700 hover:bg-blue-600 text-white text-xs font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>統合</button>
-        <button id="final-apply-btn" class="px-3 py-1 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>更新</button>
+        <button id="final-adopt-btn" class="px-3 py-1 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>一括採用</button>
+        <button id="final-exclude-btn" class="px-3 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>一括不採用</button>
         <button id="final-reset-btn" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>リセット</button>
     </div>
 </div>
@@ -908,11 +909,13 @@
 
     // --- 除外トグル (ペンディング方式) ---
     function updateFinalActionBar() {
-        const applyBtn = document.getElementById('final-apply-btn');
+        const adoptBtn = document.getElementById('final-adopt-btn');
+        const excludeBtn = document.getElementById('final-exclude-btn');
         const resetBtn = document.getElementById('final-reset-btn');
-        const count = Object.keys(pendingChanges).length;
-        applyBtn.disabled = count === 0;
-        resetBtn.disabled = count === 0 && selectedForGroup.size === 0;
+        const hasSelection = selectedForGroup.size > 0;
+        adoptBtn.disabled = !hasSelection;
+        excludeBtn.disabled = !hasSelection;
+        resetBtn.disabled = !hasSelection;
     }
 
     function togglePending(masterFp) {
@@ -985,33 +988,6 @@
         return _thumbCard(thumb, item ? (item.name || '') : '', { clickable: true, dataFp: fp });
     }
 
-    function showConfirmPopup() {
-        const entries = Object.entries(pendingChanges);
-        if (entries.length === 0) return;
-        const toExclude = entries.filter(([,v]) => v);
-        const toAdopt = entries.filter(([,v]) => !v);
-        let html = '';
-        if (toExclude.length > 0) {
-            html += `<p class="text-sm text-gray-300 mb-2">${toExclude.length} 件を除外</p>`;
-            html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto p-1 confirm-img-area mb-4">';
-            for (const [fp] of toExclude) html += _confirmCard(fp);
-            html += '</div>';
-        }
-        if (toAdopt.length > 0) {
-            html += `<p class="text-sm text-gray-300 mb-2">${toAdopt.length} 件を採用に戻す</p>`;
-            html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto p-1 confirm-img-area">';
-            for (const [fp] of toAdopt) html += _confirmCard(fp);
-            html += '</div>';
-        }
-        showConfirmDialog(html, applyPendingChanges);
-        document.querySelectorAll('.confirm-preview-card').forEach(card => {
-            card.addEventListener('click', function(e) {
-                e.stopPropagation();
-                showPreviewOverlay(this.dataset.masterFp);
-            });
-        });
-    }
-
     function showPreviewOverlay(masterFp) {
         const item = allScreens.find(s => s.master_fp === masterFp);
         if (!item) return;
@@ -1026,26 +1002,43 @@
         overlay.classList.add('flex');
     }
 
-    async function applyPendingChanges() {
-        hideConfirmDialog();
-        const entries = Object.entries(pendingChanges);
-        for (const [fp, newExcluded] of entries) {
-            const item = allScreens.find(s => s.master_fp === fp);
-            if (!item) continue;
-            // 現在の状態と目標が異なる場合のみ API 呼び出し
-            if (item.user_excluded !== newExcluded) {
-                try {
-                    await fetch(API_BASE + '?action=toggle_exclude&master_fp=' + encodeURIComponent(fp));
-                    item.user_excluded = newExcluded;
-                } catch (e) {}
+    function showBulkConfirm(action) {
+        if (selectedForGroup.size === 0) return;
+        const fps = [...selectedForGroup];
+        const label = action === 'adopt' ? '採用' : '不採用';
+        let html = `<p class="text-sm text-gray-300 mb-2">${fps.length} 件を${label}にします</p>`;
+        html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto p-1 confirm-img-area">';
+        for (const fp of fps) html += _confirmCard(fp);
+        html += '</div>';
+        showConfirmDialog(html, async function() {
+            hideConfirmDialog();
+            for (const fp of fps) {
+                const item = allScreens.find(s => s.master_fp === fp);
+                if (!item) continue;
+                const targetExcluded = action === 'exclude';
+                if (item.user_excluded !== targetExcluded) {
+                    try {
+                        await fetch(API_BASE + '?action=toggle_exclude&master_fp=' + encodeURIComponent(fp));
+                        item.user_excluded = targetExcluded;
+                    } catch (e) {}
+                }
             }
-        }
-        pendingChanges = {};
-        renderAll();
-        updateFinalActionBar();
+            selectedForGroup.clear();
+            pendingChanges = {};
+            renderAll();
+            updateGroupSelectUI();
+            updateFinalActionBar();
+        });
+        document.querySelectorAll('.confirm-preview-card').forEach(card => {
+            card.addEventListener('click', function(e) {
+                e.stopPropagation();
+                showPreviewOverlay(this.dataset.masterFp);
+            });
+        });
     }
 
-    document.getElementById('final-apply-btn').addEventListener('click', showConfirmPopup);
+    document.getElementById('final-adopt-btn').addEventListener('click', () => showBulkConfirm('adopt'));
+    document.getElementById('final-exclude-btn').addEventListener('click', () => showBulkConfirm('exclude'));
     document.getElementById('final-reset-btn').addEventListener('click', function() {
         resetPending();
         selectedForGroup.clear();
