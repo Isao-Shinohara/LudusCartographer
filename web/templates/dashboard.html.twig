@@ -720,12 +720,7 @@
 
     // --- 初期化 ---
     const initialTab = new URLSearchParams(window.location.search).get('tab') || 'live';
-    if (initialTab !== 'live') {
-        switchTab(initialTab);
-    } else {
-        fetchLiveInitial();
-        pollTimer = setInterval(pollLive, POLL_INTERVAL);
-    }
+    switchTab(initialTab);
     heartbeat();
     setInterval(heartbeat, 10000);
 
