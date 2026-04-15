@@ -42,6 +42,25 @@
     </select>
 </div>
 
+<!-- Final アクションバー -->
+<div id="final-actions" class="hidden flex items-center gap-3 mb-3">
+    <span id="final-pending-count" class="text-xs text-gray-400"></span>
+    <button id="final-apply-btn" class="px-3 py-1 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>更新</button>
+    <button id="final-reset-btn" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>リセット</button>
+</div>
+
+<!-- 確認ポップアップ -->
+<div id="confirm-popup" class="fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-4">
+    <div class="bg-gray-900 rounded-xl border border-gray-700 max-w-lg w-full max-h-[80vh] overflow-auto p-6" onclick="event.stopPropagation()">
+        <h3 class="text-lg font-bold text-brand-light mb-4">変更確認</h3>
+        <div id="confirm-body" class="space-y-3 mb-6"></div>
+        <div class="flex justify-end gap-3">
+            <button id="confirm-cancel" class="px-4 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">キャンセル</button>
+            <button id="confirm-ok" class="px-4 py-1.5 bg-green-700 hover:bg-green-600 text-white text-sm font-bold rounded">実行</button>
+        </div>
+    </div>
+</div>
+
 <!-- グリッド (Live / Final) -->
 <div id="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
     <div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>
@@ -136,14 +155,18 @@
         if (s.has_hq_ocr) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-sky-500" title="HQ OCR済"></span>');
         const statusDots = dots.length ? `<span class="flex gap-0.5 items-center">${dots.join('')}</span>` : '';
         const dimClass = (isThinned && filterSelect.value === 'all') ? ' opacity-40' : '';
-        const excludedClass = s.user_excluded ? ' opacity-30 border-red-900' : '';
+        // ペンディング変更を考慮した表示状態
+        const hasPending = s.master_fp && (s.master_fp in pendingChanges);
+        const effectiveExcluded = hasPending ? pendingChanges[s.master_fp] : s.user_excluded;
+        const pendingMark = hasPending ? ' ring-2 ring-yellow-500/50' : '';
+        const excludedClass = effectiveExcluded ? ' opacity-30 border-red-900' : '';
         // Final タブ: 除外トグルボタン
         const excludeBtn = (currentTab === 'final' && s.master_fp)
-            ? `<button class="exclude-btn absolute top-1 right-1 w-6 h-6 rounded-full ${s.user_excluded ? 'bg-red-700 hover:bg-green-700' : 'bg-gray-700/80 hover:bg-red-700'} text-white text-xs flex items-center justify-center transition-colors z-10" data-master-fp="${escapeHtml(s.master_fp)}" title="${s.user_excluded ? '採用に戻す' : '除外する'}">${s.user_excluded ? '↩' : '×'}</button>`
+            ? `<button class="exclude-btn absolute top-1 right-1 w-6 h-6 rounded-full ${effectiveExcluded ? 'bg-red-700 hover:bg-green-700' : 'bg-gray-700/80 hover:bg-red-700'} text-white text-xs flex items-center justify-center transition-colors z-10" data-master-fp="${escapeHtml(s.master_fp)}" title="${effectiveExcluded ? '採用に戻す' : '除外する'}">${effectiveExcluded ? '↩' : '×'}</button>`
             : '';
         return `
             <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer relative
-                        hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${excludedClass}"
+                        hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${excludedClass}${pendingMark}"
                  data-idx="${idx}">
                 ${excludeBtn}
                 ${thumb
@@ -365,7 +388,11 @@
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 
         const mergeContainer = document.getElementById('merge-container');
+        const finalActions = document.getElementById('final-actions');
+        pendingChanges = {};
+        updateFinalActionBar();
         if (tab === 'live') {
+            finalActions.classList.add('hidden');
             statusDot.classList.remove('hidden');
             statusText.textContent = '自動更新中';
             filterSelect.classList.remove('hidden');
@@ -378,6 +405,7 @@
             fetchLiveInitial();
             pollTimer = setInterval(pollLive, POLL_INTERVAL);
         } else if (tab === 'final') {
+            finalActions.classList.remove('hidden');
             statusDot.classList.add('hidden');
             statusText.textContent = '決定版';
             filterSelect.classList.remove('hidden');
@@ -389,6 +417,7 @@
             grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>';
             fetchFinal();
         } else if (tab === 'merge') {
+            finalActions.classList.add('hidden');
             statusDot.classList.add('hidden');
             statusText.textContent = 'マージ管理';
             filterSelect.classList.add('hidden');
@@ -680,20 +709,116 @@
         modalIdx = -1;
     }
 
-    // 除外トグル
-    grid.addEventListener('click', async function(e) {
+    // --- 除外トグル (ペンディング方式) ---
+    let pendingChanges = {};  // master_fp → target user_excluded (true/false)
+
+    function updateFinalActionBar() {
+        const bar = document.getElementById('final-actions');
+        const countEl = document.getElementById('final-pending-count');
+        const applyBtn = document.getElementById('final-apply-btn');
+        const resetBtn = document.getElementById('final-reset-btn');
+        const count = Object.keys(pendingChanges).length;
+        if (count > 0) {
+            const toExclude = Object.values(pendingChanges).filter(v => v).length;
+            const toAdopt = count - toExclude;
+            const parts = [];
+            if (toExclude) parts.push(`${toExclude}件を除外`);
+            if (toAdopt) parts.push(`${toAdopt}件を採用`);
+            countEl.textContent = parts.join('、') + ' (未保存)';
+            applyBtn.disabled = false;
+            resetBtn.disabled = false;
+        } else {
+            countEl.textContent = '';
+            applyBtn.disabled = true;
+            resetBtn.disabled = true;
+        }
+    }
+
+    function togglePending(masterFp) {
+        const item = allScreens.find(s => s.master_fp === masterFp);
+        if (!item) return;
+        const currentExcluded = item.user_excluded;
+        if (masterFp in pendingChanges) {
+            // 既にペンディング → 取り消し
+            delete pendingChanges[masterFp];
+        } else {
+            // 反転をペンディングに追加
+            pendingChanges[masterFp] = !currentExcluded;
+        }
+        renderAll();
+        updateFinalActionBar();
+    }
+
+    function resetPending() {
+        pendingChanges = {};
+        renderAll();
+        updateFinalActionBar();
+    }
+
+    function showConfirmPopup() {
+        const body = document.getElementById('confirm-body');
+        const entries = Object.entries(pendingChanges);
+        if (entries.length === 0) return;
+        let html = '';
+        for (const [fp, newExcluded] of entries) {
+            const item = allScreens.find(s => s.master_fp === fp);
+            const title = item ? (item.name || fp.substring(0, 20)) : fp.substring(0, 20);
+            const thumb = item && item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
+            const action = newExcluded
+                ? '<span class="text-red-400 text-xs font-bold">除外</span>'
+                : '<span class="text-green-400 text-xs font-bold">採用</span>';
+            html += `<div class="flex items-center gap-3 bg-gray-800 rounded p-2">
+                ${thumb ? `<img src="${thumb}" class="w-16 h-10 object-cover rounded" />` : ''}
+                <span class="text-xs text-gray-300 truncate flex-1">${escapeHtml(title)}</span>
+                ${action}
+            </div>`;
+        }
+        body.innerHTML = html;
+        const popup = document.getElementById('confirm-popup');
+        popup.classList.remove('hidden');
+        popup.classList.add('flex');
+    }
+
+    async function applyPendingChanges() {
+        const popup = document.getElementById('confirm-popup');
+        popup.classList.add('hidden');
+        popup.classList.remove('flex');
+        const entries = Object.entries(pendingChanges);
+        for (const [fp, newExcluded] of entries) {
+            const item = allScreens.find(s => s.master_fp === fp);
+            if (!item) continue;
+            // 現在の状態と目標が異なる場合のみ API 呼び出し
+            if (item.user_excluded !== newExcluded) {
+                try {
+                    await fetch(API_BASE + '?action=toggle_exclude&master_fp=' + encodeURIComponent(fp));
+                    item.user_excluded = newExcluded;
+                } catch (e) {}
+            }
+        }
+        pendingChanges = {};
+        renderAll();
+        updateFinalActionBar();
+    }
+
+    document.getElementById('final-apply-btn').addEventListener('click', showConfirmPopup);
+    document.getElementById('final-reset-btn').addEventListener('click', resetPending);
+    document.getElementById('confirm-ok').addEventListener('click', applyPendingChanges);
+    document.getElementById('confirm-cancel').addEventListener('click', function() {
+        document.getElementById('confirm-popup').classList.add('hidden');
+        document.getElementById('confirm-popup').classList.remove('flex');
+    });
+    document.getElementById('confirm-popup').addEventListener('click', function(e) {
+        if (e.target === this) {
+            this.classList.add('hidden');
+            this.classList.remove('flex');
+        }
+    });
+
+    grid.addEventListener('click', function(e) {
         const btn = e.target.closest('.exclude-btn');
         if (btn) {
             e.stopPropagation();
-            const fp = btn.dataset.masterFp;
-            try {
-                const res = await fetch(API_BASE + '?action=toggle_exclude&master_fp=' + encodeURIComponent(fp));
-                const data = await res.json();
-                // allScreens 内の該当アイテムを更新
-                const item = allScreens.find(s => s.master_fp === fp);
-                if (item) item.user_excluded = data.user_excluded;
-                renderAll();
-            } catch (e) {}
+            togglePending(btn.dataset.masterFp);
             return;
         }
         const card = e.target.closest('[data-idx]');
