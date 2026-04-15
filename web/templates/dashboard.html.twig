@@ -4,7 +4,7 @@
 
 {% block content %}
 <!-- ヘッダー+タブ (sticky) -->
-<div id="dashboard-sticky" class="sticky z-30 bg-gray-950 -mt-8 pt-4 pb-2">
+<div id="dashboard-sticky" class="sticky top-0 z-40 bg-gray-950 -mt-8 pb-2">
 <div class="flex items-center justify-between mb-4">
     <div>
         <h2 class="text-2xl font-bold text-brand-light">Dashboard</h2>
@@ -135,10 +135,10 @@
 
 <script>
 (function() {
-    // Dashboard sticky をグローバルヘッダーの直下に配置
+    // グローバルヘッダーを Dashboard sticky 内に移動（一体化）
     const _gh = document.getElementById('global-header');
     const _ds = document.getElementById('dashboard-sticky');
-    if (_gh && _ds) { _ds.style.top = _gh.offsetHeight + 'px'; }
+    if (_gh && _ds) { _ds.insertBefore(_gh, _ds.firstChild); }
 
     const POLL_INTERVAL = 3000;
     const API_BASE = 'api/search.php';
