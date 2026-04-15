@@ -930,19 +930,34 @@
     function showConfirmPopup() {
         const entries = Object.entries(pendingChanges);
         if (entries.length === 0) return;
+        const toExclude = entries.filter(([,v]) => v);
+        const toAdopt = entries.filter(([,v]) => !v);
         let html = '';
-        for (const [fp, newExcluded] of entries) {
-            const item = allScreens.find(s => s.master_fp === fp);
-            const title = item ? (item.name || fp.substring(0, 20)) : fp.substring(0, 20);
-            const thumb = item && item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
-            const action = newExcluded
-                ? '<span class="text-red-400 text-xs font-bold">除外</span>'
-                : '<span class="text-green-400 text-xs font-bold">採用</span>';
-            html += `<div class="flex items-center gap-3 bg-gray-800 rounded p-2">
-                ${thumb ? `<img src="${thumb}" class="w-16 h-10 object-cover rounded" />` : ''}
-                <span class="text-xs text-gray-300 truncate flex-1">${escapeHtml(title)}</span>
-                ${action}
-            </div>`;
+        if (toExclude.length > 0) {
+            html += `<p class="text-sm text-gray-300 mb-2">${toExclude.length} 件を除外</p>`;
+            html += '<div class="grid grid-cols-5 gap-2 max-h-52 overflow-y-auto mb-4">';
+            for (const [fp] of toExclude) {
+                const item = allScreens.find(s => s.master_fp === fp);
+                const thumb = item && item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
+                html += `<div class="bg-gray-800 rounded overflow-hidden">
+                    ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" />` : '<div class="w-full aspect-video bg-gray-700"></div>'}
+                    <p class="text-[9px] text-gray-500 p-1 truncate">${escapeHtml(item ? (item.name || '') : '')}</p>
+                </div>`;
+            }
+            html += '</div>';
+        }
+        if (toAdopt.length > 0) {
+            html += `<p class="text-sm text-gray-300 mb-2">${toAdopt.length} 件を採用に戻す</p>`;
+            html += '<div class="grid grid-cols-5 gap-2 max-h-52 overflow-y-auto">';
+            for (const [fp] of toAdopt) {
+                const item = allScreens.find(s => s.master_fp === fp);
+                const thumb = item && item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
+                html += `<div class="bg-gray-800 rounded overflow-hidden">
+                    ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" />` : '<div class="w-full aspect-video bg-gray-700"></div>'}
+                    <p class="text-[9px] text-gray-500 p-1 truncate">${escapeHtml(item ? (item.name || '') : '')}</p>
+                </div>`;
+            }
+            html += '</div>';
         }
         showConfirmDialog(html, applyPendingChanges);
     }
