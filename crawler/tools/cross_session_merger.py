@@ -778,11 +778,12 @@ class CrossSessionMerger:
             if r["master_fp"] not in G:
                 G.add_node(r["master_fp"])
 
-        # HOME 検出
-        home = self._conn.execute(
-            "SELECT master_fp FROM lc_master_nodes WHERE bfs_depth = 0 LIMIT 1"
+        # ROOT 検出: first_seen_at が最古のノード（スプラッシュ/ロゴ画面）
+        root = self._conn.execute(
+            "SELECT master_fp FROM lc_master_nodes"
+            " ORDER BY first_seen_at ASC LIMIT 1"
         ).fetchone()
-        home_fp = home["master_fp"] if home else None
+        home_fp = root["master_fp"] if root else None
 
         if not home_fp or home_fp not in G:
             # フォールバック: 出次数最大
@@ -821,11 +822,10 @@ class CrossSessionMerger:
                     (idx, f"SCC#{idx}", fp),
                 )
 
-        # sort_order: bfs_depth ASC (NULL→末尾), first_seen_at ASC
+        # sort_order: first_seen_at ASC (時系列順)
         all_nodes = self._conn.execute(
-            "SELECT master_fp, bfs_depth, first_seen_at FROM lc_master_nodes"
-            " ORDER BY CASE WHEN bfs_depth IS NULL THEN 9999 ELSE bfs_depth END ASC,"
-            " first_seen_at ASC"
+            "SELECT master_fp FROM lc_master_nodes"
+            " ORDER BY first_seen_at ASC"
         ).fetchall()
         for i, r in enumerate(all_nodes):
             self._conn.execute(
