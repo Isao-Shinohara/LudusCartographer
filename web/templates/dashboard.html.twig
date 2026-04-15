@@ -370,6 +370,10 @@
         currentTab = tab;
         allScreens = [];
         maxId = 0;
+        // URL hash にタブを保存
+        const url = new URL(window.location);
+        url.searchParams.set('tab', tab);
+        history.replaceState(null, '', url);
 
         // タブボタンのスタイル更新
         document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -600,9 +604,14 @@
     }
 
     // --- 初期化 ---
-    fetchLiveInitial();
+    const initialTab = new URLSearchParams(window.location.search).get('tab') || 'live';
+    if (initialTab !== 'live') {
+        switchTab(initialTab);
+    } else {
+        fetchLiveInitial();
+        pollTimer = setInterval(pollLive, POLL_INTERVAL);
+    }
     heartbeat();
-    pollTimer = setInterval(pollLive, POLL_INTERVAL);
     setInterval(heartbeat, 10000);
 
     // --- モーダル ---
