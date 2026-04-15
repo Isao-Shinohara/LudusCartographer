@@ -710,7 +710,7 @@
         const items = data.items || [];
         if (items.length === 0) return;
         let html = `<p class="text-sm text-gray-300 mb-3">除外済み＋セッション削除済みの ${items.length} 件を完全削除しますか？</p>`;
-        html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto" style="-webkit-mask-image:linear-gradient(to bottom,black 85%,transparent 100%);mask-image:linear-gradient(to bottom,black 85%,transparent 100%)">';
+        html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto p-1 confirm-img-area">';
         for (const item of items) {
             const thumb = item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
             html += `<div class="bg-gray-800 rounded overflow-hidden w-40 flex-shrink-0">
@@ -938,6 +938,19 @@
         okBtn.addEventListener('click', onOk);
         popup.classList.remove('hidden');
         popup.classList.add('flex');
+        // スクロール有無でフェード切替
+        requestAnimationFrame(() => {
+            document.querySelectorAll('.confirm-img-area').forEach(el => {
+                const fade = 'linear-gradient(to bottom,black 85%,transparent 100%)';
+                if (el.scrollHeight > el.clientHeight) {
+                    el.style.maskImage = fade;
+                    el.style.webkitMaskImage = fade;
+                } else {
+                    el.style.maskImage = 'none';
+                    el.style.webkitMaskImage = 'none';
+                }
+            });
+        });
     }
 
     function hideConfirmDialog() {
@@ -963,13 +976,13 @@
         let html = '';
         if (toExclude.length > 0) {
             html += `<p class="text-sm text-gray-300 mb-2">${toExclude.length} 件を除外</p>`;
-            html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto" style="-webkit-mask-image:linear-gradient(to bottom,black 85%,transparent 100%);mask-image:linear-gradient(to bottom,black 85%,transparent 100%) mb-4">';
+            html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto p-1 confirm-img-area mb-4">';
             for (const [fp] of toExclude) html += _confirmCard(fp);
             html += '</div>';
         }
         if (toAdopt.length > 0) {
             html += `<p class="text-sm text-gray-300 mb-2">${toAdopt.length} 件を採用に戻す</p>`;
-            html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto" style="-webkit-mask-image:linear-gradient(to bottom,black 85%,transparent 100%);mask-image:linear-gradient(to bottom,black 85%,transparent 100%)">';
+            html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto p-1 confirm-img-area">';
             for (const [fp] of toAdopt) html += _confirmCard(fp);
             html += '</div>';
         }
