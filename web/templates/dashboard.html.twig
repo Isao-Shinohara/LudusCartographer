@@ -241,10 +241,16 @@
         } else if (filter === 'pending') {
             filtered = allScreens.filter(s => (s.cluster_id === null || s.cluster_id === undefined) || (s.is_representative && !s.has_hq_ocr));
         }
-        // ソート
-        if (sortSelect.value === 'asc') {
+        // ソート: Live は API が降順(新しい順)、Final は API が昇順(古い順)
+        const wantDesc = sortSelect.value === 'desc';
+        if (currentTab === 'final' && wantDesc) {
+            filtered = [...filtered].reverse();
+        } else if (currentTab === 'final' && !wantDesc) {
+            // そのまま (API が昇順)
+        } else if (currentTab === 'live' && !wantDesc) {
             filtered = [...filtered].reverse();
         }
+        // Live + desc → そのまま (API が降順)
         filteredScreens = filtered;
         if (filtered.length === 0) {
             const msg = currentTab === 'live'
