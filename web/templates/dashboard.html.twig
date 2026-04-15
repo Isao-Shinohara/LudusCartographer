@@ -70,10 +70,10 @@
 <div id="merge-container" class="hidden"></div>
 
 <!-- モーダル -->
-<div id="modal" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center p-4">
-    <div class="flex items-center gap-3 max-w-6xl w-full">
-        <button id="modal-prev" class="flex-shrink-0 w-10 h-10 rounded-full bg-gray-700/80 hover:bg-gray-600 text-white text-xl flex items-center justify-center transition-colors" title="前へ (←)">&#8249;</button>
-        <div class="bg-gray-900 rounded-xl flex-1 min-w-0 max-h-[95vh] overflow-auto border border-gray-700" onclick="event.stopPropagation()">
+<div id="modal" class="fixed inset-0 bg-black/80 z-50 hidden items-start justify-center p-4 pt-8">
+    <div class="flex items-start gap-3 max-w-6xl w-full">
+        <button id="modal-prev" class="flex-shrink-0 w-10 h-10 rounded-full bg-gray-700/80 hover:bg-gray-600 text-white text-xl flex items-center justify-center transition-colors mt-40" title="前へ (←)">&#8249;</button>
+        <div class="bg-gray-900 rounded-xl flex-1 min-w-0 border border-gray-700" onclick="event.stopPropagation()">
             <div class="flex justify-between items-center p-4 border-b border-gray-800">
                 <div class="flex items-center gap-3 min-w-0">
                     <span id="modal-counter" class="text-xs text-gray-500 flex-shrink-0"></span>
@@ -84,7 +84,7 @@
             </div>
             <div class="p-4">
                 <img id="modal-img" src="" class="w-full rounded-lg bg-gray-800 mb-4" />
-                <div id="modal-ocr" class="bg-gray-800 rounded-lg p-4 text-sm text-gray-300 whitespace-pre-wrap max-h-60 overflow-auto"></div>
+                <div id="modal-ocr" class="bg-gray-800 rounded-lg p-3 text-sm text-gray-300 whitespace-pre-wrap h-16 overflow-y-auto"></div>
                 <div class="mt-3 flex gap-4 text-xs text-gray-600">
                     <span id="modal-scene"></span>
                     <span id="modal-fp" class="font-mono"></span>
@@ -100,7 +100,7 @@
                 </div>
             </div>
         </div>
-        <button id="modal-next" class="flex-shrink-0 w-10 h-10 rounded-full bg-gray-700/80 hover:bg-gray-600 text-white text-xl flex items-center justify-center transition-colors" title="次へ (→)">&#8250;</button>
+        <button id="modal-next" class="flex-shrink-0 w-10 h-10 rounded-full bg-gray-700/80 hover:bg-gray-600 text-white text-xl flex items-center justify-center transition-colors mt-40" title="次へ (→)">&#8250;</button>
     </div>
 </div>
 
