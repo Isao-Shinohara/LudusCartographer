@@ -144,6 +144,100 @@ if ($action === 'get_final_screens') {
     exit;
 }
 
+// --- get_final_screens_all アクション (除外含む全件) ---
+if ($action === 'get_final_screens_all') {
+    $limit = min((int)($_GET['limit'] ?? 10000), 10000);
+    if ($useDb && $repository instanceof EvidenceRepository) {
+        $screens = $repository->getFinalScreensIncludeExcluded($limit, $gameTitle);
+    } else {
+        $screens = [];
+    }
+    echo json_encode(
+        ['screens' => $screens, 'count' => count($screens)],
+        JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+    );
+    exit;
+}
+
+// --- toggle_exclude アクション ---
+if ($action === 'toggle_exclude') {
+    $masterFp = $_GET['master_fp'] ?? '';
+    if ($masterFp === '' || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'invalid request']);
+        exit;
+    }
+    $result = $repository->toggleExclude($masterFp);
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
+// --- get_pending_merges アクション ---
+if ($action === 'get_pending_merges') {
+    if ($useDb && $repository instanceof EvidenceRepository) {
+        $pending = $repository->getPendingMerges();
+        $merged = $repository->getMergedSessions();
+    } else {
+        $pending = [];
+        $merged = [];
+    }
+    echo json_encode(
+        ['pending' => $pending, 'merged' => $merged],
+        JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+    );
+    exit;
+}
+
+// --- preview_merge アクション ---
+if ($action === 'preview_merge') {
+    $sessionId = $_GET['session_id'] ?? '';
+    if ($sessionId === '') {
+        echo json_encode(['error' => 'session_id required']);
+        exit;
+    }
+    // Python の CrossSessionMerger.preview_merge() を呼ぶ
+    $dbPath = $repository instanceof EvidenceRepository
+        ? realpath(__DIR__ . '/../../..') . '/crawler/storage/ludus.db'
+        : '';
+    $cmd = sprintf(
+        'cd %s && ./venv/bin/python -c %s 2>&1',
+        escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler'),
+        escapeshellarg(
+            "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
+            . "m = CrossSessionMerger(Path('storage/ludus.db')); "
+            . "print(json.dumps(m.preview_merge('" . addslashes($sessionId) . "'), ensure_ascii=False)); "
+            . "m.close()"
+        ),
+    );
+    $output = shell_exec($cmd);
+    header('Content-Type: application/json');
+    echo $output ?: json_encode(['error' => 'preview failed']);
+    exit;
+}
+
+// --- execute_merge アクション ---
+if ($action === 'execute_merge') {
+    $sessionId = $_GET['session_id'] ?? '';
+    if ($sessionId === '') {
+        echo json_encode(['error' => 'session_id required']);
+        exit;
+    }
+    $cmd = sprintf(
+        'cd %s && ./venv/bin/python -c %s 2>&1',
+        escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler'),
+        escapeshellarg(
+            "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
+            . "m = CrossSessionMerger(Path('storage/ludus.db')); "
+            . "n = m.merge_to_master('" . addslashes($sessionId) . "'); "
+            . "m.close(); "
+            . "print(json.dumps({'ok': True, 'new_nodes': n}, ensure_ascii=False))"
+        ),
+    );
+    $output = shell_exec($cmd);
+    header('Content-Type: application/json');
+    echo $output ?: json_encode(['error' => 'merge failed']);
+    exit;
+}
+
 // --- get_graph アクション (遷移グラフ Cytoscape.js 用) ---
 if ($action === 'get_graph') {
     $nodes = [];

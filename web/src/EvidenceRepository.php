@@ -371,11 +371,12 @@ class EvidenceRepository
                    s.session_id, m.master_fp AS fingerprint, m.scene,
                    COALESCE(sess.game_title, 'Unknown Game') AS game_title,
                    m.visit_count, m.bfs_depth,
-                   1 AS is_representative, s.cluster_id
+                   1 AS is_representative, s.cluster_id,
+                   m.user_excluded, m.master_fp
             FROM lc_master_nodes m
             JOIN lc_screens s ON s.id = m.representative_screen_id
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
-            WHERE 1=1 {$gameFilter}
+            WHERE m.user_excluded = 0 {$gameFilter}
             ORDER BY m.bfs_depth ASC, m.last_seen_at DESC
             LIMIT :limit
         SQL;
@@ -408,6 +409,95 @@ class EvidenceRepository
             'is_representative' => (bool)($raw['is_representative'] ?? false),
             'cluster_id'      => $raw['cluster_id'] ?? null,
             'has_hq_ocr'      => ($raw['ocr_text_hq'] ?? null) !== null,
+            'user_excluded'   => (bool)($raw['user_excluded'] ?? false),
+            'master_fp'       => $raw['master_fp'] ?? null,
         ];
+    }
+
+    // ─── マージ管理 ─────────────────────────────────
+
+    public function getPendingMerges(): array
+    {
+        $sql = <<<SQL
+            SELECT sg.session_id, sg.node_count, sg.edge_count, sg.built_at,
+                   s.screens_found, s.started_at, s.status,
+                   COALESCE(s.game_title, 'Unknown Game') AS game_title
+            FROM lc_session_graphs sg
+            JOIN lc_sessions s ON s.session_id = sg.session_id
+            WHERE s.status = 'completed'
+              AND NOT EXISTS (
+                SELECT 1 FROM lc_node_mappings nm
+                WHERE nm.session_id = sg.session_id
+              )
+            ORDER BY sg.built_at DESC
+        SQL;
+        return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    public function getMergedSessions(): array
+    {
+        $sql = <<<SQL
+            SELECT sg.session_id, sg.node_count, sg.edge_count, sg.built_at,
+                   s.screens_found, s.started_at,
+                   COALESCE(s.game_title, 'Unknown Game') AS game_title,
+                   COUNT(nm.id) AS mapped_nodes
+            FROM lc_session_graphs sg
+            JOIN lc_sessions s ON s.session_id = sg.session_id
+            JOIN lc_node_mappings nm ON nm.session_id = sg.session_id
+            GROUP BY sg.session_id
+            ORDER BY sg.built_at DESC
+        SQL;
+        return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    public function toggleExclude(string $masterFp): array
+    {
+        $row = $this->db->prepare(
+            "SELECT user_excluded FROM lc_master_nodes WHERE master_fp = ?"
+        );
+        $row->execute([$masterFp]);
+        $current = $row->fetchColumn();
+        if ($current === false) {
+            return ['error' => 'not found'];
+        }
+        $newVal = $current ? 0 : 1;
+        $this->db->prepare(
+            "UPDATE lc_master_nodes SET user_excluded = ? WHERE master_fp = ?"
+        )->execute([$newVal, $masterFp]);
+        return ['master_fp' => $masterFp, 'user_excluded' => (bool)$newVal];
+    }
+
+    public function getFinalScreensIncludeExcluded(
+        int    $limit     = 10000,
+        string $gameTitle = '',
+    ): array {
+        $bindings = [':limit' => $limit];
+        $gameFilter = '';
+        if ($gameTitle !== '') {
+            $gameFilter = "AND COALESCE(sess.game_title, 'Unknown Game') = :game_title";
+            $bindings[':game_title'] = $gameTitle;
+        }
+        $sql = <<<SQL
+            SELECT s.id, m.title, s.depth, s.screenshot_path, s.thumbnail_path,
+                   s.ocr_text, s.ocr_text_hq, m.last_seen_at AS discovered_at,
+                   s.session_id, m.master_fp AS fingerprint, m.scene,
+                   COALESCE(sess.game_title, 'Unknown Game') AS game_title,
+                   m.visit_count, m.bfs_depth,
+                   1 AS is_representative, s.cluster_id,
+                   m.user_excluded, m.master_fp
+            FROM lc_master_nodes m
+            JOIN lc_screens s ON s.id = m.representative_screen_id
+            LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
+            WHERE 1=1 {$gameFilter}
+            ORDER BY m.bfs_depth ASC, m.last_seen_at DESC
+            LIMIT :limit
+        SQL;
+        $stmt = $this->db->prepare($sql);
+        foreach ($bindings as $key => $value) {
+            $type = ($key === ':limit') ? \PDO::PARAM_INT : \PDO::PARAM_STR;
+            $stmt->bindValue($key, $value, $type);
+        }
+        $stmt->execute();
+        return array_map([$this, 'toScreenArray'], $stmt->fetchAll());
     }
 }

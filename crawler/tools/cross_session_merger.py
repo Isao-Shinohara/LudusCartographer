@@ -342,26 +342,42 @@ class CrossSessionMerger:
 
     # ─── メインエントリ ──────────────────────────────
 
-    def merge_to_master(self, session_id: str) -> int:
-        """セッションのグラフをマスターグラフにマージする。
+    def _compute_matches(
+        self, session_id: str,
+    ) -> tuple[dict[str, tuple[str, str, float]], list[sqlite3.Row], bool]:
+        """マッチ計算のみ (副作用なし)。
 
-        Returns: 新規追加ノード数
+        Returns:
+            (node_mapping, session_reps, is_seed)
+            node_mapping: session_fp → (master_fp, method, score)
+            session_reps: セッションの代表画面一覧
+            is_seed: 初回セッション (マスター空) の場合 True
         """
         master_count = self._conn.execute(
             "SELECT COUNT(*) FROM lc_master_nodes"
         ).fetchone()[0]
 
         if master_count == 0:
-            # 最初のセッション → そのままマスターにコピー
-            return self._seed_master(session_id)
+            session_reps = self._conn.execute(
+                "SELECT fingerprint FROM lc_screens"
+                " WHERE session_id = ? AND is_representative = 1",
+                (session_id,),
+            ).fetchall()
+            return {}, session_reps, True
 
         # アンカー検出
         s_anchors = self.find_anchors(session_id)
         m_anchors = self.find_master_anchors()
 
+        session_reps = self._conn.execute(
+            "SELECT fingerprint FROM lc_screens"
+            " WHERE session_id = ? AND is_representative = 1",
+            (session_id,),
+        ).fetchall()
+
         if not s_anchors or not m_anchors:
-            logger.warning("[Merger] アンカーが見つからない → 全ノード新規追加")
-            return self._add_all_as_new(session_id)
+            logger.warning("[Merger] アンカーが見つからない")
+            return {}, session_reps, False
 
         # アンカーマッチング
         anchor_pairs: list[tuple[AnchorPoint, AnchorPoint, float]] = []
@@ -375,14 +391,12 @@ class CrossSessionMerger:
         logger.info("[Merger] アンカーマッチ: %d ペア", len(anchor_pairs))
 
         # ノードマッピング構築
-        node_mapping: dict[str, tuple[str, str, float]] = {}  # session_fp → (master_fp, method, score)
+        node_mapping: dict[str, tuple[str, str, float]] = {}
 
-        # Step 1: アンカーマッチ
+        # Step 1: アンカーマッチ + Step 2: k-hop 拡張
         for sa, ma, score in anchor_pairs:
             if sa.fp not in node_mapping:
                 node_mapping[sa.fp] = (ma.fp, "anchor", score)
-
-                # Step 2: k-hop 拡張
                 k_hop_map = self.k_hop_match(sa.fp, ma.fp, session_id, k=2)
                 for s_fp, m_fp in k_hop_map.items():
                     if s_fp not in node_mapping:
@@ -391,13 +405,7 @@ class CrossSessionMerger:
 
         logger.info("[Merger] アンカー+k-hop マッチ: %d ノード", len(node_mapping))
 
-        # Step 3: 残りのノードを transition_similarity で追加マッチング
-        session_reps = self._conn.execute(
-            "SELECT fingerprint FROM lc_screens"
-            " WHERE session_id = ? AND is_representative = 1",
-            (session_id,),
-        ).fetchall()
-
+        # Step 3: transition_similarity で追加マッチング
         master_fps = [r["master_fp"] for r in self._conn.execute(
             "SELECT master_fp FROM lc_master_nodes"
         ).fetchall()]
@@ -407,35 +415,110 @@ class CrossSessionMerger:
             s_fp = row["fingerprint"]
             if s_fp in node_mapping:
                 continue
-
             best_score = 0.0
             best_m_fp = None
             s_info = self._get_node_info(s_fp, session_id)
             if not s_info:
                 continue
-
             for m_fp in master_fps:
                 if m_fp in matched_master_fps:
                     continue
-                # 属性マッチング
                 n_score = self.node_match_score(s_fp, session_id, m_fp, "master")
                 if n_score < 0.5:
                     continue
-                # 遷移パターン照合
                 t_score = self.transition_similarity(s_fp, session_id, m_fp)
                 combined = n_score * 0.6 + t_score * 0.4
                 if combined > best_score and combined >= 0.5:
                     best_score = combined
                     best_m_fp = m_fp
-
             if best_m_fp:
                 node_mapping[s_fp] = (best_m_fp, "transition", best_score)
                 matched_master_fps.add(best_m_fp)
 
         logger.info("[Merger] 全マッチ完了: %d/%d ノード",
                     len(node_mapping), len(session_reps))
+        return node_mapping, session_reps, False
 
-        # Step 4: DB 更新
+    def preview_merge(self, session_id: str) -> dict:
+        """マージのプレビュー (DB 書き込みなし)。
+
+        Returns: {
+            'session_id', 'is_seed', 'session_screens', 'master_nodes_before',
+            'matches': [{'session_fp', 'master_fp', 'method', 'score',
+                         'session_title', 'session_thumb', 'master_title', 'master_thumb',
+                         'session_neighbors', 'master_neighbors'}],
+            'new_nodes': [{'fp', 'title', 'thumb', 'neighbors'}],
+            'summary': {'anchor', 'k_hop', 'transition', 'new'}
+        }
+        """
+        master_count = self._conn.execute(
+            "SELECT COUNT(*) FROM lc_master_nodes"
+        ).fetchone()[0]
+
+        node_mapping, session_reps, is_seed = self._compute_matches(session_id)
+
+        # サマリー集計
+        summary = {"anchor": 0, "k_hop": 0, "transition": 0, "new": 0}
+        for _, (_, method, _) in node_mapping.items():
+            summary[method] = summary.get(method, 0) + 1
+        new_fps = [r["fingerprint"] for r in session_reps
+                   if r["fingerprint"] not in node_mapping]
+        summary["new"] = len(new_fps)
+
+        # マッチ詳細
+        matches = []
+        for s_fp, (m_fp, method, score) in node_mapping.items():
+            s_info = self._get_screen_info(s_fp, session_id)
+            m_info = self._get_master_screen_info(m_fp)
+            matches.append({
+                "session_fp": s_fp,
+                "master_fp": m_fp,
+                "method": method,
+                "score": round(score, 3),
+                "session_title": s_info.get("title", "") if s_info else "",
+                "session_thumb": s_info.get("thumbnail_path", "") if s_info else "",
+                "master_title": m_info.get("title", "") if m_info else "",
+                "master_thumb": m_info.get("thumbnail_path", "") if m_info else "",
+                "session_neighbors": self._get_neighbors(s_fp, session_id),
+                "master_neighbors": self._get_master_neighbors(m_fp),
+            })
+
+        # 新規ノード詳細
+        new_nodes = []
+        for fp in new_fps:
+            s_info = self._get_screen_info(fp, session_id)
+            new_nodes.append({
+                "fp": fp,
+                "title": s_info.get("title", "") if s_info else "",
+                "thumb": s_info.get("thumbnail_path", "") if s_info else "",
+                "neighbors": self._get_neighbors(fp, session_id),
+            })
+
+        return {
+            "session_id": session_id,
+            "is_seed": is_seed,
+            "session_screens": len(session_reps),
+            "master_nodes_before": master_count,
+            "matches": matches,
+            "new_nodes": new_nodes,
+            "summary": summary,
+        }
+
+    def merge_to_master(self, session_id: str) -> int:
+        """セッションのグラフをマスターグラフにマージする。
+
+        Returns: 新規追加ノード数
+        """
+        node_mapping, session_reps, is_seed = self._compute_matches(session_id)
+
+        if is_seed:
+            return self._seed_master(session_id)
+
+        if not node_mapping and session_reps:
+            # アンカーなし → 全ノード新規追加
+            return self._add_all_as_new(session_id)
+
+        # DB 更新
         now = datetime.now().isoformat()
         new_count = 0
 
@@ -443,13 +526,11 @@ class CrossSessionMerger:
             s_fp = row["fingerprint"]
             if s_fp in node_mapping:
                 m_fp, method, score = node_mapping[s_fp]
-                # マスターノード更新
                 self._conn.execute(
                     "UPDATE lc_master_nodes SET visit_count = visit_count + 1,"
                     " last_seen_at = ? WHERE master_fp = ?",
                     (now, m_fp),
                 )
-                # マッピング記録
                 self._conn.execute(
                     "INSERT OR REPLACE INTO lc_node_mappings"
                     " (session_id, session_fp, master_fp, match_method, match_score)"
@@ -457,7 +538,6 @@ class CrossSessionMerger:
                     (session_id, s_fp, m_fp, method, score),
                 )
             else:
-                # 新規ノード
                 s_info = self._get_node_info(s_fp, session_id)
                 if not s_info:
                     continue
@@ -483,10 +563,7 @@ class CrossSessionMerger:
                 )
                 new_count += 1
 
-        # Step 5: エッジマージ
         self._merge_edges(session_id, node_mapping)
-
-        # Step 6: BFS/SCC 再計算
         self._recalculate_master_graph()
 
         self._conn.commit()
@@ -783,6 +860,82 @@ class CrossSessionMerger:
             "phash": row["phash"] or "",
             "scene": row["scene"] or "",
         }
+
+    # ─── プレビュー用ヘルパー ──────────────────────────
+
+    def _get_screen_info(self, fp: str, session_id: str) -> Optional[dict]:
+        """セッション画面の表示用情報を取得。"""
+        row = self._conn.execute(
+            "SELECT title, thumbnail_path, screenshot_path, scene"
+            " FROM lc_screens"
+            " WHERE fingerprint = ? AND session_id = ? AND is_representative = 1",
+            (fp, session_id),
+        ).fetchone()
+        if not row:
+            row = self._conn.execute(
+                "SELECT title, thumbnail_path, screenshot_path, scene"
+                " FROM lc_screens WHERE fingerprint = ? AND session_id = ?",
+                (fp, session_id),
+            ).fetchone()
+        if not row:
+            return None
+        return dict(row)
+
+    def _get_master_screen_info(self, master_fp: str) -> Optional[dict]:
+        """マスターノードの表示用情報を取得。"""
+        row = self._conn.execute(
+            "SELECT m.title, s.thumbnail_path, s.screenshot_path, m.scene"
+            " FROM lc_master_nodes m"
+            " LEFT JOIN lc_screens s ON s.id = m.representative_screen_id"
+            " WHERE m.master_fp = ?",
+            (master_fp,),
+        ).fetchone()
+        if not row:
+            return None
+        return dict(row)
+
+    def _get_neighbors(self, fp: str, session_id: str) -> list[dict]:
+        """セッション内の遷移先/遷移元をサムネ付きで返す。"""
+        neighbors = []
+        for direction, col_from, col_to in [("to", "from_fp", "to_fp"), ("from", "to_fp", "from_fp")]:
+            rows = self._conn.execute(
+                f"SELECT DISTINCT t.{col_to} AS fp, s.title, s.thumbnail_path"
+                f" FROM lc_transitions t"
+                f" LEFT JOIN lc_screens s ON s.fingerprint = t.{col_to}"
+                f"   AND s.session_id = t.session_id AND s.is_representative = 1"
+                f" WHERE t.{col_from} = ? AND t.session_id = ? AND t.{col_to} IS NOT NULL",
+                (fp, session_id),
+            ).fetchall()
+            for r in rows:
+                neighbors.append({
+                    "direction": direction,
+                    "fp": r["fp"],
+                    "title": r["title"] or "",
+                    "thumb": r["thumbnail_path"] or "",
+                })
+        return neighbors
+
+    def _get_master_neighbors(self, master_fp: str) -> list[dict]:
+        """マスターグラフの遷移先/遷移元をサムネ付きで返す。"""
+        neighbors = []
+        for direction, col_from, col_to in [("to", "from_master_fp", "to_master_fp"), ("from", "to_master_fp", "from_master_fp")]:
+            rows = self._conn.execute(
+                f"SELECT DISTINCT e.{col_to} AS fp, m.title,"
+                f" s.thumbnail_path"
+                f" FROM lc_master_edges e"
+                f" LEFT JOIN lc_master_nodes m ON m.master_fp = e.{col_to}"
+                f" LEFT JOIN lc_screens s ON s.id = m.representative_screen_id"
+                f" WHERE e.{col_from} = ?",
+                (master_fp,),
+            ).fetchall()
+            for r in rows:
+                neighbors.append({
+                    "direction": direction,
+                    "fp": r["fp"],
+                    "title": r["title"] or "",
+                    "thumb": r["thumbnail_path"] or "",
+                })
+        return neighbors
 
     def _load_session_transitions(self, session_id: str) -> nx.DiGraph:
         """セッションの遷移グラフをロード。"""
