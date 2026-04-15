@@ -120,6 +120,7 @@
     let pollCount = 0;
     const FULL_REFRESH_EVERY = 5;  // 5回に1回フルリフレッシュ (ステータス更新反映)
     let knownSessions = [];
+    let pendingChanges = {};  // Final タブ: master_fp → target user_excluded
     const filterSelect = document.getElementById('filter-select');
     const sessionSelect = document.getElementById('session-select');
     filterSelect.addEventListener('change', renderAll);
@@ -841,8 +842,6 @@
     }
 
     // --- 除外トグル (ペンディング方式) ---
-    let pendingChanges = {};  // master_fp → target user_excluded (true/false)
-
     function updateFinalActionBar() {
         const bar = document.getElementById('final-actions');
         const countEl = document.getElementById('final-pending-count');
