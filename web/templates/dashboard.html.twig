@@ -86,7 +86,7 @@
                 <img id="modal-img" src="" class="w-full rounded-lg bg-gray-800 mb-4" />
                 <div class="relative">
                     <div id="modal-ocr" class="bg-gray-800 rounded-lg p-3 pr-10 text-sm text-gray-300 whitespace-pre-wrap h-[4.5rem] overflow-y-auto"></div>
-                    <button id="modal-ocr-copy" class="absolute top-2 right-2 w-6 h-6 rounded bg-gray-700 hover:bg-gray-600 text-gray-400 hover:text-white text-xs flex items-center justify-center transition-colors" title="OCRテキストをコピー">&#x2398;</button>
+                    <button id="modal-ocr-copy" class="absolute top-2 right-2 w-6 h-6 rounded bg-gray-700 hover:bg-gray-600 text-gray-400 hover:text-white text-xs flex items-center justify-center transition-colors" title="クリップボードにコピー">&#x2398;</button>
                 </div>
                 <div class="mt-3 flex gap-4 text-xs text-gray-600">
                     <span id="modal-scene"></span>
@@ -988,10 +988,7 @@
     document.getElementById('modal-close-btn').addEventListener('click', closeModal);
     document.getElementById('modal-ocr-copy').addEventListener('click', function() {
         const text = document.getElementById('modal-ocr').textContent;
-        navigator.clipboard.writeText(text).then(() => {
-            this.textContent = '✓';
-            setTimeout(() => { this.innerHTML = '&#x2398;'; }, 1000);
-        });
+        navigator.clipboard.writeText(text);
     });
     document.addEventListener('keydown', function(e) {
         if (!modal.classList.contains('flex')) return;
