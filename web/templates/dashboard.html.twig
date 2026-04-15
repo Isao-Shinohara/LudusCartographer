@@ -674,7 +674,7 @@
                         <span class="text-gray-300">Final で除外済み＋セッション削除済みの画像が ${data.count} 件あります</span>
                         <p class="text-xs text-gray-500 mt-1">マスターノード・エッジ・画像ファイルを完全に削除できます</p>
                     </div>
-                    <button id="merge-cleanup-btn" class="px-3 py-1.5 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors">削除 (${data.count})</button>
+                    <button id="merge-cleanup-btn" class="px-3 py-1.5 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors">削除</button>
                 </div>`;
                 document.getElementById('merge-cleanup-btn').addEventListener('click', confirmCleanupExcluded);
             } else {
