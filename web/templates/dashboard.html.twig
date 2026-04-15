@@ -50,7 +50,7 @@
 
 <!-- 確認ポップアップ -->
 <div id="confirm-popup" class="fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-4">
-    <div id="confirm-inner" class="bg-gray-900 rounded-xl border border-gray-700 max-w-4xl max-h-[80vh] overflow-auto p-6" onclick="event.stopPropagation()">
+    <div id="confirm-inner" class="bg-gray-900 rounded-xl border border-gray-700 max-w-4xl min-w-[26rem] max-h-[80vh] overflow-auto p-6" onclick="event.stopPropagation()">
         <h3 class="text-lg font-bold text-brand-light mb-4">変更確認</h3>
         <div id="confirm-body" class="space-y-3 mb-6"></div>
         <div class="flex justify-end gap-3">
@@ -710,7 +710,7 @@
         const items = data.items || [];
         if (items.length === 0) return;
         let html = `<p class="text-sm text-gray-300 mb-3">除外済み＋セッション削除済みの ${items.length} 件を完全削除しますか？</p>`;
-        html += '<div class="flex flex-wrap gap-3 max-h-64 overflow-y-auto">';
+        html += '<div class="flex flex-wrap justify-center gap-3 max-h-64 overflow-y-auto">';
         for (const item of items) {
             const thumb = item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
             html += `<div class="bg-gray-800 rounded overflow-hidden w-40 flex-shrink-0">
@@ -963,13 +963,13 @@
         let html = '';
         if (toExclude.length > 0) {
             html += `<p class="text-sm text-gray-300 mb-2">${toExclude.length} 件を除外</p>`;
-            html += '<div class="flex flex-wrap gap-3 max-h-64 overflow-y-auto mb-4">';
+            html += '<div class="flex flex-wrap justify-center gap-3 max-h-64 overflow-y-auto mb-4">';
             for (const [fp] of toExclude) html += _confirmCard(fp);
             html += '</div>';
         }
         if (toAdopt.length > 0) {
             html += `<p class="text-sm text-gray-300 mb-2">${toAdopt.length} 件を採用に戻す</p>`;
-            html += '<div class="flex flex-wrap gap-3 max-h-64 overflow-y-auto">';
+            html += '<div class="flex flex-wrap justify-center gap-3 max-h-64 overflow-y-auto">';
             for (const [fp] of toAdopt) html += _confirmCard(fp);
             html += '</div>';
         }
