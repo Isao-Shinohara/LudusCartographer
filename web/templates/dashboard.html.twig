@@ -163,7 +163,7 @@
         const hasPending = s.master_fp && (s.master_fp in pendingChanges);
         const effectiveExcluded = hasPending ? pendingChanges[s.master_fp] : s.user_excluded;
         const pendingMark = hasPending ? ' ring-2 ring-yellow-500/50' : '';
-        const excludedBorder = effectiveExcluded ? ' border-red-900' : '';
+        const excludedBorder = '';
         const excludedOpacity = effectiveExcluded ? ' opacity-30' : '';
         // Final タブ: 除外トグルボタン
         const excludeBtn = (currentTab === 'final' && s.master_fp)
