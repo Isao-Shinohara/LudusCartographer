@@ -982,10 +982,12 @@ class BackgroundWorker:
         """セッショングラフ構築完了後にマスターグラフにマージ。"""
         conn = self._get_conn()
         try:
-            # session_graphs に存在するが node_mappings にない = 未マージ
+            # session_graphs に存在 + セッション完了済み + 未マージ
             pending = conn.execute(
                 "SELECT sg.session_id FROM lc_session_graphs sg"
-                " WHERE NOT EXISTS ("
+                " JOIN lc_sessions s ON s.session_id = sg.session_id"
+                " WHERE s.status = 'completed'"
+                " AND NOT EXISTS ("
                 "   SELECT 1 FROM lc_node_mappings nm"
                 "   WHERE nm.session_id = sg.session_id"
                 " )"
