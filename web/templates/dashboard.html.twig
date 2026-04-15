@@ -163,16 +163,18 @@
         const hasPending = s.master_fp && (s.master_fp in pendingChanges);
         const effectiveExcluded = hasPending ? pendingChanges[s.master_fp] : s.user_excluded;
         const pendingMark = hasPending ? ' ring-2 ring-yellow-500/50' : '';
-        const excludedClass = effectiveExcluded ? ' opacity-30 border-red-900' : '';
+        const excludedBorder = effectiveExcluded ? ' border-red-900' : '';
+        const excludedOpacity = effectiveExcluded ? ' opacity-30' : '';
         // Final タブ: 除外トグルボタン
         const excludeBtn = (currentTab === 'final' && s.master_fp)
             ? `<button class="exclude-btn absolute top-1 right-1 w-6 h-6 rounded-full bg-gray-700/80 hover:bg-red-700 text-white text-xs flex items-center justify-center transition-colors z-20" data-master-fp="${escapeHtml(s.master_fp)}" title="${effectiveExcluded ? '採用に戻す' : '除外する'}">${effectiveExcluded ? '↩' : '×'}</button>`
             : '';
         return `
             <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer relative
-                        hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${excludedClass}${pendingMark}"
+                        hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${excludedBorder}${pendingMark}"
                  data-idx="${idx}">
                 ${excludeBtn}
+                <div class="${excludedOpacity}">
                 ${thumb
                     ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />`
                     : `<div class="w-full aspect-video bg-gray-800 flex items-center justify-center text-3xl">📱</div>`
@@ -184,6 +186,7 @@
                         <div class="flex items-center gap-1.5">${sceneBadge}${statusDots}</div>
                         <span class="text-[10px] text-gray-600">${escapeHtml(s.last_seen_at || '')}</span>
                     </div>
+                </div>
                 </div>
             </div>
         `;
