@@ -55,7 +55,7 @@
         <div id="confirm-body" class="space-y-3 mb-6"></div>
         <div class="flex justify-end gap-3">
             <button id="confirm-cancel" class="px-4 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">キャンセル</button>
-            <button id="confirm-ok" class="px-4 py-1.5 bg-green-700 hover:bg-green-600 text-white text-sm font-bold rounded">実行</button>
+            <button id="confirm-ok" class="px-4 py-1.5 bg-green-700 hover:bg-green-600 text-white text-sm font-bold rounded">更新</button>
         </div>
     </div>
 </div>
@@ -710,7 +710,7 @@
         const items = data.items || [];
         if (items.length === 0) return;
         let html = `<p class="text-sm text-gray-300 mb-3">除外済み＋セッション削除済みの ${items.length} 件を完全削除しますか？</p>`;
-        html += '<div class="flex flex-wrap justify-center gap-3 max-h-64 overflow-y-auto">';
+        html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto" style="-webkit-mask-image:linear-gradient(to bottom,black 85%,transparent 100%);mask-image:linear-gradient(to bottom,black 85%,transparent 100%)">';
         for (const item of items) {
             const thumb = item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
             html += `<div class="bg-gray-800 rounded overflow-hidden w-40 flex-shrink-0">
@@ -963,13 +963,13 @@
         let html = '';
         if (toExclude.length > 0) {
             html += `<p class="text-sm text-gray-300 mb-2">${toExclude.length} 件を除外</p>`;
-            html += '<div class="flex flex-wrap justify-center gap-3 max-h-64 overflow-y-auto mb-4">';
+            html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto" style="-webkit-mask-image:linear-gradient(to bottom,black 85%,transparent 100%);mask-image:linear-gradient(to bottom,black 85%,transparent 100%) mb-4">';
             for (const [fp] of toExclude) html += _confirmCard(fp);
             html += '</div>';
         }
         if (toAdopt.length > 0) {
             html += `<p class="text-sm text-gray-300 mb-2">${toAdopt.length} 件を採用に戻す</p>`;
-            html += '<div class="flex flex-wrap justify-center gap-3 max-h-64 overflow-y-auto">';
+            html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto" style="-webkit-mask-image:linear-gradient(to bottom,black 85%,transparent 100%);mask-image:linear-gradient(to bottom,black 85%,transparent 100%)">';
             for (const [fp] of toAdopt) html += _confirmCard(fp);
             html += '</div>';
         }
