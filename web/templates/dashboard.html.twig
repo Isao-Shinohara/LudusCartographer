@@ -50,7 +50,7 @@
 
 <!-- 確認ポップアップ -->
 <div id="confirm-popup" class="fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-4">
-    <div class="bg-gray-900 rounded-xl border border-gray-700 max-w-lg w-full max-h-[80vh] overflow-auto p-6" onclick="event.stopPropagation()">
+    <div class="bg-gray-900 rounded-xl border border-gray-700 max-w-2xl w-full max-h-[80vh] overflow-auto p-6" onclick="event.stopPropagation()">
         <h3 class="text-lg font-bold text-brand-light mb-4">変更確認</h3>
         <div id="confirm-body" class="space-y-3 mb-6"></div>
         <div class="flex justify-end gap-3">
@@ -700,7 +700,7 @@
             </div>`;
         }
         html += '</div>';
-        html += '<p class="text-xs text-red-400 mt-3">マスターノード・エッジ・画像ファイルを物理削除します。この操作は取り消せません。</p>';
+        html += '<p class="text-xs text-red-400 mt-3">マスターノード・エッジ・画像ファイルを物理削除します。<br>この操作は取り消せません。</p>';
         showConfirmDialog(html, async function() {
             hideConfirmDialog();
             try {
