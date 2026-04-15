@@ -629,8 +629,7 @@
     }
 
     function confirmDeleteSession(sessionId, nodeCount) {
-        const body = document.getElementById('confirm-body');
-        body.innerHTML = `
+        const html = `
             <p class="text-sm text-gray-300 mb-2">セッション <code class="text-brand-light">${escapeHtml(sessionId)}</code> を削除しますか？</p>
             <ul class="text-xs text-gray-400 space-y-1 ml-4 list-disc">
                 <li>不採用の画像・スクリーンショットファイルを物理削除</li>
@@ -638,20 +637,10 @@
                 <li>採用済み画像（マスターノード参照）は保持</li>
             </ul>
             <p class="text-xs text-red-400 mt-3">この操作は取り消せません。</p>`;
-        const popup = document.getElementById('confirm-popup');
-        const okBtn = document.getElementById('confirm-ok');
-        const prev = okBtn._deleteHandler;
-        if (prev) okBtn.removeEventListener('click', prev);
-        const handler = async function() {
-            popup.classList.add('hidden');
-            popup.classList.remove('flex');
-            okBtn.removeEventListener('click', handler);
+        showConfirmDialog(html, async function() {
+            hideConfirmDialog();
             await executeDeleteSession(sessionId);
-        };
-        okBtn._deleteHandler = handler;
-        okBtn.addEventListener('click', handler);
-        popup.classList.remove('hidden');
-        popup.classList.add('flex');
+        });
     }
 
     async function executeDeleteSession(sessionId) {
@@ -678,7 +667,6 @@
         const data = await res.json();
         const items = data.items || [];
         if (items.length === 0) return;
-        const body = document.getElementById('confirm-body');
         let html = `<p class="text-sm text-gray-300 mb-3">除外済み＋セッション削除済みの ${items.length} 件を完全削除しますか？</p>`;
         html += '<div class="grid grid-cols-4 gap-2 max-h-60 overflow-auto">';
         for (const item of items) {
@@ -690,27 +678,14 @@
         }
         html += '</div>';
         html += '<p class="text-xs text-red-400 mt-3">マスターノード・エッジ・画像ファイルを物理削除します。この操作は取り消せません。</p>';
-        body.innerHTML = html;
-        const popup = document.getElementById('confirm-popup');
-        const okBtn = document.getElementById('confirm-ok');
-        const prev = okBtn._cleanupHandler;
-        if (prev) okBtn.removeEventListener('click', prev);
-        const handler = async function() {
-            popup.classList.add('hidden');
-            popup.classList.remove('flex');
-            okBtn.removeEventListener('click', handler);
+        showConfirmDialog(html, async function() {
+            hideConfirmDialog();
             try {
-                const res = await fetch(API_BASE + '?action=cleanup_excluded');
-                const result = await res.json();
-                if (result.ok) {
-                    await fetchFinal();
-                }
+                const r = await fetch(API_BASE + '?action=cleanup_excluded');
+                const result = await r.json();
+                if (result.ok) await fetchFinal();
             } catch (e) {}
-        };
-        okBtn._cleanupHandler = handler;
-        okBtn.addEventListener('click', handler);
-        popup.classList.remove('hidden');
-        popup.classList.add('flex');
+        });
     }
 
     // --- ハートビート ---
@@ -828,8 +803,7 @@
         if (!_clusterSelectedId || !_clusterMasterFp) return;
         const sib = _clusterSiblings.find(s => s.id == _clusterSelectedId);
         const origSib = _clusterSiblings.find(s => s.id == _clusterOriginalRepId);
-        const body = document.getElementById('confirm-body');
-        body.innerHTML = `
+        const html = `
             <p class="text-sm text-gray-300 mb-3">代表画像を変更しますか？</p>
             <div class="grid grid-cols-2 gap-4">
                 <div>
@@ -841,30 +815,17 @@
                     ${sib && sib.thumbnail_path ? `<img src="${imgUrl(sib.thumbnail_path)}" class="w-full aspect-video object-cover rounded bg-gray-800" />` : ''}
                 </div>
             </div>`;
-        // 確認ポップアップの OK を代表変更用に一時差し替え
-        const popup = document.getElementById('confirm-popup');
-        const okBtn = document.getElementById('confirm-ok');
-        const origHandler = okBtn._promoteHandler;
-        if (origHandler) okBtn.removeEventListener('click', origHandler);
-        const handler = async function() {
-            popup.classList.add('hidden');
-            popup.classList.remove('flex');
-            okBtn.removeEventListener('click', handler);
+        showConfirmDialog(html, async function() {
+            hideConfirmDialog();
             try {
                 const res = await fetch(API_BASE + '?action=promote_representative&master_fp=' + encodeURIComponent(_clusterMasterFp) + '&screen_id=' + _clusterSelectedId);
                 const result = await res.json();
                 if (result.ok) {
                     await fetchFinal();
-                    if (modalIdx >= 0 && modalIdx < filteredScreens.length) {
-                        showModal(modalIdx);
-                    }
+                    if (modalIdx >= 0 && modalIdx < filteredScreens.length) showModal(modalIdx);
                 }
             } catch (e) {}
-        };
-        okBtn._promoteHandler = handler;
-        okBtn.addEventListener('click', handler);
-        popup.classList.remove('hidden');
-        popup.classList.add('flex');
+        });
     });
 
     function updateModalNav() {
@@ -925,8 +886,27 @@
         updateFinalActionBar();
     }
 
+    // 確認ダイアログの OK ハンドラを設定するユーティリティ
+    function showConfirmDialog(bodyHtml, onOk) {
+        document.getElementById('confirm-body').innerHTML = bodyHtml;
+        const popup = document.getElementById('confirm-popup');
+        const okBtn = document.getElementById('confirm-ok');
+        // 既存ハンドラをクリア
+        const prev = okBtn._currentHandler;
+        if (prev) okBtn.removeEventListener('click', prev);
+        okBtn._currentHandler = onOk;
+        okBtn.addEventListener('click', onOk);
+        popup.classList.remove('hidden');
+        popup.classList.add('flex');
+    }
+
+    function hideConfirmDialog() {
+        const popup = document.getElementById('confirm-popup');
+        popup.classList.add('hidden');
+        popup.classList.remove('flex');
+    }
+
     function showConfirmPopup() {
-        const body = document.getElementById('confirm-body');
         const entries = Object.entries(pendingChanges);
         if (entries.length === 0) return;
         let html = '';
@@ -943,16 +923,11 @@
                 ${action}
             </div>`;
         }
-        body.innerHTML = html;
-        const popup = document.getElementById('confirm-popup');
-        popup.classList.remove('hidden');
-        popup.classList.add('flex');
+        showConfirmDialog(html, applyPendingChanges);
     }
 
     async function applyPendingChanges() {
-        const popup = document.getElementById('confirm-popup');
-        popup.classList.add('hidden');
-        popup.classList.remove('flex');
+        hideConfirmDialog();
         const entries = Object.entries(pendingChanges);
         for (const [fp, newExcluded] of entries) {
             const item = allScreens.find(s => s.master_fp === fp);
@@ -973,16 +948,9 @@
     document.getElementById('final-apply-btn').addEventListener('click', showConfirmPopup);
     document.getElementById('final-reset-btn').addEventListener('click', resetPending);
     document.getElementById('final-cleanup-btn').addEventListener('click', confirmCleanupExcluded);
-    document.getElementById('confirm-ok').addEventListener('click', applyPendingChanges);
-    document.getElementById('confirm-cancel').addEventListener('click', function() {
-        document.getElementById('confirm-popup').classList.add('hidden');
-        document.getElementById('confirm-popup').classList.remove('flex');
-    });
+    document.getElementById('confirm-cancel').addEventListener('click', hideConfirmDialog);
     document.getElementById('confirm-popup').addEventListener('click', function(e) {
-        if (e.target === this) {
-            this.classList.add('hidden');
-            this.classList.remove('flex');
-        }
+        if (e.target === this) hideConfirmDialog();
     });
 
     grid.addEventListener('click', function(e) {
