@@ -37,8 +37,7 @@
         <option value="">最新セッション</option>
     </select>
     <!-- Final 採用/不採用アクション (右詰) -->
-    <div class="ml-auto flex items-center gap-3">
-        <div id="stats" class="text-sm text-gray-400"></div>
+    <div class="ml-auto flex items-center gap-2">
         <div id="status" class="flex items-center gap-2">
             <span id="status-dot" class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
             <span id="status-text" class="text-xs text-gray-500">自動更新中</span>
@@ -86,12 +85,17 @@
 </div>
 
 <!-- グリッド (Live / Final) -->
-<div id="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 mt-4">
+<div id="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 mt-4 pb-10">
     <div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>
 </div>
 
 <!-- Merge タブ用コンテナ -->
 <div id="merge-container" class="hidden"></div>
+
+<!-- 固定フッター (画面数) -->
+<div id="dashboard-footer" class="fixed bottom-0 left-0 right-0 z-30 bg-gray-900/90 border-t border-gray-800 py-1.5 px-4 text-center">
+    <span id="stats" class="text-xs text-gray-500"></span>
+</div>
 
 <!-- モーダル -->
 <div id="modal" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center p-4">
