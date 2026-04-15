@@ -50,7 +50,7 @@
 
 <!-- 確認ポップアップ -->
 <div id="confirm-popup" class="fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-4">
-    <div id="confirm-inner" class="bg-gray-900 rounded-xl border border-gray-700 w-full max-h-[80vh] overflow-auto p-6" onclick="event.stopPropagation()">
+    <div id="confirm-inner" class="bg-gray-900 rounded-xl border border-gray-700 max-w-4xl max-h-[80vh] overflow-auto p-6" onclick="event.stopPropagation()">
         <h3 class="text-lg font-bold text-brand-light mb-4">変更確認</h3>
         <div id="confirm-body" class="space-y-3 mb-6"></div>
         <div class="flex justify-end gap-3">
@@ -659,7 +659,7 @@
         showConfirmDialog(html, async function() {
             hideConfirmDialog();
             await executeDeleteSession(sessionId);
-        }, 1);
+        });
     }
 
     async function executeDeleteSession(sessionId) {
@@ -710,10 +710,10 @@
         const items = data.items || [];
         if (items.length === 0) return;
         let html = `<p class="text-sm text-gray-300 mb-3">除外済み＋セッション削除済みの ${items.length} 件を完全削除しますか？</p>`;
-        html += '<div class="grid grid-cols-4 gap-3 max-h-64 overflow-y-auto">';
+        html += '<div class="flex flex-wrap gap-3 max-h-64 overflow-y-auto">';
         for (const item of items) {
             const thumb = item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
-            html += `<div class="bg-gray-800 rounded overflow-hidden">
+            html += `<div class="bg-gray-800 rounded overflow-hidden w-40 flex-shrink-0">
                 ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" />` : '<div class="w-full aspect-video bg-gray-700"></div>'}
                 <p class="text-[9px] text-gray-500 p-1 truncate">${escapeHtml(item.title || '')}</p>
             </div>`;
@@ -727,7 +727,7 @@
                 const result = await r.json();
                 if (result.ok) await fetchMergeTab();
             } catch (e) {}
-        }, items.length);
+        });
     }
 
     // --- ハートビート ---
@@ -867,7 +867,7 @@
                     if (modalIdx >= 0 && modalIdx < filteredScreens.length) showModal(modalIdx);
                 }
             } catch (e) {}
-        }, 2);
+        });
     });
 
     function updateModalNav() {
@@ -927,13 +927,10 @@
     }
 
     // 確認ダイアログの OK ハンドラを設定するユーティリティ
-    function showConfirmDialog(bodyHtml, onOk, itemCount) {
+    function showConfirmDialog(bodyHtml, onOk) {
         document.getElementById('confirm-body').innerHTML = bodyHtml;
         const popup = document.getElementById('confirm-popup');
-        const inner = document.getElementById('confirm-inner');
         const okBtn = document.getElementById('confirm-ok');
-        // 件数に応じてポップアップ幅を調整
-        inner.style.maxWidth = (itemCount || 0) <= 2 ? '28rem' : (itemCount || 0) <= 4 ? '36rem' : '56rem';
         // 既存ハンドラをクリア
         const prev = okBtn._currentHandler;
         if (prev) okBtn.removeEventListener('click', prev);
@@ -952,7 +949,7 @@
     function _confirmCard(fp) {
         const item = allScreens.find(s => s.master_fp === fp);
         const thumb = item && item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
-        return `<div class="bg-gray-800 rounded overflow-hidden cursor-pointer hover:ring-2 hover:ring-brand/50 transition-all confirm-preview-card" data-master-fp="${escapeHtml(fp)}">
+        return `<div class="bg-gray-800 rounded overflow-hidden cursor-pointer hover:ring-2 hover:ring-brand/50 transition-all confirm-preview-card w-40 flex-shrink-0" data-master-fp="${escapeHtml(fp)}">
             ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" />` : '<div class="w-full aspect-video bg-gray-700"></div>'}
             <p class="text-[10px] text-gray-500 p-1.5 truncate">${escapeHtml(item ? (item.name || '') : '')}</p>
         </div>`;
@@ -966,17 +963,17 @@
         let html = '';
         if (toExclude.length > 0) {
             html += `<p class="text-sm text-gray-300 mb-2">${toExclude.length} 件を除外</p>`;
-            html += '<div class="grid grid-cols-4 gap-3 max-h-64 overflow-y-auto mb-4">';
+            html += '<div class="flex flex-wrap gap-3 max-h-64 overflow-y-auto mb-4">';
             for (const [fp] of toExclude) html += _confirmCard(fp);
             html += '</div>';
         }
         if (toAdopt.length > 0) {
             html += `<p class="text-sm text-gray-300 mb-2">${toAdopt.length} 件を採用に戻す</p>`;
-            html += '<div class="grid grid-cols-4 gap-3 max-h-64 overflow-y-auto">';
+            html += '<div class="flex flex-wrap gap-3 max-h-64 overflow-y-auto">';
             for (const [fp] of toAdopt) html += _confirmCard(fp);
             html += '</div>';
         }
-        showConfirmDialog(html, applyPendingChanges, entries.length);
+        showConfirmDialog(html, applyPendingChanges);
         document.querySelectorAll('.confirm-preview-card').forEach(card => {
             card.addEventListener('click', function(e) {
                 e.stopPropagation();
