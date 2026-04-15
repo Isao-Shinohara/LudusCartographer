@@ -93,7 +93,7 @@
                 <div id="modal-cluster" class="hidden mt-4">
                     <div class="flex items-center justify-between mb-2">
                         <h4 class="text-xs font-bold text-gray-400">同クラスタの画像</h4>
-                        <button id="cluster-promote-btn" class="hidden px-3 py-1 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded transition-colors">代表を変更</button>
+                        <button id="cluster-promote-btn" class="px-3 py-1 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed hidden" disabled>変更</button>
                     </div>
                     <div id="modal-cluster-grid" class="grid grid-cols-4 sm:grid-cols-6 gap-2"></div>
                 </div>
@@ -666,6 +666,7 @@
         const promoteBtn = document.getElementById('cluster-promote-btn');
         _clusterMasterFp = masterFp;
         _clusterSelectedId = null;
+        promoteBtn.disabled = true;
         promoteBtn.classList.add('hidden');
         try {
             const res = await fetch(API_BASE + '?action=get_cluster_siblings&screen_id=' + screenId);
@@ -694,12 +695,10 @@
                 ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
             </div>`;
         }).join('');
-        // 選択が変わっていたら更新ボタン表示
-        if (_clusterSelectedId && _clusterSelectedId != _clusterOriginalRepId) {
-            promoteBtn.classList.remove('hidden');
-        } else {
-            promoteBtn.classList.add('hidden');
-        }
+        // 選択が代表と異なればボタン有効化
+        const isChanged = _clusterSelectedId && _clusterSelectedId != _clusterOriginalRepId;
+        promoteBtn.disabled = !isChanged;
+        promoteBtn.classList.remove('hidden');
         // タップで選択
         clusterGrid.querySelectorAll('.cluster-sib').forEach(el => {
             el.addEventListener('click', (e) => {
@@ -709,8 +708,8 @@
                 // モーダルのメイン画像を選択した画像に切替
                 const sib = _clusterSiblings.find(s => s.id == sibId);
                 if (sib) {
-                    const imgSrc = sib.screenshot_path ? imgUrl(sib.screenshot_path) : '';
-                    document.getElementById('modal-img').src = imgSrc;
+                    document.getElementById('modal-img').src = sib.screenshot_path ? imgUrl(sib.screenshot_path) : '';
+                    document.getElementById('modal-ocr').textContent = sib.ocr_text_hq || sib.ocr_text || '';
                 }
                 renderClusterGrid();
             });
