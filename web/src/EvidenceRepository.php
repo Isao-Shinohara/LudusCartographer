@@ -500,4 +500,63 @@ class EvidenceRepository
         $stmt->execute();
         return array_map([$this, 'toScreenArray'], $stmt->fetchAll());
     }
+
+    // ─── クラスタ兄弟・代表昇格 ─────────────────────
+
+    public function getClusterSiblings(int $screenId): array
+    {
+        // まず対象画面の cluster_id と session_id を取得
+        $row = $this->db->prepare(
+            "SELECT cluster_id, session_id FROM lc_screens WHERE id = ?"
+        );
+        $row->execute([$screenId]);
+        $info = $row->fetch(\PDO::FETCH_ASSOC);
+        if (!$info || $info['cluster_id'] === null) {
+            return [];
+        }
+
+        $stmt = $this->db->prepare(<<<SQL
+            SELECT id, fingerprint, title, screenshot_path, thumbnail_path,
+                   ocr_text, ocr_text_hq, is_representative, discovered_at, scene
+            FROM lc_screens
+            WHERE cluster_id = :cluster_id AND session_id = :session_id
+            ORDER BY is_representative DESC, discovered_at ASC
+        SQL);
+        $stmt->execute([
+            ':cluster_id' => $info['cluster_id'],
+            ':session_id' => $info['session_id'],
+        ]);
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    public function promoteRepresentative(string $masterFp, int $newScreenId): array
+    {
+        // 新しい代表画面の情報を取得
+        $stmt = $this->db->prepare(
+            "SELECT id, cluster_id, session_id FROM lc_screens WHERE id = ?"
+        );
+        $stmt->execute([$newScreenId]);
+        $newScreen = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if (!$newScreen) {
+            return ['error' => 'screen not found'];
+        }
+
+        // 同クラスタの現在の代表を解除
+        $this->db->prepare(
+            "UPDATE lc_screens SET is_representative = 0"
+            . " WHERE cluster_id = ? AND session_id = ? AND is_representative = 1"
+        )->execute([$newScreen['cluster_id'], $newScreen['session_id']]);
+
+        // 新しい代表に設定
+        $this->db->prepare(
+            "UPDATE lc_screens SET is_representative = 1 WHERE id = ?"
+        )->execute([$newScreenId]);
+
+        // マスターノードの representative_screen_id を更新
+        $this->db->prepare(
+            "UPDATE lc_master_nodes SET representative_screen_id = ? WHERE master_fp = ?"
+        )->execute([$newScreenId, $masterFp]);
+
+        return ['ok' => true, 'master_fp' => $masterFp, 'new_screen_id' => $newScreenId];
+    }
 }

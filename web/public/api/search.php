@@ -144,6 +144,34 @@ if ($action === 'get_final_screens') {
     exit;
 }
 
+// --- get_cluster_siblings アクション ---
+if ($action === 'get_cluster_siblings') {
+    $screenId = (int)($_GET['screen_id'] ?? 0);
+    if ($screenId <= 0 || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['siblings' => []]);
+        exit;
+    }
+    $siblings = $repository->getClusterSiblings($screenId);
+    echo json_encode(
+        ['siblings' => $siblings],
+        JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+    );
+    exit;
+}
+
+// --- promote_representative アクション ---
+if ($action === 'promote_representative') {
+    $masterFp = $_GET['master_fp'] ?? '';
+    $newScreenId = (int)($_GET['screen_id'] ?? 0);
+    if ($masterFp === '' || $newScreenId <= 0 || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'invalid request']);
+        exit;
+    }
+    $result = $repository->promoteRepresentative($masterFp, $newScreenId);
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
 // --- get_final_screens_all アクション (除外含む全件) ---
 if ($action === 'get_final_screens_all') {
     $limit = min((int)($_GET['limit'] ?? 10000), 10000);

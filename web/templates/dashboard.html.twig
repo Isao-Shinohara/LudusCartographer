@@ -71,6 +71,11 @@
                     <span id="modal-fp" class="font-mono"></span>
                     <span id="modal-time"></span>
                 </div>
+                <!-- クラスタ兄弟 (Final タブのみ) -->
+                <div id="modal-cluster" class="hidden mt-4">
+                    <h4 class="text-xs font-bold text-gray-400 mb-2">同クラスタの画像</h4>
+                    <div id="modal-cluster-grid" class="grid grid-cols-4 sm:grid-cols-6 gap-2"></div>
+                </div>
             </div>
         </div>
         <button id="modal-next" class="flex-shrink-0 w-10 h-10 rounded-full bg-gray-700/80 hover:bg-gray-600 text-white text-xl flex items-center justify-center transition-colors" title="次へ (→)">&#8250;</button>
@@ -580,7 +585,7 @@
         if (idx < 0 || idx >= filteredScreens.length) return;
         modalIdx = idx;
         const s = filteredScreens[idx];
-        const chronoPos = filteredScreens.length - idx; // 時系列での位置（1 = 最古）
+        const chronoPos = filteredScreens.length - idx;
         const isThinned = s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative;
         const titlePrefix = isThinned ? '[不採用] ' : '';
         const scene = s.category || 'UNKNOWN';
@@ -598,6 +603,69 @@
         updateModalNav();
         modal.classList.remove('hidden');
         modal.classList.add('flex');
+        // Final タブ: クラスタ兄弟を表示
+        const clusterDiv = document.getElementById('modal-cluster');
+        const clusterGrid = document.getElementById('modal-cluster-grid');
+        if (currentTab === 'final' && s.id) {
+            clusterDiv.classList.remove('hidden');
+            clusterGrid.innerHTML = '<span class="text-xs text-gray-600">読み込み中...</span>';
+            fetchClusterSiblings(s.id, s.master_fp);
+        } else {
+            clusterDiv.classList.add('hidden');
+            clusterGrid.innerHTML = '';
+        }
+    }
+
+    async function fetchClusterSiblings(screenId, masterFp) {
+        const clusterGrid = document.getElementById('modal-cluster-grid');
+        try {
+            const res = await fetch(API_BASE + '?action=get_cluster_siblings&screen_id=' + screenId);
+            const data = await res.json();
+            const siblings = data.siblings || [];
+            if (siblings.length <= 1) {
+                clusterGrid.innerHTML = '<span class="text-xs text-gray-600">クラスタ内に他の画像はありません</span>';
+                return;
+            }
+            clusterGrid.innerHTML = siblings.map(sib => {
+                const thumb = sib.thumbnail_path ? imgUrl(sib.thumbnail_path) : (sib.screenshot_path ? imgUrl(sib.screenshot_path) : '');
+                const isRep = sib.is_representative == 1;
+                const border = isRep ? 'border-emerald-500' : 'border-gray-700 hover:border-brand/50';
+                const label = isRep ? '<span class="text-[9px] text-emerald-400">代表</span>' : '';
+                const promoteBtn = (!isRep && masterFp)
+                    ? `<button class="promote-btn text-[9px] px-1 py-0.5 bg-brand/20 hover:bg-brand/40 text-brand-light rounded transition-colors" data-screen-id="${sib.id}" data-master-fp="${escapeHtml(masterFp)}">代表にする</button>`
+                    : '';
+                return `<div class="border ${border} rounded overflow-hidden bg-gray-900">
+                    ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
+                    <div class="p-1 flex items-center justify-between">
+                        ${label}${promoteBtn}
+                    </div>
+                </div>`;
+            }).join('');
+            // 昇格ボタン
+            clusterGrid.querySelectorAll('.promote-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const fp = btn.dataset.masterFp;
+                    const sid = btn.dataset.screenId;
+                    btn.textContent = '処理中...';
+                    btn.disabled = true;
+                    try {
+                        const res = await fetch(API_BASE + '?action=promote_representative&master_fp=' + encodeURIComponent(fp) + '&screen_id=' + sid);
+                        const result = await res.json();
+                        if (result.ok) {
+                            // Final タブを再取得して反映
+                            await fetchFinal();
+                            // モーダルを現在位置で再表示
+                            if (modalIdx >= 0 && modalIdx < filteredScreens.length) {
+                                showModal(modalIdx);
+                            }
+                        }
+                    } catch (e) {}
+                });
+            });
+        } catch (e) {
+            clusterGrid.innerHTML = '<span class="text-xs text-red-500">取得エラー</span>';
+        }
     }
 
     function updateModalNav() {
