@@ -691,7 +691,7 @@
         const items = data.items || [];
         if (items.length === 0) return;
         let html = `<p class="text-sm text-gray-300 mb-3">除外済み＋セッション削除済みの ${items.length} 件を完全削除しますか？</p>`;
-        html += '<div class="grid grid-cols-4 gap-2 max-h-60 overflow-auto">';
+        html += '<div class="grid grid-cols-5 gap-2 max-h-52 overflow-y-auto">';
         for (const item of items) {
             const thumb = item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
             html += `<div class="bg-gray-800 rounded overflow-hidden">
