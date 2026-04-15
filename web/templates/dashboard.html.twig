@@ -266,8 +266,8 @@
         grid.innerHTML = filtered.map((s, i) => renderCard(s, i)).join('');
         const repsCount = allScreens.filter(s => s.is_representative).length;
         stats.textContent = filter === 'all'
-            ? `${allScreens.length} 枚 (代表 ${repsCount})`
-            : `${filtered.length} 枚`;
+            ? `全${allScreens.length}枚 (代表 ${repsCount})`
+            : `全${filtered.length}枚`;
     }
 
     // --- セッション一覧取得 ---
