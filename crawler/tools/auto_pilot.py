@@ -3901,6 +3901,9 @@ def main():
                     # バックグラウンド処理の完了を待機
                     logger.info("[BG_WORKER] バックグラウンド処理の完了を待機中...")
                     bg_worker.wait_until_idle()
+                    # セッション完了後のマージを明示的に実行
+                    logger.info("[BG_WORKER] セッション完了 → クロスセッションマージ実行")
+                    bg_worker._run_cross_session_merge()
                     bg_worker.stop()
                 _cleanup_dashboard()
                 generate_and_copy_report(state, "ホーム画面到達")
@@ -3920,6 +3923,8 @@ def main():
                 if bg_worker is not None:
                     logger.info("[BG_WORKER] バックグラウンド処理の完了を待機中...")
                     bg_worker.wait_until_idle()
+                    logger.info("[BG_WORKER] 周回完了 → クロスセッションマージ実行")
+                    bg_worker._run_cross_session_merge()
                     bg_worker.stop()
                 _cleanup_dashboard()
                 break
