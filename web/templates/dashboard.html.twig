@@ -38,17 +38,16 @@
         <option value="thinned">不採用</option>
         <option value="pending">未処理</option>
     </select>
-    <select id="session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
-        <option value="">最新セッション</option>
-    </select>
     <select id="sort-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="desc" selected>降順</option>
         <option value="asc">昇順</option>
     </select>
+    <select id="session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
+        <option value="">最新セッション</option>
+    </select>
     <!-- Final 採用/不採用アクション (右詰) -->
     <div id="final-actions" class="hidden ml-auto flex items-center gap-2">
-        <span id="final-select-count" class="text-xs text-gray-400 hidden"></span>
-        <span id="final-pending-count" class="text-xs text-gray-400"></span>
+        <span id="final-select-count" class="text-xs text-gray-400"></span>
         <button id="final-merge-group-btn" class="px-3 py-1 bg-blue-700 hover:bg-blue-600 text-white text-xs font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>統合</button>
         <button id="final-apply-btn" class="px-3 py-1 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>更新</button>
         <button id="final-reset-btn" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>リセット</button>
@@ -908,25 +907,11 @@
 
     // --- 除外トグル (ペンディング方式) ---
     function updateFinalActionBar() {
-        const bar = document.getElementById('final-actions');
-        const countEl = document.getElementById('final-pending-count');
         const applyBtn = document.getElementById('final-apply-btn');
         const resetBtn = document.getElementById('final-reset-btn');
         const count = Object.keys(pendingChanges).length;
-        if (count > 0) {
-            const toExclude = Object.values(pendingChanges).filter(v => v).length;
-            const toAdopt = count - toExclude;
-            const parts = [];
-            if (toExclude) parts.push(`${toExclude}件を除外`);
-            if (toAdopt) parts.push(`${toAdopt}件を採用`);
-            countEl.textContent = parts.join('、') + ' (未保存)';
-            applyBtn.disabled = false;
-            resetBtn.disabled = false;
-        } else {
-            countEl.textContent = '';
-            applyBtn.disabled = true;
-            resetBtn.disabled = true;
-        }
+        applyBtn.disabled = count === 0;
+        resetBtn.disabled = count === 0 && selectedForGroup.size === 0;
     }
 
     function togglePending(masterFp) {
@@ -1073,13 +1058,15 @@
         const mergeBtn = document.getElementById('final-merge-group-btn');
         if (selectedForGroup.size >= 2) {
             countEl.textContent = `${selectedForGroup.size} 件選択中`;
-            countEl.classList.remove('hidden');
             mergeBtn.disabled = false;
+        } else if (selectedForGroup.size === 1) {
+            countEl.textContent = '1 件選択中';
+            mergeBtn.disabled = true;
         } else {
-            countEl.textContent = selectedForGroup.size === 1 ? '1 件選択中 (Shift+クリックで追加)' : '';
-            countEl.classList.toggle('hidden', selectedForGroup.size === 0);
+            countEl.textContent = 'Shift+クリックで選択';
             mergeBtn.disabled = true;
         }
+        countEl.classList.remove('hidden');
     }
 
     function showMergeGroupDialog() {
