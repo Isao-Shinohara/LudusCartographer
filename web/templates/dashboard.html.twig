@@ -50,7 +50,7 @@
 
 <!-- 確認ポップアップ -->
 <div id="confirm-popup" class="fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-4">
-    <div class="bg-gray-900 rounded-xl border border-gray-700 max-w-4xl w-full max-h-[80vh] overflow-auto p-6" onclick="event.stopPropagation()">
+    <div id="confirm-inner" class="bg-gray-900 rounded-xl border border-gray-700 w-full max-h-[80vh] overflow-auto p-6" onclick="event.stopPropagation()">
         <h3 class="text-lg font-bold text-brand-light mb-4">変更確認</h3>
         <div id="confirm-body" class="space-y-3 mb-6"></div>
         <div class="flex justify-end gap-3">
@@ -659,7 +659,7 @@
         showConfirmDialog(html, async function() {
             hideConfirmDialog();
             await executeDeleteSession(sessionId);
-        });
+        }, 1);
     }
 
     async function executeDeleteSession(sessionId) {
@@ -727,7 +727,7 @@
                 const result = await r.json();
                 if (result.ok) await fetchMergeTab();
             } catch (e) {}
-        });
+        }, items.length);
     }
 
     // --- ハートビート ---
@@ -867,7 +867,7 @@
                     if (modalIdx >= 0 && modalIdx < filteredScreens.length) showModal(modalIdx);
                 }
             } catch (e) {}
-        });
+        }, 2);
     });
 
     function updateModalNav() {
@@ -927,10 +927,13 @@
     }
 
     // 確認ダイアログの OK ハンドラを設定するユーティリティ
-    function showConfirmDialog(bodyHtml, onOk) {
+    function showConfirmDialog(bodyHtml, onOk, itemCount) {
         document.getElementById('confirm-body').innerHTML = bodyHtml;
         const popup = document.getElementById('confirm-popup');
+        const inner = document.getElementById('confirm-inner');
         const okBtn = document.getElementById('confirm-ok');
+        // 件数に応じてポップアップ幅を調整
+        inner.style.maxWidth = (itemCount || 0) <= 2 ? '28rem' : (itemCount || 0) <= 4 ? '36rem' : '56rem';
         // 既存ハンドラをクリア
         const prev = okBtn._currentHandler;
         if (prev) okBtn.removeEventListener('click', prev);
@@ -973,7 +976,7 @@
             for (const [fp] of toAdopt) html += _confirmCard(fp);
             html += '</div>';
         }
-        showConfirmDialog(html, applyPendingChanges);
+        showConfirmDialog(html, applyPendingChanges, entries.length);
         document.querySelectorAll('.confirm-preview-card').forEach(card => {
             card.addEventListener('click', function(e) {
                 e.stopPropagation();
