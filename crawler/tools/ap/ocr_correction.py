@@ -230,7 +230,7 @@ def _stage2_dictionary(text: str, dictionary: list[str] = _GAME_DICTIONARY) -> s
 
 # ─── 段階3: Gemini Flash ─────────────────────────────────
 
-_GEMINI_MODEL = "gemini-2.5-flash"
+_GEMINI_MODEL = "gemini-2.5-flash-lite"
 _GEMINI_RATE_LIMIT = 1.5  # 40 RPM (有料枠) → 1.5秒間隔で安全
 _GEMINI_BATCH_SIZE = 8    # 1リクエストあたりの画像枚数（観察しながら調整）
 
