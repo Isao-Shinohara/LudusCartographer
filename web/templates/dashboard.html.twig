@@ -635,8 +635,10 @@
             }
             html += '</div>';
             // 3. グラフ未構築
-            if (empty.length > 0) {
-                html += '<div><h3 class="text-lg font-bold text-amber-400 mb-3">⚠ グラフ未構築</h3>';
+            html += '<div><h3 class="text-lg font-bold text-amber-400 mb-3">⚠ グラフ未構築</h3>';
+            if (empty.length === 0) {
+                html += '<p class="text-gray-600 text-sm">グラフ未構築のセッションはありません</p>';
+            } else {
                 html += '<p class="text-xs text-gray-500 mb-2">セッショングラフ未構築のためマージ対象外。画面ありなら「グラフ構築」で復活、なしなら削除のみ可能。</p>';
                 html += '<div class="space-y-2">';
                 for (const s of empty) {
@@ -656,11 +658,14 @@
                         </div>
                     </div>`;
                 }
-                html += '</div></div>';
+                html += '</div>';
             }
+            html += '</div>';
             // 4. 進行中セッション
-            if (running.length > 0) {
-                html += '<div><h3 class="text-lg font-bold text-sky-400 mb-3">▶ 進行中セッション</h3>';
+            html += '<div><h3 class="text-lg font-bold text-sky-400 mb-3">▶ 進行中セッション</h3>';
+            if (running.length === 0) {
+                html += '<p class="text-gray-600 text-sm">実行中のセッションはありません</p>';
+            } else {
                 html += '<p class="text-xs text-gray-500 mb-2">auto_pilot 実行中のセッション。完了するとマージ待ちに移動。</p>';
                 html += '<div class="space-y-2">';
                 for (const s of running) {
@@ -675,8 +680,9 @@
                         </div>
                     </div>`;
                 }
-                html += '</div></div>';
+                html += '</div>';
             }
+            html += '</div>';
             // OCR 修正ルール (Phase 2)
             html += '<div><h3 class="text-lg font-bold text-gray-400 mb-3">OCR 修正ルール</h3>';
             html += '<div id="correction-rules-area" class="text-sm text-gray-500">確認中...</div>';
