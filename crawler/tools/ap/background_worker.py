@@ -945,14 +945,38 @@ class BackgroundWorker:
 
                 # 結果を id でマップ
                 result_map = {r["id"]: r for r in results}
+                import re as _re
+                _has_text = _re.compile(r'[\u3040-\u9fff\u30a0-\u30ffA-Za-z]')
+                _pure_num = _re.compile(r'^[\d\s.:/%×+\-~]+$')
                 for item in items:
                     sid = item["id"]
                     r = result_map.get(sid)
                     corrected = (r.get("corrected_text", "") if r else "").strip()
-                    conn.execute(
-                        "UPDATE lc_screens SET ocr_text_gemini = ? WHERE id = ?",
-                        (corrected or "", sid),
-                    )
+                    # プレースホルダ title (STARTUP, UNKNOWN等) なら、補正テキストから生成
+                    new_title = None
+                    if corrected:
+                        words = [w.strip() for w in corrected.split()
+                                 if w.strip() and _has_text.search(w)
+                                 and not _pure_num.match(w.strip())]
+                        if words:
+                            new_title = " / ".join(words[:3])
+                    if new_title:
+                        conn.execute(
+                            "UPDATE lc_screens SET ocr_text_gemini = ?, title = ?"
+                            " WHERE id = ? AND (title LIKE '(%' OR title IS NULL)",
+                            (corrected, new_title, sid),
+                        )
+                        # プレースホルダでない場合は ocr_text_gemini のみ更新
+                        conn.execute(
+                            "UPDATE lc_screens SET ocr_text_gemini = ?"
+                            " WHERE id = ? AND title NOT LIKE '(%' AND title IS NOT NULL",
+                            (corrected, sid),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE lc_screens SET ocr_text_gemini = ? WHERE id = ?",
+                            (corrected or "", sid),
+                        )
                     if corrected and corrected != item["ocr_text"]:
                         updated += 1
                     total += 1
