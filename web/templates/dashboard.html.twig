@@ -177,6 +177,7 @@
     let knownSessions = [];
     let pendingChanges = {};  // Final タブ: master_fp → target user_excluded
     let selectedForGroup = new Set();  // Final タブ: 統合選択中の master_fp
+    let geminiEnabled = false;  // GEMINI_API_KEY が設定されているか (API レスポンスで更新)
     const filterSelect = document.getElementById('filter-select');
     const sessionSelect = document.getElementById('session-select');
     const sortToggle = document.getElementById('sort-toggle');
@@ -362,6 +363,7 @@
             const res = await fetch(API_BASE + '?' + params);
             const data = await res.json();
             allScreens = data.screens || [];
+            if (data.gemini_enabled !== undefined) geminiEnabled = data.gemini_enabled;
             if (allScreens.length > 0) {
                 maxId = Math.max(...allScreens.map(s => s.id));
             }
@@ -477,6 +479,7 @@
             const res = await fetch(API_BASE + '?' + params);
             const data = await res.json();
             allScreens = data.screens || [];
+            if (data.gemini_enabled !== undefined) geminiEnabled = data.gemini_enabled;
             renderAll();
         } catch (e) {
             grid.innerHTML = '<div class="col-span-full text-center text-red-500 py-12">API エラー</div>';
@@ -1235,8 +1238,11 @@
         } else if (s.ocr_text_hq) {
             sources.push({label: 'HQ', color: 'bg-sky-900/40 text-sky-300',
                           value: s.ocr_text_hq});
+        } else if (geminiEnabled) {
+            // Gemini 有効時は Gemini 未実行と表示
+            sources.push({label: 'Gemini', color: 'bg-violet-900/40 text-violet-300', value: null});
         } else {
-            // 両方未実行 → HQ ラベルで未実行表示 (高さ揃え用)
+            // Gemini 無効時は HQ 未実行と表示
             sources.push({label: 'HQ', color: 'bg-sky-900/40 text-sky-300', value: null});
         }
         sources.push({label: '初期', color: 'bg-gray-700 text-gray-400',

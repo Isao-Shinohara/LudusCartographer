@@ -15,6 +15,16 @@ if (file_exists($envPath)) {
     $dotenv->safeLoad();
 }
 
+// --- crawler/config/.env から GEMINI_API_KEY 検出 ---
+function _gemini_enabled(): bool {
+    $crawlerEnv = realpath(__DIR__ . '/../../..') . '/crawler/config/.env';
+    if (!file_exists($crawlerEnv)) return false;
+    $content = @file_get_contents($crawlerEnv);
+    if (!$content) return false;
+    return preg_match('/^GEMINI_API_KEY\s*=\s*\S+/m', $content) === 1;
+}
+$GEMINI_ENABLED = _gemini_enabled();
+
 header('Content-Type: application/json; charset=utf-8');
 
 $action    = $_GET['action'] ?? 'search';
@@ -107,7 +117,7 @@ if ($action === 'get_recent_screens') {
     }
 
     echo json_encode(
-        ['screens' => $screens, 'count' => count($screens)],
+        ['screens' => $screens, 'count' => count($screens), 'gemini_enabled' => $GEMINI_ENABLED],
         JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
     );
     exit;
@@ -181,7 +191,7 @@ if ($action === 'get_final_screens_all') {
         $screens = [];
     }
     echo json_encode(
-        ['screens' => $screens, 'count' => count($screens)],
+        ['screens' => $screens, 'count' => count($screens), 'gemini_enabled' => $GEMINI_ENABLED],
         JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
     );
     exit;
