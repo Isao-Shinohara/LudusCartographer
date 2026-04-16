@@ -1040,10 +1040,16 @@
         });
     });
 
+    // ソート方向に応じた「新しい方向」「古い方向」のインデックス移動
+    function newerIdx() { return sortToggle.dataset.sort === 'desc' ? modalIdx - 1 : modalIdx + 1; }
+    function olderIdx() { return sortToggle.dataset.sort === 'desc' ? modalIdx + 1 : modalIdx - 1; }
+    function canGoNewer() { const i = newerIdx(); return i >= 0 && i < filteredScreens.length; }
+    function canGoOlder() { const i = olderIdx(); return i >= 0 && i < filteredScreens.length; }
+
     function updateModalNav() {
         if (modalIdx < 0) return;
-        document.getElementById('modal-prev').style.visibility = modalIdx < filteredScreens.length - 1 ? 'visible' : 'hidden';
-        document.getElementById('modal-next').style.visibility = modalIdx > 0 ? 'visible' : 'hidden';
+        document.getElementById('modal-prev').style.visibility = canGoOlder() ? 'visible' : 'hidden';
+        document.getElementById('modal-next').style.visibility = canGoNewer() ? 'visible' : 'hidden';
     }
 
     function closeModal() {
@@ -1293,15 +1299,15 @@
         showModal(parseInt(card.dataset.idx, 10));
     });
 
-    // ← 古い方向 (idx+1)
+    // ← 古い方向
     document.getElementById('modal-prev').addEventListener('click', function(e) {
         e.stopPropagation();
-        if (modalIdx < filteredScreens.length - 1) showModal(modalIdx + 1);
+        if (canGoOlder()) showModal(olderIdx());
     });
-    // → 新しい方向 (idx-1)
+    // → 新しい方向
     document.getElementById('modal-next').addEventListener('click', function(e) {
         e.stopPropagation();
-        if (modalIdx > 0) showModal(modalIdx - 1);
+        if (canGoNewer()) showModal(newerIdx());
     });
 
     modal.addEventListener('click', function(e) {
@@ -1315,9 +1321,9 @@
     document.addEventListener('keydown', function(e) {
         if (!modal.classList.contains('flex')) return;
         if (e.key === 'Escape') closeModal();
-        // ← 古い方向、→ 新しい方向
-        if (e.key === 'ArrowLeft' && modalIdx < filteredScreens.length - 1) showModal(modalIdx + 1);
-        if (e.key === 'ArrowRight' && modalIdx > 0) showModal(modalIdx - 1);
+        // ← 古い方向、→ 新しい方向（ソート方向対応）
+        if (e.key === 'ArrowLeft' && canGoOlder()) showModal(olderIdx());
+        if (e.key === 'ArrowRight' && canGoNewer()) showModal(newerIdx());
     });
 })();
 </script>
