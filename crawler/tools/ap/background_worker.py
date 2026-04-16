@@ -185,14 +185,15 @@ class BackgroundWorker:
                     logger.warning("[BG_WORKER] group 例外: %s", e)
                 last_group = time.time()
 
-            # OCR 再処理 (5秒間隔/1枚) — 間引きより先に実行
-            # HQ OCR のテキストで間引き精度を上げるため
-            if now - last_ocr >= self._interval_ocr:
-                try:
-                    self._run_incremental_ocr()
-                except Exception as e:
-                    logger.warning("[BG_WORKER] ocr 例外: %s", e)
-                last_ocr = time.time()
+            # HQ OCR (PaddleOCR フル解像度): GEMINI_API_KEY 未設定時のみ実行
+            # Gemini が画像から直接 OCR するため、API キーがあれば不要
+            if not os.environ.get("GEMINI_API_KEY"):
+                if now - last_ocr >= self._interval_ocr:
+                    try:
+                        self._run_incremental_ocr()
+                    except Exception as e:
+                        logger.warning("[BG_WORKER] ocr 例外: %s", e)
+                    last_ocr = time.time()
 
             # 間引き処理 (15秒間隔) — OCR 完了後に実行
             if now - last_dedup >= self._interval_dedup:
@@ -409,10 +410,13 @@ class BackgroundWorker:
                 _sid_filter = " AND session_id = ?"
                 _sid_params = (self._session_id,)
 
+            # GEMINI_API_KEY 設定時: HQ OCR を待たず初期 OCR で間引き
+            # 未設定時: HQ OCR 完了済みのみ間引き対象
+            _hq_filter = "" if os.environ.get("GEMINI_API_KEY") else " AND ocr_text_hq IS NOT NULL"
             rows = conn.execute(
                 "SELECT id, phash, title, COALESCE(ocr_text_hq, ocr_text) AS ocr FROM lc_screens"
                 " WHERE cluster_id IS NULL AND phash IS NOT NULL AND phash != ''"
-                " AND ocr_text_hq IS NOT NULL"
+                + _hq_filter
                 + _sid_filter +
                 " ORDER BY discovered_at",
                 _sid_params,
@@ -882,16 +886,15 @@ class BackgroundWorker:
 
         conn = self._get_conn()
         try:
-            # ocr_text_gemini が NULL の代表画像のみ対象（HQ OCR 完了済み）
+            # ocr_text_gemini が NULL の代表画像のみ対象
+            # Gemini が画像から直接 OCR するため HQ OCR 不要
             rows = conn.execute(
                 "SELECT id, screenshot_path,"
                 " COALESCE(ocr_text_hq, ocr_text, '') AS ocr"
                 " FROM lc_screens"
                 " WHERE is_representative = 1"
-                " AND ocr_text_hq IS NOT NULL"
                 " AND ocr_text_gemini IS NULL"
                 " AND screenshot_path != ''"
-                " AND LENGTH(COALESCE(ocr_text_hq, ocr_text, '')) > 5"
                 " ORDER BY discovered_at"
                 " LIMIT 5"
             ).fetchall()
