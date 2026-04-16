@@ -269,20 +269,34 @@ if ($action === 'process_session_bg') {
     $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
     // Gemini OCR + dedup + graph build をフルパイプライン実行
-    $script = "import json, time, os; "
+    // 内部的にループして全件完了させる (1クリックで完了)
+    $script = "import json, sqlite3; "
             . "from pathlib import Path; "
             . "from tools.ap.background_worker import BackgroundWorker; "
-            . "w = BackgroundWorker(db_path=Path('storage/ludus.db'), session_id='" . addslashes($sessionId) . "'); "
-            . "w._run_incremental_dedup(); "
-            . "w._run_gemini_batch_correction(); "
-            . "w._run_gemini_batch_correction(); "
-            . "w._run_gemini_batch_correction(); "
-            . "w._run_incremental_dedup(); "
             . "from tools.batch_processor import BatchProcessor; "
-            . "bp = BatchProcessor(db_path=Path('storage/ludus.db')); "
-            . "sccs = bp.build_graph(session_id='" . addslashes($sessionId) . "'); "
+            . "SID = '" . addslashes($sessionId) . "'; "
+            . "DB = Path('storage/ludus.db'); "
+            . "def _pending(): "
+            . "  c = sqlite3.connect(str(DB)); "
+            . "  g = c.execute('SELECT COUNT(*) FROM lc_screens WHERE session_id=? AND is_representative=1 AND ocr_text_gemini IS NULL', (SID,)).fetchone()[0]; "
+            . "  d = c.execute('SELECT COUNT(*) FROM lc_screens WHERE session_id=? AND cluster_id IS NULL AND phash IS NOT NULL AND phash !=\"\"', (SID,)).fetchone()[0]; "
+            . "  c.close(); "
+            . "  return g, d; "
+            . "w = BackgroundWorker(db_path=DB, session_id=SID); "
+            . "MAX_ITERATIONS = 100; "
+            . "iters = 0; "
+            . "while iters < MAX_ITERATIONS: "
+            . "  iters += 1; "
+            . "  w._run_incremental_dedup(); "
+            . "  w._run_gemini_batch_correction(); "
+            . "  g, d = _pending(); "
+            . "  if g == 0 and d == 0: break; "
+            . "w._run_incremental_dedup(); "
+            . "bp = BatchProcessor(db_path=DB); "
+            . "sccs = bp.build_graph(session_id=SID); "
             . "bp.close(); "
-            . "print(json.dumps({'ok': True, 'sccs': sccs}, ensure_ascii=False))";
+            . "g, d = _pending(); "
+            . "print(json.dumps({'ok': True, 'sccs': sccs, 'iterations': iters, 'remaining_gemini': g, 'remaining_dedup': d}, ensure_ascii=False))";
     $cmd = sprintf(
         'cd %s && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null &',
         $crawlerDir,
