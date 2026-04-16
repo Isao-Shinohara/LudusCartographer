@@ -25,6 +25,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import threading
 import tempfile
 import time
 from difflib import SequenceMatcher
@@ -3942,26 +3943,35 @@ def main():
                 logger.info("=" * 60)
                 if recorder is not None:
                     recorder.close()
+                # 実行中の非同期マージスレッドが完了するまで待機
+                for _t in threading.enumerate():
+                    if _t.name.startswith("merge-cycle-") and _t.is_alive():
+                        logger.info("[BG_WORKER] 非同期マージ待機: %s", _t.name)
+                        _t.join()
                 if bg_worker is not None:
                     logger.info("[BG_WORKER] バックグラウンド処理の完了を待機中...")
                     bg_worker.wait_until_idle()
-                    logger.info("[BG_WORKER] 周回完了 → クロスセッションマージ実行")
+                    logger.info("[BG_WORKER] 最終周回完了 → クロスセッションマージ実行")
                     bg_worker._run_cross_session_merge()
                     bg_worker.stop()
                 _cleanup_dashboard()
                 break
-            # 各周回完了時にクロスセッションマージを実行
-            # (途中停止でもマージ済み状態で残す)
+            # 各周回完了時にクロスセッションマージを非同期実行
+            # (途中停止でもマージ済み状態で残す / 次の周回はブロックしない)
             if bg_worker is not None:
-                logger.info("[BG_WORKER] 周回 #%d 完了 → バックグラウンド処理完了待機",
-                            state.grind_cycles_completed)
-                bg_worker.wait_until_idle()
-                logger.info("[BG_WORKER] 周回 #%d 完了 → クロスセッションマージ実行",
-                            state.grind_cycles_completed)
-                try:
-                    bg_worker._run_cross_session_merge()
-                except Exception as e:
-                    logger.warning("[BG_WORKER] マージ例外: %s", e)
+                _cycle_num = state.grind_cycles_completed
+                def _async_merge():
+                    try:
+                        bg_worker.wait_until_idle()
+                        logger.info("[BG_WORKER] 周回 #%d → クロスセッションマージ実行",
+                                    _cycle_num)
+                        bg_worker._run_cross_session_merge()
+                        logger.info("[BG_WORKER] 周回 #%d マージ完了", _cycle_num)
+                    except Exception as e:
+                        logger.warning("[BG_WORKER] 周回 #%d マージ例外: %s",
+                                       _cycle_num, e)
+                threading.Thread(target=_async_merge, daemon=True,
+                                 name=f"merge-cycle-{_cycle_num}").start()
             from tools.ap.constants import GRIND_CYCLE_INTERVAL
             logger.info("=" * 60)
             logger.info("  [GRIND] 周回 #%d 完了! → %.0f秒後に次の周回を開始",
