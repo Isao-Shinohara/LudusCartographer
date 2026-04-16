@@ -194,6 +194,7 @@ def _stage2_dictionary(text: str, dictionary: list[str] = _GAME_DICTIONARY) -> s
 
 _GEMINI_MODEL = "gemini-2.5-flash"
 _GEMINI_RATE_LIMIT = 4.0  # 無料枠 15 RPM → 4秒間隔で安全
+_GEMINI_BATCH_SIZE = 3    # 1リクエストあたりの画像枚数（観察しながら調整）
 
 _GEMINI_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedra」のUI仕様と世界観に精通したデバッグエンジニアです。
 
@@ -215,6 +216,37 @@ _GEMINI_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedr
 }}
 
 初期OCR が空または無関係な場合も画像から読み取ってください。corrections は誤読を検出した場合のみ。'''
+
+
+_GEMINI_BATCH_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedra」のUI仕様と世界観に精通したデバッグエンジニアです。
+
+複数のゲーム画面のスクリーンショットから、各画面のテキストを正確に読み取ってください。
+画像は順番に「画像1, 画像2, ...」として渡されます。
+
+## マスターリスト（参考）
+- キャラ名: 鹿目まどか、暁美ほむら、美樹さやか、巴マミ、佐倉杏子、由比鶴乃、七海やちよ、環いろは、秋野かえで、深月フェリシア、二葉さな、水波レナ、御園かりん、梓みふゆ、十咎ももこ、志筑仁美、キュゥべえ、早乙女和子
+- UI用語: パーティー、ホーム、ショップ、ガチャ、クエスト、バトル、スキル、通常攻撃、マギア、ドッペル、キオク、額縁、プレイヤー、推奨、報酬、限界突破、ATTACKER、BUFFER、DEFENDER、BREAK、SKIP、AUTO
+
+## 各画像の初期 OCR 結果（誤読の可能性あり、参考程度に）
+{ocr_block}
+
+## 出力形式（JSONのみ、他の説明不要）
+{{
+  "results": [
+    {{
+      "index": 1,
+      "corrected_text": "画像1のテキスト",
+      "corrections": [{{"before": "誤読", "after": "正", "reason": "..."}}]
+    }},
+    {{
+      "index": 2,
+      "corrected_text": "画像2のテキスト",
+      "corrections": []
+    }}
+  ]
+}}
+
+各画像について必ず1つのオブジェクトを返してください。corrections は誤読を検出した場合のみ。'''
 
 
 def _init_gemini_client():
@@ -286,6 +318,95 @@ def gemini_correct_single(
         return None
     except Exception as e:
         logger.warning("[GEMINI] API エラー: %s", e)
+        return None
+
+
+def gemini_correct_multi(
+    items: list[dict],
+    client=None,
+) -> Optional[list[dict]]:
+    """複数画像を1リクエストでバッチ補正。
+
+    Args:
+        items: [{"id": int, "screenshot_path": str, "ocr_text": str}, ...]
+        client: Gemini クライアント (None なら自動作成)
+
+    Returns:
+        [{"id": int, "corrected_text": str, "corrections": list}, ...] or None
+    """
+    if not items:
+        return []
+    if client is None:
+        client = _init_gemini_client()
+    if client is None:
+        return None
+
+    from google import genai as _genai
+
+    try:
+        # 画像読み込み + 検証
+        contents: list = []
+        ocr_lines = []
+        valid_items = []
+        for i, item in enumerate(items, 1):
+            img_path = Path(item["screenshot_path"])
+            if not img_path.exists():
+                continue
+            with open(img_path, "rb") as f:
+                img_data = f.read()
+            mime = "image/webp" if img_path.suffix == ".webp" else "image/png"
+            contents.append(_genai.types.Part.from_bytes(data=img_data, mime_type=mime))
+            ocr_lines.append(f"画像{i}: {item.get('ocr_text', '')}")
+            valid_items.append((i, item))
+
+        if not contents:
+            return []
+
+        prompt = _GEMINI_BATCH_PROMPT.format(ocr_block="\n".join(ocr_lines))
+        contents.append(prompt)
+
+        response = client.models.generate_content(
+            model=_GEMINI_MODEL,
+            contents=contents,
+        )
+
+        text = response.text.strip()
+        if text.startswith("```"):
+            text = re.sub(r'^```\w*\n?', '', text)
+            text = re.sub(r'\n?```$', '', text)
+
+        result = json.loads(text)
+        results = result.get("results", [])
+
+        # index → 元の id にマッピング
+        index_to_id = {idx: item["id"] for idx, item in valid_items}
+        index_to_orig = {idx: item.get("ocr_text", "") for idx, item in valid_items}
+
+        output = []
+        for r in results:
+            idx = r.get("index")
+            if idx not in index_to_id:
+                continue
+            corrected = r.get("corrected_text", "")
+            output.append({
+                "id": index_to_id[idx],
+                "corrected_text": corrected,
+                "corrections": r.get("corrections", []),
+            })
+            # パターン学習
+            orig = index_to_orig[idx]
+            if corrected and corrected != orig:
+                for c in r.get("corrections", []):
+                    if c.get("before") and c.get("after"):
+                        learn_from_correction(c["before"], c["after"])
+
+        return output
+
+    except json.JSONDecodeError as e:
+        logger.warning("[GEMINI] バッチ JSON パース失敗: %s", e)
+        return None
+    except Exception as e:
+        logger.warning("[GEMINI] バッチ API エラー: %s", e)
         return None
 
 

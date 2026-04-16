@@ -888,6 +888,12 @@ class BackgroundWorker:
         try:
             # ocr_text_gemini が NULL の代表画像のみ対象
             # Gemini が画像から直接 OCR するため HQ OCR 不要
+            from tools.ap.ocr_correction import (
+                _init_gemini_client, _GEMINI_BATCH_SIZE, _GEMINI_RATE_LIMIT,
+                gemini_correct_multi,
+            )
+            # 1バッチ = _GEMINI_BATCH_SIZE 枚, 1回の起動で 4 バッチまで処理
+            fetch_limit = _GEMINI_BATCH_SIZE * 4
             rows = conn.execute(
                 "SELECT id, screenshot_path,"
                 " COALESCE(ocr_text_hq, ocr_text, '') AS ocr"
@@ -896,49 +902,69 @@ class BackgroundWorker:
                 " AND ocr_text_gemini IS NULL"
                 " AND screenshot_path != ''"
                 " ORDER BY discovered_at"
-                " LIMIT 5"
+                " LIMIT ?",
+                (fetch_limit,),
             ).fetchall()
 
             if not rows:
                 return
 
-            from tools.ap.ocr_correction import gemini_correct_single, _init_gemini_client
             client = _init_gemini_client()
             if client is None:
                 return
 
             updated = 0
-            for row in rows:
-                sid = row["id"]
-                path = row["screenshot_path"]
-                ocr = row["ocr"]
-                if not path or not Path(path).exists():
-                    # 画像なし → スキップマーク（空文字で）
-                    conn.execute(
-                        "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?", (sid,)
-                    )
+            total = 0
+            # _GEMINI_BATCH_SIZE 枚ごとに分割してバッチ送信
+            for batch_start in range(0, len(rows), _GEMINI_BATCH_SIZE):
+                batch = rows[batch_start:batch_start + _GEMINI_BATCH_SIZE]
+                items = []
+                for row in batch:
+                    sid = row["id"]
+                    path = row["screenshot_path"]
+                    if not path or not Path(path).exists():
+                        # 画像なし → 空文字でスキップマーク
+                        conn.execute(
+                            "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?",
+                            (sid,),
+                        )
+                        continue
+                    items.append({
+                        "id": sid,
+                        "screenshot_path": path,
+                        "ocr_text": row["ocr"],
+                    })
+
+                if not items:
                     continue
 
-                result = gemini_correct_single(path, ocr, client=client)
-                if result is None:
+                results = gemini_correct_multi(items, client=client)
+                if results is None:
                     # API エラー → 次回再試行のため更新しない
                     break
 
-                corrected = result.get("corrected_text", "").strip()
-                # 結果がなくても空文字でマークしてスキップ防止
-                conn.execute(
-                    "UPDATE lc_screens SET ocr_text_gemini = ? WHERE id = ?",
-                    (corrected or "", sid),
-                )
-                if corrected and corrected != ocr:
-                    updated += 1
+                # 結果を id でマップ
+                result_map = {r["id"]: r for r in results}
+                for item in items:
+                    sid = item["id"]
+                    r = result_map.get(sid)
+                    corrected = (r.get("corrected_text", "") if r else "").strip()
+                    conn.execute(
+                        "UPDATE lc_screens SET ocr_text_gemini = ? WHERE id = ?",
+                        (corrected or "", sid),
+                    )
+                    if corrected and corrected != item["ocr_text"]:
+                        updated += 1
+                    total += 1
 
                 conn.commit()
-                # レート制限対策（4秒間隔 = 15RPM）
-                _time.sleep(4.0)
+                logger.info("[BG_WORKER] gemini batch: %d 枚処理 (バッチサイズ=%d)",
+                            len(items), _GEMINI_BATCH_SIZE)
+                # レート制限対策
+                _time.sleep(_GEMINI_RATE_LIMIT)
 
-            if updated > 0:
-                logger.info("[BG_WORKER] gemini: %d/%d 件修正", updated, len(rows))
+            if total > 0:
+                logger.info("[BG_WORKER] gemini: %d/%d 件修正 (合計)", updated, total)
         finally:
             conn.close()
 
