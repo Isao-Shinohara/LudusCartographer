@@ -3950,6 +3950,18 @@ def main():
                     bg_worker.stop()
                 _cleanup_dashboard()
                 break
+            # 各周回完了時にクロスセッションマージを実行
+            # (途中停止でもマージ済み状態で残す)
+            if bg_worker is not None:
+                logger.info("[BG_WORKER] 周回 #%d 完了 → バックグラウンド処理完了待機",
+                            state.grind_cycles_completed)
+                bg_worker.wait_until_idle()
+                logger.info("[BG_WORKER] 周回 #%d 完了 → クロスセッションマージ実行",
+                            state.grind_cycles_completed)
+                try:
+                    bg_worker._run_cross_session_merge()
+                except Exception as e:
+                    logger.warning("[BG_WORKER] マージ例外: %s", e)
             from tools.ap.constants import GRIND_CYCLE_INTERVAL
             logger.info("=" * 60)
             logger.info("  [GRIND] 周回 #%d 完了! → %.0f秒後に次の周回を開始",
@@ -3999,6 +4011,7 @@ def main():
                 if bg_worker is not None:
                     bg_worker._session_id = None
                 state.startup_phase = True
+                state.game_foreground = True  # 既にアプリ起動確認済み (GRIND プロセス検出)
             logger.info("[GRIND] 状態リセット完了 → 周回 #%d 開始",
                         state.grind_cycles_completed + 1)
         # 副作用アクション以外なら代替候補を収集
