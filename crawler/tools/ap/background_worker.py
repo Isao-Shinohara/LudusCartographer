@@ -1035,7 +1035,7 @@ class BackgroundWorker:
             merges: list[tuple[int, int]] = []
             merged_clusters: set[int] = set()
             judged_count = 0
-            MAX_JUDGEMENTS_PER_RUN = 20  # 1回の起動で Gemini 判定する最大アンカー数
+            MAX_JUDGEMENTS_PER_RUN = 30  # 1回の起動で Gemini 判定する最大アンカー数
 
             for i, anchor in enumerate(items):
                 if anchor["cluster_id"] in merged_clusters:
