@@ -767,7 +767,8 @@ class CrossSessionMerger:
             self._conn.execute(
                 "CREATE TEMP TABLE _unmerge_backup AS"
                 " SELECT master_fp, user_excluded, manual_group_id,"
-                "   is_group_representative, title"
+                "   is_group_representative, title,"
+                "   ocr_text_manual, title_manual, manual_edited_at"
                 " FROM lc_master_nodes"
             )
             backup_count = self._conn.execute(
@@ -801,7 +802,10 @@ class CrossSessionMerger:
                 "  user_excluded = b.user_excluded,"
                 "  manual_group_id = b.manual_group_id,"
                 "  is_group_representative = b.is_group_representative,"
-                "  title = b.title"
+                "  title = b.title,"
+                "  ocr_text_manual = b.ocr_text_manual,"
+                "  title_manual = b.title_manual,"
+                "  manual_edited_at = b.manual_edited_at"
                 " FROM _unmerge_backup b"
                 " WHERE lc_master_nodes.master_fp = b.master_fp"
             ).rowcount

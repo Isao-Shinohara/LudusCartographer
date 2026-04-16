@@ -54,6 +54,7 @@ def learn_from_correction(original: str, corrected: str) -> None:
 
     Gemini 修正結果またはユーザー指摘から呼ばれる。
     同じ修正が LEARN_THRESHOLD 回以上出現したら確定パターンに昇格。
+    また DB の lc_ocr_corrections テーブルにも記録 (Phase 2/4)。
     """
     if not original or not corrected or original == corrected:
         return
@@ -65,12 +66,14 @@ def learn_from_correction(original: str, corrected: str) -> None:
 
     data = _load_learned_patterns()
     updated = False
+    diff_pairs: list[tuple[str, str]] = []
 
     for op, i1, i2, j1, j2 in sm.get_opcodes():
         if op == "replace":
             old = " ".join(orig_words[i1:i2])
             new = " ".join(corr_words[j1:j2])
             if old and new and old != new and len(old) >= 2:
+                diff_pairs.append((old, new))
                 key = f"{old} → {new}"
                 if key in data["confirmed"]:
                     continue  # 既に確定済み
@@ -85,6 +88,41 @@ def learn_from_correction(original: str, corrected: str) -> None:
 
     if updated:
         _save_learned_patterns(data)
+
+    # DB の lc_ocr_corrections にも記録 (Phase 2/4)
+    if diff_pairs:
+        _record_corrections_to_db(diff_pairs, source="gemini")
+
+
+def _record_corrections_to_db(diff_pairs: list, source: str = "gemini") -> None:
+    """差分ペアを lc_ocr_corrections に記録。"""
+    db_path = Path(__file__).parent.parent.parent / "storage" / "ludus.db"
+    if not db_path.exists():
+        return
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(db_path), timeout=2)
+        try:
+            for old, new in diff_pairs:
+                conn.execute(
+                    "INSERT INTO lc_ocr_corrections "
+                    "(before_text, after_text, scope, source, frequency) "
+                    "VALUES (?, ?, 'global', ?, 1) "
+                    "ON CONFLICT(before_text, after_text, scope, scope_id) "
+                    "DO UPDATE SET frequency = frequency + 1",
+                    (old, new, source),
+                )
+            # 高頻度ルール自動昇格 (frequency >= 5 で promoted_to_regex に)
+            conn.execute(
+                "UPDATE lc_ocr_corrections SET promoted_to_regex = 1 "
+                "WHERE frequency >= 5 AND promoted_to_regex = 0 AND source = ?",
+                (source,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning("[OCR_LEARN] DB 記録失敗: %s", e)
 
 
 def add_user_correction(wrong: str, correct: str) -> None:
@@ -447,6 +485,55 @@ def correct_ocr_text(text: str) -> str:
     """段階1+2 でテキストを修正 (ローカルのみ、高速)。"""
     text = _stage1_regex(text)
     text = _stage2_dictionary(text)
+    return text
+
+
+# ─── Phase 4: DB ルール適用 ──────────────────────────────
+
+def apply_db_corrections(text: str, db_path: Optional[Path] = None) -> str:
+    """DB の lc_ocr_corrections から global ルールを適用 (周回開始時用)。
+
+    promoted_to_regex = 1 のルールは正規表現として適用。
+    その他は単純な文字列置換。
+    """
+    if not text:
+        return text
+    if db_path is None:
+        db_path = Path(__file__).parent.parent.parent / "storage" / "ludus.db"
+    if not db_path.exists():
+        return text
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(db_path), timeout=2)
+        conn.row_factory = sqlite3.Row
+        try:
+            rules = conn.execute(
+                "SELECT before_text, after_text, promoted_to_regex"
+                " FROM lc_ocr_corrections"
+                " WHERE scope = 'global'"
+                " ORDER BY frequency DESC LIMIT 200"
+            ).fetchall()
+            for rule in rules:
+                if rule["promoted_to_regex"]:
+                    try:
+                        text = re.sub(rule["before_text"], rule["after_text"], text)
+                    except Exception:
+                        pass
+                else:
+                    if rule["before_text"] in text:
+                        text = text.replace(rule["before_text"], rule["after_text"])
+            return text
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning("[OCR_CORRECT] DB ルール適用失敗: %s", e)
+        return text
+
+
+def correct_ocr_full(text: str, db_path: Optional[Path] = None) -> str:
+    """フルパイプライン: 組み込み regex + 辞書 + DB ルール (Phase 4)。"""
+    text = correct_ocr_text(text)
+    text = apply_db_corrections(text, db_path)
     return text
 
 

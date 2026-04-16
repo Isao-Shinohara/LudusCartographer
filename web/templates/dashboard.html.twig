@@ -116,6 +116,22 @@
                     <div id="modal-ocr" class="bg-gray-800 rounded-lg px-3 py-2 pr-10 text-sm text-gray-300 whitespace-pre-wrap overflow-y-scroll leading-5 h-[3.5rem]"></div>
                     <button id="modal-ocr-copy" class="group absolute top-2 right-2 w-6 h-6 rounded bg-gray-700 hover:bg-gray-600 text-gray-400 hover:text-white text-xs flex items-center justify-center transition-colors">&#x2398;<span class="hidden group-hover:block absolute right-8 top-0 whitespace-nowrap bg-gray-900 text-gray-300 text-[10px] px-2 py-1 rounded shadow-lg border border-gray-700">クリップボードにコピー</span></button>
                 </div>
+                <!-- OCR ソース別 diff 表示 (Phase 3) -->
+                <div id="modal-ocr-sources" class="mt-2 space-y-1 text-xs"></div>
+                <!-- 手動編集 UI (Phase 1) -->
+                <div id="modal-edit-area" class="hidden mt-3 bg-gray-800/50 rounded-lg p-3 border border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="text-xs font-bold text-amber-400">手動編集</label>
+                        <div class="flex gap-2">
+                            <button id="modal-edit-cancel" class="px-2 py-0.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded">キャンセル</button>
+                            <button id="modal-edit-save" class="px-3 py-0.5 text-xs bg-emerald-700 hover:bg-emerald-600 text-white rounded">保存</button>
+                        </div>
+                    </div>
+                    <textarea id="modal-edit-text" class="w-full bg-gray-900 text-gray-200 text-sm rounded p-2 border border-gray-700 focus:border-brand outline-none" rows="3"></textarea>
+                </div>
+                <div class="mt-2 flex items-center gap-2">
+                    <button id="modal-edit-btn" class="px-2 py-0.5 text-xs bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 rounded transition-colors">✎ 編集</button>
+                </div>
                 <div class="mt-3 flex gap-4 text-xs text-gray-600">
                     <span id="modal-scene"></span>
                     <span id="modal-fp" class="font-mono"></span>
@@ -224,6 +240,7 @@
         if (s.has_hq_ocr) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-sky-500" title="HQ OCR済"></span>');
         if (s.is_representative) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-emerald-500" title="採用"></span>');
         if (s.has_gemini) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-amber-500" title="Gemini OCR済"></span>');
+        if (s.has_manual) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-pink-500" title="手動編集済"></span>');
         const statusDots = dots.length ? `<span class="flex gap-0.5 items-center">${dots.join('')}</span>` : '';
         const isExcluded = currentTab === 'final' && s.user_excluded;
         const dimClass = ((isThinned && filterSelect.value === 'all') || isExcluded) ? ' opacity-40' : '';
@@ -606,6 +623,10 @@
                 html += '</div>';
             }
             html += '</div>';
+            // OCR 修正ルール (Phase 2)
+            html += '<div><h3 class="text-lg font-bold text-gray-400 mb-3">OCR 修正ルール</h3>';
+            html += '<div id="correction-rules-area" class="text-sm text-gray-500">確認中...</div>';
+            html += '</div>';
             // 不要データ整理
             html += '<div><h3 class="text-lg font-bold text-gray-400 mb-3">データ整理</h3>';
             html += '<div id="merge-cleanup-area" class="text-sm text-gray-500">確認中...</div>';
@@ -640,6 +661,8 @@
             });
             // 不要データ整理の件数確認
             checkCleanableInMerge();
+            // 修正ルール候補の取得・表示
+            checkCorrectionRules();
         } catch (e) {
             mc.innerHTML = '<div class="text-center text-red-500 py-12">API エラー</div>';
         }
@@ -866,6 +889,62 @@
         });
     }
 
+    // --- 修正ルール (Phase 2) ---
+    async function checkCorrectionRules() {
+        const area = document.getElementById('correction-rules-area');
+        if (!area) return;
+        try {
+            const res = await fetch(API_BASE + '?action=get_correction_candidates');
+            const data = await res.json();
+            const candidates = data.candidates || [];
+            if (candidates.length === 0) {
+                area.innerHTML = `<p class="text-gray-600 text-sm">適用可能な修正ルールはありません (登録済み: ${data.total_rules || 0} 件)</p>`;
+                return;
+            }
+            let html = `<p class="text-xs text-gray-500 mb-2">${candidates.length} 件のルールが他のノードに適用可能です</p>`;
+            html += '<div class="space-y-2">';
+            for (const c of candidates) {
+                const r = c.rule;
+                html += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="text-xs">
+                            <span class="text-red-400 line-through">${escapeHtml(r.before_text.substring(0, 60))}</span>
+                            <span class="text-gray-500 mx-2">→</span>
+                            <span class="text-emerald-400">${escapeHtml(r.after_text.substring(0, 60))}</span>
+                        </div>
+                        <button class="apply-rule-btn px-3 py-1 bg-emerald-900/50 hover:bg-emerald-800/60 text-emerald-300 text-xs rounded transition-colors"
+                                data-rule-id="${r.id}"
+                                data-master-fps='${JSON.stringify(c.matches.map(m => m.master_fp))}'>
+                            ${c.count} 件に適用
+                        </button>
+                    </div>
+                </div>`;
+            }
+            html += '</div>';
+            area.innerHTML = html;
+            area.querySelectorAll('.apply-rule-btn').forEach(btn => {
+                btn.addEventListener('click', () => applyCorrectionRule(btn.dataset.ruleId, btn.dataset.masterFps));
+            });
+        } catch (e) {
+            area.innerHTML = '<p class="text-gray-600 text-sm">ルール取得エラー</p>';
+        }
+    }
+
+    async function applyCorrectionRule(ruleId, masterFpsJson) {
+        try {
+            const params = new URLSearchParams({ rule_id: ruleId, master_fps: masterFpsJson });
+            const res = await fetch(API_BASE + '?action=apply_correction_rule&' + params);
+            const data = await res.json();
+            if (data.ok) {
+                checkCorrectionRules();
+            } else {
+                alert('適用失敗: ' + (data.error || '不明'));
+            }
+        } catch (e) {
+            alert('適用失敗: ' + e.message);
+        }
+    }
+
     // --- 未マージ ---
     function confirmUnmerge(sessionId) {
         const html = `
@@ -917,6 +996,64 @@
     // ← = 前へ (idx-1)、→ = 次へ (idx+1)。グリッド表示順に一致。
     let modalIdx = -1;
 
+    function renderOcrSources(s) {
+        const area = document.getElementById('modal-ocr-sources');
+        const sources = [];
+        if (s.ocr_text_manual) sources.push({label: '手動', color: 'bg-amber-900/40 text-amber-300', text: s.ocr_text_manual});
+        if (s.ocr_text_gemini) sources.push({label: 'Gemini', color: 'bg-violet-900/40 text-violet-300', text: s.ocr_text_gemini});
+        if (s.ocr_text_hq) sources.push({label: 'HQ', color: 'bg-sky-900/40 text-sky-300', text: s.ocr_text_hq});
+        if (s.ocr_text_raw) sources.push({label: '初期', color: 'bg-gray-700 text-gray-400', text: s.ocr_text_raw});
+        if (sources.length <= 1) {
+            area.innerHTML = '';
+            return;
+        }
+        area.innerHTML = sources.map(src =>
+            `<div class="flex items-start gap-2">
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold flex-shrink-0 ${src.color}">${src.label}</span>
+                <span class="text-gray-400 truncate" title="${escapeHtml(src.text)}">${escapeHtml(src.text.substring(0, 100))}</span>
+            </div>`
+        ).join('');
+    }
+
+    // 編集ボタン
+    document.getElementById('modal-edit-btn').addEventListener('click', function() {
+        const area = document.getElementById('modal-edit-area');
+        const textarea = document.getElementById('modal-edit-text');
+        const currentText = document.getElementById('modal-ocr').textContent;
+        textarea.value = currentText;
+        area.classList.remove('hidden');
+        textarea.focus();
+    });
+    document.getElementById('modal-edit-cancel').addEventListener('click', function() {
+        document.getElementById('modal-edit-area').classList.add('hidden');
+    });
+    document.getElementById('modal-edit-save').addEventListener('click', async function() {
+        const fp = document.getElementById('modal-edit-btn')._currentMasterFp;
+        const newText = document.getElementById('modal-edit-text').value;
+        if (!fp) return;
+        try {
+            const params = new URLSearchParams({ master_fp: fp, text: newText });
+            const res = await fetch(API_BASE + '?action=update_manual_text&' + params);
+            const data = await res.json();
+            if (data.ok) {
+                document.getElementById('modal-ocr').textContent = newText;
+                document.getElementById('modal-edit-area').classList.add('hidden');
+                // 該当画面のデータも更新
+                if (modalIdx >= 0 && filteredScreens[modalIdx]) {
+                    filteredScreens[modalIdx].ocr_text = newText;
+                    filteredScreens[modalIdx].ocr_text_manual = newText;
+                    filteredScreens[modalIdx].has_manual = true;
+                }
+                renderOcrSources(filteredScreens[modalIdx]);
+                renderAll();
+            } else {
+                alert('保存失敗: ' + (data.error || '不明'));
+            }
+        } catch (e) {
+            alert('保存失敗: ' + e.message);
+        }
+    });
+
     function showModal(idx) {
         if (idx < 0 || idx >= filteredScreens.length) return;
         modalIdx = idx;
@@ -936,6 +1073,19 @@
         document.getElementById('modal-fp').textContent = 'fp: ' + (s.screen_hash || '');
         document.getElementById('modal-time').textContent = s.last_seen_at || '';
         document.getElementById('modal-counter').textContent = chronoPos + ' / ' + filteredScreens.length;
+        // OCR ソース別表示 (Phase 3)
+        renderOcrSources(s);
+        // 編集 UI を閉じる
+        document.getElementById('modal-edit-area').classList.add('hidden');
+        // 編集ボタンは Final タブの代表のみ
+        const editBtn = document.getElementById('modal-edit-btn');
+        if (currentTab === 'final' && s.master_fp) {
+            editBtn.style.display = 'inline-block';
+            editBtn._currentMasterFp = s.master_fp;
+            editBtn._currentText = s.ocr_text || '';
+        } else {
+            editBtn.style.display = 'none';
+        }
         updateModalNav();
         modal.classList.remove('hidden');
         modal.classList.add('flex');

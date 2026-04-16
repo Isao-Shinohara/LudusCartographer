@@ -341,6 +341,180 @@ if ($action === 'execute_unmerge') {
     exit;
 }
 
+// --- update_manual_text アクション (Phase 1: 手動編集) ---
+if ($action === 'update_manual_text') {
+    $masterFp = $_POST['master_fp'] ?? $_GET['master_fp'] ?? '';
+    $newText = $_POST['text'] ?? $_GET['text'] ?? '';
+    $newTitle = $_POST['title'] ?? $_GET['title'] ?? null;
+    if ($masterFp === '') {
+        echo json_encode(['error' => 'master_fp required']);
+        exit;
+    }
+    try {
+        $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+        $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
+        $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+        // 編集前の値を取得（修正ルール抽出用）
+        $stmt = $db->prepare(
+            "SELECT COALESCE(ocr_text_manual, '') AS prev_text, "
+            . "COALESCE(ocr_text_gemini, ocr_text, '') AS auto_text, "
+            . "COALESCE(title_manual, title, '') AS prev_title "
+            . "FROM lc_master_nodes WHERE master_fp = ?"
+        );
+        $stmt->execute([$masterFp]);
+        $prev = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$prev) {
+            echo json_encode(['error' => 'master_fp not found']);
+            exit;
+        }
+
+        // 手動編集を保存
+        $stmt = $db->prepare(
+            "UPDATE lc_master_nodes SET "
+            . "ocr_text_manual = ?, "
+            . ($newTitle !== null ? "title_manual = ?, " : "")
+            . "manual_edited_at = datetime('now') "
+            . "WHERE master_fp = ?"
+        );
+        $params = [$newText];
+        if ($newTitle !== null) $params[] = $newTitle;
+        $params[] = $masterFp;
+        $stmt->execute($params);
+
+        // Phase 2: 自動 OCR 結果と手動編集の diff から修正ルールを抽出
+        $autoText = $prev['auto_text'] ?? '';
+        $rulesAdded = 0;
+        if ($autoText && $newText && $autoText !== $newText) {
+            // 単語レベルの diff を抽出（簡易版: 単純な置換ペアとして全文を保存）
+            $stmt = $db->prepare(
+                "INSERT INTO lc_ocr_corrections (before_text, after_text, scope, source) "
+                . "VALUES (?, ?, 'global', 'manual') "
+                . "ON CONFLICT(before_text, after_text, scope, scope_id) "
+                . "DO UPDATE SET frequency = frequency + 1, "
+                . "last_applied_at = datetime('now')"
+            );
+            try {
+                $stmt->execute([$autoText, $newText]);
+                $rulesAdded = 1;
+            } catch (\Throwable $e) {}
+        }
+
+        echo json_encode([
+            'ok' => true,
+            'rules_added' => $rulesAdded,
+        ], JSON_UNESCAPED_UNICODE);
+    } catch (\Throwable $e) {
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// --- get_correction_candidates アクション (Phase 2: 適用候補取得) ---
+if ($action === 'get_correction_candidates') {
+    try {
+        $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+        $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
+
+        // 全 global ルールを取得
+        $rules = $db->query(
+            "SELECT id, before_text, after_text, frequency "
+            . "FROM lc_ocr_corrections "
+            . "WHERE scope = 'global' AND promoted_to_regex = 0 "
+            . "ORDER BY frequency DESC, created_at DESC LIMIT 100"
+        )->fetchAll(PDO::FETCH_ASSOC);
+
+        // 各ルールに対して適用可能なノードを検索
+        $candidates = [];
+        foreach ($rules as $rule) {
+            $stmt = $db->prepare(
+                "SELECT m.master_fp, m.title, "
+                . "COALESCE(s.ocr_text_gemini, s.ocr_text_hq, s.ocr_text, '') AS auto_text, "
+                . "s.thumbnail_path "
+                . "FROM lc_master_nodes m "
+                . "LEFT JOIN lc_screens s ON s.id = m.representative_screen_id "
+                . "WHERE m.ocr_text_manual IS NULL "
+                . "AND COALESCE(s.ocr_text_gemini, s.ocr_text_hq, s.ocr_text, '') LIKE ? "
+                . "LIMIT 50"
+            );
+            $stmt->execute(['%' . $rule['before_text'] . '%']);
+            $matches = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            if ($matches) {
+                $candidates[] = [
+                    'rule' => $rule,
+                    'matches' => $matches,
+                    'count' => count($matches),
+                ];
+            }
+        }
+        echo json_encode([
+            'candidates' => $candidates,
+            'total_rules' => count($rules),
+        ], JSON_UNESCAPED_UNICODE);
+    } catch (\Throwable $e) {
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// --- apply_correction_rule アクション (Phase 2: ルール一括適用) ---
+if ($action === 'apply_correction_rule') {
+    $ruleId = (int)($_POST['rule_id'] ?? $_GET['rule_id'] ?? 0);
+    $masterFps = json_decode($_POST['master_fps'] ?? $_GET['master_fps'] ?? '[]', true);
+    if (!$ruleId || !is_array($masterFps) || empty($masterFps)) {
+        echo json_encode(['error' => 'rule_id and master_fps required']);
+        exit;
+    }
+    try {
+        $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+        $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
+        $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+        // ルール取得
+        $stmt = $db->prepare("SELECT before_text, after_text FROM lc_ocr_corrections WHERE id = ?");
+        $stmt->execute([$ruleId]);
+        $rule = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$rule) {
+            echo json_encode(['error' => 'rule not found']);
+            exit;
+        }
+
+        // 各 master_fp に適用
+        $applied = 0;
+        $placeholders = implode(',', array_fill(0, count($masterFps), '?'));
+        $stmt = $db->prepare(
+            "SELECT m.master_fp, "
+            . "COALESCE(s.ocr_text_gemini, s.ocr_text_hq, s.ocr_text, '') AS auto_text "
+            . "FROM lc_master_nodes m "
+            . "LEFT JOIN lc_screens s ON s.id = m.representative_screen_id "
+            . "WHERE m.master_fp IN ($placeholders)"
+        );
+        $stmt->execute($masterFps);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $updateStmt = $db->prepare(
+            "UPDATE lc_master_nodes SET ocr_text_manual = ?, "
+            . "manual_edited_at = datetime('now') WHERE master_fp = ?"
+        );
+        foreach ($rows as $row) {
+            $newText = str_replace($rule['before_text'], $rule['after_text'], $row['auto_text']);
+            if ($newText !== $row['auto_text']) {
+                $updateStmt->execute([$newText, $row['master_fp']]);
+                $applied++;
+            }
+        }
+
+        // 適用回数を increment
+        $db->prepare("UPDATE lc_ocr_corrections SET frequency = frequency + ?, last_applied_at = datetime('now') WHERE id = ?")
+           ->execute([$applied, $ruleId]);
+
+        echo json_encode(['ok' => true, 'applied' => $applied]);
+    } catch (\Throwable $e) {
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit;
+}
+
 // --- delete_session アクション ---
 if ($action === 'delete_session') {
     $sessionId = $_GET['session_id'] ?? '';

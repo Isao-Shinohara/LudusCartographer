@@ -181,6 +181,38 @@ class BatchProcessor:
             if col not in cols:
                 self._conn.execute(f"ALTER TABLE lc_screens ADD COLUMN {col} {typ}")
                 logger.info("[BatchProcessor] migrate: %s カラム追加", col)
+
+        # lc_master_nodes に手動編集用カラム追加
+        master_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_master_nodes)")}
+        for col, typ in [
+            ("ocr_text_manual", "TEXT"),
+            ("title_manual", "TEXT"),
+            ("manual_edited_at", "TEXT"),
+        ]:
+            if col not in master_cols:
+                self._conn.execute(f"ALTER TABLE lc_master_nodes ADD COLUMN {col} {typ}")
+                logger.info("[BatchProcessor] migrate (master): %s カラム追加", col)
+
+        # OCR 修正ルールテーブル（Phase 2: ルール展開用）
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS lc_ocr_corrections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                before_text TEXT NOT NULL,
+                after_text TEXT NOT NULL,
+                scope TEXT DEFAULT 'global',
+                scope_id TEXT,
+                source TEXT DEFAULT 'manual',
+                frequency INTEGER DEFAULT 1,
+                promoted_to_regex INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                last_applied_at TEXT,
+                UNIQUE(before_text, after_text, scope, scope_id)
+            );
+        """)
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_corrections_before"
+            " ON lc_ocr_corrections(before_text)"
+        )
         self._conn.commit()
 
     # ─── Phase 1: グルーピング + ラベル付け ────────────

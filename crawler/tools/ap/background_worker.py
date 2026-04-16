@@ -965,8 +965,73 @@ class BackgroundWorker:
 
             if total > 0:
                 logger.info("[BG_WORKER] gemini: %d/%d 件修正 (合計)", updated, total)
+                # Gemini 補正後の再クラスタリング (Phase 3)
+                self._reclustering_after_gemini(conn)
         finally:
             conn.close()
+
+    def _reclustering_after_gemini(self, conn) -> None:
+        """Gemini 補正後、同セッション内で同じ補正テキストになった画面を統合。
+
+        セリフ違いで分かれていた画面が補正で同じになるケースを正しく統合する。
+        """
+        try:
+            # 同セッション・同シーンで ocr_text_gemini が一致するクラスタを統合
+            sid_filter = ""
+            sid_params: tuple = ()
+            if self._session_id:
+                sid_filter = " AND session_id = ?"
+                sid_params = (self._session_id,)
+
+            # ocr_text_gemini が同じだが cluster_id が異なる代表画面ペアを取得
+            rows = conn.execute(
+                "SELECT id, cluster_id, scene, ocr_text_gemini"
+                " FROM lc_screens"
+                " WHERE is_representative = 1"
+                " AND ocr_text_gemini IS NOT NULL AND ocr_text_gemini != ''"
+                " AND LENGTH(ocr_text_gemini) > 10"
+                + sid_filter +
+                " ORDER BY cluster_id",
+                sid_params,
+            ).fetchall()
+
+            # テキスト → 最古の cluster_id をマップ
+            text_to_cluster: dict[str, int] = {}
+            merges: list[tuple[int, int]] = []  # (target_cluster, source_cluster)
+            for r in rows:
+                key = f"{r['scene']}:{_normalize_text(r['ocr_text_gemini'])}"
+                if key in text_to_cluster:
+                    target = text_to_cluster[key]
+                    if r["cluster_id"] != target:
+                        merges.append((target, r["cluster_id"]))
+                else:
+                    text_to_cluster[key] = r["cluster_id"]
+
+            if not merges:
+                return
+
+            # クラスタ統合
+            for target, source in merges:
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 0"
+                    " WHERE cluster_id = ?",
+                    (target, source),
+                )
+                # ターゲットの代表を1つだけ残す
+                rep = conn.execute(
+                    "SELECT id FROM lc_screens WHERE cluster_id = ?"
+                    " ORDER BY discovered_at LIMIT 1",
+                    (target,),
+                ).fetchone()
+                if rep:
+                    conn.execute(
+                        "UPDATE lc_screens SET is_representative = 1 WHERE id = ?",
+                        (rep["id"],),
+                    )
+            conn.commit()
+            logger.info("[BG_WORKER] gemini reclustering: %d クラスタ統合", len(merges))
+        except Exception as e:
+            logger.warning("[BG_WORKER] reclustering 例外: %s", e)
 
     # ─── 遷移グラフ構築 ───────────────────────────────────
 

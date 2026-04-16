@@ -71,7 +71,10 @@ def _setup_db(db_path: Path) -> sqlite3.Connection:
             sort_order INTEGER,
             user_excluded BOOLEAN DEFAULT 0,
             manual_group_id INTEGER,
-            is_group_representative BOOLEAN DEFAULT 0
+            is_group_representative BOOLEAN DEFAULT 0,
+            ocr_text_manual TEXT,
+            title_manual TEXT,
+            manual_edited_at TEXT
         );
         CREATE TABLE IF NOT EXISTS lc_master_edges (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

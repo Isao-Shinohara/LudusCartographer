@@ -367,8 +367,10 @@ class EvidenceRepository
         }
 
         $sql = <<<SQL
-            SELECT s.id, m.title, s.depth, s.screenshot_path, s.thumbnail_path,
+            SELECT s.id, COALESCE(m.title_manual, m.title) AS title, s.depth,
+                   s.screenshot_path, s.thumbnail_path,
                    s.ocr_text, s.ocr_text_hq, s.ocr_text_gemini,
+                   m.ocr_text_manual, m.title_manual, m.manual_edited_at,
                    m.last_seen_at AS discovered_at,
                    s.session_id, m.master_fp AS fingerprint, m.scene,
                    COALESCE(sess.game_title, 'Unknown Game') AS game_title,
@@ -401,10 +403,14 @@ class EvidenceRepository
             'category'        => $raw['scene'] ?? ('depth=' . $raw['depth']),
             'screenshot_path' => $raw['screenshot_path'],
             'thumbnail_path'  => $raw['thumbnail_path'] ?? null,
-            'ocr_text'        => $raw['ocr_text_gemini'] ?: ($raw['ocr_text_hq'] ?? $raw['ocr_text']),
+            'ocr_text'        => $raw['ocr_text_manual'] ?: ($raw['ocr_text_gemini'] ?: ($raw['ocr_text_hq'] ?? $raw['ocr_text'])),
             'ocr_text_raw'    => $raw['ocr_text'] ?? '',
             'ocr_text_hq'     => $raw['ocr_text_hq'] ?? null,
             'ocr_text_gemini' => $raw['ocr_text_gemini'] ?? null,
+            'ocr_text_manual' => $raw['ocr_text_manual'] ?? null,
+            'title_manual'    => $raw['title_manual'] ?? null,
+            'manual_edited_at' => $raw['manual_edited_at'] ?? null,
+            'has_manual'      => !empty($raw['ocr_text_manual'] ?? null),
             'visited_count'   => 1,
             'last_seen_at'    => $raw['discovered_at'],
             'game_name'       => $raw['game_title'] ?? $raw['session_id'],
@@ -487,8 +493,10 @@ class EvidenceRepository
             $bindings[':game_title'] = $gameTitle;
         }
         $sql = <<<SQL
-            SELECT s.id, m.title, s.depth, s.screenshot_path, s.thumbnail_path,
+            SELECT s.id, COALESCE(m.title_manual, m.title) AS title, s.depth,
+                   s.screenshot_path, s.thumbnail_path,
                    s.ocr_text, s.ocr_text_hq, s.ocr_text_gemini,
+                   m.ocr_text_manual, m.title_manual, m.manual_edited_at,
                    m.last_seen_at AS discovered_at,
                    s.session_id, m.master_fp AS fingerprint, m.scene,
                    COALESCE(sess.game_title, 'Unknown Game') AS game_title,
