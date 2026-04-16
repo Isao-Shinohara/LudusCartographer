@@ -1045,14 +1045,14 @@
                 html += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
                     <div class="flex items-center justify-between mb-2">
                         <div class="text-xs">
-                            <span class="text-red-400 line-through">${escapeHtml(r.before_text.substring(0, 60))}</span>
+                            <span class="text-red-400">${escapeHtml(r.before_text.substring(0, 60))}</span>
                             <span class="text-gray-500 mx-2">→</span>
                             <span class="text-emerald-400">${escapeHtml(r.after_text.substring(0, 60))}</span>
                         </div>
                         <button class="apply-rule-btn px-3 py-1 bg-emerald-900/50 hover:bg-emerald-800/60 text-emerald-300 text-xs rounded transition-colors"
                                 data-rule-id="${r.id}"
                                 data-master-fps='${JSON.stringify(c.matches.map(m => m.master_fp))}'>
-                            ${c.count} 件に適用
+                            出現 ${c.count} 件
                         </button>
                     </div>
                 </div>`;
