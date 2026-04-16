@@ -215,43 +215,69 @@ if ($action === 'get_pending_merges') {
     exit;
 }
 
-// --- preview_merge アクション ---
+// --- merge_progress アクション (進捗ポーリング) ---
+if ($action === 'merge_progress') {
+    $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+    $resultFile = $crawlerDir . '/storage/merge_result.json';
+    // 進捗を auto_pilot_state から取得
+    try {
+        $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
+        $db->setAttribute(PDO::ATTR_TIMEOUT, 2);
+        $progress = $db->query("SELECT value FROM auto_pilot_state WHERE key = 'merge_progress'")->fetchColumn();
+        $done = file_exists($resultFile);
+        $result = $done ? json_decode(file_get_contents($resultFile), true) : null;
+        if ($done) @unlink($resultFile);
+        echo json_encode([
+            'progress' => $progress ? json_decode($progress, true) : null,
+            'done' => $done,
+            'result' => $result,
+        ], JSON_UNESCAPED_UNICODE);
+    } catch (\Throwable $e) {
+        echo json_encode(['progress' => null, 'done' => false, 'result' => null]);
+    }
+    exit;
+}
+
+// --- preview_merge アクション (バックグラウンド実行) ---
 if ($action === 'preview_merge') {
     $sessionId = $_GET['session_id'] ?? '';
     if ($sessionId === '') {
         echo json_encode(['error' => 'session_id required']);
         exit;
     }
-    // Python の CrossSessionMerger.preview_merge() を呼ぶ
-    $dbPath = $repository instanceof EvidenceRepository
-        ? realpath(__DIR__ . '/../../..') . '/crawler/storage/ludus.db'
-        : '';
+    $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
+    $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
+    @unlink($resultFile);
     $cmd = sprintf(
-        'cd %s && ./venv/bin/python -c %s 2>&1',
-        escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler'),
+        'cd %s && ./venv/bin/python -c %s > %s 2>&1 &',
+        $crawlerDir,
         escapeshellarg(
             "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
             . "m = CrossSessionMerger(Path('storage/ludus.db')); "
             . "print(json.dumps(m.preview_merge('" . addslashes($sessionId) . "'), ensure_ascii=False)); "
             . "m.close()"
         ),
+        escapeshellarg($resultFile),
     );
-    $output = shell_exec($cmd);
+    exec($cmd);
     header('Content-Type: application/json');
-    echo $output ?: json_encode(['error' => 'preview failed']);
+    echo json_encode(['started' => true]);
     exit;
 }
 
-// --- execute_merge アクション ---
+// --- execute_merge アクション (バックグラウンド実行) ---
 if ($action === 'execute_merge') {
     $sessionId = $_GET['session_id'] ?? '';
     if ($sessionId === '') {
         echo json_encode(['error' => 'session_id required']);
         exit;
     }
+    $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
+    $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
+    @unlink($resultFile);
     $cmd = sprintf(
-        'cd %s && ./venv/bin/python -c %s 2>&1',
-        escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler'),
+        'cd %s && ./venv/bin/python -c %s > %s 2>&1 &',
+        $crawlerDir,
         escapeshellarg(
             "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
             . "m = CrossSessionMerger(Path('storage/ludus.db')); "
@@ -259,10 +285,11 @@ if ($action === 'execute_merge') {
             . "m.close(); "
             . "print(json.dumps({'ok': True, 'new_nodes': n}, ensure_ascii=False))"
         ),
+        escapeshellarg($resultFile),
     );
-    $output = shell_exec($cmd);
+    exec($cmd);
     header('Content-Type: application/json');
-    echo $output ?: json_encode(['error' => 'merge failed']);
+    echo json_encode(['started' => true]);
     exit;
 }
 

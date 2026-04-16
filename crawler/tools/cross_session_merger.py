@@ -342,6 +342,35 @@ class CrossSessionMerger:
 
     # ─── メインエントリ ──────────────────────────────
 
+    def _report_progress(self, stage: str, current: int, total: int,
+                         elapsed: float) -> None:
+        """マージ進捗を auto_pilot_state に書き込む。"""
+        import json as _json
+        eta = (elapsed / current * (total - current)) if current > 0 else 0
+        progress = _json.dumps({
+            "stage": stage, "current": current, "total": total,
+            "elapsed": round(elapsed, 1), "eta": round(eta, 1),
+        }, ensure_ascii=False)
+        try:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO auto_pilot_state (key, value)"
+                " VALUES ('merge_progress', ?)",
+                (progress,),
+            )
+            self._conn.commit()
+        except Exception:
+            pass
+
+    def _clear_progress(self) -> None:
+        """マージ進捗をクリア。"""
+        try:
+            self._conn.execute(
+                "DELETE FROM auto_pilot_state WHERE key = 'merge_progress'"
+            )
+            self._conn.commit()
+        except Exception:
+            pass
+
     def _compute_matches(
         self, session_id: str,
     ) -> tuple[dict[str, tuple[str, str, float]], list[sqlite3.Row], bool]:
@@ -353,6 +382,9 @@ class CrossSessionMerger:
             session_reps: セッションの代表画面一覧
             is_seed: 初回セッション (マスター空) の場合 True
         """
+        import time as _time
+        t0 = _time.time()
+
         master_count = self._conn.execute(
             "SELECT COUNT(*) FROM lc_master_nodes"
         ).fetchone()[0]
@@ -363,7 +395,10 @@ class CrossSessionMerger:
                 " WHERE session_id = ? AND is_representative = 1",
                 (session_id,),
             ).fetchall()
+            self._clear_progress()
             return {}, session_reps, True
+
+        self._report_progress("アンカー検出", 0, 1, 0)
 
         # アンカー検出
         s_anchors = self.find_anchors(session_id)
@@ -377,6 +412,7 @@ class CrossSessionMerger:
 
         if not s_anchors or not m_anchors:
             logger.warning("[Merger] アンカーが見つからない")
+            self._clear_progress()
             return {}, session_reps, False
 
         # アンカーマッチング
@@ -394,7 +430,9 @@ class CrossSessionMerger:
         node_mapping: dict[str, tuple[str, str, float]] = {}
 
         # Step 1: アンカーマッチ + Step 2: k-hop 拡張
-        for sa, ma, score in anchor_pairs:
+        self._report_progress("k-hop 拡張", 0, len(anchor_pairs),
+                              _time.time() - t0)
+        for i, (sa, ma, score) in enumerate(anchor_pairs):
             if sa.fp not in node_mapping:
                 node_mapping[sa.fp] = (ma.fp, "anchor", score)
                 k_hop_map = self.k_hop_match(sa.fp, ma.fp, session_id, k=2)
@@ -402,6 +440,8 @@ class CrossSessionMerger:
                     if s_fp not in node_mapping:
                         k_score = self.node_match_score(s_fp, session_id, m_fp, "master")
                         node_mapping[s_fp] = (m_fp, "k_hop", k_score)
+            self._report_progress("k-hop 拡張", i + 1, len(anchor_pairs),
+                                  _time.time() - t0)
 
         logger.info("[Merger] アンカー+k-hop マッチ: %d ノード", len(node_mapping))
 
@@ -411,14 +451,16 @@ class CrossSessionMerger:
         ).fetchall()]
         matched_master_fps = {v[0] for v in node_mapping.values()}
 
-        for row in session_reps:
+        unmatched = [r for r in session_reps
+                     if r["fingerprint"] not in node_mapping]
+        for idx, row in enumerate(unmatched):
             s_fp = row["fingerprint"]
-            if s_fp in node_mapping:
-                continue
             best_score = 0.0
             best_m_fp = None
             s_info = self._get_node_info(s_fp, session_id)
             if not s_info:
+                self._report_progress("transition マッチ", idx + 1,
+                                      len(unmatched), _time.time() - t0)
                 continue
             for m_fp in master_fps:
                 if m_fp in matched_master_fps:
@@ -434,9 +476,30 @@ class CrossSessionMerger:
             if best_m_fp:
                 node_mapping[s_fp] = (best_m_fp, "transition", best_score)
                 matched_master_fps.add(best_m_fp)
+            self._report_progress("transition マッチ", idx + 1,
+                                  len(unmatched), _time.time() - t0)
 
-        logger.info("[Merger] 全マッチ完了: %d/%d ノード",
-                    len(node_mapping), len(session_reps))
+        elapsed = _time.time() - t0
+        logger.info("[Merger] 全マッチ完了: %d/%d ノード (%.1f秒)",
+                    len(node_mapping), len(session_reps), elapsed)
+
+        # 所要時間を記録
+        try:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO auto_pilot_state (key, value)"
+                " VALUES ('last_merge_duration', ?)",
+                (str(round(elapsed, 1)),),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO auto_pilot_state (key, value)"
+                " VALUES ('last_merge_nodes', ?)",
+                (str(len(session_reps) * master_count),),
+            )
+            self._conn.commit()
+        except Exception:
+            pass
+
+        self._clear_progress()
         return node_mapping, session_reps, False
 
     def preview_merge(self, session_id: str) -> dict:
