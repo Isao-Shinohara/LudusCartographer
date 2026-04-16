@@ -467,15 +467,46 @@ class EvidenceRepository
 
     public function getEmptySessions(): array
     {
-        // 完了済みだが session_graph がないセッション（画面記録なし or グラフ未構築）
+        // 完了済みだが session_graph がないセッション (画面ありで遷移ありのもの = グラフ構築可能)
+        // または画面なし (削除のみ可能)
         $sql = <<<SQL
             SELECT s.session_id, s.started_at, s.screens_found, s.status, s.completion_type,
+                   COALESCE(s.game_title, 'Unknown Game') AS game_title,
+                   (SELECT COUNT(*) FROM lc_screens WHERE session_id = s.session_id) AS actual_screens,
+                   (SELECT COUNT(*) FROM lc_transitions WHERE session_id = s.session_id AND to_fp IS NOT NULL) AS transitions
+            FROM lc_sessions s
+            WHERE s.status = 'completed'
+              AND NOT EXISTS (
+                SELECT 1 FROM lc_session_graphs sg WHERE sg.session_id = s.session_id
+              )
+            ORDER BY s.started_at DESC
+        SQL;
+        $rows = $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+        // 遷移データなしのものは getNoTransitionSessions で扱うため除外
+        // (画面あり+遷移0 = 遷移データなし)
+        return array_values(array_filter($rows, function ($r) {
+            return (int)$r['actual_screens'] === 0 || (int)$r['transitions'] > 0;
+        }));
+    }
+
+    public function getNoTransitionSessions(): array
+    {
+        // 画面はあるが遷移データなし → グラフ構築不可、削除のみ可能
+        $sql = <<<SQL
+            SELECT s.session_id, s.started_at, s.screens_found, s.completion_type,
                    COALESCE(s.game_title, 'Unknown Game') AS game_title,
                    (SELECT COUNT(*) FROM lc_screens WHERE session_id = s.session_id) AS actual_screens
             FROM lc_sessions s
             WHERE s.status = 'completed'
               AND NOT EXISTS (
                 SELECT 1 FROM lc_session_graphs sg WHERE sg.session_id = s.session_id
+              )
+              AND EXISTS (
+                SELECT 1 FROM lc_screens sc WHERE sc.session_id = s.session_id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM lc_transitions t
+                WHERE t.session_id = s.session_id AND t.to_fp IS NOT NULL
               )
             ORDER BY s.started_at DESC
         SQL;
