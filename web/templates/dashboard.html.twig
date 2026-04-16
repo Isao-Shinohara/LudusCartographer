@@ -1008,10 +1008,11 @@
             return;
         }
         area.innerHTML = sources.map((src, i) =>
-            `<div class="flex items-start gap-2 cursor-pointer hover:bg-gray-800/40 rounded px-1 py-0.5 transition-colors ocr-source-row" data-text-idx="${i}" title="クリックでコピー">
+            `<div class="group relative flex items-start gap-2 cursor-pointer hover:bg-gray-800/40 rounded px-1 py-0.5 transition-colors ocr-source-row" data-text-idx="${i}">
                 <span class="px-1.5 py-0.5 rounded text-[10px] font-bold flex-shrink-0 ${src.color}">${src.label}</span>
                 <span class="text-gray-400 truncate flex-1">${escapeHtml(src.text.substring(0, 100))}</span>
                 <span class="text-[10px] text-gray-600 flex-shrink-0 copy-feedback" data-feedback-idx="${i}"></span>
+                <span class="hidden group-hover:block absolute right-2 -top-5 whitespace-nowrap bg-gray-900 text-gray-300 text-[10px] px-2 py-1 rounded shadow-lg border border-gray-700 z-10 copy-tooltip" data-tooltip-idx="${i}">クリップボードにコピー</span>
             </div>`
         ).join('');
         // クリックでコピー
@@ -1022,7 +1023,7 @@
                 navigator.clipboard.writeText(text).then(() => {
                     const fb = area.querySelector(`.copy-feedback[data-feedback-idx="${idx}"]`);
                     if (fb) {
-                        fb.textContent = 'コピー済';
+                        fb.textContent = 'コピーしました';
                         fb.classList.add('text-emerald-400');
                         setTimeout(() => {
                             fb.textContent = '';
