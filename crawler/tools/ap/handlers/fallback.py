@@ -19,7 +19,7 @@ from tools.ap.device import adb, tap_device, swipe_device, take_screenshot
 from tools.ap.helpers import has_any, has_text, log_milestone
 from tools.ap.image_proc import (
     smart_tap_button, roi_to_device, ASSET_MANAGER,
-    detect_dialog_corners,
+    detect_dialog_corners, find_gold_button_by_edges,
 )
 from tools.ap.state import PilotState
 
@@ -290,22 +290,38 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             has_text(ocr, "基本無料", min_conf=0.3) and has_text(ocr, "未成年", min_conf=0.3)
         )
     ):
-        agree_btn = (has_text(ocr, "同意してゲーム", min_conf=0.2) or
-                     has_text(ocr, "同意して", min_conf=0.2) or
-                     has_text(ocr, "ゲームを始める", min_conf=0.2))
-        if agree_btn:
-            cx, cy = agree_btn["center"]
-            logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d)", cx, cy)
-        else:
-            cx, cy = roi_to_device(int(W * 0.66), int(H * 0.79), state.game_roi)
-            logger.info(">>> 【ご注意画面】 同意ボタン未検出 → ROI補正フォールバック (%d,%d)", cx, cy)
+        # 優先順位: 1) gold_btn_edge_r テンプレマッチ → 2) OCR テキスト → 3) 固定 ROI
+        cx, cy = None, None
+        _detect_method = "FB"
+        if analysis_path:
+            # 画面下半分で gold_btn_edge_r を検索
+            _btn = find_gold_button_by_edges(
+                analysis_path,
+                search_roi=(0, int(H * 0.5), W, H),
+            )
+            if _btn:
+                cx, cy = _btn[0], _btn[1]
+                _detect_method = "TMPL"
+                logger.info(">>> 【ご注意画面】 同意ボタン検出 TMPL(%d,%d)", cx, cy)
+        agree_btn = None
+        if cx is None:
+            agree_btn = (has_text(ocr, "同意してゲーム", min_conf=0.2) or
+                         has_text(ocr, "同意して", min_conf=0.2) or
+                         has_text(ocr, "ゲームを始める", min_conf=0.2))
+            if agree_btn:
+                cx, cy = agree_btn["center"]
+                _detect_method = "OCR"
+                logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d)", cx, cy)
+            else:
+                cx, cy = roi_to_device(int(W * 0.66), int(H * 0.79), state.game_roi)
+                logger.info(">>> 【ご注意画面】 同意ボタン未検出 → ROI補正フォールバック (%d,%d)", cx, cy)
         _base_ph = compute_phash(analysis_path) if analysis_path else ""
         _agree_changed = False
         for _retry_i in range(5):
             _tap_x = cx + _retry_i * 20
             _tap_y = cy
             tap_device(_tap_x, _tap_y, state,
-                       f"GO_CHUI_AGREE_R{_retry_i}({'OCR' if agree_btn else 'FB'})")
+                       f"GO_CHUI_AGREE_R{_retry_i}({_detect_method})")
             logger.info(">>> 【ご注意→phash監視】 #%d タップ(%d,%d) → 待機",
                         _retry_i + 1, _tap_x, _tap_y)
             time.sleep(0.3)

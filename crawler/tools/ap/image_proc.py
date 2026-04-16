@@ -2753,33 +2753,23 @@ def _load_gold_btn_edges():
         _GOLD_BTN_EDGE_L = cv2.flip(_GOLD_BTN_EDGE_R, 1)
 
 
-def find_button_in_gold_frame(
-    img_path: Path,
-    gold_rect: tuple[int, int, int, int],
+def _match_gold_button_edges(
+    gray: np.ndarray,
+    roi_xyxy: tuple[int, int, int, int],
     threshold: float = 0.75,
     y_tolerance: int = 10,
 ) -> Optional[tuple[int, int, int, int]]:
-    """金枠内のボタンを左右エッジテンプレで検出。
+    """共通: 指定 ROI 内で gold_btn_edge_r の左右エッジを検索し、
+    矩形整合性チェック後に画像座標で (cx, cy, w, h) を返す。
 
-    gold_rect: (cx, cy, w, h) — 金枠の中心と幅高さ
-    Returns: (btn_cx, btn_cy, btn_w, btn_h) or None
+    Args:
+        gray: グレースケール画像 (全体)
+        roi_xyxy: 検索範囲 (x1, y1, x2, y2)
     """
     _load_gold_btn_edges()
     if _GOLD_BTN_EDGE_R is None:
         return None
-    img = imread_analysis(img_path)
-    if img is None:
-        return None
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _H, _W = gray.shape
-
-    # 金枠周辺を ROI として検索 (金枠より少し広め)
-    _gcx, _gcy, _gw, _gh = gold_rect
-    _margin = 50
-    _rx1 = max(0, _gcx - _gw // 2 - _margin)
-    _ry1 = max(0, _gcy - _gh // 2 - _margin)
-    _rx2 = min(_W, _gcx + _gw // 2 + _margin)
-    _ry2 = min(_H, _gcy + _gh // 2 + _margin)
+    _rx1, _ry1, _rx2, _ry2 = roi_xyxy
     roi = gray[_ry1:_ry2, _rx1:_rx2]
 
     th, tw = _GOLD_BTN_EDGE_R.shape[:2]
@@ -2789,7 +2779,6 @@ def find_button_in_gold_frame(
     # 右端マッチ
     res_r = cv2.matchTemplate(roi, _GOLD_BTN_EDGE_R, cv2.TM_CCOEFF_NORMED)
     _, max_r, _, loc_r = cv2.minMaxLoc(res_r)
-
     # 左端マッチ
     res_l = cv2.matchTemplate(roi, _GOLD_BTN_EDGE_L, cv2.TM_CCOEFF_NORMED)
     _, max_l, _, loc_l = cv2.minMaxLoc(res_l)
@@ -2819,6 +2808,57 @@ def find_button_in_gold_frame(
     logger.info("[GoldBtnEdge] ボタン検出 (%d,%d) %dx%d scores=R%.2f/L%.2f",
                 btn_cx, btn_cy, btn_w, btn_h, max_r, max_l)
     return btn_cx, btn_cy, btn_w, btn_h
+
+
+def find_button_in_gold_frame(
+    img_path: Path,
+    gold_rect: tuple[int, int, int, int],
+    threshold: float = 0.75,
+    y_tolerance: int = 10,
+) -> Optional[tuple[int, int, int, int]]:
+    """金枠内のボタンを左右エッジテンプレで検出。
+
+    gold_rect: (cx, cy, w, h) — 金枠の中心と幅高さ
+    Returns: (btn_cx, btn_cy, btn_w, btn_h) or None
+    """
+    img = imread_analysis(img_path)
+    if img is None:
+        return None
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _H, _W = gray.shape
+
+    # 金枠周辺を ROI として検索 (金枠より少し広め)
+    _gcx, _gcy, _gw, _gh = gold_rect
+    _margin = 50
+    _rx1 = max(0, _gcx - _gw // 2 - _margin)
+    _ry1 = max(0, _gcy - _gh // 2 - _margin)
+    _rx2 = min(_W, _gcx + _gw // 2 + _margin)
+    _ry2 = min(_H, _gcy + _gh // 2 + _margin)
+    return _match_gold_button_edges(gray, (_rx1, _ry1, _rx2, _ry2),
+                                     threshold, y_tolerance)
+
+
+def find_gold_button_by_edges(
+    img_path: Path,
+    search_roi: Optional[tuple[int, int, int, int]] = None,
+    threshold: float = 0.75,
+    y_tolerance: int = 10,
+) -> Optional[tuple[int, int, int, int]]:
+    """gold_btn_edge_r の左右エッジで金枠ボタンを検出 (金枠位置不要)。
+
+    Args:
+        img_path: 解析対象画像
+        search_roi: (x1, y1, x2, y2) 検索範囲。None なら画面全体。
+    Returns: (btn_cx, btn_cy, btn_w, btn_h) or None
+    """
+    img = imread_analysis(img_path)
+    if img is None:
+        return None
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _H, _W = gray.shape
+    if search_roi is None:
+        search_roi = (0, 0, _W, _H)
+    return _match_gold_button_edges(gray, search_roi, threshold, y_tolerance)
 
 
 # ─── Type B: 金枠ハイライトボタン検出 → 中心タップ ─────────────────────
