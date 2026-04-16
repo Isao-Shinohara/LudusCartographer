@@ -1027,15 +1027,23 @@
 
     function renderOcrSources(s) {
         const area = document.getElementById('modal-ocr-sources');
-        // 初期・HQ・Gemini は常時表示 (高さ揃えのため)、手動は編集時のみ
+        // 初期・(Gemini or HQ) を常時表示。手動は編集時のみ。
+        // Gemini と HQ は排他実行のため、どちらかが存在する方を表示。
         const sources = [];
         if (s.ocr_text_manual !== undefined && s.ocr_text_manual !== null) {
             sources.push({label: '手動', color: 'bg-amber-900/40 text-amber-300', value: s.ocr_text_manual});
         }
-        sources.push({label: 'Gemini', color: 'bg-violet-900/40 text-violet-300',
-                      value: s.ocr_text_gemini === undefined ? null : s.ocr_text_gemini});
-        sources.push({label: 'HQ', color: 'bg-sky-900/40 text-sky-300',
-                      value: s.ocr_text_hq === undefined ? null : s.ocr_text_hq});
+        // Gemini を優先、なければ HQ
+        if (s.ocr_text_gemini) {
+            sources.push({label: 'Gemini', color: 'bg-violet-900/40 text-violet-300',
+                          value: s.ocr_text_gemini});
+        } else if (s.ocr_text_hq) {
+            sources.push({label: 'HQ', color: 'bg-sky-900/40 text-sky-300',
+                          value: s.ocr_text_hq});
+        } else {
+            // 両方未実行 → HQ ラベルで未実行表示 (高さ揃え用)
+            sources.push({label: 'HQ', color: 'bg-sky-900/40 text-sky-300', value: null});
+        }
         sources.push({label: '初期', color: 'bg-gray-700 text-gray-400',
                       value: s.ocr_text_raw === undefined ? null : s.ocr_text_raw});
 
@@ -1057,8 +1065,8 @@
             }
             const cursor = isPlaceholder ? '' : 'cursor-pointer hover:bg-gray-800/40';
             const textCls = isPlaceholder ? 'text-gray-600 italic' : 'text-gray-400';
-            return `<div class="group relative flex items-start gap-2 ${cursor} rounded px-1 py-0.5 transition-colors ocr-source-row" data-text-idx="${i}">
-                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold flex-shrink-0 ${src.color}">${src.label}</span>
+            return `<div class="group relative flex items-center gap-2 ${cursor} rounded px-1 py-0.5 transition-colors ocr-source-row" data-text-idx="${i}">
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold flex-shrink-0 text-center w-14 ${src.color}">${src.label}</span>
                 <span class="${textCls} truncate flex-1">${escapeHtml(displayText)}</span>
                 <span class="text-[10px] text-gray-600 flex-shrink-0 copy-feedback" data-feedback-idx="${i}"></span>
                 ${!isPlaceholder ? `<span class="hidden group-hover:block absolute right-2 -top-5 whitespace-nowrap bg-gray-900 text-gray-300 text-[10px] px-2 py-1 rounded shadow-lg border border-gray-700 z-10">クリップボードにコピー</span>` : ''}
