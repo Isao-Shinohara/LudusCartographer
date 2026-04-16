@@ -2519,13 +2519,22 @@ def main():
             pass
 
     def _sigint_handler(signum, frame):
-        logger.info("\n[Ctrl+C] 手動停止 — レポートを生成します...")
+        logger.info("\n[STOP] 停止シグナル受信 — シャットダウン開始")
         if bg_worker is not None:
+            logger.info("[STOP 1/4] BG_WORKER 停止中... (Gemini バッチ完了待ち、最大数十秒)")
             bg_worker.stop()
+            logger.info("[STOP 1/4] BG_WORKER 停止完了")
         if recorder is not None:
+            logger.info("[STOP 2/4] ScreenRecorder クローズ中...")
             recorder.close()
+            logger.info("[STOP 2/4] ScreenRecorder クローズ完了")
+        logger.info("[STOP 3/4] ダッシュボードクリーンアップ中...")
         _cleanup_dashboard()
+        logger.info("[STOP 3/4] ダッシュボードクリーンアップ完了")
+        logger.info("[STOP 4/4] レポート生成中...")
         generate_and_copy_report(_pilot_state_ref, "手動停止 (Ctrl+C / SIGINT)")
+        logger.info("[STOP 4/4] レポート生成完了")
+        logger.info("[STOP] シャットダウン完了 — exit")
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _sigint_handler)
