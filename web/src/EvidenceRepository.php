@@ -421,7 +421,7 @@ class EvidenceRepository
             'is_representative' => (bool)($raw['is_representative'] ?? false),
             'cluster_id'      => $raw['cluster_id'] ?? null,
             'has_hq_ocr'      => ($raw['ocr_text_hq'] ?? null) !== null,
-            'has_gemini'      => !empty($raw['ocr_text_gemini'] ?? null),
+            'has_gemini'      => ($raw['ocr_text_gemini'] ?? null) !== null,
             'user_excluded'   => (bool)($raw['user_excluded'] ?? false),
             'master_fp'       => $raw['master_fp'] ?? null,
             'manual_group_id' => $raw['manual_group_id'] ?? null,
