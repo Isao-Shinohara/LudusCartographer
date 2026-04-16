@@ -616,11 +616,10 @@
             const running = data.running || [];
             const noTransition = data.no_transition || [];
             const bgPending = data.bg_pending || [];
-            // completion_type バッジ (NULL は表示しない)
+            // completion_type バッジ (完走時はバッジなし、未完走時のみ表示)
             const completionBadge = (ct) => {
-                if (ct === 'goal_reached') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-emerald-900/50 text-emerald-300" title="目的達成（ホーム到達/周回完了）">完走</span>';
-                if (ct === 'manual_stop') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-yellow-900/50 text-yellow-300" title="手動停止（Ctrl+C等）">途中停止</span>';
-                if (ct === 'orphaned') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-red-900/50 text-red-300" title="プロセス異常終了">✕ 異常終了</span>';
+                if (ct === 'manual_stop') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-yellow-900/50 text-yellow-300" title="手動停止（Ctrl+C等）">未完走</span>';
+                if (ct === 'orphaned') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-red-900/50 text-red-300" title="プロセス異常終了">未完走（異常終了）</span>';
                 return '';
             };
             let html = '<div class="space-y-6">';
