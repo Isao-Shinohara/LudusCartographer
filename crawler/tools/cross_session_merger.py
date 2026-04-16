@@ -1114,7 +1114,8 @@ class CrossSessionMerger:
 
         # sort_order: 位相ソート (チュートリアル進行順)
         # SCC を condensation し、位相ソートで順序決定。
-        # SCC 内および接続なしノードは first_seen_at でタイブレイク。
+        # SCC 内は「入口ノードからの DFS 順」(マージ時期に依存しない)。
+        # 接続なしノードは first_seen_at で末尾に。
         first_seen_map: dict[str, str] = {
             r["master_fp"]: r["first_seen_at"] or ""
             for r in self._conn.execute(
@@ -1133,13 +1134,67 @@ class CrossSessionMerger:
                 topo_scc_ids = list(nx.topological_sort(condensation))
             except nx.NetworkXUnfeasible:
                 topo_scc_ids = list(condensation.nodes())
-            # 各 SCC 内のノードを first_seen_at 順で展開
+
+            # SCC ID → メンバー集合
+            scc_members: dict[int, set[str]] = {
+                scc_id: set(condensation.nodes[scc_id]["members"])
+                for scc_id in condensation.nodes()
+            }
+            # ノード fp → 所属 SCC ID
+            fp_to_scc: dict[str, int] = {
+                fp: scc_id for scc_id, members in scc_members.items() for fp in members
+            }
+
             for scc_id in topo_scc_ids:
-                members = sorted(
-                    condensation.nodes[scc_id]["members"],
+                members = scc_members[scc_id]
+                if len(members) == 1:
+                    ordered_fps.extend(members)
+                    continue
+
+                # 入口ノード = SCC 外から流入があるノード
+                entry_nodes = []
+                for m in members:
+                    for pred in G.predecessors(m):
+                        if fp_to_scc.get(pred) != scc_id:
+                            entry_nodes.append(m)
+                            break
+                # 入口がなければ first_seen_at 最古を入口とする
+                if not entry_nodes:
+                    entry_nodes = [min(members, key=lambda fp: first_seen_map.get(fp, ""))]
+                # 入口を first_seen_at 順で並べる (複数入口対応)
+                entry_nodes = sorted(set(entry_nodes),
+                                     key=lambda fp: first_seen_map.get(fp, ""))
+
+                # SCC 内サブグラフで DFS
+                sub_G = G.subgraph(members)
+                visited: set[str] = set()
+                scc_order: list[str] = []
+                for entry in entry_nodes:
+                    if entry in visited:
+                        continue
+                    # DFS (隣接ノードを first_seen_at 順で訪問 → 安定性)
+                    stack = [entry]
+                    while stack:
+                        node = stack.pop()
+                        if node in visited:
+                            continue
+                        visited.add(node)
+                        scc_order.append(node)
+                        # 後続ノードを first_seen_at 降順で stack に積む
+                        # (pop すると昇順で取り出される)
+                        succs = sorted(
+                            (n for n in sub_G.successors(node) if n not in visited),
+                            key=lambda fp: first_seen_map.get(fp, ""),
+                            reverse=True,
+                        )
+                        stack.extend(succs)
+                # 訪問漏れ (双方向到達不能等) を first_seen_at 順で末尾追加
+                missed = sorted(
+                    (fp for fp in members if fp not in visited),
                     key=lambda fp: first_seen_map.get(fp, ""),
                 )
-                ordered_fps.extend(members)
+                scc_order.extend(missed)
+                ordered_fps.extend(scc_order)
 
         # グラフに含まれないノード (孤立) を first_seen_at 順で末尾に追加
         in_graph = set(ordered_fps)
