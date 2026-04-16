@@ -685,16 +685,16 @@
             }
             html += '</div>';
             // 5. 遷移データなし
-            html += '<div><h3 class="text-lg font-bold text-red-400 mb-3">✕ 遷移データなし</h3>';
+            html += '<div><h3 class="text-lg font-bold text-gray-400 mb-3">− 遷移データなし</h3>';
             if (noTransition.length === 0) {
                 html += '<p class="text-gray-600 text-sm">遷移データなしのセッションはありません</p>';
             } else {
                 html += '<p class="text-xs text-gray-500 mb-2">画面記録はあるがタップ遷移が記録されていないため、グラフ構築・マージ不可。削除のみ可能。</p>';
                 html += '<div class="space-y-2">';
                 for (const s of noTransition) {
-                    html += `<div class="bg-gray-900/50 border border-red-900/30 rounded-lg p-3 flex items-center justify-between">
+                    html += `<div class="bg-gray-900/50 border border-gray-800/50 rounded-lg p-3 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-red-300">✕ ${escapeHtml(s.session_id)}</span>
+                            <span class="text-sm font-mono text-gray-400">− ${escapeHtml(s.session_id)}</span>
                             ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件・遷移 0 件</span>
                             <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.started_at || '')}</span>
