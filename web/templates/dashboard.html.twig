@@ -727,6 +727,8 @@
             checkCleanableInMerge();
             // 修正ルール候補の取得・表示
             checkCorrectionRules();
+            // 操作実行中ならボタンを再 disable
+            if (_operationInProgress) _setOperationButtons(true);
         } catch (e) {
             mc.innerHTML = '<div class="text-center text-red-500 py-12">API エラー</div>';
         }
@@ -768,6 +770,11 @@
     }
 
     async function showMergePreview(sessionId) {
+        return await withOperationLock('プレビュー', async () => {
+            return await _showMergePreview(sessionId);
+        });
+    }
+    async function _showMergePreview(sessionId) {
         const mc = document.getElementById('merge-container');
         mc.innerHTML = '<div class="text-center text-gray-600 py-12"><span class="animate-pulse">プレビュー計算中...</span></div>';
         try {
@@ -857,6 +864,11 @@
     }
 
     async function executeMerge(sessionId) {
+        await withOperationLock('マージ実行', async () => {
+            await _executeMerge(sessionId);
+        });
+    }
+    async function _executeMerge(sessionId) {
         const mc = document.getElementById('merge-container');
         mc.innerHTML = '<div class="text-center text-gray-600 py-12"><span class="animate-pulse">マージ実行中...</span></div>';
         try {
@@ -995,6 +1007,11 @@
     }
 
     async function applyCorrectionRule(ruleId, masterFpsJson) {
+        await withOperationLock('ルール適用', async () => {
+            await _applyCorrectionRule(ruleId, masterFpsJson);
+        });
+    }
+    async function _applyCorrectionRule(ruleId, masterFpsJson) {
         try {
             const params = new URLSearchParams({ rule_id: ruleId, master_fps: masterFpsJson });
             const res = await fetch(API_BASE + '?action=apply_correction_rule&' + params);
@@ -1006,6 +1023,44 @@
             }
         } catch (e) {
             alert('適用失敗: ' + e.message);
+        }
+    }
+
+    // --- 操作ロック (排他制御) ---
+    // 同時に1つの長時間操作のみ実行可能
+    let _operationInProgress = false;
+
+    function _setOperationButtons(disabled) {
+        const selectors = ['.unmerge-btn', '.build-graph-btn', '.merge-preview-btn',
+                           '#execute-merge-btn', '.apply-rule-btn'];
+        document.querySelectorAll(selectors.join(',')).forEach(btn => {
+            btn.disabled = disabled;
+            if (disabled) {
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+                btn.dataset.lockedTitle = btn.title || '';
+                btn.title = '他の作業実行中のため操作不可';
+            } else {
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                if (btn.dataset.lockedTitle !== undefined) {
+                    btn.title = btn.dataset.lockedTitle;
+                    delete btn.dataset.lockedTitle;
+                }
+            }
+        });
+    }
+
+    async function withOperationLock(label, fn) {
+        if (_operationInProgress) {
+            showToast(`他の作業実行中のため「${label}」を開始できません`, 'error');
+            return null;
+        }
+        _operationInProgress = true;
+        _setOperationButtons(true);
+        try {
+            return await fn();
+        } finally {
+            _operationInProgress = false;
+            _setOperationButtons(false);
         }
     }
 
@@ -1032,31 +1087,33 @@
 
     // --- グラフ構築 (バックグラウンド) ---
     async function buildSessionGraph(sessionId) {
-        showToast(`セッショングラフ構築中: ${sessionId}`, 'info');
-        try {
-            await fetch(API_BASE + '?action=build_session_graph&session_id=' + encodeURIComponent(sessionId));
-            // 完了をポーリング
-            const result = await new Promise((resolve) => {
-                const timer = setInterval(async () => {
-                    try {
-                        const r = await fetch(API_BASE + '?action=merge_progress');
-                        const d = await r.json();
-                        if (d.done) {
-                            clearInterval(timer);
-                            resolve(d.result);
-                        }
-                    } catch (e) {}
-                }, 1500);
-            });
-            if (result && result.ok) {
-                showToast(`グラフ構築完了: ${sessionId} (${result.sccs} SCC)`, 'success');
-                fetchMergeTab();
-            } else {
-                showToast(`グラフ構築失敗: ${result?.error || '不明'}`, 'error');
+        await withOperationLock('グラフ構築', async () => {
+            showToast(`セッショングラフ構築中: ${sessionId}`, 'info');
+            try {
+                await fetch(API_BASE + '?action=build_session_graph&session_id=' + encodeURIComponent(sessionId));
+                // 完了をポーリング
+                const result = await new Promise((resolve) => {
+                    const timer = setInterval(async () => {
+                        try {
+                            const r = await fetch(API_BASE + '?action=merge_progress');
+                            const d = await r.json();
+                            if (d.done) {
+                                clearInterval(timer);
+                                resolve(d.result);
+                            }
+                        } catch (e) {}
+                    }, 1500);
+                });
+                if (result && result.ok) {
+                    showToast(`グラフ構築完了: ${sessionId} (${result.sccs} SCC)`, 'success');
+                    fetchMergeTab();
+                } else {
+                    showToast(`グラフ構築失敗: ${result?.error || '不明'}`, 'error');
+                }
+            } catch (e) {
+                showToast(`グラフ構築エラー: ${e.message}`, 'error');
             }
-        } catch (e) {
-            showToast(`グラフ構築エラー: ${e.message}`, 'error');
-        }
+        });
     }
 
     // --- 未マージ ---
@@ -1076,22 +1133,24 @@
     }
 
     async function executeUnmerge(sessionId) {
-        const mc = document.getElementById('merge-container');
-        mc.innerHTML = '<div class="text-center text-gray-600 py-12"><span class="animate-pulse">再構築中...</span></div>';
-        try {
-            const res = await fetch(API_BASE + '?action=execute_unmerge&session_id=' + encodeURIComponent(sessionId));
-            const data = await res.json();
-            if (data.ok) {
-                mc.innerHTML = `<div class="text-center text-green-500 py-12">
-                    未マージ完了: ${data.master_nodes} ノード, ${data.master_edges} エッジ (手動変更 ${data.restored_manual} 件復元)
-                </div>`;
-                setTimeout(() => fetchMergeTab(), 2000);
-            } else {
-                mc.innerHTML = `<div class="text-center text-red-500 py-12">エラー: ${escapeHtml(data.error || '不明')}</div>`;
+        await withOperationLock('Undo', async () => {
+            const mc = document.getElementById('merge-container');
+            mc.innerHTML = '<div class="text-center text-gray-600 py-12"><span class="animate-pulse">再構築中...</span></div>';
+            try {
+                const res = await fetch(API_BASE + '?action=execute_unmerge&session_id=' + encodeURIComponent(sessionId));
+                const data = await res.json();
+                if (data.ok) {
+                    mc.innerHTML = `<div class="text-center text-green-500 py-12">
+                        未マージ完了: ${data.master_nodes} ノード, ${data.master_edges} エッジ (手動変更 ${data.restored_manual} 件復元)
+                    </div>`;
+                    setTimeout(() => fetchMergeTab(), 2000);
+                } else {
+                    mc.innerHTML = `<div class="text-center text-red-500 py-12">エラー: ${escapeHtml(data.error || '不明')}</div>`;
+                }
+            } catch (e) {
+                mc.innerHTML = '<div class="text-center text-red-500 py-12">未マージ失敗</div>';
             }
-        } catch (e) {
-            mc.innerHTML = '<div class="text-center text-red-500 py-12">未マージ失敗</div>';
-        }
+        });
     }
 
     // --- ハートビート ---
