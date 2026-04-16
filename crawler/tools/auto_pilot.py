@@ -2598,12 +2598,17 @@ def main():
     for _orient_wait in range(10):
         _ss_check = take_screenshot()
         # 起動シーン記録: -r / 新規周回時のみランドスケープ待機中にロゴ等をキャプチャ
+        # ただしアプリが前面にあることを確認 (ホーム画面誤キャプチャ防止)
         if recorder is not None and args.reinstall and _ss_check[0] is not None and _ss_check[1] > _ss_check[2]:
-            try:
-                _startup_ph = compute_phash(_ss_check[0])
-            except Exception:
-                _startup_ph = ""
-            recorder.record_startup(_ss_check[0], _startup_ph)
+            _focus_check = adb("shell dumpsys window | grep mCurrentFocus")
+            if APP_PACKAGE in _focus_check:
+                try:
+                    _startup_ph = compute_phash(_ss_check[0])
+                except Exception:
+                    _startup_ph = ""
+                recorder.record_startup(_ss_check[0], _startup_ph)
+            else:
+                logger.debug("[STARTUP] アプリ未前面 → 記録スキップ")
         if _ss_check[0] is not None and _ss_check[1] > _ss_check[2]:
             logger.info("[STARTUP] ランドスケープ確認 (%dx%d)", _ss_check[1], _ss_check[2])
             # ポートレートを経由した場合のみ scrcpy 再起動 (ウィンドウ縮小復帰)
