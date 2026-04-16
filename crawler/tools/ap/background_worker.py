@@ -995,41 +995,63 @@ class BackgroundWorker:
             conn.close()
 
     def _reclustering_after_gemini(self, conn) -> None:
-        """Gemini 補正後、同セッション内で同じ補正テキストになった画面を統合。
+        """Gemini 補正後の再クラスタリング。
 
-        セリフ違いで分かれていた画面が補正で同じになるケースを正しく統合する。
+        統合条件: 同シーン + phash 距離 < 20 + テキスト前方一致。
+        セリフの拾い切り違い (はっ、はっ vs はっ、はっ、はっ…) も統合する。
         """
         try:
-            # 同セッション・同シーンで ocr_text_gemini が一致するクラスタを統合
+            from lc.utils import phash_distance
             sid_filter = ""
             sid_params: tuple = ()
             if self._session_id:
                 sid_filter = " AND session_id = ?"
                 sid_params = (self._session_id,)
 
-            # ocr_text_gemini が同じだが cluster_id が異なる代表画面ペアを取得
+            # 代表画面でテキストありを取得
             rows = conn.execute(
-                "SELECT id, cluster_id, scene, ocr_text_gemini"
+                "SELECT id, cluster_id, scene, phash, ocr_text_gemini"
                 " FROM lc_screens"
                 " WHERE is_representative = 1"
                 " AND ocr_text_gemini IS NOT NULL AND ocr_text_gemini != ''"
-                " AND LENGTH(ocr_text_gemini) > 10"
+                " AND phash IS NOT NULL AND phash != ''"
                 + sid_filter +
                 " ORDER BY cluster_id",
                 sid_params,
             ).fetchall()
 
-            # テキスト → 最古の cluster_id をマップ
-            text_to_cluster: dict[str, int] = {}
+            # 全ペアで判定 (代表画面は通常少ないので O(N^2) で OK)
             merges: list[tuple[int, int]] = []  # (target_cluster, source_cluster)
-            for r in rows:
-                key = f"{r['scene']}:{_normalize_text(r['ocr_text_gemini'])}"
-                if key in text_to_cluster:
-                    target = text_to_cluster[key]
-                    if r["cluster_id"] != target:
-                        merges.append((target, r["cluster_id"]))
-                else:
-                    text_to_cluster[key] = r["cluster_id"]
+            merged_clusters: set[int] = set()
+            items = [dict(r) for r in rows]
+            for i, a in enumerate(items):
+                if a["cluster_id"] in merged_clusters:
+                    continue
+                text_a = _normalize_text(a["ocr_text_gemini"])
+                if not text_a:
+                    continue
+                for b in items[i+1:]:
+                    if b["cluster_id"] in merged_clusters:
+                        continue
+                    if a["scene"] != b["scene"]:
+                        continue
+                    if a["cluster_id"] == b["cluster_id"]:
+                        continue
+                    # phash 距離 < 20
+                    try:
+                        if phash_distance(a["phash"], b["phash"]) >= 20:
+                            continue
+                    except Exception:
+                        continue
+                    # テキスト前方一致 (どちらかが他方の prefix)
+                    text_b = _normalize_text(b["ocr_text_gemini"])
+                    if not text_b:
+                        continue
+                    if not (text_a.startswith(text_b) or text_b.startswith(text_a)):
+                        continue
+                    # 統合: a を target、b を source
+                    merges.append((a["cluster_id"], b["cluster_id"]))
+                    merged_clusters.add(b["cluster_id"])
 
             if not merges:
                 return
