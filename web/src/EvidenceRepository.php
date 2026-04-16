@@ -434,7 +434,7 @@ class EvidenceRepository
     {
         $sql = <<<SQL
             SELECT sg.session_id, sg.node_count, sg.edge_count, sg.built_at,
-                   s.screens_found, s.started_at, s.status,
+                   s.screens_found, s.started_at, s.status, s.completion_type,
                    COALESCE(s.game_title, 'Unknown Game') AS game_title
             FROM lc_session_graphs sg
             JOIN lc_sessions s ON s.session_id = sg.session_id
@@ -452,7 +452,7 @@ class EvidenceRepository
     {
         $sql = <<<SQL
             SELECT sg.session_id, sg.node_count, sg.edge_count, sg.built_at,
-                   s.screens_found, s.started_at,
+                   s.screens_found, s.started_at, s.completion_type,
                    COALESCE(s.game_title, 'Unknown Game') AS game_title,
                    COUNT(nm.id) AS mapped_nodes
             FROM lc_session_graphs sg
@@ -469,7 +469,7 @@ class EvidenceRepository
     {
         // 完了済みだが session_graph がないセッション（画面記録なし or グラフ未構築）
         $sql = <<<SQL
-            SELECT s.session_id, s.started_at, s.screens_found, s.status,
+            SELECT s.session_id, s.started_at, s.screens_found, s.status, s.completion_type,
                    COALESCE(s.game_title, 'Unknown Game') AS game_title,
                    (SELECT COUNT(*) FROM lc_screens WHERE session_id = s.session_id) AS actual_screens
             FROM lc_sessions s

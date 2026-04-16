@@ -573,6 +573,13 @@
             const pending = data.pending || [];
             const merged = data.merged || [];
             const empty = data.empty || [];
+            // completion_type バッジ
+            const completionBadge = (ct) => {
+                if (ct === 'goal_reached') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-emerald-900/50 text-emerald-300" title="目的達成（ホーム到達/周回完了）">✓ 完走</span>';
+                if (ct === 'manual_stop') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-yellow-900/50 text-yellow-300" title="手動停止（Ctrl+C等）">⏸ 途中停止</span>';
+                if (ct === 'orphaned') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-red-900/50 text-red-300" title="プロセス異常終了">✕ 異常終了</span>';
+                return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-gray-700 text-gray-400" title="不明">? 不明</span>';
+            };
             let html = '<div class="space-y-6">';
             // 未マージセッション
             html += '<div><h3 class="text-lg font-bold text-brand-light mb-3">未マージセッション</h3>';
@@ -584,6 +591,7 @@
                     html += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 flex items-center justify-between">
                         <div>
                             <span class="text-sm font-mono text-gray-300">${escapeHtml(s.session_id)}</span>
+                            ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-500 ml-3">${s.node_count} ノード / ${s.edge_count} エッジ</span>
                             <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.built_at || '')}</span>
                         </div>
@@ -608,6 +616,7 @@
                     html += `<div class="bg-gray-900/50 border border-gray-800/50 rounded-lg p-3 flex items-center justify-between">
                         <div>
                             <span class="text-sm font-mono text-gray-500">${escapeHtml(s.session_id)}</span>
+                            ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-600 ml-3">${s.mapped_nodes} ノードマッピング済</span>
                         </div>
                         <div class="flex items-center gap-3">
@@ -631,6 +640,7 @@
                     html += `<div class="bg-gray-900/50 border border-amber-900/30 rounded-lg p-3 flex items-center justify-between">
                         <div>
                             <span class="text-sm font-mono text-amber-300">⚠ ${escapeHtml(s.session_id)}</span>
+                            ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
                             <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.started_at || '')}</span>
                         </div>

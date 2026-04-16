@@ -62,14 +62,15 @@ CREATE TABLE IF NOT EXISTS lc_projects (
 );
 
 CREATE TABLE IF NOT EXISTS lc_sessions (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id    TEXT    UNIQUE NOT NULL,
-    screens_found INTEGER DEFAULT 0,
-    started_at    TEXT,
-    status        TEXT    DEFAULT 'running',
-    game_title    TEXT    DEFAULT 'Unknown Game',
-    device_mode   TEXT    DEFAULT 'SIMULATOR',
-    project_id    INTEGER
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT    UNIQUE NOT NULL,
+    screens_found   INTEGER DEFAULT 0,
+    started_at      TEXT,
+    status          TEXT    DEFAULT 'running',
+    completion_type TEXT,   -- NULL/goal_reached/manual_stop/orphaned
+    game_title      TEXT    DEFAULT 'Unknown Game',
+    device_mode     TEXT    DEFAULT 'SIMULATOR',
+    project_id      INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS lc_screens (
@@ -445,8 +446,14 @@ class ScreenRecorder:
                 best_text = text
         return best_text
 
-    def close(self) -> None:
-        """セッションを完了状態にして DB 接続を閉じる。"""
+    def close(self, goal_reached: bool = False) -> None:
+        """セッションを完了状態にして DB 接続を閉じる。
+
+        Args:
+            goal_reached: True なら 'goal_reached' (ホーム到達/周回完了),
+                          False なら 'manual_stop' (Ctrl+C 等の途中停止)
+        """
+        completion_type = 'goal_reached' if goal_reached else 'manual_stop'
         try:
             # pending transition をフラッシュ (to=NULL)
             if self._pending_transition is not None:
@@ -454,13 +461,14 @@ class ScreenRecorder:
                 self._pending_transition = None
             self._conn.execute(
                 "UPDATE lc_sessions SET status = 'completed',"
+                " completion_type = ?,"
                 " screens_found = ? WHERE session_id = ?",
-                (self._recorded_count, self._session_id),
+                (completion_type, self._recorded_count, self._session_id),
             )
             self._conn.commit()
             logger.info(
-                "[ScreenRecorder] セッション完了: %d 画面記録",
-                self._recorded_count,
+                "[ScreenRecorder] セッション完了 (%s): %d 画面記録",
+                completion_type, self._recorded_count,
             )
         except Exception as e:
             logger.warning("[ScreenRecorder] close エラー: %s", e)
@@ -478,8 +486,10 @@ class ScreenRecorder:
             if self._pending_transition is not None:
                 self._insert_transition(self._pending_transition)
                 self._pending_transition = None
+            # start_new_session は周回完了時の切替なので goal_reached
             self._conn.execute(
                 "UPDATE lc_sessions SET status = 'completed',"
+                " completion_type = 'goal_reached',"
                 " screens_found = ? WHERE session_id = ?",
                 (self._recorded_count, self._session_id),
             )
@@ -535,6 +545,14 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: scene カラム追加")
+        # lc_sessions に completion_type カラム
+        sess_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_sessions)")}
+        if "completion_type" not in sess_cols:
+            self._conn.execute(
+                "ALTER TABLE lc_sessions ADD COLUMN completion_type TEXT"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: completion_type カラム追加")
 
     # ─── 画像保存 ─────────────────────────────────────
 

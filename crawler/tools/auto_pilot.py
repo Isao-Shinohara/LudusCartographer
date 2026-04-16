@@ -132,6 +132,23 @@ def delete_state(key: str):
 
 _ensure_state_table()
 
+
+def _mark_orphaned_sessions():
+    """前回起動時に異常終了したセッション (status='running') を 'orphaned' として完了化。"""
+    try:
+        conn = sqlite3.connect(str(_STATE_DB_PATH))
+        cur = conn.execute(
+            "UPDATE lc_sessions SET status = 'completed', completion_type = 'orphaned'"
+            " WHERE status = 'running' AND completion_type IS NULL"
+        )
+        if cur.rowcount > 0:
+            logger.warning("[ORPHAN] %d 件のセッションを 'orphaned' で完了化", cur.rowcount)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning("[ORPHAN] orphan 検出エラー: %s", e)
+
+
 # ─── 定数: ap/constants.py から一括 import ───
 from tools.ap.constants import (  # noqa: E402
     _CRAWLER_ROOT, SCREENSHOT_PATH, ANALYSIS_PATH, REMOTE_PATH, EVIDENCE_DIR,
@@ -2453,6 +2470,8 @@ def main():
     bg_worker = None
     if args.screenshot:
         from tools.ap.screen_recorder import ScreenRecorder
+        # 前回起動時に異常終了したセッションを orphaned 化
+        _mark_orphaned_sessions()
         # -r (新規) → 新セッション、それ以外 (再起動/途中再開) → 前回セッション継続
         _rec_session = None
         if not args.reinstall:
@@ -3919,7 +3938,7 @@ def main():
                 logger.info("  ホーム画面到達 — 自動操縦を停止します")
                 logger.info("=" * 60)
                 if recorder is not None:
-                    recorder.close()
+                    recorder.close(goal_reached=True)
                 if bg_worker is not None:
                     # バックグラウンド処理の完了を待機
                     logger.info("[BG_WORKER] バックグラウンド処理の完了を待機中...")
@@ -3942,7 +3961,7 @@ def main():
                             state.grind_max_cycles)
                 logger.info("=" * 60)
                 if recorder is not None:
-                    recorder.close()
+                    recorder.close(goal_reached=True)
                 # 実行中の非同期マージスレッドが完了するまで待機
                 for _t in threading.enumerate():
                     if _t.name.startswith("merge-cycle-") and _t.is_alive():
@@ -4321,7 +4340,7 @@ def main():
                 logger.info("=" * 62)
                 save_evidence(img_path, ocr_results, action, state)
                 if recorder is not None:
-                    recorder.close()
+                    recorder.close(goal_reached=True)
                 _cleanup_dashboard()
                 generate_and_copy_report(state, _reason)
                 return
