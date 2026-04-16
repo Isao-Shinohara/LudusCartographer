@@ -1229,18 +1229,18 @@
         // Gemini と HQ は排他実行のため、どちらかが存在する方を表示。
         const sources = [];
         if (s.ocr_text_manual !== undefined && s.ocr_text_manual !== null) {
-            sources.push({label: '手動', color: 'bg-amber-900/40 text-amber-300', value: s.ocr_text_manual});
+            sources.push({label: '手動', color: 'bg-pink-900/40 text-pink-300', value: s.ocr_text_manual});
         }
         // Gemini を優先、なければ HQ
         if (s.ocr_text_gemini) {
-            sources.push({label: 'Gemini', color: 'bg-violet-900/40 text-violet-300',
+            sources.push({label: 'Gemini', color: 'bg-amber-900/40 text-amber-300',
                           value: s.ocr_text_gemini});
         } else if (s.ocr_text_hq) {
             sources.push({label: 'HQ', color: 'bg-sky-900/40 text-sky-300',
                           value: s.ocr_text_hq});
         } else if (geminiEnabled) {
             // Gemini 有効時は Gemini 未実行と表示
-            sources.push({label: 'Gemini', color: 'bg-violet-900/40 text-violet-300', value: null});
+            sources.push({label: 'Gemini', color: 'bg-amber-900/40 text-amber-300', value: null});
         } else {
             // Gemini 無効時は HQ 未実行と表示
             sources.push({label: 'HQ', color: 'bg-sky-900/40 text-sky-300', value: null});
