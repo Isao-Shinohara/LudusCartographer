@@ -1231,13 +1231,17 @@
         if (s.ocr_text_manual !== undefined && s.ocr_text_manual !== null) {
             sources.push({label: '手動', color: 'bg-pink-900/40 text-pink-300', value: s.ocr_text_manual});
         }
-        // Gemini を優先、なければ HQ
-        if (s.ocr_text_gemini) {
+        // Gemini を優先 (実行済みなら空文字でも表示)
+        const geminiVal = s.ocr_text_gemini;
+        const hqVal = s.ocr_text_hq;
+        if (geminiVal !== undefined && geminiVal !== null) {
+            // Gemini 実行済 (テキストあり or 空文字)
             sources.push({label: 'Gemini', color: 'bg-amber-900/40 text-amber-300',
-                          value: s.ocr_text_gemini});
-        } else if (s.ocr_text_hq) {
+                          value: geminiVal});
+        } else if (hqVal !== undefined && hqVal !== null) {
+            // HQ 実行済
             sources.push({label: 'HQ', color: 'bg-sky-900/40 text-sky-300',
-                          value: s.ocr_text_hq});
+                          value: hqVal});
         } else if (geminiEnabled) {
             // Gemini 有効時は Gemini 未実行と表示
             sources.push({label: 'Gemini', color: 'bg-amber-900/40 text-amber-300', value: null});

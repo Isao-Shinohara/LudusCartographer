@@ -234,6 +234,29 @@ _GEMINI_MODEL = "gemini-2.5-flash"
 _GEMINI_RATE_LIMIT = 1.5  # 40 RPM (有料枠) → 1.5秒間隔で安全
 _GEMINI_BATCH_SIZE = 8    # 1リクエストあたりの画像枚数（観察しながら調整）
 
+# Gemini が誤って返す「テキストなし」系の説明文パターン (空文字に変換)
+_NO_TEXT_PATTERNS = [
+    r'^テキスト(が|は)?(なし|ありません|ない).*',
+    r'^文字(が|は)?(なし|ありません|ない).*',
+    r'.*画像(には|に)?(テキスト|文字)(が|は)?(ない|ありません|存在しない).*',
+    r'^(背景|イベントシーン|暗転|空白|黒画面|白画面)(の一部|のみ)?$',
+]
+_NO_TEXT_RE = re.compile('|'.join(_NO_TEXT_PATTERNS))
+
+
+def _clean_gemini_output(text: str) -> str:
+    """Gemini が説明文を返した場合は空文字に変換。"""
+    if not text:
+        return ""
+    stripped = text.strip()
+    if not stripped:
+        return ""
+    # 先頭60文字で判定（長文はそのまま返す = 実際のテキスト）
+    head = stripped[:60]
+    if _NO_TEXT_RE.match(head):
+        return ""
+    return text
+
 _GEMINI_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedra」のUI仕様と世界観に精通したデバッグエンジニアです。
 
 ゲーム画面のスクリーンショットから、画面上のテキストを正確に読み取ってください。
@@ -253,7 +276,12 @@ _GEMINI_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedr
   ]
 }}
 
-初期OCR が空または無関係な場合も画像から読み取ってください。corrections は誤読を検出した場合のみ。'''
+## 重要な制約
+- 画像にテキストが「全く存在しない」場合（イベントシーン・背景・暗転等）は corrected_text を **空文字 ""** にする
+- 画像の説明や解釈（「テキストなし」「背景の一部」等の文）を corrected_text に書かない
+- 画面に表示されている文字のみ抽出する。説明文や注釈は不要
+- 初期OCR が空または無関係な場合も画像から読み取ってください
+- corrections は誤読を検出した場合のみ'''
 
 
 _GEMINI_BATCH_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedra」のUI仕様と世界観に精通したデバッグエンジニアです。
@@ -284,7 +312,12 @@ _GEMINI_BATCH_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia
   ]
 }}
 
-各画像について必ず1つのオブジェクトを返してください。corrections は誤読を検出した場合のみ。'''
+## 重要な制約
+- 各画像について必ず1つのオブジェクトを返してください
+- 画像にテキストが「全く存在しない」場合（イベントシーン・背景・暗転等）は corrected_text を **空文字 ""** にする
+- 画像の説明や解釈（「テキストなし」「背景の一部」等の文）を corrected_text に書かない
+- 画面に表示されている文字のみ抽出する。説明文や注釈は不要
+- corrections は誤読を検出した場合のみ'''
 
 
 def _init_gemini_client():

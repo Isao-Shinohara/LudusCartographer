@@ -946,12 +946,14 @@ class BackgroundWorker:
                 # 結果を id でマップ
                 result_map = {r["id"]: r for r in results}
                 import re as _re
+                from tools.ap.ocr_correction import _clean_gemini_output
                 _has_text = _re.compile(r'[\u3040-\u9fff\u30a0-\u30ffA-Za-z]')
                 _pure_num = _re.compile(r'^[\d\s.:/%×+\-~]+$')
                 for item in items:
                     sid = item["id"]
                     r = result_map.get(sid)
-                    corrected = (r.get("corrected_text", "") if r else "").strip()
+                    raw_corrected = (r.get("corrected_text", "") if r else "").strip()
+                    corrected = _clean_gemini_output(raw_corrected)
                     # プレースホルダ title (STARTUP, UNKNOWN等) なら、補正テキストから生成
                     new_title = None
                     if corrected:
