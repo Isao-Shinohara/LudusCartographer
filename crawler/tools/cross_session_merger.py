@@ -1112,15 +1112,47 @@ class CrossSessionMerger:
                     (idx, f"SCC#{idx}", fp),
                 )
 
-        # sort_order: first_seen_at ASC (時系列順)
-        all_nodes = self._conn.execute(
-            "SELECT master_fp FROM lc_master_nodes"
-            " ORDER BY first_seen_at ASC"
-        ).fetchall()
-        for i, r in enumerate(all_nodes):
+        # sort_order: 位相ソート (チュートリアル進行順)
+        # SCC を condensation し、位相ソートで順序決定。
+        # SCC 内および接続なしノードは first_seen_at でタイブレイク。
+        first_seen_map: dict[str, str] = {
+            r["master_fp"]: r["first_seen_at"] or ""
+            for r in self._conn.execute(
+                "SELECT master_fp, first_seen_at FROM lc_master_nodes"
+            ).fetchall()
+        }
+
+        ordered_fps: list[str] = []
+        if G.number_of_edges() > 0:
+            # SCC 検出 (有向グラフ全体で)
+            sccs_all = list(nx.strongly_connected_components(G))
+            # 各 SCC を condensation
+            condensation = nx.condensation(G, scc=sccs_all)
+            # 位相ソート (DAG 保証)
+            try:
+                topo_scc_ids = list(nx.topological_sort(condensation))
+            except nx.NetworkXUnfeasible:
+                topo_scc_ids = list(condensation.nodes())
+            # 各 SCC 内のノードを first_seen_at 順で展開
+            for scc_id in topo_scc_ids:
+                members = sorted(
+                    condensation.nodes[scc_id]["members"],
+                    key=lambda fp: first_seen_map.get(fp, ""),
+                )
+                ordered_fps.extend(members)
+
+        # グラフに含まれないノード (孤立) を first_seen_at 順で末尾に追加
+        in_graph = set(ordered_fps)
+        orphans = sorted(
+            (fp for fp in first_seen_map if fp not in in_graph),
+            key=lambda fp: first_seen_map.get(fp, ""),
+        )
+        ordered_fps.extend(orphans)
+
+        for i, fp in enumerate(ordered_fps):
             self._conn.execute(
                 "UPDATE lc_master_nodes SET sort_order = ? WHERE master_fp = ?",
-                (i, r["master_fp"]),
+                (i, fp),
             )
 
     def _get_node_info(self, fp: str, session_id: str) -> Optional[dict]:
