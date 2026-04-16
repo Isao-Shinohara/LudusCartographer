@@ -892,8 +892,20 @@ class BackgroundWorker:
                 _init_gemini_client, _GEMINI_BATCH_SIZE, _GEMINI_RATE_LIMIT,
                 gemini_correct_multi,
             )
-            # 1バッチ = _GEMINI_BATCH_SIZE 枚, 1回の起動で 4 バッチまで処理
+            # 1バッチ = _GEMINI_BATCH_SIZE 枚, 1回の起動で 6 バッチまで処理
+            # 自動処理は self._session_id があればそのセッション、なければ status='running' のセッション
+            # を優先 (古い完了済みセッションは「バックグラウンド未完了」セクションで手動処理)
             fetch_limit = _GEMINI_BATCH_SIZE * 6
+            target_sid = self._session_id
+            if not target_sid:
+                row = conn.execute(
+                    "SELECT session_id FROM lc_sessions WHERE status = 'running'"
+                    " ORDER BY started_at DESC LIMIT 1"
+                ).fetchone()
+                if row:
+                    target_sid = row["session_id"]
+            if not target_sid:
+                return  # アクティブセッションがない → 自動処理しない
             rows = conn.execute(
                 "SELECT id, screenshot_path,"
                 " COALESCE(ocr_text_hq, ocr_text, '') AS ocr"
@@ -901,9 +913,10 @@ class BackgroundWorker:
                 " WHERE is_representative = 1"
                 " AND ocr_text_gemini IS NULL"
                 " AND screenshot_path != ''"
+                " AND session_id = ?"
                 " ORDER BY discovered_at"
                 " LIMIT ?",
-                (fetch_limit,),
+                (target_sid, fetch_limit),
             ).fetchall()
 
             if not rows:

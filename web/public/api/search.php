@@ -217,16 +217,19 @@ if ($action === 'get_pending_merges') {
         $empty = $repository->getEmptySessions();
         $running = $repository->getRunningSessions();
         $no_transition = $repository->getNoTransitionSessions();
+        $bg_pending = $repository->getBgPendingSessions();
     } else {
         $pending = [];
         $merged = [];
         $empty = [];
         $running = [];
         $no_transition = [];
+        $bg_pending = [];
     }
     echo json_encode(
         ['pending' => $pending, 'merged' => $merged, 'empty' => $empty,
-         'running' => $running, 'no_transition' => $no_transition],
+         'running' => $running, 'no_transition' => $no_transition,
+         'bg_pending' => $bg_pending],
         JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
     );
     exit;
@@ -252,6 +255,43 @@ if ($action === 'merge_progress') {
     } catch (\Throwable $e) {
         echo json_encode(['progress' => null, 'done' => false, 'result' => null]);
     }
+    exit;
+}
+
+// --- process_session_bg アクション (バックグラウンド未完了の手動完了) ---
+if ($action === 'process_session_bg') {
+    $sessionId = $_GET['session_id'] ?? '';
+    if ($sessionId === '') {
+        echo json_encode(['error' => 'session_id required']);
+        exit;
+    }
+    $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
+    $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
+    @unlink($resultFile);
+    // Gemini OCR + dedup + graph build をフルパイプライン実行
+    $script = "import json, time, os; "
+            . "from pathlib import Path; "
+            . "from tools.ap.background_worker import BackgroundWorker; "
+            . "w = BackgroundWorker(db_path=Path('storage/ludus.db'), session_id='" . addslashes($sessionId) . "'); "
+            . "w._run_incremental_dedup(); "
+            . "w._run_gemini_batch_correction(); "
+            . "w._run_gemini_batch_correction(); "
+            . "w._run_gemini_batch_correction(); "
+            . "w._run_incremental_dedup(); "
+            . "from tools.batch_processor import BatchProcessor; "
+            . "bp = BatchProcessor(db_path=Path('storage/ludus.db')); "
+            . "sccs = bp.build_graph(session_id='" . addslashes($sessionId) . "'); "
+            . "bp.close(); "
+            . "print(json.dumps({'ok': True, 'sccs': sccs}, ensure_ascii=False))";
+    $cmd = sprintf(
+        'cd %s && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null &',
+        $crawlerDir,
+        escapeshellarg($script),
+        escapeshellarg($resultFile),
+    );
+    exec($cmd);
+    header('Content-Type: application/json');
+    echo json_encode(['started' => true]);
     exit;
 }
 

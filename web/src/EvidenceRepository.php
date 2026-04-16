@@ -527,6 +527,35 @@ class EvidenceRepository
         return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
     }
 
+    public function getBgPendingSessions(): array
+    {
+        // バックグラウンド未完了: 完了済みだが Gemini OCR 未処理の代表画面がある
+        // (running セッションは除外、それは進行中で扱う)
+        $sql = <<<SQL
+            SELECT s.session_id, s.started_at, s.completion_type,
+                   COALESCE(s.game_title, 'Unknown Game') AS game_title,
+                   (SELECT COUNT(*) FROM lc_screens WHERE session_id = s.session_id) AS actual_screens,
+                   (SELECT COUNT(*) FROM lc_screens
+                      WHERE session_id = s.session_id
+                        AND is_representative = 1
+                        AND ocr_text_gemini IS NULL) AS pending_gemini,
+                   (SELECT COUNT(*) FROM lc_screens
+                      WHERE session_id = s.session_id
+                        AND cluster_id IS NULL
+                        AND phash IS NOT NULL AND phash != '') AS pending_dedup
+            FROM lc_sessions s
+            WHERE s.status = 'completed'
+              AND EXISTS (
+                SELECT 1 FROM lc_screens
+                WHERE session_id = s.session_id
+                  AND is_representative = 1
+                  AND ocr_text_gemini IS NULL
+              )
+            ORDER BY s.started_at DESC
+        SQL;
+        return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
     public function toggleExclude(string $masterFp): array
     {
         $row = $this->db->prepare(
