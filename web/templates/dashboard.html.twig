@@ -652,7 +652,7 @@
                         </div>
                         <div class="flex items-center gap-2">
                             ${hasScreens ? `<button class="build-graph-btn px-3 py-1 bg-violet-900/50 hover:bg-violet-800/60 text-violet-300 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}">グラフ構築</button>` : ''}
+                                    data-session-id="${escapeHtml(s.session_id)}" title="セッショングラフを構築">構築</button>` : ''}
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">削除</button>
                         </div>
