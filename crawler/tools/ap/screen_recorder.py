@@ -140,12 +140,18 @@ class ScreenRecorder:
         self._conn.executescript(_SCHEMA)
         self._migrate()
 
-        # セッション登録
+        # セッション登録 (新規) または継続再開時の status 更新
         self._conn.execute(
             "INSERT OR IGNORE INTO lc_sessions"
             " (session_id, screens_found, started_at, status, game_title)"
             " VALUES (?, 0, ?, 'running', ?)",
             (self._session_id, datetime.now().isoformat(), self._game_title),
+        )
+        # 継続再開時は status を 'running' に戻し、completion_type をクリア
+        self._conn.execute(
+            "UPDATE lc_sessions SET status = 'running', completion_type = NULL"
+            " WHERE session_id = ?",
+            (self._session_id,),
         )
         self._conn.commit()
 
