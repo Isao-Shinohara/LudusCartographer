@@ -579,7 +579,7 @@
             const running = data.running || [];
             // completion_type バッジ (NULL は表示しない)
             const completionBadge = (ct) => {
-                if (ct === 'goal_reached') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-emerald-900/50 text-emerald-300" title="目的達成（ホーム到達/周回完了）">✓ 完走</span>';
+                if (ct === 'goal_reached') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-emerald-900/50 text-emerald-300" title="目的達成（ホーム到達/周回完了）">完走</span>';
                 if (ct === 'manual_stop') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-yellow-900/50 text-yellow-300" title="手動停止（Ctrl+C等）">⏸ 途中停止</span>';
                 if (ct === 'orphaned') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-red-900/50 text-red-300" title="プロセス異常終了">✕ 異常終了</span>';
                 return '';
@@ -600,7 +600,7 @@
                         </div>
                         <div class="flex items-center gap-3">
                             <button class="unmerge-btn px-3 py-1 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" title="マージを解除して未マージ状態に戻す">↶ Undo</button>
+                                    data-session-id="${escapeHtml(s.session_id)}" title="マージを解除して未マージ状態に戻す">Undo</button>
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.mapped_nodes}">削除</button>
                         </div>
