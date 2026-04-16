@@ -3874,7 +3874,8 @@ def main():
         _sys_dialog = any("応答していません" in t for t in texts)
         if _sys_dialog:
             # 実機ポートレート座標: 画面中央 x=540, 「待機」は画面高さの約 1/3 付近
-            _dev_w, _dev_h = _ap_device.DEVICE_W, _ap_device.DEVICE_H
+            _dev_w = state.device_w or 1080
+            _dev_h = state.device_h or 2160
             _wait_x = min(_dev_w, _dev_h) // 2  # ポートレート幅の中央
             _wait_y = int(max(_dev_w, _dev_h) * 0.32)  # 「待機」の位置
             logger.info("[SYS_DIALOG] 「応答していません」→ 待機タップ (実機座標 %d,%d)", _wait_x, _wait_y)
