@@ -459,6 +459,57 @@ class ScreenRecorder:
         finally:
             self._conn.close()
 
+    def start_new_session(self, new_session_id: str) -> None:
+        """周回完了等で現在のセッションを完了し、新セッションに切り替える。
+
+        DB 接続は維持したまま、前セッションを 'completed' にし、
+        新しい session_id でレコードを追加する。
+        """
+        # 前セッション完了処理
+        try:
+            if self._pending_transition is not None:
+                self._insert_transition(self._pending_transition)
+                self._pending_transition = None
+            self._conn.execute(
+                "UPDATE lc_sessions SET status = 'completed',"
+                " screens_found = ? WHERE session_id = ?",
+                (self._recorded_count, self._session_id),
+            )
+            self._conn.commit()
+        except Exception as e:
+            logger.warning("[ScreenRecorder] 前セッション完了エラー: %s", e)
+
+        prev_session = self._session_id
+
+        # 新セッションに切替
+        self._session_id = new_session_id
+        self._storage_dir = self._storage_dir.parent / new_session_id
+        self._storage_dir.mkdir(parents=True, exist_ok=True)
+
+        # 新セッション登録
+        self._conn.execute(
+            "INSERT OR IGNORE INTO lc_sessions"
+            " (session_id, screens_found, started_at, status, game_title)"
+            " VALUES (?, 0, ?, 'running', ?)",
+            (self._session_id, datetime.now().isoformat(), self._game_title),
+        )
+        self._conn.commit()
+
+        # 状態リセット
+        self._recorded_count = 0
+        self._last_recorded_fp = None
+        self._last_recorded_phash = ""
+        self._last_inserted_id = None
+        self._last_record_time = 0.0
+        self._last_tap_time = 0.0
+        self._startup_last_phash = ""
+        self._startup_last_brightness = 0.0
+
+        logger.info(
+            "[ScreenRecorder] 新セッション開始: %s → %s (storage=%s)",
+            prev_session, new_session_id, self._storage_dir,
+        )
+
     # ─── マイグレーション ──────────────────────────────
 
     def _migrate(self) -> None:

@@ -3985,11 +3985,14 @@ def main():
             state.reset_for_new_cycle()
             reset_device_cache()
             clear_imread_cache()
-            # 新規周回 → 起動シーン記録モード ON
+            # 新規周回 → 新セッション開始 + 起動シーン記録モード ON
             if recorder is not None:
+                _new_session = f"ap_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                recorder.start_new_session(_new_session)
+                # bg_worker は全セッション横断で処理させる
+                if bg_worker is not None:
+                    bg_worker._session_id = None
                 state.startup_phase = True
-                recorder._startup_last_phash = ""
-                recorder._startup_last_brightness = 0.0
             logger.info("[GRIND] 状態リセット完了 → 周回 #%d 開始",
                         state.grind_cycles_completed + 1)
         # 副作用アクション以外なら代替候補を収集
