@@ -204,12 +204,14 @@ if ($action === 'get_pending_merges') {
     if ($useDb && $repository instanceof EvidenceRepository) {
         $pending = $repository->getPendingMerges();
         $merged = $repository->getMergedSessions();
+        $empty = $repository->getEmptySessions();
     } else {
         $pending = [];
         $merged = [];
+        $empty = [];
     }
     echo json_encode(
-        ['pending' => $pending, 'merged' => $merged],
+        ['pending' => $pending, 'merged' => $merged, 'empty' => $empty],
         JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
     );
     exit;

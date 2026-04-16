@@ -572,6 +572,7 @@
             const data = await res.json();
             const pending = data.pending || [];
             const merged = data.merged || [];
+            const empty = data.empty || [];
             let html = '<div class="space-y-6">';
             // 未マージセッション
             html += '<div><h3 class="text-lg font-bold text-brand-light mb-3">未マージセッション</h3>';
@@ -621,6 +622,26 @@
                 html += '</div>';
             }
             html += '</div>';
+            // 空セッション (画面記録なし or グラフ未構築)
+            if (empty.length > 0) {
+                html += '<div><h3 class="text-lg font-bold text-amber-400 mb-3">⚠ 空セッション</h3>';
+                html += '<p class="text-xs text-gray-500 mb-2">画面記録がない / セッショングラフ未構築のためマージ対象外。削除のみ可能。</p>';
+                html += '<div class="space-y-2">';
+                for (const s of empty) {
+                    html += `<div class="bg-gray-900/50 border border-amber-900/30 rounded-lg p-3 flex items-center justify-between">
+                        <div>
+                            <span class="text-sm font-mono text-amber-300">⚠ ${escapeHtml(s.session_id)}</span>
+                            <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
+                            <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.started_at || '')}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">削除</button>
+                        </div>
+                    </div>`;
+                }
+                html += '</div></div>';
+            }
             // OCR 修正ルール (Phase 2)
             html += '<div><h3 class="text-lg font-bold text-gray-400 mb-3">OCR 修正ルール</h3>';
             html += '<div id="correction-rules-area" class="text-sm text-gray-500">確認中...</div>';

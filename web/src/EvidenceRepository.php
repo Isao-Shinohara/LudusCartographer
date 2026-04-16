@@ -465,6 +465,23 @@ class EvidenceRepository
         return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
     }
 
+    public function getEmptySessions(): array
+    {
+        // 完了済みだが session_graph がないセッション（画面記録なし or グラフ未構築）
+        $sql = <<<SQL
+            SELECT s.session_id, s.started_at, s.screens_found, s.status,
+                   COALESCE(s.game_title, 'Unknown Game') AS game_title,
+                   (SELECT COUNT(*) FROM lc_screens WHERE session_id = s.session_id) AS actual_screens
+            FROM lc_sessions s
+            WHERE s.status = 'completed'
+              AND NOT EXISTS (
+                SELECT 1 FROM lc_session_graphs sg WHERE sg.session_id = s.session_id
+              )
+            ORDER BY s.started_at DESC
+        SQL;
+        return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
     public function toggleExclude(string $masterFp): array
     {
         $row = $this->db->prepare(
