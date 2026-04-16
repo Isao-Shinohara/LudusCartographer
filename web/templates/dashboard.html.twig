@@ -634,9 +634,9 @@
                 html += '</div>';
             }
             html += '</div>';
-            // 未処理セッション (画面記録なし or セッショングラフ未構築)
+            // グラフ未構築セッション (画面記録なし or セッショングラフ未構築)
             if (empty.length > 0) {
-                html += '<div><h3 class="text-lg font-bold text-amber-400 mb-3">⚠ 未処理セッション</h3>';
+                html += '<div><h3 class="text-lg font-bold text-amber-400 mb-3">⚠ グラフ未構築セッション</h3>';
                 html += '<p class="text-xs text-gray-500 mb-2">セッショングラフ未構築のためマージ対象外。画面ありなら「グラフ構築」で復活、なしなら削除のみ可能。</p>';
                 html += '<div class="space-y-2">';
                 for (const s of empty) {
