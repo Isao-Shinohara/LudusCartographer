@@ -250,8 +250,9 @@ if ($action === 'build_session_graph') {
     $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
     $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
+    // stderr は捨てて stdout (JSON) のみ結果ファイルに出力
     $cmd = sprintf(
-        'cd %s && ./venv/bin/python -c %s > %s 2>&1 &',
+        'cd %s && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null &',
         $crawlerDir,
         escapeshellarg(
             "import json; from pathlib import Path; from tools.batch_processor import BatchProcessor; "
@@ -279,7 +280,7 @@ if ($action === 'preview_merge') {
     $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
     $cmd = sprintf(
-        'cd %s && ./venv/bin/python -c %s > %s 2>&1 &',
+        'cd %s && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null &',
         $crawlerDir,
         escapeshellarg(
             "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
@@ -306,7 +307,7 @@ if ($action === 'execute_merge') {
     $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
     $cmd = sprintf(
-        'cd %s && ./venv/bin/python -c %s > %s 2>&1 &',
+        'cd %s && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null &',
         $crawlerDir,
         escapeshellarg(
             "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
