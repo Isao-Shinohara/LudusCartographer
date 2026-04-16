@@ -840,7 +840,7 @@
         showConfirmDialog(html, async function() {
             hideConfirmDialog();
             await executeDeleteSession(sessionId);
-        });
+        }, { okLabel: '削除', danger: true });
     }
 
     async function executeDeleteSession(sessionId) {
@@ -905,7 +905,7 @@
                 const result = await r.json();
                 if (result.ok) await fetchMergeTab();
             } catch (e) {}
-        });
+        }, { okLabel: '削除', danger: true });
     }
 
     // --- 修正ルール (Phase 2) ---
@@ -1282,7 +1282,7 @@
     }
 
     // 確認ダイアログの OK ハンドラを設定するユーティリティ
-    function showConfirmDialog(bodyHtml, onOk) {
+    function showConfirmDialog(bodyHtml, onOk, opts = {}) {
         document.getElementById('confirm-body').innerHTML = bodyHtml;
         const popup = document.getElementById('confirm-popup');
         const okBtn = document.getElementById('confirm-ok');
@@ -1291,6 +1291,16 @@
         if (prev) okBtn.removeEventListener('click', prev);
         okBtn._currentHandler = onOk;
         okBtn.addEventListener('click', onOk);
+        // OK ラベル + 色のカスタマイズ
+        okBtn.textContent = opts.okLabel || '更新';
+        // ボタン色をリセットして再適用
+        okBtn.classList.remove('bg-green-700', 'hover:bg-green-600',
+                               'bg-red-700', 'hover:bg-red-600');
+        if (opts.danger) {
+            okBtn.classList.add('bg-red-700', 'hover:bg-red-600');
+        } else {
+            okBtn.classList.add('bg-green-700', 'hover:bg-green-600');
+        }
         popup.classList.remove('hidden');
         popup.classList.add('flex');
         // スクロール有無でフェード切替
