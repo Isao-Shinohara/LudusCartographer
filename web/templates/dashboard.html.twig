@@ -600,7 +600,7 @@
                         </div>
                         <div class="flex items-center gap-3">
                             <button class="unmerge-btn px-3 py-1 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}">未マージ</button>
+                                    data-session-id="${escapeHtml(s.session_id)}" title="マージを解除して未マージ状態に戻す">↶ Undo</button>
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.mapped_nodes}">削除</button>
                         </div>
