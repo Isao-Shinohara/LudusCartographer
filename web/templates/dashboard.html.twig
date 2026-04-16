@@ -691,8 +691,8 @@
                             <span class="text-sm font-mono text-slate-300">▷ ${escapeHtml(s.session_id)}</span>
                             ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
-                            ${s.pending_gemini > 0 ? `<span class="text-xs text-amber-500 ml-2">Gemini 未処理 ${s.pending_gemini} 件</span>` : ''}
-                            ${s.pending_dedup > 0 ? `<span class="text-xs text-emerald-500 ml-2">間引き残 ${s.pending_dedup} 件</span>` : ''}
+                            ${s.pending_gemini > 0 ? `<span class="text-xs text-amber-500 ml-2">OCR ${s.pending_gemini} 件</span>` : ''}
+                            ${s.pending_dedup > 0 ? `<span class="text-xs text-emerald-500 ml-2">間引き ${s.pending_dedup} 件</span>` : ''}
                             ${noGraphBadge}
                         </div>
                         <div class="flex items-center gap-2">
