@@ -995,65 +995,104 @@ class BackgroundWorker:
             conn.close()
 
     def _reclustering_after_gemini(self, conn) -> None:
-        """Gemini 補正後の再クラスタリング。
+        """Gemini 補正後の再クラスタリング (ハイブリッド)。
 
-        統合条件: 同シーン + phash 距離 < 20 + テキスト前方一致。
-        セリフの拾い切り違い (はっ、はっ vs はっ、はっ、はっ…) も統合する。
+        Step 1: phash 距離 < 30 で候補絞り込み (緩い閾値、ドリフト OK)
+        Step 2: アンカー + 候補 を Gemini に送信、同一画面か判定させる
+        Step 3: Gemini が「同じ」と言ったクラスタのみ統合
         """
         try:
             from lc.utils import phash_distance
+            from tools.ap.ocr_correction import (
+                gemini_judge_identical, _init_gemini_client, _GEMINI_RATE_LIMIT,
+            )
+            import time as _time
+
+            client = _init_gemini_client()
+            if client is None:
+                return  # API キーなしならスキップ
+
             sid_filter = ""
             sid_params: tuple = ()
             if self._session_id:
                 sid_filter = " AND session_id = ?"
                 sid_params = (self._session_id,)
 
-            # 代表画面でテキストありを取得
+            # 代表画面 (Gemini 補正済み + phash あり)
             rows = conn.execute(
-                "SELECT id, cluster_id, scene, phash, ocr_text_gemini"
+                "SELECT id, cluster_id, scene, phash, screenshot_path, ocr_text_gemini"
                 " FROM lc_screens"
                 " WHERE is_representative = 1"
-                " AND ocr_text_gemini IS NOT NULL AND ocr_text_gemini != ''"
+                " AND ocr_text_gemini IS NOT NULL"
                 " AND phash IS NOT NULL AND phash != ''"
+                " AND screenshot_path != ''"
                 + sid_filter +
                 " ORDER BY cluster_id",
                 sid_params,
             ).fetchall()
-
-            # 全ペアで判定 (代表画面は通常少ないので O(N^2) で OK)
-            merges: list[tuple[int, int]] = []  # (target_cluster, source_cluster)
-            merged_clusters: set[int] = set()
             items = [dict(r) for r in rows]
-            for i, a in enumerate(items):
-                if a["cluster_id"] in merged_clusters:
+
+            merges: list[tuple[int, int]] = []
+            merged_clusters: set[int] = set()
+            judged_count = 0
+            MAX_JUDGEMENTS_PER_RUN = 10  # 1回の起動で Gemini 判定する最大アンカー数
+
+            for i, anchor in enumerate(items):
+                if anchor["cluster_id"] in merged_clusters:
                     continue
-                text_a = _normalize_text(a["ocr_text_gemini"])
-                if not text_a:
-                    continue
-                for b in items[i+1:]:
-                    if b["cluster_id"] in merged_clusters:
+                if judged_count >= MAX_JUDGEMENTS_PER_RUN:
+                    break
+
+                # Step 1: phash で候補絞り込み (同シーン + 距離 < 30)
+                candidates = []
+                for j, other in enumerate(items):
+                    if j == i:
                         continue
-                    if a["scene"] != b["scene"]:
+                    if other["cluster_id"] in merged_clusters:
                         continue
-                    if a["cluster_id"] == b["cluster_id"]:
+                    if other["cluster_id"] == anchor["cluster_id"]:
                         continue
-                    # phash 距離 < 20
+                    if anchor["scene"] != other["scene"]:
+                        continue
                     try:
-                        if phash_distance(a["phash"], b["phash"]) >= 20:
-                            continue
+                        d = phash_distance(anchor["phash"], other["phash"])
+                        if d < 30:
+                            candidates.append((d, j, other))
                     except Exception:
                         continue
-                    # テキスト前方一致 (どちらかが他方の prefix)
-                    text_b = _normalize_text(b["ocr_text_gemini"])
-                    if not text_b:
-                        continue
-                    if not (text_a.startswith(text_b) or text_b.startswith(text_a)):
-                        continue
-                    # 統合: a を target、b を source
-                    merges.append((a["cluster_id"], b["cluster_id"]))
-                    merged_clusters.add(b["cluster_id"])
+
+                if not candidates:
+                    continue
+
+                # 距離が近い順に上位 5 候補に絞る
+                candidates.sort(key=lambda x: x[0])
+                candidates = candidates[:5]
+
+                # Step 2: Gemini に同一判定を依頼
+                cand_paths = [c[2]["screenshot_path"] for c in candidates]
+                identical_pos = gemini_judge_identical(
+                    anchor["screenshot_path"], cand_paths, client=client
+                )
+                judged_count += 1
+                _time.sleep(_GEMINI_RATE_LIMIT)
+
+                if identical_pos is None:
+                    continue  # API エラー
+                if not identical_pos:
+                    continue  # 同一なし
+
+                # Step 3: 同一と判定された候補を anchor のクラスタに統合
+                for pos in identical_pos:
+                    if 0 <= pos < len(candidates):
+                        target_cluster = anchor["cluster_id"]
+                        source_cluster = candidates[pos][2]["cluster_id"]
+                        if target_cluster != source_cluster:
+                            merges.append((target_cluster, source_cluster))
+                            merged_clusters.add(source_cluster)
 
             if not merges:
+                if judged_count > 0:
+                    logger.info("[BG_WORKER] gemini grouping: %d 件判定、統合なし", judged_count)
                 return
 
             # クラスタ統合

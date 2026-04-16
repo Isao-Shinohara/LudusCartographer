@@ -448,6 +448,110 @@ def gemini_correct_multi(
         return None
 
 
+_GROUPING_PROMPT = '''最初の画像（画像 1）はアンカー画面です。
+残りの画像（画像 2〜）のうち、アンカーと「同じゲーム画面」のものを選んでください。
+
+## 「同じ画面」の判定基準
+- 動画の連続フレーム（背景の動きはOK、内容が同じ場面）
+- カーソル位置・選択ハイライトの違いはOK
+- 同じダイアログ（ボタン押下前後の微差はOK）
+
+## 「別の画面」とすべきもの
+- 別のメニュー / 別のシーン
+- 異なる選択肢を表示しているダイアログ
+- 内容が大きく異なる動画シーン
+
+## 出力形式（JSONのみ）
+{
+  "identical_indices": [2, 4]
+}
+
+identical_indices にはアンカーと同じ画面のインデックス（2始まり）のリストを返す。
+1つもなければ空配列。'''
+
+
+def gemini_judge_identical(
+    anchor_path: str,
+    candidate_paths: list[str],
+    client=None,
+) -> Optional[list[int]]:
+    """anchor + candidates を送信し、anchor と同じ画面の candidate index を返す。
+
+    Args:
+        anchor_path: アンカー画像
+        candidate_paths: 候補画像のリスト (順番が重要、Gemini が 2始まりで返す)
+        client: Gemini クライアント
+
+    Returns:
+        anchor と同じ画面の candidate のインデックス (0始まりに変換済み) または None (エラー)
+    """
+    if not candidate_paths:
+        return []
+    if client is None:
+        client = _init_gemini_client()
+    if client is None:
+        return None
+
+    from google import genai as _genai
+
+    try:
+        contents: list = []
+        # anchor を最初に
+        anchor = Path(anchor_path)
+        if not anchor.exists():
+            return None
+        with open(anchor, "rb") as f:
+            contents.append(_genai.types.Part.from_bytes(
+                data=f.read(),
+                mime_type="image/webp" if anchor.suffix == ".webp" else "image/png",
+            ))
+        # candidates
+        valid_indices = []  # gemini index (2始まり) → 元のリスト index (0始まり)
+        for i, cp in enumerate(candidate_paths):
+            p = Path(cp)
+            if not p.exists():
+                continue
+            with open(p, "rb") as f:
+                contents.append(_genai.types.Part.from_bytes(
+                    data=f.read(),
+                    mime_type="image/webp" if p.suffix == ".webp" else "image/png",
+                ))
+            valid_indices.append(i)
+
+        if not valid_indices:
+            return []
+
+        contents.append(_GROUPING_PROMPT)
+
+        response = client.models.generate_content(
+            model=_GEMINI_MODEL,
+            contents=contents,
+        )
+
+        text = response.text.strip()
+        if text.startswith("```"):
+            text = re.sub(r'^```\w*\n?', '', text)
+            text = re.sub(r'\n?```$', '', text)
+
+        result = json.loads(text)
+        gemini_indices = result.get("identical_indices", [])
+        # gemini index (2始まり、anchorが1) → valid_indices 経由で元の0始まりに変換
+        original_indices = []
+        for gi in gemini_indices:
+            # gi は 2 = 候補1番目, 3 = 候補2番目, ...
+            cand_pos = gi - 2  # 0始まり
+            if 0 <= cand_pos < len(valid_indices):
+                original_indices.append(valid_indices[cand_pos])
+        return original_indices
+
+    except json.JSONDecodeError as e:
+        logger.warning("[GEMINI] グルーピング JSON パース失敗: %s", e)
+        return None
+    except Exception as e:
+        logger.warning("[GEMINI] グルーピング API エラー: %s", e)
+        return None
+
+
 def _stage3_gemini_batch(texts: list[dict[int, str]]) -> dict[int, str]:
     """段階3: Gemini Flash でテキストのみバッチ修正（画像なし、フォールバック用）。"""
     api_key = os.environ.get("GEMINI_API_KEY", "")
