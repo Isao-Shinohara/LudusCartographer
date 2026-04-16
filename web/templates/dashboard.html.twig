@@ -1007,12 +1007,31 @@
             area.innerHTML = '';
             return;
         }
-        area.innerHTML = sources.map(src =>
-            `<div class="flex items-start gap-2">
+        area.innerHTML = sources.map((src, i) =>
+            `<div class="flex items-start gap-2 cursor-pointer hover:bg-gray-800/40 rounded px-1 py-0.5 transition-colors ocr-source-row" data-text-idx="${i}" title="クリックでコピー">
                 <span class="px-1.5 py-0.5 rounded text-[10px] font-bold flex-shrink-0 ${src.color}">${src.label}</span>
-                <span class="text-gray-400 truncate" title="${escapeHtml(src.text)}">${escapeHtml(src.text.substring(0, 100))}</span>
+                <span class="text-gray-400 truncate flex-1">${escapeHtml(src.text.substring(0, 100))}</span>
+                <span class="text-[10px] text-gray-600 flex-shrink-0 copy-feedback" data-feedback-idx="${i}"></span>
             </div>`
         ).join('');
+        // クリックでコピー
+        area.querySelectorAll('.ocr-source-row').forEach(row => {
+            row.addEventListener('click', () => {
+                const idx = parseInt(row.dataset.textIdx, 10);
+                const text = sources[idx].text;
+                navigator.clipboard.writeText(text).then(() => {
+                    const fb = area.querySelector(`.copy-feedback[data-feedback-idx="${idx}"]`);
+                    if (fb) {
+                        fb.textContent = 'コピー済';
+                        fb.classList.add('text-emerald-400');
+                        setTimeout(() => {
+                            fb.textContent = '';
+                            fb.classList.remove('text-emerald-400');
+                        }, 1500);
+                    }
+                });
+            });
+        });
     }
 
     // 編集ボタン
