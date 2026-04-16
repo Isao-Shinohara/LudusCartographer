@@ -3963,6 +3963,10 @@ def main():
                 def _async_merge():
                     try:
                         bg_worker.wait_until_idle()
+                        # セッショングラフを即時構築 (Merge タブに表示するため)
+                        logger.info("[BG_WORKER] 周回 #%d → セッショングラフ構築",
+                                    _cycle_num)
+                        bg_worker._run_graph_build()
                         logger.info("[BG_WORKER] 周回 #%d → クロスセッションマージ実行",
                                     _cycle_num)
                         bg_worker._run_cross_session_merge()
