@@ -6,7 +6,7 @@
 <!-- ヘッダー+タブ (sticky) -->
 <div id="dashboard-sticky" class="sticky top-0 z-40 bg-gray-950 pb-2" style="margin: -2rem calc(-50vw + 50%) 0; padding: 1rem calc(50vw - 50%) 0;">
 <div class="flex items-center justify-between mb-2">
-    <h2 class="text-2xl font-bold text-brand-light">Dashboard</h2>
+    <h2 class="text-xl font-bold text-brand-light">Dashboard</h2>
 </div>
 
 <!-- タブ -->
@@ -43,7 +43,7 @@
     </select>
     <!-- Final 採用/不採用アクション (右詰) -->
     <div class="ml-auto flex items-center gap-2">
-        <div id="status" class="flex items-center gap-2">
+        <div id="status" class="flex items-center gap-2 cursor-pointer select-none" onclick="toggleAutoRefresh()" title="クリックで自動更新を切り替え">
             <span id="status-dot" class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
             <span id="status-text" class="text-xs text-gray-500">自動更新中</span>
         </div>
@@ -186,6 +186,7 @@
     let pendingChanges = {};  // Final タブ: master_fp → target user_excluded
     let selectedForGroup = new Set();  // Final タブ: 統合選択中の master_fp
     let geminiEnabled = false;  // GEMINI_API_KEY が設定されているか (API レスポンスで更新)
+    let autoRefreshPaused = false;  // 自動更新一時停止フラグ
     const filterSelect = document.getElementById('filter-select');
     const sessionSelect = document.getElementById('session-select');
     const sortToggle = document.getElementById('sort-toggle');
@@ -477,6 +478,26 @@
     }
 
 
+    // --- 自動更新トグル ---
+    window.toggleAutoRefresh = function() {
+        if (currentTab !== 'live') return;
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        if (autoRefreshPaused) {
+            autoRefreshPaused = false;
+            pollTimer = setInterval(pollLive, POLL_INTERVAL);
+            statusDot.classList.remove('bg-gray-500');
+            statusDot.classList.add('bg-green-500', 'animate-pulse');
+            statusText.textContent = '自動更新中';
+        } else {
+            autoRefreshPaused = true;
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+            statusDot.classList.remove('bg-green-500', 'animate-pulse');
+            statusDot.classList.add('bg-gray-500');
+            statusText.textContent = '自動更新停止';
+        }
+    };
+
     // --- Final タブ ---
     let showExcluded = false;
     async function fetchFinal() {
@@ -531,8 +552,11 @@
         selectedForGroup.clear();
         updateFinalActionBar();
         if (tab === 'live') {
+            autoRefreshPaused = false;
             finalActions.classList.add('hidden');
             statusDot.classList.remove('hidden');
+            statusDot.classList.remove('bg-gray-500');
+            statusDot.classList.add('bg-green-500', 'animate-pulse');
             statusText.textContent = '自動更新中';
             filterSelect.classList.remove('hidden');
             filterSelect.innerHTML = '<option value="reps">採用</option><option value="thinned">不採用</option><option value="pending">未処理</option><option value="all">すべて</option>';
@@ -637,10 +661,10 @@
                             <span class="text-xs text-gray-600 ml-3">${s.mapped_nodes} ノードマッピング済</span>
                         </div>
                         <div class="flex items-center gap-3">
-                            <button class="unmerge-btn px-3 py-1 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-xs rounded transition-colors"
+                            <button class="unmerge-btn px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" title="マージを解除して未マージ状態に戻す">Undo</button>
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.mapped_nodes}">削除</button>
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.mapped_nodes}">🗑︎</button>
                         </div>
                     </div>`;
                 }
@@ -648,7 +672,7 @@
             }
             html += '</div>';
             // 2. マージ待ち
-            html += '<div><h3 class="text-lg font-bold text-blue-400 mb-3">◷ マージ待ち</h3>';
+            html += '<div><h3 class="text-lg font-bold text-blue-400 mb-3">マージ待ち</h3>';
             if (pending.length === 0) {
                 html += '<p class="text-gray-500 text-sm">マージ待ちのセッションはありません</p>';
             } else {
@@ -665,7 +689,7 @@
                             <button class="merge-preview-btn px-3 py-1.5 bg-emerald-900/50 hover:bg-emerald-800/60 text-emerald-300 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" title="マージプレビュー → 実行">マージ</button>
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.node_count}">削除</button>
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.node_count}">🗑︎</button>
                         </div>
                     </div>`;
                 }
@@ -673,7 +697,7 @@
             }
             html += '</div>';
             // 3. バックグラウンド未完了 (古いセッションの後処理待ち)
-            html += '<div><h3 class="text-lg font-bold text-slate-400 mb-3">▷ バックグラウンド未完了</h3>';
+            html += '<div><h3 class="text-lg font-bold text-slate-400 mb-3">バックグラウンド未完了</h3>';
             if (bgPending.length === 0) {
                 html += '<p class="text-gray-600 text-sm">バックグラウンド処理が未完了のセッションはありません</p>';
             } else {
@@ -687,7 +711,7 @@
                         ? '<span class="text-xs text-amber-500 ml-2">グラフ未構築</span>' : '';
                     html += `<div class="bg-gray-900/50 border border-slate-700/40 rounded-lg p-3 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-slate-300">▷ ${escapeHtml(s.session_id)}</span>
+                            <span class="text-sm font-mono text-slate-300">${escapeHtml(s.session_id)}</span>
                             ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
                             ${s.pending_gemini > 0 ? `<span class="text-xs text-amber-500 ml-2">OCR ${s.pending_gemini} 件</span>` : ''}
@@ -698,7 +722,7 @@
                             ${canResume ? `<button class="bg-process-btn px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" title="後処理 (OCR + 間引き + グラフ構築) を再開">再開</button>` : ''}
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">削除</button>
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">🗑︎</button>
                         </div>
                     </div>`;
                 }
@@ -706,7 +730,7 @@
             }
             html += '</div>';
             // 4. 進行中セッション
-            html += '<div><h3 class="text-lg font-bold text-violet-400 mb-3">▶ 進行中セッション</h3>';
+            html += '<div><h3 class="text-lg font-bold text-violet-400 mb-3">進行中セッション</h3>';
             if (running.length === 0) {
                 html += '<p class="text-gray-600 text-sm">実行中のセッションはありません</p>';
             } else {
@@ -715,7 +739,7 @@
                 for (const s of running) {
                     html += `<div class="bg-gray-900/50 border border-violet-900/30 rounded-lg p-3 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-violet-300">▶ ${escapeHtml(s.session_id)}</span>
+                            <span class="text-sm font-mono text-violet-300">${escapeHtml(s.session_id)}</span>
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
                             <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.started_at || '')}</span>
                         </div>
@@ -728,7 +752,7 @@
             }
             html += '</div>';
             // 5. 遷移データなし
-            html += '<div><h3 class="text-lg font-bold text-gray-500 mb-3">♻ 遷移データなし</h3>';
+            html += '<div><h3 class="text-lg font-bold text-gray-500 mb-3">遷移データなし</h3>';
             if (noTransition.length === 0) {
                 html += '<p class="text-gray-600 text-sm">遷移データなしのセッションはありません</p>';
             } else {
@@ -737,14 +761,14 @@
                 for (const s of noTransition) {
                     html += `<div class="bg-gray-900/50 border border-gray-800/50 rounded-lg p-3 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-gray-400">♻ ${escapeHtml(s.session_id)}</span>
+                            <span class="text-sm font-mono text-gray-400">${escapeHtml(s.session_id)}</span>
                             ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件・遷移 0 件</span>
                             <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.started_at || '')}</span>
                         </div>
                         <div class="flex items-center gap-2">
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">削除</button>
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">🗑︎</button>
                         </div>
                     </div>`;
                 }
@@ -991,7 +1015,7 @@
                         <span class="text-gray-300">Final で除外済み＋セッション削除済みの画像が ${data.count} 件あります</span>
                         <p class="text-xs text-gray-500 mt-1">マスターノード・エッジ・画像ファイルを完全に削除できます</p>
                     </div>
-                    <button id="merge-cleanup-btn" class="px-3 py-1.5 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors">削除</button>
+                    <button id="merge-cleanup-btn" class="px-3 py-1.5 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors">🗑︎</button>
                 </div>`;
                 document.getElementById('merge-cleanup-btn').addEventListener('click', confirmCleanupExcluded);
             } else {
@@ -1051,7 +1075,7 @@
                         <button class="apply-rule-btn px-3 py-1 bg-emerald-900/50 hover:bg-emerald-800/60 text-emerald-300 text-xs rounded transition-colors"
                                 data-rule-id="${r.id}"
                                 data-master-fps='${JSON.stringify(c.matches.map(m => m.master_fp))}'>
-                            出現 ${c.count} 件
+                            ${c.count} 回
                         </button>
                     </div>
                 </div>`;
