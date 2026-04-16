@@ -290,7 +290,8 @@ class EvidenceRepository
 
         $sql = <<<SQL
             SELECT s.id, s.title, s.depth, s.screenshot_path, s.thumbnail_path,
-                   s.ocr_text, s.ocr_text_hq, s.discovered_at, s.session_id,
+                   s.ocr_text, s.ocr_text_hq, s.ocr_text_gemini,
+                   s.discovered_at, s.session_id,
                    s.fingerprint, s.scene,
                    s.is_representative, s.cluster_id,
                    COALESCE(sess.game_title, 'Unknown Game') AS game_title
@@ -367,7 +368,8 @@ class EvidenceRepository
 
         $sql = <<<SQL
             SELECT s.id, m.title, s.depth, s.screenshot_path, s.thumbnail_path,
-                   s.ocr_text, s.ocr_text_hq, m.last_seen_at AS discovered_at,
+                   s.ocr_text, s.ocr_text_hq, s.ocr_text_gemini,
+                   m.last_seen_at AS discovered_at,
                    s.session_id, m.master_fp AS fingerprint, m.scene,
                    COALESCE(sess.game_title, 'Unknown Game') AS game_title,
                    m.visit_count, m.bfs_depth,
@@ -399,7 +401,10 @@ class EvidenceRepository
             'category'        => $raw['scene'] ?? ('depth=' . $raw['depth']),
             'screenshot_path' => $raw['screenshot_path'],
             'thumbnail_path'  => $raw['thumbnail_path'] ?? null,
-            'ocr_text'        => $raw['ocr_text_hq'] ?? $raw['ocr_text'],
+            'ocr_text'        => $raw['ocr_text_gemini'] ?: ($raw['ocr_text_hq'] ?? $raw['ocr_text']),
+            'ocr_text_raw'    => $raw['ocr_text'] ?? '',
+            'ocr_text_hq'     => $raw['ocr_text_hq'] ?? null,
+            'ocr_text_gemini' => $raw['ocr_text_gemini'] ?? null,
             'visited_count'   => 1,
             'last_seen_at'    => $raw['discovered_at'],
             'game_name'       => $raw['game_title'] ?? $raw['session_id'],
@@ -410,6 +415,7 @@ class EvidenceRepository
             'is_representative' => (bool)($raw['is_representative'] ?? false),
             'cluster_id'      => $raw['cluster_id'] ?? null,
             'has_hq_ocr'      => ($raw['ocr_text_hq'] ?? null) !== null,
+            'has_gemini'      => !empty($raw['ocr_text_gemini'] ?? null),
             'user_excluded'   => (bool)($raw['user_excluded'] ?? false),
             'master_fp'       => $raw['master_fp'] ?? null,
             'manual_group_id' => $raw['manual_group_id'] ?? null,
@@ -482,7 +488,8 @@ class EvidenceRepository
         }
         $sql = <<<SQL
             SELECT s.id, m.title, s.depth, s.screenshot_path, s.thumbnail_path,
-                   s.ocr_text, s.ocr_text_hq, m.last_seen_at AS discovered_at,
+                   s.ocr_text, s.ocr_text_hq, s.ocr_text_gemini,
+                   m.last_seen_at AS discovered_at,
                    s.session_id, m.master_fp AS fingerprint, m.scene,
                    COALESCE(sess.game_title, 'Unknown Game') AS game_title,
                    m.visit_count, m.bfs_depth,

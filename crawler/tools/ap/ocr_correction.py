@@ -192,75 +192,140 @@ def _stage2_dictionary(text: str, dictionary: list[str] = _GAME_DICTIONARY) -> s
 
 # ─── 段階3: Gemini Flash ─────────────────────────────────
 
-_GEMINI_MODEL = "gemini-2.0-flash-lite"
-_GEMINI_RATE_LIMIT = 4.0
+_GEMINI_MODEL = "gemini-2.5-flash"
+_GEMINI_RATE_LIMIT = 4.0  # 無料枠 15 RPM → 4秒間隔で安全
+
+_GEMINI_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedra」のUI仕様と世界観に精通したデバッグエンジニアです。
+
+以下はゲーム画面のスクリーンショットとOCRで読み取ったテキストです。
+OCRテキストには誤読が含まれている可能性があります。
+
+画像を確認し、OCRテキストを正確に修正してください。
+
+## OCR生テキスト
+{ocr_text}
+
+## マスターリスト
+- キャラ名: 鹿目まどか、暁美ほむら、美樹さやか、巴マミ、佐倉杏子、由比鶴乃、七海やちよ、環いろは、秋野かえで、深月フェリシア、二葉さな、水波レナ、御園かりん、梓みふゆ、十咎ももこ、志筑仁美、キュゥべえ、早乙女和子
+- UI用語: パーティー、ホーム、ショップ、ガチャ、クエスト、バトル、スキル、通常攻撃、マギア、ドッペル、キオク、額縁、プレイヤー、推奨、報酬、限界突破、ATTACKER、BUFFER、DEFENDER、BREAK、SKIP、AUTO
+
+## 指示
+1. 画像に実際に表示されているテキストを正確に読み取る
+2. OCR生テキストとの差分を特定する
+3. 修正結果をJSON形式で返す
+
+## 出力形式（JSONのみ、他の説明不要）
+{{
+  "corrected_text": "修正後の全テキスト（画面上の主要テキストをスペース区切りで）",
+  "corrections": [
+    {{"before": "誤読テキスト", "after": "正しいテキスト", "reason": "理由"}}
+  ]
+}}
+
+修正が不要な場合はcorrectionsを空配列にしてください。'''
+
+
+def _init_gemini_client():
+    """Gemini クライアントを初期化（遅延ロード）。"""
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        return None
+    try:
+        from google import genai
+        return genai.Client(api_key=api_key)
+    except Exception as e:
+        logger.warning("[GEMINI] クライアント初期化失敗: %s", e)
+        return None
+
+
+def gemini_correct_single(
+    screenshot_path: str,
+    ocr_text: str,
+    client=None,
+) -> Optional[dict]:
+    """1枚の画像に対して Gemini で OCR 補正を実行。
+
+    Returns: {"corrected_text": str, "corrections": list} or None
+    """
+    if client is None:
+        client = _init_gemini_client()
+    if client is None:
+        return None
+
+    from google import genai as _genai
+
+    try:
+        img_path = Path(screenshot_path)
+        if not img_path.exists():
+            return None
+
+        with open(img_path, "rb") as f:
+            img_data = f.read()
+
+        mime = "image/webp" if img_path.suffix == ".webp" else "image/png"
+
+        response = client.models.generate_content(
+            model=_GEMINI_MODEL,
+            contents=[
+                _genai.types.Part.from_bytes(data=img_data, mime_type=mime),
+                _GEMINI_PROMPT.format(ocr_text=ocr_text),
+            ],
+        )
+
+        text = response.text.strip()
+        # ```json ... ``` を除去
+        if text.startswith("```"):
+            text = re.sub(r'^```\w*\n?', '', text)
+            text = re.sub(r'\n?```$', '', text)
+
+        result = json.loads(text)
+
+        # パターン学習
+        corrected = result.get("corrected_text", "")
+        if corrected and corrected != ocr_text:
+            for c in result.get("corrections", []):
+                if c.get("before") and c.get("after"):
+                    learn_from_correction(c["before"], c["after"])
+
+        return result
+
+    except json.JSONDecodeError as e:
+        logger.warning("[GEMINI] JSON パース失敗: %s", e)
+        return None
+    except Exception as e:
+        logger.warning("[GEMINI] API エラー: %s", e)
+        return None
 
 
 def _stage3_gemini_batch(texts: list[dict[int, str]]) -> dict[int, str]:
-    """段階3: Gemini Flash で OCR テキストをバッチ修正。"""
+    """段階3: Gemini Flash でテキストのみバッチ修正（画像なし、フォールバック用）。"""
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         return {}
 
-    try:
-        import urllib.request
-
-        items = []
-        for item in texts:
-            for sid, text in item.items():
-                items.append({"id": sid, "text": text})
-
-        prompt = f"""以下はゲーム「まどか★マギカ Magia Exedra」の画面から OCR で抽出したテキストです。
-OCR の誤認を修正してください。
-
-ルール:
-- 明らかな誤字のみ修正（意味が通る場合はそのまま）
-- キャラ名: 鹿目まどか、暁美ほむら、美樹さやか、巴マミ、佐倉杏子、由比鶴乃、七海やちよ、環いろは、志筑仁美、キュゥべえ、早乙女和子
-- ゴミ文字（「2ヨ」「臼」「米」「図」等の単独文字）は削除
-- 修正不要ならそのまま返す
-
-入力 (JSON 配列):
-{json.dumps(items, ensure_ascii=False)}
-
-出力 (JSON 配列、同じ id で修正後テキストを返す):
-"""
-
-        body = json.dumps({
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.1,
-                "responseMimeType": "application/json",
-            },
-        }).encode()
-
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent?key={api_key}"
-        req = urllib.request.Request(url, data=body, method="POST",
-                                     headers={"Content-Type": "application/json"})
-
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
-
-        text_resp = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-        corrected_items = json.loads(text_resp)
-
-        result_map = {}
-        if isinstance(corrected_items, list):
-            for item in corrected_items:
-                if isinstance(item, dict) and "id" in item and "text" in item:
-                    result_map[item["id"]] = item["text"]
-
-        # Gemini 修正結果からパターンを学習
-        for item_dict in texts:
-            for sid, orig_text in item_dict.items():
-                corrected = result_map.get(sid)
-                if corrected and corrected != orig_text:
-                    learn_from_correction(orig_text, corrected)
-
-        return result_map
-
-    except Exception as e:
-        logger.warning("[OCR_CORRECT] Gemini API エラー: %s", e)
+    client = _init_gemini_client()
+    if client is None:
         return {}
+
+    result_map = {}
+    for item_dict in texts:
+        for sid, text in item_dict.items():
+            try:
+                response = client.models.generate_content(
+                    model=_GEMINI_MODEL,
+                    contents=f"以下のOCRテキストの誤読を修正してください。"
+                             f"修正後のテキストのみ返してください。\n\n{text}",
+                )
+                corrected = response.text.strip()
+                if corrected:
+                    result_map[sid] = corrected
+                    if corrected != text:
+                        learn_from_correction(text, corrected)
+            except Exception as e:
+                logger.warning("[GEMINI] batch 修正失敗 id=%d: %s", sid, e)
+            time.sleep(_GEMINI_RATE_LIMIT)
+
+    return result_map
 
 
 # ─── パイプライン実行 ─────────────────────────────────────

@@ -173,6 +173,7 @@ class BatchProcessor:
             ("is_representative", "BOOLEAN DEFAULT 0"),
             ("cluster_id", "INTEGER"),
             ("ocr_text_hq", "TEXT"),
+            ("ocr_text_gemini", "TEXT"),
             ("bfs_depth", "INTEGER"),
             ("scc_id", "INTEGER"),
             ("scc_label", "TEXT"),

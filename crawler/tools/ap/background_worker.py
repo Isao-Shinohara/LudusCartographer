@@ -870,66 +870,70 @@ class BackgroundWorker:
     # ─── Gemini バッチ修正 ──────────────────────────────────
 
     def _run_gemini_batch_correction(self) -> None:
-        """Gemini Flash で代表画像のテキストをバッチ修正 (API キー未設定ならスキップ)。"""
+        """Gemini Flash で代表画像の OCR を画像付きで補正 (API キー未設定ならスキップ)。
+
+        ocr_text_gemini カラムに保存。ocr_text_hq は PaddleOCR 結果として保持。
+        """
         import os
+        import time as _time
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
             return
 
         conn = self._get_conn()
         try:
-            # gemini_corrected IS NULL かつ ocr_text_hq IS NOT NULL の代表画像
-            # gemini_corrected カラムがなければ追加
-            cols = {r[1] for r in conn.execute("PRAGMA table_info(lc_screens)")}
-            if "gemini_corrected" not in cols:
-                conn.execute("ALTER TABLE lc_screens ADD COLUMN gemini_corrected BOOLEAN DEFAULT 0")
-                conn.commit()
-
+            # ocr_text_gemini が NULL の代表画像のみ対象（HQ OCR 完了済み）
             rows = conn.execute(
-                "SELECT id, COALESCE(ocr_text_hq, ocr_text, '') AS ocr FROM lc_screens"
-                " WHERE is_representative = 1 AND ocr_text_hq IS NOT NULL"
-                " AND (gemini_corrected IS NULL OR gemini_corrected = 0)"
+                "SELECT id, screenshot_path,"
+                " COALESCE(ocr_text_hq, ocr_text, '') AS ocr"
+                " FROM lc_screens"
+                " WHERE is_representative = 1"
+                " AND ocr_text_hq IS NOT NULL"
+                " AND ocr_text_gemini IS NULL"
+                " AND screenshot_path != ''"
                 " AND LENGTH(COALESCE(ocr_text_hq, ocr_text, '')) > 5"
                 " ORDER BY discovered_at"
-                " LIMIT 20"
+                " LIMIT 5"
             ).fetchall()
 
             if not rows:
                 return
 
-            from tools.ap.ocr_correction import correct_batch_gemini
-            texts = [{r["id"]: r["ocr"]} for r in rows]
-            corrections = correct_batch_gemini(texts)
+            from tools.ap.ocr_correction import gemini_correct_single, _init_gemini_client
+            client = _init_gemini_client()
+            if client is None:
+                return
 
             updated = 0
             for row in rows:
                 sid = row["id"]
-                corrected = corrections.get(sid)
-                if corrected and corrected != row["ocr"]:
-                    # タイトルも更新
-                    import re
-                    _HAS_TEXT = re.compile(r'[\u3040-\u9fff\u30a0-\u30ffA-Za-z]')
-                    _PURE_NUM = re.compile(r'^[\d\s.:/%×+\-~]+$')
-                    words = [w.strip() for w in corrected.split()
-                             if w.strip() and _HAS_TEXT.search(w) and not _PURE_NUM.match(w.strip())]
-                    new_title = " / ".join(words[:3]) if words else None
-                    if new_title:
-                        conn.execute(
-                            "UPDATE lc_screens SET ocr_text_hq = ?, title = ?, gemini_corrected = 1 WHERE id = ?",
-                            (corrected, new_title, sid),
-                        )
-                    else:
-                        conn.execute(
-                            "UPDATE lc_screens SET ocr_text_hq = ?, gemini_corrected = 1 WHERE id = ?",
-                            (corrected, sid),
-                        )
-                    updated += 1
-                else:
+                path = row["screenshot_path"]
+                ocr = row["ocr"]
+                if not path or not Path(path).exists():
+                    # 画像なし → スキップマーク（空文字で）
                     conn.execute(
-                        "UPDATE lc_screens SET gemini_corrected = 1 WHERE id = ?", (sid,)
+                        "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?", (sid,)
                     )
+                    continue
 
-            conn.commit()
+                result = gemini_correct_single(path, ocr, client=client)
+                if result is None:
+                    # API エラー → 次回再試行のため更新しない
+                    break
+
+                corrected = result.get("corrected_text", "").strip()
+                # 結果がなくても空文字でマークしてスキップ防止
+                conn.execute(
+                    "UPDATE lc_screens SET ocr_text_gemini = ? WHERE id = ?",
+                    (corrected or "", sid),
+                )
+                if corrected and corrected != ocr:
+                    updated += 1
+
+                conn.commit()
+                # レート制限対策（4秒間隔 = 15RPM）
+                _time.sleep(4.0)
+
             if updated > 0:
                 logger.info("[BG_WORKER] gemini: %d/%d 件修正", updated, len(rows))
         finally:

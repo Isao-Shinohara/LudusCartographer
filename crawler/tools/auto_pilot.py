@@ -66,6 +66,15 @@ logger = logging.getLogger("auto_pilot")
 logging.getLogger("PIL").setLevel(logging.WARNING)
 logging.getLogger("PIL.PngImagePlugin").setLevel(logging.WARNING)
 
+# .env から GEMINI_API_KEY 等を読み込む
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).parent.parent / "config" / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path)
+except ImportError:
+    pass
+
 # ─── 永続化: SQLite (ludus.db) ──────────────────────────────
 _STATE_DB_PATH = Path(__file__).parent.parent / "storage" / "ludus.db"
 
