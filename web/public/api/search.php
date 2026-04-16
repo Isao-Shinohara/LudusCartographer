@@ -205,13 +205,15 @@ if ($action === 'get_pending_merges') {
         $pending = $repository->getPendingMerges();
         $merged = $repository->getMergedSessions();
         $empty = $repository->getEmptySessions();
+        $running = $repository->getRunningSessions();
     } else {
         $pending = [];
         $merged = [];
         $empty = [];
+        $running = [];
     }
     echo json_encode(
-        ['pending' => $pending, 'merged' => $merged, 'empty' => $empty],
+        ['pending' => $pending, 'merged' => $merged, 'empty' => $empty, 'running' => $running],
         JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
     );
     exit;

@@ -482,6 +482,20 @@ class EvidenceRepository
         return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
     }
 
+    public function getRunningSessions(): array
+    {
+        // 進行中セッション (status='running')
+        $sql = <<<SQL
+            SELECT s.session_id, s.started_at, s.screens_found, s.completion_type,
+                   COALESCE(s.game_title, 'Unknown Game') AS game_title,
+                   (SELECT COUNT(*) FROM lc_screens WHERE session_id = s.session_id) AS actual_screens
+            FROM lc_sessions s
+            WHERE s.status = 'running'
+            ORDER BY s.started_at DESC
+        SQL;
+        return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
     public function toggleExclude(string $masterFp): array
     {
         $row = $this->db->prepare(
