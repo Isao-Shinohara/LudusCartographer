@@ -673,25 +673,31 @@
                 html += '</div>';
             }
             html += '</div>';
-            // 3. グラフ未構築
-            html += '<div><h3 class="text-lg font-bold text-amber-500 mb-3">⚠ グラフ未構築</h3>';
-            if (empty.length === 0) {
-                html += '<p class="text-gray-600 text-sm">グラフ未構築のセッションはありません</p>';
+            // 3. バックグラウンド未完了 (古いセッションの後処理待ち)
+            html += '<div><h3 class="text-lg font-bold text-teal-400 mb-3">▷ バックグラウンド未完了</h3>';
+            if (bgPending.length === 0) {
+                html += '<p class="text-gray-600 text-sm">バックグラウンド処理が未完了のセッションはありません</p>';
             } else {
-                html += '<p class="text-xs text-gray-500 mb-2">セッショングラフ未構築のためマージ対象外。画面ありなら「グラフ構築」で復活、なしなら削除のみ可能。</p>';
+                html += '<p class="text-xs text-gray-500 mb-2">中断された後処理 (Gemini OCR / 間引き / グラフ構築) を「再開」で完了させる。画面なしは削除のみ可能。</p>';
                 html += '<div class="space-y-2">';
-                for (const s of empty) {
+                for (const s of bgPending) {
                     const hasScreens = s.actual_screens > 0;
-                    html += `<div class="bg-gray-900/50 border border-amber-900/30 rounded-lg p-3 flex items-center justify-between">
+                    const hasTransitions = (s.transitions || 0) > 0;
+                    const canResume = hasScreens && hasTransitions;
+                    const noGraphBadge = (s.has_graph || 0) === 0
+                        ? '<span class="text-xs text-amber-500 ml-2">グラフ未構築</span>' : '';
+                    html += `<div class="bg-gray-900/50 border border-teal-900/30 rounded-lg p-3 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-amber-300">⚠ ${escapeHtml(s.session_id)}</span>
+                            <span class="text-sm font-mono text-teal-300">▷ ${escapeHtml(s.session_id)}</span>
                             ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
-                            <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.started_at || '')}</span>
+                            ${s.pending_gemini > 0 ? `<span class="text-xs text-amber-500 ml-2">Gemini 未処理 ${s.pending_gemini} 件</span>` : ''}
+                            ${s.pending_dedup > 0 ? `<span class="text-xs text-blue-500 ml-2">間引き残 ${s.pending_dedup} 件</span>` : ''}
+                            ${noGraphBadge}
                         </div>
                         <div class="flex items-center gap-2">
-                            ${hasScreens ? `<button class="build-graph-btn px-3 py-1 bg-blue-900/50 hover:bg-blue-800/60 text-blue-300 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" title="セッショングラフを構築 → マージ待ちへ">構築</button>` : ''}
+                            ${canResume ? `<button class="bg-process-btn px-3 py-1 bg-teal-900/50 hover:bg-teal-800/60 text-teal-300 text-xs rounded transition-colors"
+                                    data-session-id="${escapeHtml(s.session_id)}" title="後処理 (OCR + 間引き + グラフ構築) を再開">再開</button>` : ''}
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">削除</button>
                         </div>
@@ -700,32 +706,7 @@
                 html += '</div>';
             }
             html += '</div>';
-            // 4. バックグラウンド未完了 (古いセッションの後処理待ち)
-            html += '<div><h3 class="text-lg font-bold text-teal-400 mb-3">▷ バックグラウンド未完了</h3>';
-            if (bgPending.length === 0) {
-                html += '<p class="text-gray-600 text-sm">バックグラウンド処理が未完了のセッションはありません</p>';
-            } else {
-                html += '<p class="text-xs text-gray-500 mb-2">中断された後処理 (Gemini OCR / 間引き / グラフ構築) を手動で完了させる。</p>';
-                html += '<div class="space-y-2">';
-                for (const s of bgPending) {
-                    html += `<div class="bg-gray-900/50 border border-teal-900/30 rounded-lg p-3 flex items-center justify-between">
-                        <div>
-                            <span class="text-sm font-mono text-teal-300">▷ ${escapeHtml(s.session_id)}</span>
-                            ${completionBadge(s.completion_type)}
-                            <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
-                            <span class="text-xs text-amber-500 ml-2">Gemini 未処理 ${s.pending_gemini} 件</span>
-                            ${s.pending_dedup > 0 ? `<span class="text-xs text-blue-500 ml-2">間引き残 ${s.pending_dedup} 件</span>` : ''}
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <button class="bg-process-btn px-3 py-1 bg-teal-900/50 hover:bg-teal-800/60 text-teal-300 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" title="後処理 (OCR + 間引き + グラフ構築) を再開">再開</button>
-                        </div>
-                    </div>`;
-                }
-                html += '</div>';
-            }
-            html += '</div>';
-            // 5. 進行中セッション
+            // 4. 進行中セッション
             html += '<div><h3 class="text-lg font-bold text-violet-400 mb-3">▶ 進行中セッション</h3>';
             if (running.length === 0) {
                 html += '<p class="text-gray-600 text-sm">実行中のセッションはありません</p>';

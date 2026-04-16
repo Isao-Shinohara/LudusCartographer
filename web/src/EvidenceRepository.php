@@ -535,8 +535,8 @@ class EvidenceRepository
 
     public function getBgPendingSessions(): array
     {
-        // バックグラウンド未完了: 完了済み + Gemini OCR 未処理あり
-        // ただし「最新セッション」は除外 (進行中扱いになる)
+        // バックグラウンド未完了: 完了済み + 後処理が未完了 (Gemini未処理 or グラフ未構築)
+        // ただし「最新セッション」は除外 (進行中扱い)、画面0件もここに含む (削除可)
         $sql = <<<SQL
             SELECT s.session_id, s.started_at, s.completion_type,
                    COALESCE(s.game_title, 'Unknown Game') AS game_title,
@@ -548,7 +548,10 @@ class EvidenceRepository
                    (SELECT COUNT(*) FROM lc_screens
                       WHERE session_id = s.session_id
                         AND cluster_id IS NULL
-                        AND phash IS NOT NULL AND phash != '') AS pending_dedup
+                        AND phash IS NOT NULL AND phash != '') AS pending_dedup,
+                   (SELECT COUNT(*) FROM lc_session_graphs WHERE session_id = s.session_id) AS has_graph,
+                   (SELECT COUNT(*) FROM lc_transitions
+                      WHERE session_id = s.session_id AND to_fp IS NOT NULL) AS transitions
             FROM lc_sessions s
             WHERE s.status = 'completed'
               AND s.session_id != (
@@ -556,11 +559,16 @@ class EvidenceRepository
                 WHERE status != 'archived'
                 ORDER BY started_at DESC LIMIT 1
               )
-              AND EXISTS (
-                SELECT 1 FROM lc_screens
-                WHERE session_id = s.session_id
-                  AND is_representative = 1
-                  AND ocr_text_gemini IS NULL
+              AND (
+                EXISTS (
+                  SELECT 1 FROM lc_screens
+                  WHERE session_id = s.session_id
+                    AND is_representative = 1
+                    AND ocr_text_gemini IS NULL
+                )
+                OR NOT EXISTS (
+                  SELECT 1 FROM lc_session_graphs sg WHERE sg.session_id = s.session_id
+                )
               )
             ORDER BY s.started_at DESC
         SQL;
