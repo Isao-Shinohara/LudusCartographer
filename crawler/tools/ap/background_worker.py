@@ -204,7 +204,7 @@ class BackgroundWorker:
                 last_dedup = time.time()
 
             # Gemini バッチ修正 (60秒間隔、OCR+間引き完了後)
-            if now - last_gemini >= 60.0:
+            if now - last_gemini >= 30.0:
                 try:
                     self._run_gemini_batch_correction()
                 except Exception as e:
@@ -893,7 +893,7 @@ class BackgroundWorker:
                 gemini_correct_multi,
             )
             # 1バッチ = _GEMINI_BATCH_SIZE 枚, 1回の起動で 4 バッチまで処理
-            fetch_limit = _GEMINI_BATCH_SIZE * 4
+            fetch_limit = _GEMINI_BATCH_SIZE * 6
             rows = conn.execute(
                 "SELECT id, screenshot_path,"
                 " COALESCE(ocr_text_hq, ocr_text, '') AS ocr"
@@ -1035,7 +1035,7 @@ class BackgroundWorker:
             merges: list[tuple[int, int]] = []
             merged_clusters: set[int] = set()
             judged_count = 0
-            MAX_JUDGEMENTS_PER_RUN = 10  # 1回の起動で Gemini 判定する最大アンカー数
+            MAX_JUDGEMENTS_PER_RUN = 20  # 1回の起動で Gemini 判定する最大アンカー数
 
             for i, anchor in enumerate(items):
                 if anchor["cluster_id"] in merged_clusters:

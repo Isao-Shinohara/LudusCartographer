@@ -231,8 +231,8 @@ def _stage2_dictionary(text: str, dictionary: list[str] = _GAME_DICTIONARY) -> s
 # ─── 段階3: Gemini Flash ─────────────────────────────────
 
 _GEMINI_MODEL = "gemini-2.5-flash"
-_GEMINI_RATE_LIMIT = 4.0  # 無料枠 15 RPM → 4秒間隔で安全
-_GEMINI_BATCH_SIZE = 3    # 1リクエストあたりの画像枚数（観察しながら調整）
+_GEMINI_RATE_LIMIT = 1.5  # 40 RPM (有料枠) → 1.5秒間隔で安全
+_GEMINI_BATCH_SIZE = 5    # 1リクエストあたりの画像枚数（観察しながら調整）
 
 _GEMINI_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedra」のUI仕様と世界観に精通したデバッグエンジニアです。
 
