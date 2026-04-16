@@ -97,6 +97,9 @@
     </div>
 </div>
 
+<!-- 通知トースト -->
+<div id="toast-container" class="fixed bottom-4 right-4 z-[80] space-y-2 pointer-events-none"></div>
+
 <!-- モーダル -->
 <div id="modal" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center p-4">
     <div class="flex items-center gap-3 max-w-4xl w-full">
@@ -631,12 +634,13 @@
                 html += '</div>';
             }
             html += '</div>';
-            // 空セッション (画面記録なし or グラフ未構築)
+            // 未処理セッション (画面記録なし or セッショングラフ未構築)
             if (empty.length > 0) {
-                html += '<div><h3 class="text-lg font-bold text-amber-400 mb-3">⚠ 空セッション</h3>';
-                html += '<p class="text-xs text-gray-500 mb-2">画面記録がない / セッショングラフ未構築のためマージ対象外。削除のみ可能。</p>';
+                html += '<div><h3 class="text-lg font-bold text-amber-400 mb-3">⚠ 未処理セッション</h3>';
+                html += '<p class="text-xs text-gray-500 mb-2">セッショングラフ未構築のためマージ対象外。画面ありなら「グラフ構築」で復活、なしなら削除のみ可能。</p>';
                 html += '<div class="space-y-2">';
                 for (const s of empty) {
+                    const hasScreens = s.actual_screens > 0;
                     html += `<div class="bg-gray-900/50 border border-amber-900/30 rounded-lg p-3 flex items-center justify-between">
                         <div>
                             <span class="text-sm font-mono text-amber-300">⚠ ${escapeHtml(s.session_id)}</span>
@@ -645,6 +649,8 @@
                             <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.started_at || '')}</span>
                         </div>
                         <div class="flex items-center gap-2">
+                            ${hasScreens ? `<button class="build-graph-btn px-3 py-1 bg-violet-900/50 hover:bg-violet-800/60 text-violet-300 text-xs rounded transition-colors"
+                                    data-session-id="${escapeHtml(s.session_id)}">グラフ構築</button>` : ''}
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">削除</button>
                         </div>
@@ -669,6 +675,10 @@
             // 削除ボタン
             mc.querySelectorAll('.delete-session-btn').forEach(btn => {
                 btn.addEventListener('click', () => confirmDeleteSession(btn.dataset.sessionId, btn.dataset.nodeCount));
+            });
+            // グラフ構築ボタン
+            mc.querySelectorAll('.build-graph-btn').forEach(btn => {
+                btn.addEventListener('click', () => buildSessionGraph(btn.dataset.sessionId));
             });
             // 未マージボタン: can_unmerge チェック → disabled 制御
             mc.querySelectorAll('.unmerge-btn').forEach(btn => {
@@ -971,6 +981,56 @@
             }
         } catch (e) {
             alert('適用失敗: ' + e.message);
+        }
+    }
+
+    // --- トースト通知 ---
+    function showToast(message, type = 'info') {
+        const container = document.getElementById('toast-container');
+        if (!container) return;
+        const colors = {
+            info:    'bg-gray-800 border-gray-600 text-gray-200',
+            success: 'bg-emerald-900 border-emerald-700 text-emerald-200',
+            error:   'bg-red-900 border-red-700 text-red-200',
+        };
+        const cls = colors[type] || colors.info;
+        const toast = document.createElement('div');
+        toast.className = `${cls} border rounded-lg px-4 py-2 shadow-lg pointer-events-auto text-sm transition-opacity opacity-0`;
+        toast.textContent = message;
+        container.appendChild(toast);
+        requestAnimationFrame(() => toast.classList.replace('opacity-0', 'opacity-100'));
+        setTimeout(() => {
+            toast.classList.replace('opacity-100', 'opacity-0');
+            setTimeout(() => toast.remove(), 300);
+        }, 4000);
+    }
+
+    // --- グラフ構築 (バックグラウンド) ---
+    async function buildSessionGraph(sessionId) {
+        showToast(`セッショングラフ構築中: ${sessionId}`, 'info');
+        try {
+            await fetch(API_BASE + '?action=build_session_graph&session_id=' + encodeURIComponent(sessionId));
+            // 完了をポーリング
+            const result = await new Promise((resolve) => {
+                const timer = setInterval(async () => {
+                    try {
+                        const r = await fetch(API_BASE + '?action=merge_progress');
+                        const d = await r.json();
+                        if (d.done) {
+                            clearInterval(timer);
+                            resolve(d.result);
+                        }
+                    } catch (e) {}
+                }, 1500);
+            });
+            if (result && result.ok) {
+                showToast(`グラフ構築完了: ${sessionId} (${result.sccs} SCC)`, 'success');
+                fetchMergeTab();
+            } else {
+                showToast(`グラフ構築失敗: ${result?.error || '不明'}`, 'error');
+            }
+        } catch (e) {
+            showToast(`グラフ構築エラー: ${e.message}`, 'error');
         }
     }
 

@@ -240,6 +240,34 @@ if ($action === 'merge_progress') {
     exit;
 }
 
+// --- build_session_graph アクション (バックグラウンド実行) ---
+if ($action === 'build_session_graph') {
+    $sessionId = $_GET['session_id'] ?? '';
+    if ($sessionId === '') {
+        echo json_encode(['error' => 'session_id required']);
+        exit;
+    }
+    $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
+    $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
+    @unlink($resultFile);
+    $cmd = sprintf(
+        'cd %s && ./venv/bin/python -c %s > %s 2>&1 &',
+        $crawlerDir,
+        escapeshellarg(
+            "import json; from pathlib import Path; from tools.batch_processor import BatchProcessor; "
+            . "bp = BatchProcessor(db_path=Path('storage/ludus.db')); "
+            . "sccs = bp.build_graph(session_id='" . addslashes($sessionId) . "'); "
+            . "bp.close(); "
+            . "print(json.dumps({'ok': True, 'sccs': sccs}, ensure_ascii=False))"
+        ),
+        escapeshellarg($resultFile),
+    );
+    exec($cmd);
+    header('Content-Type: application/json');
+    echo json_encode(['started' => true]);
+    exit;
+}
+
 // --- preview_merge アクション (バックグラウンド実行) ---
 if ($action === 'preview_merge') {
     $sessionId = $_GET['session_id'] ?? '';
