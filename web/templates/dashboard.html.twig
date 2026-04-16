@@ -1027,29 +1027,50 @@
 
     function renderOcrSources(s) {
         const area = document.getElementById('modal-ocr-sources');
+        // 初期・HQ・Gemini は常時表示 (高さ揃えのため)、手動は編集時のみ
         const sources = [];
-        if (s.ocr_text_manual) sources.push({label: '手動', color: 'bg-amber-900/40 text-amber-300', text: s.ocr_text_manual});
-        if (s.ocr_text_gemini) sources.push({label: 'Gemini', color: 'bg-violet-900/40 text-violet-300', text: s.ocr_text_gemini});
-        if (s.ocr_text_hq) sources.push({label: 'HQ', color: 'bg-sky-900/40 text-sky-300', text: s.ocr_text_hq});
-        if (s.ocr_text_raw) sources.push({label: '初期', color: 'bg-gray-700 text-gray-400', text: s.ocr_text_raw});
-        if (sources.length <= 1) {
-            area.innerHTML = '';
-            return;
+        if (s.ocr_text_manual !== undefined && s.ocr_text_manual !== null) {
+            sources.push({label: '手動', color: 'bg-amber-900/40 text-amber-300', value: s.ocr_text_manual});
         }
-        area.innerHTML = sources.map((src, i) =>
-            `<div class="group relative flex items-start gap-2 cursor-pointer hover:bg-gray-800/40 rounded px-1 py-0.5 transition-colors ocr-source-row" data-text-idx="${i}">
+        sources.push({label: 'Gemini', color: 'bg-violet-900/40 text-violet-300',
+                      value: s.ocr_text_gemini === undefined ? null : s.ocr_text_gemini});
+        sources.push({label: 'HQ', color: 'bg-sky-900/40 text-sky-300',
+                      value: s.ocr_text_hq === undefined ? null : s.ocr_text_hq});
+        sources.push({label: '初期', color: 'bg-gray-700 text-gray-400',
+                      value: s.ocr_text_raw === undefined ? null : s.ocr_text_raw});
+
+        area.innerHTML = sources.map((src, i) => {
+            // 表示テキスト & コピー対象の決定
+            let displayText, copyText, isPlaceholder;
+            if (src.value === null) {
+                displayText = '(未実行)';
+                copyText = '';
+                isPlaceholder = true;
+            } else if (src.value === '') {
+                displayText = '(なし)';
+                copyText = '';
+                isPlaceholder = true;
+            } else {
+                displayText = src.value.substring(0, 100);
+                copyText = src.value;
+                isPlaceholder = false;
+            }
+            const cursor = isPlaceholder ? '' : 'cursor-pointer hover:bg-gray-800/40';
+            const textCls = isPlaceholder ? 'text-gray-600 italic' : 'text-gray-400';
+            return `<div class="group relative flex items-start gap-2 ${cursor} rounded px-1 py-0.5 transition-colors ocr-source-row" data-text-idx="${i}">
                 <span class="px-1.5 py-0.5 rounded text-[10px] font-bold flex-shrink-0 ${src.color}">${src.label}</span>
-                <span class="text-gray-400 truncate flex-1">${escapeHtml(src.text.substring(0, 100))}</span>
+                <span class="${textCls} truncate flex-1">${escapeHtml(displayText)}</span>
                 <span class="text-[10px] text-gray-600 flex-shrink-0 copy-feedback" data-feedback-idx="${i}"></span>
-                <span class="hidden group-hover:block absolute right-2 -top-5 whitespace-nowrap bg-gray-900 text-gray-300 text-[10px] px-2 py-1 rounded shadow-lg border border-gray-700 z-10 copy-tooltip" data-tooltip-idx="${i}">クリップボードにコピー</span>
-            </div>`
-        ).join('');
-        // クリックでコピー
+                ${!isPlaceholder ? `<span class="hidden group-hover:block absolute right-2 -top-5 whitespace-nowrap bg-gray-900 text-gray-300 text-[10px] px-2 py-1 rounded shadow-lg border border-gray-700 z-10">クリップボードにコピー</span>` : ''}
+            </div>`;
+        }).join('');
+        // クリックでコピー (空 / 未実行は対象外)
         area.querySelectorAll('.ocr-source-row').forEach(row => {
+            const idx = parseInt(row.dataset.textIdx, 10);
+            const src = sources[idx];
+            if (src.value === null || src.value === '') return;
             row.addEventListener('click', () => {
-                const idx = parseInt(row.dataset.textIdx, 10);
-                const text = sources[idx].text;
-                navigator.clipboard.writeText(text).then(() => {
+                navigator.clipboard.writeText(src.value).then(() => {
                     const fb = area.querySelector(`.copy-feedback[data-feedback-idx="${idx}"]`);
                     if (fb) {
                         fb.textContent = 'コピーしました';
