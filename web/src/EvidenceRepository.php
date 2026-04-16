@@ -515,13 +515,19 @@ class EvidenceRepository
 
     public function getRunningSessions(): array
     {
-        // 進行中セッション (status='running')
+        // 進行中セッション: status='running' または「最新の non-archived セッション」
+        // (最新セッションは bg_worker が自動処理対象なので「進行中」扱い)
         $sql = <<<SQL
-            SELECT s.session_id, s.started_at, s.screens_found, s.completion_type,
+            SELECT s.session_id, s.started_at, s.screens_found, s.status, s.completion_type,
                    COALESCE(s.game_title, 'Unknown Game') AS game_title,
                    (SELECT COUNT(*) FROM lc_screens WHERE session_id = s.session_id) AS actual_screens
             FROM lc_sessions s
             WHERE s.status = 'running'
+               OR s.session_id = (
+                  SELECT session_id FROM lc_sessions
+                  WHERE status != 'archived'
+                  ORDER BY started_at DESC LIMIT 1
+               )
             ORDER BY s.started_at DESC
         SQL;
         return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
@@ -529,8 +535,8 @@ class EvidenceRepository
 
     public function getBgPendingSessions(): array
     {
-        // バックグラウンド未完了: 完了済みだが Gemini OCR 未処理の代表画面がある
-        // (running セッションは除外、それは進行中で扱う)
+        // バックグラウンド未完了: 完了済み + Gemini OCR 未処理あり
+        // ただし「最新セッション」は除外 (進行中扱いになる)
         $sql = <<<SQL
             SELECT s.session_id, s.started_at, s.completion_type,
                    COALESCE(s.game_title, 'Unknown Game') AS game_title,
@@ -545,6 +551,11 @@ class EvidenceRepository
                         AND phash IS NOT NULL AND phash != '') AS pending_dedup
             FROM lc_sessions s
             WHERE s.status = 'completed'
+              AND s.session_id != (
+                SELECT session_id FROM lc_sessions
+                WHERE status != 'archived'
+                ORDER BY started_at DESC LIMIT 1
+              )
               AND EXISTS (
                 SELECT 1 FROM lc_screens
                 WHERE session_id = s.session_id
