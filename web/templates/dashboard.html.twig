@@ -339,8 +339,7 @@
             sessionSelect.innerHTML = '<option value="">最新セッション</option>';
             const older = (data.sessions || []).slice(1); // 最新を除外
             for (const s of older) {
-                const label = s.session_dir.replace('ap_', '').replace(/_/g, ' ');
-                sessionSelect.innerHTML += `<option value="${escapeHtml(s.session_dir)}">${escapeHtml(label)}</option>`;
+                sessionSelect.innerHTML += `<option value="${escapeHtml(s.session_dir)}">${escapeHtml(s.session_dir)}</option>`;
             }
             // ドロップダウン再構築後に選択状態を復元
             sessionSelect.value = currentSessionId;
@@ -384,8 +383,7 @@
                 sessionSelect.innerHTML = '<option value="">最新セッション</option>';
                 const olderPoll = (sessData.sessions || []).slice(1);
                 for (const s of olderPoll) {
-                    const label = s.session_dir.replace('ap_', '').replace(/_/g, ' ');
-                    sessionSelect.innerHTML += `<option value="${escapeHtml(s.session_dir)}">${escapeHtml(label)}</option>`;
+                    sessionSelect.innerHTML += `<option value="${escapeHtml(s.session_dir)}">${escapeHtml(s.session_dir)}</option>`;
                 }
                 currentSessionId = '';
                 sessionSelect.value = '';
