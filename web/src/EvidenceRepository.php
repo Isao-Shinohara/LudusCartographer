@@ -403,7 +403,7 @@ class EvidenceRepository
             'category'        => $raw['scene'] ?? ('depth=' . $raw['depth']),
             'screenshot_path' => $raw['screenshot_path'],
             'thumbnail_path'  => $raw['thumbnail_path'] ?? null,
-            'ocr_text'        => $raw['ocr_text_manual'] ?: ($raw['ocr_text_gemini'] ?: ($raw['ocr_text_hq'] ?? $raw['ocr_text'])),
+            'ocr_text'        => ($raw['ocr_text_manual'] ?? null) ?: (($raw['ocr_text_gemini'] ?? null) ?: ($raw['ocr_text_hq'] ?? $raw['ocr_text'])),
             'ocr_text_raw'    => $raw['ocr_text'] ?? '',
             'ocr_text_hq'     => $raw['ocr_text_hq'] ?? null,
             'ocr_text_gemini' => $raw['ocr_text_gemini'] ?? null,
