@@ -23,6 +23,14 @@
             onclick="switchTab('merge')">
         Merge
     </button>
+    <button id="tab-rules" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300"
+            onclick="switchTab('rules')">
+        Rules
+    </button>
+    <button id="tab-cleanup" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300"
+            onclick="switchTab('cleanup')">
+        Cleanup
+    </button>
     <select id="filter-select" class="ml-3 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="reps" selected>採用</option>
         <option value="thinned">不採用</option>
@@ -566,6 +574,32 @@
             mergeContainer.classList.remove('hidden');
             syncUrlParams();
             fetchMergeTab();
+        } else if (tab === 'rules') {
+            finalActions.classList.add('hidden');
+            statusDot.classList.add('hidden');
+            statusText.textContent = '';
+            stats.textContent = '';
+            filterSelect.classList.add('hidden');
+            sessionSelect.classList.add('hidden');
+            sortToggle.classList.add('hidden');
+            grid.classList.add('hidden');
+            mergeContainer.classList.remove('hidden');
+            mergeContainer.innerHTML = '<div><h3 class="text-lg font-bold text-gray-300 mb-3">OCR 修正ルール</h3><div id="correction-rules-area" class="text-sm text-gray-500">確認中...</div></div>';
+            syncUrlParams();
+            checkCorrectionRules();
+        } else if (tab === 'cleanup') {
+            finalActions.classList.add('hidden');
+            statusDot.classList.add('hidden');
+            statusText.textContent = '';
+            stats.textContent = '';
+            filterSelect.classList.add('hidden');
+            sessionSelect.classList.add('hidden');
+            sortToggle.classList.add('hidden');
+            grid.classList.add('hidden');
+            mergeContainer.classList.remove('hidden');
+            mergeContainer.innerHTML = '<div><h3 class="text-lg font-bold text-gray-300 mb-3">データ整理</h3><div id="merge-cleanup-area" class="text-sm text-gray-500">確認中...</div></div>';
+            syncUrlParams();
+            checkCleanableInMerge();
         }
     };
 
@@ -737,14 +771,6 @@
                 html += '</div>';
             }
             html += '</div>';
-            // OCR 修正ルール (Phase 2)
-            html += '<div><h3 class="text-lg font-bold text-gray-400 mb-3">OCR 修正ルール</h3>';
-            html += '<div id="correction-rules-area" class="text-sm text-gray-500">確認中...</div>';
-            html += '</div>';
-            // 不要データ整理
-            html += '<div><h3 class="text-lg font-bold text-gray-400 mb-3">データ整理</h3>';
-            html += '<div id="merge-cleanup-area" class="text-sm text-gray-500">確認中...</div>';
-            html += '</div>';
             html += '</div>';
             mc.innerHTML = html;
             // プレビューボタン
@@ -781,10 +807,6 @@
                     })
                     .catch(() => { btn.title = 'チェック失敗'; });
             });
-            // 不要データ整理の件数確認
-            checkCleanableInMerge();
-            // 修正ルール候補の取得・表示
-            checkCorrectionRules();
             // 操作実行中ならボタンを再 disable
             if (_operationInProgress) _setOperationButtons(true);
         } catch (e) {
