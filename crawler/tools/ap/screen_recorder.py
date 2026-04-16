@@ -204,6 +204,7 @@ class ScreenRecorder:
         self,
         img_path: Optional[Path],
         phash: str,
+        ocr_results: Optional[list[dict]] = None,
     ) -> bool:
         """起動シーン専用記録: 暗転→ロゴ等の変化を検出して記録する。
 
@@ -257,6 +258,13 @@ class ScreenRecorder:
         if not screenshot_path:
             return False
 
+        # OCR テキスト: Vision OCR で検出されたテキストを保存（dedup の精度向上）
+        ocr_text = ""
+        if ocr_results:
+            ocr_text = " ".join(
+                item.get("text", "").strip() for item in ocr_results
+                if item.get("text", "").strip()
+            )
         screen_id = self._insert_screen(
             fingerprint=content_fp,
             title=title,
@@ -264,7 +272,7 @@ class ScreenRecorder:
             phash=phash,
             screenshot_path=screenshot_path,
             thumbnail_path=thumbnail_path,
-            ocr_text="",
+            ocr_text=ocr_text,
             scene="STARTUP",
         )
         if screen_id:

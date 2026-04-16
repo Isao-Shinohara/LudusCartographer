@@ -3859,7 +3859,8 @@ def main():
                 logger.info("[STARTUP] MENU画面到達 → 起動シーン記録モード終了")
             if getattr(state, "startup_phase", False):
                 # 起動シーン記録: タイトル画面到達まで phash/brightness 変化で撮影
-                recorder.record_startup(img_path, cur_phash)
+                # ocr_results を渡して dedup の精度を上げる（ロゴ画像のテキスト保存）
+                recorder.record_startup(img_path, cur_phash, ocr_results=ocr_results)
             # NOTE: メインループの maybe_record を復帰。
             # タップ後2秒間は保存スキップ (tap_device の force 記録と重複防止)。
             # 間引き側でテキスト長い方を代表に採用するため、セリフ途中/完了の逆転も解消。
