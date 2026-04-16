@@ -2631,6 +2631,13 @@ def main():
         state.iteration = i
         _loop_t0 = time.time()  # [PERF] ループ開始時刻
         clear_imread_cache()    # 前イテレーションのキャッシュを破棄
+
+        # ── 排他制御: マスターグラフ再構築中は待機 ──
+        if load_state("is_rebuilding") == "1":
+            logger.info("[WAIT] マスターグラフ再構築中 — 待機")
+            while load_state("is_rebuilding") == "1":
+                time.sleep(2)
+            logger.info("[WAIT] 再構築完了 — 再開")
         # ガチャ直後 TTL デクリメント
         if getattr(state, "_gacha_scene_ttl", 0) > 0:
             state._gacha_scene_ttl -= 1

@@ -266,6 +266,54 @@ if ($action === 'execute_merge') {
     exit;
 }
 
+// --- can_unmerge アクション ---
+if ($action === 'can_unmerge') {
+    $sessionId = $_GET['session_id'] ?? '';
+    if ($sessionId === '') {
+        echo json_encode(['error' => 'session_id required']);
+        exit;
+    }
+    $cmd = sprintf(
+        'cd %s && ./venv/bin/python -c %s 2>&1',
+        escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler'),
+        escapeshellarg(
+            "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
+            . "m = CrossSessionMerger(Path('storage/ludus.db')); "
+            . "r = m.can_unmerge('" . addslashes($sessionId) . "'); "
+            . "m.close(); "
+            . "print(json.dumps(r, ensure_ascii=False))"
+        ),
+    );
+    $output = shell_exec($cmd);
+    header('Content-Type: application/json');
+    echo $output ?: json_encode(['ok' => false, 'reason' => 'check failed']);
+    exit;
+}
+
+// --- execute_unmerge アクション ---
+if ($action === 'execute_unmerge') {
+    $sessionId = $_GET['session_id'] ?? '';
+    if ($sessionId === '') {
+        echo json_encode(['error' => 'session_id required']);
+        exit;
+    }
+    $cmd = sprintf(
+        'cd %s && ./venv/bin/python -c %s 2>&1',
+        escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler'),
+        escapeshellarg(
+            "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
+            . "m = CrossSessionMerger(Path('storage/ludus.db')); "
+            . "r = m.unmerge_session('" . addslashes($sessionId) . "'); "
+            . "m.close(); "
+            . "print(json.dumps(r, ensure_ascii=False))"
+        ),
+    );
+    $output = shell_exec($cmd);
+    header('Content-Type: application/json');
+    echo $output ?: json_encode(['ok' => false, 'error' => 'unmerge failed']);
+    exit;
+}
+
 // --- delete_session アクション ---
 if ($action === 'delete_session') {
     $sessionId = $_GET['session_id'] ?? '';

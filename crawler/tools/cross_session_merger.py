@@ -626,6 +626,182 @@ class CrossSessionMerger:
         ).fetchone()[0]
         logger.info("[Merger] 再構築完了: %d ノード, %d エッジ", master_count, edge_count)
 
+    # ─── 未マージ (Unmerge) ──────────────────────────
+
+    def can_unmerge(self, session_id: str) -> dict:
+        """セッションの未マージが可能か判定する。
+
+        Returns: {"ok": bool, "reason": str | None}
+        """
+        # session_graphs に存在するか
+        sg = self._conn.execute(
+            "SELECT session_id, built_at FROM lc_session_graphs WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if not sg:
+            return {"ok": False, "reason": "セッショングラフが存在しません"}
+        if not sg["built_at"]:
+            return {"ok": False, "reason": "未マージのセッションです"}
+
+        # node_mappings にマッピングがあるか
+        mapping_count = self._conn.execute(
+            "SELECT COUNT(*) FROM lc_node_mappings WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()[0]
+        if mapping_count == 0:
+            return {"ok": False, "reason": "マージ記録（node_mappings）がありません"}
+
+        # 残りのマージ済みセッションの transitions/screens が存在するか
+        other_sessions = self._conn.execute(
+            "SELECT sg.session_id FROM lc_session_graphs sg"
+            " WHERE sg.session_id != ? AND sg.built_at IS NOT NULL",
+            (session_id,),
+        ).fetchall()
+
+        for other in other_sessions:
+            sid = other["session_id"]
+            trans = self._conn.execute(
+                "SELECT COUNT(*) FROM lc_transitions WHERE session_id = ?",
+                (sid,),
+            ).fetchone()[0]
+            screens = self._conn.execute(
+                "SELECT COUNT(*) FROM lc_screens"
+                " WHERE session_id = ? AND is_representative = 1",
+                (sid,),
+            ).fetchone()[0]
+            if trans == 0 or screens == 0:
+                return {
+                    "ok": False,
+                    "reason": f"セッション {sid} の遷移データまたは"
+                              f"代表画像が欠損しており再構築できません",
+                }
+
+        return {"ok": True, "reason": None}
+
+    def unmerge_session(self, session_id: str) -> dict:
+        """セッションを未マージに戻し、マスターグラフを再構築する。
+
+        Returns: {"ok": bool, "master_nodes": int, "master_edges": int,
+                  "restored_manual": int, "error": str | None}
+        """
+        check = self.can_unmerge(session_id)
+        if not check["ok"]:
+            return {"ok": False, "master_nodes": 0, "master_edges": 0,
+                    "restored_manual": 0, "error": check["reason"]}
+
+        logger.info("[Unmerge] セッション %s の未マージ開始", session_id)
+
+        # 1. 排他フラグ ON
+        self._conn.execute(
+            "INSERT OR REPLACE INTO auto_pilot_state (key, value)"
+            " VALUES ('is_rebuilding', '1')"
+        )
+        self._conn.commit()
+
+        try:
+            # 2. 手動変更バックアップ（全ノード）
+            self._conn.execute("DROP TABLE IF EXISTS _unmerge_backup")
+            self._conn.execute(
+                "CREATE TEMP TABLE _unmerge_backup AS"
+                " SELECT master_fp, user_excluded, manual_group_id,"
+                "   is_group_representative, title"
+                " FROM lc_master_nodes"
+            )
+            backup_count = self._conn.execute(
+                "SELECT COUNT(*) FROM _unmerge_backup"
+            ).fetchone()[0]
+            logger.info("[Unmerge] バックアップ: %d ノード", backup_count)
+
+            # 3. マスターグラフ全削除
+            self._conn.execute("DELETE FROM lc_master_nodes")
+            self._conn.execute("DELETE FROM lc_master_edges")
+            self._conn.execute("DELETE FROM lc_node_mappings")
+            self._conn.commit()
+
+            # 4. 対象セッションを除外して再構築
+            sessions = self._conn.execute(
+                "SELECT session_id FROM lc_session_graphs"
+                " WHERE session_id != ? AND built_at IS NOT NULL"
+                " ORDER BY built_at",
+                (session_id,),
+            ).fetchall()
+
+            for i, row in enumerate(sessions):
+                sid = row["session_id"]
+                new_count = self.merge_to_master(sid)
+                logger.info("[Unmerge] rebuild %d/%d: session=%s, +%d nodes",
+                            i + 1, len(sessions), sid, new_count)
+
+            # 5. 手動変更の復元
+            restored = self._conn.execute(
+                "UPDATE lc_master_nodes SET"
+                "  user_excluded = b.user_excluded,"
+                "  manual_group_id = b.manual_group_id,"
+                "  is_group_representative = b.is_group_representative,"
+                "  title = b.title"
+                " FROM _unmerge_backup b"
+                " WHERE lc_master_nodes.master_fp = b.master_fp"
+            ).rowcount
+            logger.info("[Unmerge] 手動変更復元: %d ノード", restored)
+
+            # 6. orphan チェック: representative_screen_id の整合性
+            orphans = self._conn.execute(
+                "SELECT m.master_fp, m.representative_screen_id"
+                " FROM lc_master_nodes m"
+                " WHERE m.representative_screen_id IS NOT NULL"
+                "   AND NOT EXISTS ("
+                "     SELECT 1 FROM lc_screens s"
+                "     WHERE s.id = m.representative_screen_id)"
+            ).fetchall()
+            for orph in orphans:
+                alt = self._conn.execute(
+                    "SELECT id FROM lc_screens"
+                    " WHERE fingerprint = ? AND is_representative = 1"
+                    " ORDER BY discovered_at DESC LIMIT 1",
+                    (orph["master_fp"],),
+                ).fetchone()
+                new_id = alt["id"] if alt else None
+                self._conn.execute(
+                    "UPDATE lc_master_nodes SET representative_screen_id = ?"
+                    " WHERE master_fp = ?",
+                    (new_id, orph["master_fp"]),
+                )
+            if orphans:
+                logger.info("[Unmerge] orphan 修復: %d ノード", len(orphans))
+
+            # 7. 対象セッションの built_at をクリア（未マージ状態に戻す）
+            self._conn.execute(
+                "UPDATE lc_session_graphs SET built_at = NULL WHERE session_id = ?",
+                (session_id,),
+            )
+
+            self._conn.execute("DROP TABLE IF EXISTS _unmerge_backup")
+            self._conn.commit()
+
+            master_nodes = self._conn.execute(
+                "SELECT COUNT(*) FROM lc_master_nodes"
+            ).fetchone()[0]
+            master_edges = self._conn.execute(
+                "SELECT COUNT(*) FROM lc_master_edges"
+            ).fetchone()[0]
+
+            logger.info("[Unmerge] 完了: %d ノード, %d エッジ, 復元 %d 件",
+                        master_nodes, master_edges, restored)
+            return {
+                "ok": True,
+                "master_nodes": master_nodes,
+                "master_edges": master_edges,
+                "restored_manual": restored,
+                "error": None,
+            }
+
+        finally:
+            # 排他フラグ OFF
+            self._conn.execute(
+                "UPDATE auto_pilot_state SET value = '0' WHERE key = 'is_rebuilding'"
+            )
+            self._conn.commit()
+
     # ─── 内部ヘルパー ────────────────────────────────
 
     def _seed_master(self, session_id: str) -> int:

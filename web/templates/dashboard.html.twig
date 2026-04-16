@@ -29,10 +29,7 @@
         <option value="pending">未処理</option>
         <option value="all">すべて</option>
     </select>
-    <select id="sort-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
-        <option value="desc" selected>降順</option>
-        <option value="asc">昇順</option>
-    </select>
+    <button id="sort-toggle" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 hover:border-brand hover:text-brand-light transition-colors outline-none" data-sort="desc">降順</button>
     <select id="session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="">最新セッション</option>
     </select>
@@ -163,13 +160,40 @@
     let selectedForGroup = new Set();  // Final タブ: 統合選択中の master_fp
     const filterSelect = document.getElementById('filter-select');
     const sessionSelect = document.getElementById('session-select');
-    const sortSelect = document.getElementById('sort-select');
-    filterSelect.addEventListener('change', renderAll);
-    sortSelect.addEventListener('change', renderAll);
+    const sortToggle = document.getElementById('sort-toggle');
+
+    // URL パラメータ同期
+    function syncUrlParams() {
+        const url = new URL(window.location);
+        url.searchParams.set('tab', currentTab);
+        url.searchParams.set('filter', filterSelect.value);
+        url.searchParams.set('sort', sortToggle.dataset.sort);
+        if (currentSessionId) {
+            url.searchParams.set('session', currentSessionId);
+        } else {
+            url.searchParams.delete('session');
+        }
+        history.replaceState(null, '', url);
+    }
+
+    function getUrlParam(key, fallback) {
+        return new URLSearchParams(window.location.search).get(key) || fallback;
+    }
+
+    filterSelect.addEventListener('change', function() { renderAll(); syncUrlParams(); });
+    sortToggle.addEventListener('click', function() {
+        const cur = this.dataset.sort;
+        const next = cur === 'desc' ? 'asc' : 'desc';
+        this.dataset.sort = next;
+        this.textContent = next === 'desc' ? '降順' : '昇順';
+        renderAll();
+        syncUrlParams();
+    });
     sessionSelect.addEventListener('change', function() {
         currentSessionId = this.value;
         allScreens = [];
         maxId = 0;
+        syncUrlParams();
         fetchLiveInitial();
     });
 
@@ -249,7 +273,7 @@
             filtered = allScreens.filter(s => (s.cluster_id === null || s.cluster_id === undefined) || (s.is_representative && !s.has_hq_ocr));
         }
         // ソート: Live は API が降順(新しい順)、Final は API が昇順(古い順)
-        const wantDesc = sortSelect.value === 'desc';
+        const wantDesc = sortToggle.dataset.sort === 'desc';
         if (currentTab === 'final' && wantDesc) {
             filtered = [...filtered].reverse();
         } else if (currentTab === 'final' && !wantDesc) {
@@ -273,6 +297,18 @@
             : `全${filtered.length}枚`;
     }
 
+    // 昇順で末尾に画像追加時のスクロール追従
+    function isNearBottom() {
+        const threshold = 200;
+        return (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - threshold);
+    }
+
+    function scrollToBottom() {
+        requestAnimationFrame(() => {
+            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        });
+    }
+
     // --- セッション一覧取得 ---
     async function fetchSessions() {
         const game = getGameParam();
@@ -288,6 +324,8 @@
                 const label = s.session_dir.replace('ap_', '').replace(/_/g, ' ');
                 sessionSelect.innerHTML += `<option value="${escapeHtml(s.session_dir)}">${escapeHtml(label)}</option>`;
             }
+            // ドロップダウン再構築後に選択状態を復元
+            sessionSelect.value = currentSessionId;
         } catch (e) {}
     }
 
@@ -336,6 +374,7 @@
                 allScreens = [];
                 maxId = 0;
                 pollCount = 0;
+                syncUrlParams();
                 fetchLiveInitial();
                 return;
             }
@@ -362,7 +401,7 @@
                     if (restored >= 0) {
                         modalIdx = restored;
                         document.getElementById('modal-counter').textContent =
-                            (filteredScreens.length - modalIdx) + ' / ' + filteredScreens.length;
+                            (modalIdx + 1) + ' / ' + filteredScreens.length;
                         updateModalNav();
                     }
                 }
@@ -384,6 +423,7 @@
             const data = await res.json();
             const newScreens = data.screens || [];
             if (newScreens.length > 0) {
+                const shouldFollow = sortToggle.dataset.sort === 'asc' && isNearBottom();
                 allScreens = newScreens.concat(allScreens);
                 maxId = Math.max(maxId, Math.max(...newScreens.map(s => s.id)));
                 if (modalIdx >= 0) {
@@ -395,13 +435,14 @@
                         if (newIdx >= 0) {
                             modalIdx = newIdx;
                             document.getElementById('modal-counter').textContent =
-                                (filteredScreens.length - modalIdx) + ' / ' + filteredScreens.length;
+                                (modalIdx + 1) + ' / ' + filteredScreens.length;
                             updateModalNav();
                         }
                     }
                     return;
                 }
                 renderAll();
+                if (shouldFollow) scrollToBottom();
             }
         } catch (e) {}
     }
@@ -425,14 +466,18 @@
 
 
     // --- タブ切り替え ---
-    window.switchTab = function(tab) {
+    window.switchTab = function(tab, restoreFromUrl) {
         currentTab = tab;
         allScreens = [];
         maxId = 0;
-        // URL hash にタブを保存
-        const url = new URL(window.location);
-        url.searchParams.set('tab', tab);
-        history.replaceState(null, '', url);
+
+        // ソート復元 (初期化時のみ)
+        if (restoreFromUrl) {
+            const urlSort = getUrlParam('sort', 'desc');
+            sortToggle.dataset.sort = urlSort;
+            sortToggle.textContent = urlSort === 'desc' ? '降順' : '昇順';
+            currentSessionId = getUrlParam('session', '');
+        }
 
         // タブボタンのスタイル更新
         document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -460,13 +505,15 @@
             statusDot.classList.remove('hidden');
             statusText.textContent = '自動更新中';
             filterSelect.classList.remove('hidden');
-            filterSelect.innerHTML = '<option value="reps" selected>採用</option><option value="thinned">不採用</option><option value="pending">未処理</option><option value="all">すべて</option>';
-            filterSelect.onchange = renderAll;
+            filterSelect.innerHTML = '<option value="reps">採用</option><option value="thinned">不採用</option><option value="pending">未処理</option><option value="all">すべて</option>';
+            filterSelect.value = restoreFromUrl ? getUrlParam('filter', 'reps') : 'reps';
+            filterSelect.onchange = function() { renderAll(); syncUrlParams(); };
             sessionSelect.classList.remove('hidden');
-            sortSelect.classList.remove('hidden');
+            sortToggle.classList.remove('hidden');
             grid.classList.remove('hidden');
             mergeContainer.classList.add('hidden');
             grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>';
+            syncUrlParams();
             fetchLiveInitial();
             pollTimer = setInterval(pollLive, POLL_INTERVAL);
         } else if (tab === 'final') {
@@ -474,14 +521,16 @@
             statusDot.classList.add('hidden');
             statusText.textContent = '';
             filterSelect.classList.remove('hidden');
-            filterSelect.innerHTML = '<option value="adopted" selected>採用</option><option value="excluded">不採用</option><option value="all">すべて</option>';
-            filterSelect.onchange = function() { showExcluded = this.value === 'all' || this.value === 'excluded'; renderAll(); updateFinalActionBar(); };
+            filterSelect.innerHTML = '<option value="adopted">採用</option><option value="excluded">不採用</option><option value="all">すべて</option>';
+            filterSelect.value = restoreFromUrl ? getUrlParam('filter', 'adopted') : 'adopted';
+            filterSelect.onchange = function() { showExcluded = this.value === 'all' || this.value === 'excluded'; renderAll(); syncUrlParams(); updateFinalActionBar(); };
             sessionSelect.classList.add('hidden');
-            sortSelect.classList.remove('hidden');
+            sortToggle.classList.remove('hidden');
             grid.classList.remove('hidden');
             mergeContainer.classList.add('hidden');
             grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>';
             updateGroupSelectUI();
+            syncUrlParams();
             fetchFinal();
         } else if (tab === 'merge') {
             finalActions.classList.add('hidden');
@@ -490,9 +539,10 @@
             stats.textContent = '';
             filterSelect.classList.add('hidden');
             sessionSelect.classList.add('hidden');
-            sortSelect.classList.add('hidden');
+            sortToggle.classList.add('hidden');
             grid.classList.add('hidden');
             mergeContainer.classList.remove('hidden');
+            syncUrlParams();
             fetchMergeTab();
         }
     };
@@ -545,6 +595,8 @@
                         </div>
                         <div class="flex items-center gap-3">
                             <span class="text-xs text-green-700">完了</span>
+                            <button class="unmerge-btn px-3 py-1 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-xs rounded transition-colors"
+                                    data-session-id="${escapeHtml(s.session_id)}">未マージ</button>
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.mapped_nodes}">削除</button>
                         </div>
@@ -566,6 +618,24 @@
             // 削除ボタン
             mc.querySelectorAll('.delete-session-btn').forEach(btn => {
                 btn.addEventListener('click', () => confirmDeleteSession(btn.dataset.sessionId, btn.dataset.nodeCount));
+            });
+            // 未マージボタン: can_unmerge チェック → disabled 制御
+            mc.querySelectorAll('.unmerge-btn').forEach(btn => {
+                const sid = btn.dataset.sessionId;
+                btn.disabled = true;
+                btn.classList.add('opacity-60', 'cursor-not-allowed');
+                fetch(API_BASE + '?action=can_unmerge&session_id=' + encodeURIComponent(sid))
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.ok) {
+                            btn.disabled = false;
+                            btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                            btn.addEventListener('click', () => confirmUnmerge(sid));
+                        } else {
+                            btn.title = data.reason || '未マージ不可';
+                        }
+                    })
+                    .catch(() => { btn.title = 'チェック失敗'; });
             });
             // 不要データ整理の件数確認
             checkCleanableInMerge();
@@ -762,27 +832,62 @@
         });
     }
 
+    // --- 未マージ ---
+    function confirmUnmerge(sessionId) {
+        const html = `
+            <p class="text-sm text-gray-300 mb-2">セッション <code class="text-brand-light">${escapeHtml(sessionId)}</code> を未マージに戻しますか？</p>
+            <ul class="text-xs text-gray-400 space-y-1 ml-4 list-disc">
+                <li>マスターグラフを全削除し、このセッションを除外して再構築します</li>
+                <li>手動変更（採用/不採用・グループ統合・タイトル編集）は自動復元されます</li>
+                <li>auto_pilot は再構築完了まで一時停止します</li>
+            </ul>
+            <p class="text-xs text-amber-400 mt-3">再構築に数秒〜数十秒かかる場合があります。</p>`;
+        showConfirmDialog(html, async function() {
+            hideConfirmDialog();
+            await executeUnmerge(sessionId);
+        });
+    }
+
+    async function executeUnmerge(sessionId) {
+        const mc = document.getElementById('merge-container');
+        mc.innerHTML = '<div class="text-center text-gray-600 py-12"><span class="animate-pulse">再構築中...</span></div>';
+        try {
+            const res = await fetch(API_BASE + '?action=execute_unmerge&session_id=' + encodeURIComponent(sessionId));
+            const data = await res.json();
+            if (data.ok) {
+                mc.innerHTML = `<div class="text-center text-green-500 py-12">
+                    未マージ完了: ${data.master_nodes} ノード, ${data.master_edges} エッジ (手動変更 ${data.restored_manual} 件復元)
+                </div>`;
+                setTimeout(() => fetchMergeTab(), 2000);
+            } else {
+                mc.innerHTML = `<div class="text-center text-red-500 py-12">エラー: ${escapeHtml(data.error || '不明')}</div>`;
+            }
+        } catch (e) {
+            mc.innerHTML = '<div class="text-center text-red-500 py-12">未マージ失敗</div>';
+        }
+    }
+
     // --- ハートビート ---
     function heartbeat() {
         fetch(API_BASE + '?action=heartbeat').catch(function() {});
     }
 
     // --- 初期化 ---
-    const initialTab = new URLSearchParams(window.location.search).get('tab') || 'live';
-    switchTab(initialTab);
+    const initialTab = getUrlParam('tab', 'live');
+    switchTab(initialTab, true);
     heartbeat();
     setInterval(heartbeat, 10000);
 
     // --- モーダル ---
-    // allScreens は新しい順（idx=0 が最新）。
-    // ← = 古い方向 (idx+1)、→ = 新しい方向 (idx-1)
+    // filteredScreens はソート済み配列。
+    // ← = 前へ (idx-1)、→ = 次へ (idx+1)。グリッド表示順に一致。
     let modalIdx = -1;
 
     function showModal(idx) {
         if (idx < 0 || idx >= filteredScreens.length) return;
         modalIdx = idx;
         const s = filteredScreens[idx];
-        const chronoPos = filteredScreens.length - idx;
+        const chronoPos = idx + 1;
         const isThinned = s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative;
         const titlePrefix = isThinned ? '[不採用] ' : '';
         const scene = s.category || 'UNKNOWN';
@@ -904,8 +1009,8 @@
 
     function updateModalNav() {
         if (modalIdx < 0) return;
-        document.getElementById('modal-prev').style.visibility = modalIdx < filteredScreens.length - 1 ? 'visible' : 'hidden';
-        document.getElementById('modal-next').style.visibility = modalIdx > 0 ? 'visible' : 'hidden';
+        document.getElementById('modal-prev').style.visibility = modalIdx > 0 ? 'visible' : 'hidden';
+        document.getElementById('modal-next').style.visibility = modalIdx < filteredScreens.length - 1 ? 'visible' : 'hidden';
     }
 
     function closeModal() {
@@ -1155,15 +1260,15 @@
         showModal(parseInt(card.dataset.idx, 10));
     });
 
-    // ← 古い画像へ (idx が大きい方)
+    // ← 前へ (idx-1)
     document.getElementById('modal-prev').addEventListener('click', function(e) {
         e.stopPropagation();
-        if (modalIdx < filteredScreens.length - 1) showModal(modalIdx + 1);
+        if (modalIdx > 0) showModal(modalIdx - 1);
     });
-    // → 新しい画像へ (idx が小さい方)
+    // → 次へ (idx+1)
     document.getElementById('modal-next').addEventListener('click', function(e) {
         e.stopPropagation();
-        if (modalIdx > 0) showModal(modalIdx - 1);
+        if (modalIdx < filteredScreens.length - 1) showModal(modalIdx + 1);
     });
 
     modal.addEventListener('click', function(e) {
@@ -1177,9 +1282,9 @@
     document.addEventListener('keydown', function(e) {
         if (!modal.classList.contains('flex')) return;
         if (e.key === 'Escape') closeModal();
-        // ← 古い方向、→ 新しい方向
-        if (e.key === 'ArrowLeft' && modalIdx < filteredScreens.length - 1) showModal(modalIdx + 1);
-        if (e.key === 'ArrowRight' && modalIdx > 0) showModal(modalIdx - 1);
+        // ← 前へ、→ 次へ（グリッド表示順）
+        if (e.key === 'ArrowLeft' && modalIdx > 0) showModal(modalIdx - 1);
+        if (e.key === 'ArrowRight' && modalIdx < filteredScreens.length - 1) showModal(modalIdx + 1);
     });
 })();
 </script>
