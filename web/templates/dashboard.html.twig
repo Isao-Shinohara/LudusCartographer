@@ -611,7 +611,7 @@
             }
             html += '</div>';
             // 2. マージ待ち
-            html += '<div><h3 class="text-lg font-bold text-brand-light mb-3">マージ待ち</h3>';
+            html += '<div><h3 class="text-lg font-bold text-blue-400 mb-3">マージ待ち</h3>';
             if (pending.length === 0) {
                 html += '<p class="text-gray-500 text-sm">マージ待ちのセッションはありません</p>';
             } else {
@@ -663,21 +663,21 @@
             }
             html += '</div>';
             // 4. 進行中セッション
-            html += '<div><h3 class="text-lg font-bold text-sky-400 mb-3">▶ 進行中セッション</h3>';
+            html += '<div><h3 class="text-lg font-bold text-violet-400 mb-3">▶ 進行中セッション</h3>';
             if (running.length === 0) {
                 html += '<p class="text-gray-600 text-sm">実行中のセッションはありません</p>';
             } else {
                 html += '<p class="text-xs text-gray-500 mb-2">auto_pilot 実行中のセッション。完了するとマージ待ちに移動。</p>';
                 html += '<div class="space-y-2">';
                 for (const s of running) {
-                    html += `<div class="bg-gray-900/50 border border-sky-900/30 rounded-lg p-3 flex items-center justify-between">
+                    html += `<div class="bg-gray-900/50 border border-violet-900/30 rounded-lg p-3 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-sky-300">▶ ${escapeHtml(s.session_id)}</span>
+                            <span class="text-sm font-mono text-violet-300">▶ ${escapeHtml(s.session_id)}</span>
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
                             <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.started_at || '')}</span>
                         </div>
                         <div class="flex items-center gap-2">
-                            <span class="inline-block w-2 h-2 rounded-full bg-sky-400 animate-pulse" title="実行中"></span>
+                            <span class="inline-block w-2 h-2 rounded-full bg-violet-400 animate-pulse" title="実行中"></span>
                         </div>
                     </div>`;
                 }
@@ -685,7 +685,7 @@
             }
             html += '</div>';
             // 5. 遷移データなし
-            html += '<div><h3 class="text-lg font-bold text-gray-400 mb-3">♻ 遷移データなし</h3>';
+            html += '<div><h3 class="text-lg font-bold text-gray-500 mb-3">♻ 遷移データなし</h3>';
             if (noTransition.length === 0) {
                 html += '<p class="text-gray-600 text-sm">遷移データなしのセッションはありません</p>';
             } else {
