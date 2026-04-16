@@ -949,11 +949,35 @@ class BackgroundWorker:
                 from tools.ap.ocr_correction import _clean_gemini_output
                 _has_text = _re.compile(r'[\u3040-\u9fff\u30a0-\u30ffA-Za-z]')
                 _pure_num = _re.compile(r'^[\d\s.:/%×+\-~]+$')
+                artifact_count = 0
                 for item in items:
                     sid = item["id"]
                     r = result_map.get(sid)
                     raw_corrected = (r.get("corrected_text", "") if r else "").strip()
                     corrected = _clean_gemini_output(raw_corrected)
+                    # is_artifact 検知 → 対応するマスターノードを user_excluded=1 に
+                    is_artifact = bool(r.get("is_artifact", False)) if r else False
+                    if is_artifact:
+                        # screen の fingerprint からマスターノードを特定
+                        screen_fp = conn.execute(
+                            "SELECT fingerprint FROM lc_screens WHERE id = ?",
+                            (sid,),
+                        ).fetchone()
+                        if screen_fp:
+                            updated_nodes = conn.execute(
+                                "UPDATE lc_master_nodes SET user_excluded = 1"
+                                " WHERE master_fp = ?",
+                                (screen_fp["fingerprint"],),
+                            ).rowcount
+                            if updated_nodes > 0:
+                                artifact_count += 1
+                            # マスター未登録の場合は screen の is_representative を 0 にして
+                            # 今後マージ対象外に (元の代表は別の画面が再選出される)
+                            else:
+                                conn.execute(
+                                    "UPDATE lc_screens SET is_representative = 0"
+                                    " WHERE id = ?", (sid,),
+                                )
                     # プレースホルダ title (STARTUP, UNKNOWN等) なら、補正テキストから生成
                     new_title = None
                     if corrected:
@@ -984,8 +1008,12 @@ class BackgroundWorker:
                     total += 1
 
                 conn.commit()
-                logger.info("[BG_WORKER] gemini batch: %d 枚処理 (バッチサイズ=%d)",
-                            len(items), _GEMINI_BATCH_SIZE)
+                if artifact_count > 0:
+                    logger.info("[BG_WORKER] gemini batch: %d 枚処理 (バッチサイズ=%d, アーティファクト除外=%d)",
+                                len(items), _GEMINI_BATCH_SIZE, artifact_count)
+                else:
+                    logger.info("[BG_WORKER] gemini batch: %d 枚処理 (バッチサイズ=%d)",
+                                len(items), _GEMINI_BATCH_SIZE)
                 # レート制限対策
                 _time.sleep(_GEMINI_RATE_LIMIT)
 
