@@ -465,11 +465,19 @@ class BackgroundWorker:
 
                 _is_meaningful = len(norm_text) > 0
 
-                # 1) テキスト一致チェック (グローバル): 同じテキストなら同一画面
+                # 1) テキスト一致チェック (グローバル): 同じテキスト or 前方一致なら同一画面
+                #    セリフ途中（文字送り中）のスクショは前方一致で同クラスタに統合
                 text_match_cid = None
                 if _is_meaningful:
                     for cid, (rep_ph, rep_title, rep_norm) in rep_map.items():
-                        if rep_norm and rep_norm == norm_text:
+                        if not rep_norm:
+                            continue
+                        if rep_norm == norm_text:
+                            text_match_cid = cid
+                            break
+                        # 前方一致: 短い方が長い方の先頭と一致 (最低5文字)
+                        shorter, longer = (norm_text, rep_norm) if len(norm_text) <= len(rep_norm) else (rep_norm, norm_text)
+                        if len(shorter) >= 5 and longer.startswith(shorter):
                             text_match_cid = cid
                             break
 
