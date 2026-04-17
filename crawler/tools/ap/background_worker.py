@@ -948,8 +948,108 @@ class BackgroundWorker:
 
             if total > 0:
                 logger.info("[BG_WORKER] gemini: %d/%d 件修正 (合計)", updated, total)
+                # Gemini 補正後の再マージ
+                self._remerge_after_gemini(conn)
         finally:
             conn.close()
+
+    def _remerge_after_gemini(self, conn) -> None:
+        """Gemini 補正後、修正されたテキストで既存クラスタと再照合する。
+
+        対象: ocr_text_gemini が設定済みで、初期 OCR と異なるテキストを持つ代表画面。
+        - テキスト一致/前方一致 → 既存クラスタに統合 (長い方が代表)
+        - テキストが空になった画面同士 → phash 近接で統合
+        """
+        try:
+            from lc.utils import phash_distance
+
+            sid_filter = ""
+            sid_params: tuple = ()
+            if self._session_id:
+                sid_filter = " AND session_id = ?"
+                sid_params = (self._session_id,)
+
+            # 代表画面の Gemini 補正テキストを取得
+            reps = conn.execute(
+                "SELECT id, cluster_id, phash,"
+                " COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS gemini_text,"
+                " COALESCE(ocr_text, '') AS orig_text"
+                " FROM lc_screens"
+                " WHERE is_representative = 1"
+                " AND ocr_text_gemini IS NOT NULL"
+                " AND phash IS NOT NULL AND phash != ''"
+                + sid_filter +
+                " ORDER BY cluster_id",
+                sid_params,
+            ).fetchall()
+
+            if len(reps) < 2:
+                return
+
+            # cluster_id → (phash, normalized_gemini_text) マップ
+            cluster_info: dict[int, tuple[str, str]] = {}
+            for r in reps:
+                norm = _normalize_text(r["gemini_text"])
+                cluster_info[r["cluster_id"]] = (r["phash"], norm)
+
+            merged = 0
+            merged_clusters: set[int] = set()
+
+            for r in reps:
+                cid = r["cluster_id"]
+                if cid in merged_clusters:
+                    continue
+                norm = _normalize_text(r["gemini_text"])
+                ph = r["phash"]
+
+                for other_cid, (other_ph, other_norm) in cluster_info.items():
+                    if other_cid == cid or other_cid in merged_clusters:
+                        continue
+
+                    should_merge = False
+
+                    if norm and other_norm:
+                        # テキスト完全一致
+                        if norm == other_norm:
+                            should_merge = True
+                        # 前方一致 (5文字以上)
+                        else:
+                            shorter, longer = (norm, other_norm) if len(norm) <= len(other_norm) else (other_norm, norm)
+                            if len(shorter) >= 5 and longer.startswith(shorter):
+                                should_merge = True
+                    elif not norm and not other_norm:
+                        # 両方テキスト空 → phash で判定
+                        d = phash_distance(ph, other_ph) if ph and other_ph else 999
+                        if d < 20:
+                            should_merge = True
+
+                    if should_merge:
+                        # other_cid を cid に統合
+                        conn.execute(
+                            "UPDATE lc_screens SET cluster_id = ?, is_representative = 0"
+                            " WHERE cluster_id = ?",
+                            (cid, other_cid),
+                        )
+                        # テキストが長い方を代表に
+                        rep = conn.execute(
+                            "SELECT id FROM lc_screens WHERE cluster_id = ?"
+                            " ORDER BY LENGTH(COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '')) DESC,"
+                            " discovered_at ASC LIMIT 1",
+                            (cid,),
+                        ).fetchone()
+                        if rep:
+                            conn.execute(
+                                "UPDATE lc_screens SET is_representative = 1 WHERE id = ?",
+                                (rep["id"],),
+                            )
+                        merged_clusters.add(other_cid)
+                        merged += 1
+
+            if merged > 0:
+                conn.commit()
+                logger.info("[BG_WORKER] gemini remerge: %d クラスタ統合", merged)
+        except Exception as e:
+            logger.warning("[BG_WORKER] gemini remerge 例外: %s", e)
 
     # ─── 遷移グラフ構築 ───────────────────────────────────
 
