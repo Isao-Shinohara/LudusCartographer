@@ -502,29 +502,13 @@ class BackgroundWorker:
                         )
                     _prev_cid = text_match_cid
                 elif _is_meaningful:
-                    # 2a) 直前がテキスト空 + phash 近い → 同じ場面、テキストあり側が代表に
-                    # 2b) 直前がテキストあり + phash 近い + テキスト類似 → OCR 揺れ
+                    # 直前がテキストあり + phash 近い + テキスト類似 → OCR 揺れ
+                    # ※ 直前がテキスト空の場合は統合しない（暗画面にロゴ等が吸い込まれる連鎖を防止）
                     _merge_to_prev = False
                     if _prev_cid is not None and _prev_cid in rep_map:
                         _rep_ph, _rep_title, _rep_norm = rep_map[_prev_cid]
                         d = phash_distance(_rep_ph, ph) if _rep_ph else 999
-                        _has_face = self._max_face_area(conn, sid) > 0
-                        _ph_lim = 5 if _has_face else 20
-                        if not _rep_norm and d < _ph_lim:
-                            # 直前テキスト空 + phash 近い → 統合 (テキストあり側が代表)
-                            _merge_to_prev = True
-                            old_rep_id = self._get_rep_id(conn, _prev_cid)
-                            conn.execute(
-                                "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
-                                (_prev_cid, sid),
-                            )
-                            if old_rep_id:
-                                conn.execute(
-                                    "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
-                                    (old_rep_id,),
-                                )
-                            rep_map[_prev_cid] = (ph, title, norm_text)
-                        elif _rep_norm and d < 5 and _text_similarity(norm_text, _rep_norm) >= 0.5:
+                        if _rep_norm and d < 5 and _text_similarity(norm_text, _rep_norm) >= 0.5:
                             # テキスト類似 + phash 近い → OCR 揺れ (テキスト長い方を代表に)
                             # phash が非常に近い (< 10) 場合はテキスト類似度を緩和 (OCR 誤読救済)
                             _merge_to_prev = True
