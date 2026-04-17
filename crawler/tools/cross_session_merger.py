@@ -69,10 +69,12 @@ class AnchorPoint:
 class CrossSessionMerger:
     """セッション別グラフをマスターグラフに統合する。"""
 
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, sort_strategy=None):
+        from tools.merge_sort_strategy import SafeInsertStrategy
         self._db_path = db_path
         self._conn = sqlite3.connect(str(db_path), timeout=10)
         self._conn.row_factory = sqlite3.Row
+        self._sort_strategy = sort_strategy or SafeInsertStrategy()
 
     def close(self) -> None:
         self._conn.close()
@@ -649,114 +651,42 @@ class CrossSessionMerger:
                 new_count += 1
 
         self._merge_edges(session_id, node_mapping)
-        self._insert_new_nodes_by_session_order(session_id, node_mapping)
 
-        self._conn.commit()
-        logger.info("[Merger] マージ完了: session=%s, matched=%d, new=%d",
-                    session_id, len(node_mapping), new_count)
-        return new_count
+        # SafeInsert: 挿入可能なノードのみ配置、それ以外は削除
+        from tools.merge_sort_strategy import renumber_sort_orders
+        result = self._sort_strategy.compute_sort_order(
+            self._conn, session_id, node_mapping
+        )
 
-    def _insert_new_nodes_by_session_order(
-        self, session_id: str,
-        node_mapping: dict[str, tuple[str, str, float]],
-    ) -> None:
-        """セッションの時系列順で、マッチしたノードの間に新規ノードを挿入する。
-
-        seed の sort_order を壊さず、新規ノードだけを正しい位置に配置する。
-        アルゴリズム:
-        1. セッション画面を時系列順に走査
-        2. マッチノード（既存 sort_order あり）をアンカーとして記録
-        3. 新規ノードは直前のアンカーの sort_order + offset で配置
-        4. 全ノードを再番号付け（整数化）
-        """
-        # session_fp → master_fp
-        all_mappings = {
-            r["session_fp"]: r["master_fp"]
-            for r in self._conn.execute(
-                "SELECT session_fp, master_fp FROM lc_node_mappings"
-                " WHERE session_id = ?", (session_id,),
-            ).fetchall()
-        }
-
-        # 現在の sort_order (seed で確定済み + 既存マッチ分)
-        sort_orders: dict[str, float] = {
-            r["master_fp"]: float(r["sort_order"])
-            for r in self._conn.execute(
-                "SELECT master_fp, sort_order FROM lc_master_nodes"
-            ).fetchall()
-        }
-
-        # 新規ノード (このセッションで追加) を特定
-        new_fps = set()
-        for r in self._conn.execute(
-            "SELECT master_fp FROM lc_node_mappings"
-            " WHERE session_id = ? AND match_method = 'new'",
-            (session_id,),
-        ).fetchall():
-            new_fps.add(r["master_fp"])
-
-        if not new_fps:
-            return
-
-        # セッション画面を時系列順に走査
-        session_screens = self._conn.execute(
-            "SELECT fingerprint FROM lc_screens"
-            " WHERE session_id = ? AND is_representative = 1"
-            " ORDER BY discovered_at ASC",
-            (session_id,),
-        ).fetchall()
-
-        # セッション時系列を走査し、マッチノード間の新規ノードの位置を決定
-        # 最初のアンカー前の新規ノードは、最初のアンカーの直後に配置
-        # (seed の先頭より前に S2 のノードが来ないようにする)
-        first_anchor_sort = None
-        for screen in session_screens:
-            m_fp = all_mappings.get(screen["fingerprint"])
-            if m_fp and m_fp in sort_orders and m_fp not in new_fps:
-                first_anchor_sort = sort_orders[m_fp]
-                break
-        last_anchor_sort = first_anchor_sort if first_anchor_sort is not None else 0.0
-        new_count_after_anchor = 0
-        placed_new: dict[str, float] = {}  # 配置済み新規ノード
-
-        for screen in session_screens:
-            m_fp = all_mappings.get(screen["fingerprint"])
-            if not m_fp:
-                continue
-
-            if m_fp in sort_orders and m_fp not in new_fps:
-                # マッチノード → アンカー更新
-                last_anchor_sort = sort_orders[m_fp]
-                new_count_after_anchor = 0
-            elif m_fp in new_fps and m_fp not in placed_new:
-                # 新規ノード → 直前アンカーの直後に配置
-                new_count_after_anchor += 1
-                insert_pos = last_anchor_sort + new_count_after_anchor * 0.0001
-                placed_new[m_fp] = insert_pos
-
-        # セッション走査で位置が決まらなかった新規ノード → 末尾に追加
-        max_sort = max(sort_orders.values()) if sort_orders else 0
-        for fp in new_fps:
-            if fp not in placed_new:
-                max_sort += 1
-                placed_new[fp] = max_sort
-
-        # 既存 sort_orders に新規を追加して再番号付け
-        merged = dict(sort_orders)
-        merged.update(placed_new)
-        all_nodes = sorted(merged.items(), key=lambda x: x[1])
-
-        logger.info("[Merger] sort_order 再番号付け: %d ノード (%d 新規挿入)",
-                    len(all_nodes), len(placed_new))
-        updated = 0
-        for new_order, (fp, _) in enumerate(all_nodes):
-            rowcount = self._conn.execute(
+        # 挿入するノードの sort_order を設定
+        for fp, sort_pos in result.inserts:
+            self._conn.execute(
                 "UPDATE lc_master_nodes SET sort_order = ? WHERE master_fp = ?",
-                (new_order, fp),
-            ).rowcount
-            updated += rowcount
-        logger.info("[Merger] sort_order UPDATE: %d/%d rows updated", updated, len(all_nodes))
+                (sort_pos, fp),
+            )
+
+        # skipped ノードをマスターから削除
+        for fp in result.skipped:
+            self._conn.execute(
+                "DELETE FROM lc_master_nodes WHERE master_fp = ?", (fp,),
+            )
+            self._conn.execute(
+                "DELETE FROM lc_node_mappings WHERE master_fp = ? AND session_id = ?",
+                (fp, session_id),
+            )
+            self._conn.execute(
+                "DELETE FROM lc_master_edges WHERE from_master_fp = ? OR to_master_fp = ?",
+                (fp, fp),
+            )
+            new_count -= 1
+
+        # sort_order を連番に振り直し
+        renumber_sort_orders(self._conn)
+
         self._conn.commit()
+        logger.info("[Merger] マージ完了: session=%s, matched=%d, new=%d, skipped=%d",
+                    session_id, len(node_mapping), new_count, len(result.skipped))
+        return new_count
 
     def rebuild_master(self) -> None:
         """全セッションからマスターグラフを再構築。"""

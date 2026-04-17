@@ -54,6 +54,7 @@
         <button id="final-adopt-btn" class="px-3 py-1 bg-emerald-900/70 hover:bg-emerald-800/80 text-emerald-200 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✓ 採用</button>
         <button id="final-exclude-btn" class="px-3 py-1 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✕ 不採用</button>
         <button id="final-reset-btn" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>リセット</button>
+        <button id="debug-toggle" class="px-2 py-1 text-[10px] rounded transition-colors" onclick="toggleDebug()">Debug</button>
     </div>
 </div>
 </div>
@@ -187,7 +188,7 @@
     let selectedForGroup = new Set();  // Final タブ: 統合選択中の master_fp
     let geminiEnabled = false;  // GEMINI_API_KEY が設定されているか (API レスポンスで更新)
     let autoRefreshPaused = false;  // 自動更新一時停止フラグ
-    const _debugMode = new URLSearchParams(window.location.search).has('debug');  // ?debug でアンカー表示
+    let _debugMode = localStorage.getItem('lc_debug') === '1';  // デバッグモード
     const TRASH_ICON = '<svg class="w-3.5 h-3.5 inline" viewBox="0 0 16 16" fill="currentColor"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM4.496 6.675a.75.75 0 10-1.492.15l.66 6.6A1.75 1.75 0 005.405 15h5.19a1.75 1.75 0 001.741-1.575l.66-6.6a.75.75 0 00-1.492-.15l-.66 6.6a.25.25 0 01-.249.225h-5.19a.25.25 0 01-.249-.225l-.66-6.6z"/></svg>';
     const filterSelect = document.getElementById('filter-select');
     const sessionSelect = document.getElementById('session-select');
@@ -268,7 +269,10 @@
         const isGroupSelected = currentTab === 'final' && s.master_fp && selectedForGroup.has(s.master_fp);
         const groupSelectMark = isGroupSelected ? ' ring-2 ring-blue-500' : '';
         const excludedBorder = '';
-        const anchorMark = (_debugMode && s.anchor_info) ? ' ring-2 ring-cyan-400' : '';
+        const anchorMark = _debugMode
+            ? (s.anchor_info ? ' ring-2 ring-cyan-400'
+               : s.last_match_method === 'new' ? ' ring-2 ring-lime-400' : '')
+            : '';
         return `
             <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer relative
                         hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${excludedBorder}${pendingMark}${groupSelectMark}${anchorMark}"
@@ -502,6 +506,24 @@
             statusText.textContent = '自動更新停止';
         }
     };
+
+    // --- デバッグモード ---
+    window.toggleDebug = function() {
+        _debugMode = !_debugMode;
+        localStorage.setItem('lc_debug', _debugMode ? '1' : '0');
+        _updateDebugBtn();
+        renderAll();
+    };
+    function _updateDebugBtn() {
+        const btn = document.getElementById('debug-toggle');
+        if (!btn) return;
+        if (_debugMode) {
+            btn.className = 'px-2 py-1 text-[10px] rounded transition-colors bg-cyan-900/60 text-cyan-300 border border-cyan-700';
+        } else {
+            btn.className = 'px-2 py-1 text-[10px] rounded transition-colors bg-gray-800 text-gray-500 border border-gray-700';
+        }
+    }
+    _updateDebugBtn();
 
     // --- Final タブ ---
     let showExcluded = false;

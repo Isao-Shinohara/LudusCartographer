@@ -381,7 +381,11 @@ class EvidenceRepository
                    (SELECT GROUP_CONCAT(nm2.match_method || ':' || nm2.session_id, ',')
                     FROM lc_node_mappings nm2
                     WHERE nm2.master_fp = m.master_fp AND nm2.match_method != 'seed' AND nm2.match_method != 'new'
-                   ) AS anchor_info
+                   ) AS anchor_info,
+                   (SELECT nm3.match_method FROM lc_node_mappings nm3
+                    WHERE nm3.master_fp = m.master_fp AND nm3.match_method != 'seed'
+                    ORDER BY nm3.rowid DESC LIMIT 1
+                   ) AS last_match_method
             FROM lc_master_nodes m
             JOIN lc_screens s ON s.id = m.representative_screen_id
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
@@ -431,6 +435,7 @@ class EvidenceRepository
             'manual_group_id' => $raw['manual_group_id'] ?? null,
             'is_artifact'     => (bool)($raw['is_artifact'] ?? false),
             'anchor_info'     => $raw['anchor_info'] ?? null,
+            'last_match_method' => $raw['last_match_method'] ?? null,
         ];
     }
 
@@ -623,7 +628,11 @@ class EvidenceRepository
                    (SELECT GROUP_CONCAT(nm2.match_method || ':' || nm2.session_id, ',')
                     FROM lc_node_mappings nm2
                     WHERE nm2.master_fp = m.master_fp AND nm2.match_method != 'seed' AND nm2.match_method != 'new'
-                   ) AS anchor_info
+                   ) AS anchor_info,
+                   (SELECT nm3.match_method FROM lc_node_mappings nm3
+                    WHERE nm3.master_fp = m.master_fp AND nm3.match_method != 'seed'
+                    ORDER BY nm3.rowid DESC LIMIT 1
+                   ) AS last_match_method
             FROM lc_master_nodes m
             JOIN lc_screens s ON s.id = m.representative_screen_id
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
