@@ -533,9 +533,13 @@
     };
 
     // --- デバッグモード ---
+    let _debugAnchorIdx = -1;  // 選択中のアンカーインデックス (-1 = 未選択)
+    let _debugAnchorIndices = [];  // filteredScreens 内のアンカーのインデックス列
+
     window.toggleDebug = function() {
         _debugMode = !_debugMode;
         localStorage.setItem('lc_debug', _debugMode ? '1' : '0');
+        _debugAnchorIdx = -1;
         _updateDebugBtn();
         renderAll();
     };
@@ -549,6 +553,52 @@
         }
     }
     _updateDebugBtn();
+
+    function _debugNavigateAnchor(direction) {
+        if (!_debugMode || currentTab !== 'final') return;
+        // アンカーインデックス列を構築
+        _debugAnchorIndices = [];
+        for (let i = 0; i < filteredScreens.length; i++) {
+            if (filteredScreens[i].anchor_info) _debugAnchorIndices.push(i);
+        }
+        if (_debugAnchorIndices.length === 0) return;
+
+        if (_debugAnchorIdx === -1) {
+            // 未選択 → 方向に応じて最初 or 最後
+            _debugAnchorIdx = direction > 0 ? 0 : _debugAnchorIndices.length - 1;
+        } else {
+            _debugAnchorIdx += direction;
+            if (_debugAnchorIdx < 0) _debugAnchorIdx = 0;
+            if (_debugAnchorIdx >= _debugAnchorIndices.length) _debugAnchorIdx = _debugAnchorIndices.length - 1;
+        }
+
+        const screenIdx = _debugAnchorIndices[_debugAnchorIdx];
+        // 枠の更新
+        _updateDebugSelection(screenIdx);
+        // スクロール
+        const card = grid.querySelector(`[data-idx="${screenIdx}"]`);
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // フッター更新
+        const ds = document.getElementById('debug-stats');
+        if (ds) {
+            const s = filteredScreens[screenIdx];
+            ds.textContent = `Anchor ${_debugAnchorIdx + 1}/${_debugAnchorIndices.length} | ${s.name || s.ocr_text?.substring(0, 30) || ''}`;
+        }
+    }
+
+    function _updateDebugSelection(selectedScreenIdx) {
+        // 全カードの選択枠をリセット
+        grid.querySelectorAll('.debug-selected').forEach(el => {
+            el.classList.remove('debug-selected', 'ring-2', 'ring-orange-400');
+        });
+        // 選択カードに枠を追加
+        if (selectedScreenIdx >= 0) {
+            const card = grid.querySelector(`[data-idx="${selectedScreenIdx}"]`);
+            if (card) {
+                card.classList.add('debug-selected', 'ring-2', 'ring-orange-400');
+            }
+        }
+    }
 
     // --- Final タブ ---
     let showExcluded = false;
@@ -1925,11 +1975,19 @@
         navigator.clipboard.writeText(text);
     });
     document.addEventListener('keydown', function(e) {
-        if (!modal.classList.contains('flex')) return;
-        if (e.key === 'Escape') closeModal();
-        // ← 古い方向、→ 新しい方向（ソート方向対応）
-        if (e.key === 'ArrowLeft' && canGoOlder()) showModal(olderIdx());
-        if (e.key === 'ArrowRight' && canGoNewer()) showModal(newerIdx());
+        // モーダルが開いている時はモーダル内ナビゲーション
+        if (modal.classList.contains('flex')) {
+            if (e.key === 'Escape') closeModal();
+            if (e.key === 'ArrowLeft' && canGoOlder()) showModal(olderIdx());
+            if (e.key === 'ArrowRight' && canGoNewer()) showModal(newerIdx());
+            return;
+        }
+        // デバッグモード: ←→ でアンカーナビゲーション
+        if (_debugMode && currentTab === 'final') {
+            if (e.key === 'ArrowLeft') { e.preventDefault(); _debugNavigateAnchor(-1); }
+            if (e.key === 'ArrowRight') { e.preventDefault(); _debugNavigateAnchor(1); }
+            if (e.key === 'Escape') { _debugAnchorIdx = -1; _updateDebugSelection(-1); }
+        }
     });
 })();
 </script>
