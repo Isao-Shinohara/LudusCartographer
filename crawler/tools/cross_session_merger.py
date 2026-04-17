@@ -946,10 +946,20 @@ class CrossSessionMerger:
                      e["discovered_at"], now),
                 )
 
-        self._recalculate_master_graph()
+        # Seed: sort_order は first_seen_at 順 (位相ソートは使わない)
+        # 初回セッションは一本道なので時系列 = ゲーム進行順
+        sorted_nodes = self._conn.execute(
+            "SELECT master_fp FROM lc_master_nodes ORDER BY first_seen_at ASC"
+        ).fetchall()
+        for i, row in enumerate(sorted_nodes):
+            self._conn.execute(
+                "UPDATE lc_master_nodes SET sort_order = ? WHERE master_fp = ?",
+                (i, row["master_fp"]),
+            )
+
         self._conn.commit()
 
-        logger.info("[Merger] Seed: session=%s → %d ノード, マスターに投入",
+        logger.info("[Merger] Seed: session=%s → %d ノード, first_seen_at 順で sort_order 確定",
                     session_id, len(reps))
         return len(reps)
 
@@ -1072,20 +1082,27 @@ class CrossSessionMerger:
                 )
 
     def _recalculate_master_graph(self) -> None:
-        """マスターグラフの BFS depth + SCC を再計算。"""
+        """マスターグラフの BFS depth + SCC + sort_order を再計算。"""
         nodes = self._conn.execute(
             "SELECT master_fp FROM lc_master_nodes"
         ).fetchall()
         edges = self._conn.execute(
-            "SELECT from_master_fp, to_master_fp FROM lc_master_edges"
+            "SELECT from_master_fp, to_master_fp, COALESCE(edge_type, 'tap') AS edge_type"
+            " FROM lc_master_edges"
         ).fetchall()
 
         if not nodes or not edges:
             return
 
         G = nx.DiGraph()
+        # エッジに edge_type を属性として持たせる (tap 優先 DFS 用)
+        edge_types: dict[tuple[str, str], str] = {}
         for r in edges:
             G.add_edge(r["from_master_fp"], r["to_master_fp"])
+            key = (r["from_master_fp"], r["to_master_fp"])
+            # tap が1つでもあれば tap 扱い
+            if key not in edge_types or r["edge_type"] == "tap":
+                edge_types[key] = r["edge_type"]
         # ノードのみ（エッジなし）も追加
         for r in nodes:
             if r["master_fp"] not in G:
@@ -1191,14 +1208,13 @@ class CrossSessionMerger:
                 entry_nodes = sorted(set(entry_nodes),
                                      key=lambda fp: first_seen_map.get(fp, ""))
 
-                # SCC 内サブグラフで DFS
+                # SCC 内サブグラフで DFS (tap エッジ優先)
                 sub_G = G.subgraph(members)
                 visited: set[str] = set()
                 scc_order: list[str] = []
                 for entry in entry_nodes:
                     if entry in visited:
                         continue
-                    # DFS (隣接ノードを first_seen_at 順で訪問 → 安定性)
                     stack = [entry]
                     while stack:
                         node = stack.pop()
@@ -1206,11 +1222,14 @@ class CrossSessionMerger:
                             continue
                         visited.add(node)
                         scc_order.append(node)
-                        # 後続ノードを first_seen_at 降順で stack に積む
-                        # (pop すると昇順で取り出される)
+                        # tap エッジ優先、同優先度なら first_seen_at 順
+                        # (降順で積む → pop で昇順)
                         succs = sorted(
                             (n for n in sub_G.successors(node) if n not in visited),
-                            key=lambda fp: first_seen_map.get(fp, ""),
+                            key=lambda fp: (
+                                0 if edge_types.get((node, fp)) == "tap" else 1,
+                                first_seen_map.get(fp, ""),
+                            ),
                             reverse=True,
                         )
                         stack.extend(succs)
