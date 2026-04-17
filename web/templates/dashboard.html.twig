@@ -268,9 +268,10 @@
         const isGroupSelected = currentTab === 'final' && s.master_fp && selectedForGroup.has(s.master_fp);
         const groupSelectMark = isGroupSelected ? ' ring-2 ring-blue-500' : '';
         const excludedBorder = '';
+        const anchorMark = (_debugMode && s.anchor_info) ? ' ring-2 ring-cyan-400' : '';
         return `
             <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer relative
-                        hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${excludedBorder}${pendingMark}${groupSelectMark}"
+                        hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${excludedBorder}${pendingMark}${groupSelectMark}${anchorMark}"
                  data-idx="${idx}">
                 <div>
                 ${thumb
