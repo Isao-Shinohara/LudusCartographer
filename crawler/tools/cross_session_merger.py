@@ -901,9 +901,9 @@ class CrossSessionMerger:
                 (session_id, r["fingerprint"], r["fingerprint"]),
             )
 
-        # エッジをコピー
+        # エッジをコピー (tap + auto 両方。位相ソートに使うため)
         edges = self._conn.execute(
-            "SELECT from_fp, to_fp, tap_label, action_name, discovered_at"
+            "SELECT from_fp, to_fp, tap_label, action_name, edge_type, discovered_at"
             " FROM lc_transitions"
             " WHERE session_id = ? AND to_fp IS NOT NULL",
             (session_id,),
@@ -939,10 +939,11 @@ class CrossSessionMerger:
             self._conn.execute(
                     "INSERT OR IGNORE INTO lc_master_edges"
                     " (from_master_fp, to_master_fp, tap_label, action_name,"
-                    "  count, first_seen_at, last_seen_at)"
-                    " VALUES (?, ?, ?, ?, 1, ?, ?)",
+                    "  edge_type, count, first_seen_at, last_seen_at)"
+                    " VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
                     (from_fp, to_fp, e["tap_label"],
-                     e["action_name"], e["discovered_at"], now),
+                     e["action_name"], (e["edge_type"] if "edge_type" in e.keys() else "tap") or "tap",
+                     e["discovered_at"], now),
                 )
 
         self._recalculate_master_graph()
@@ -1011,12 +1012,13 @@ class CrossSessionMerger:
         self, session_id: str,
         node_mapping: dict[str, tuple[str, str, float]],
     ) -> None:
-        """セッションのエッジをマスターにマージ。"""
+        """セッションのエッジをマスターにマージ。auto エッジは除外。"""
         now = datetime.now().isoformat()
         edges = self._conn.execute(
             "SELECT from_fp, to_fp, tap_label, action_name, discovered_at"
             " FROM lc_transitions"
-            " WHERE session_id = ? AND to_fp IS NOT NULL",
+            " WHERE session_id = ? AND to_fp IS NOT NULL"
+            " AND COALESCE(edge_type, 'tap') != 'auto'",
             (session_id,),
         ).fetchall()
 

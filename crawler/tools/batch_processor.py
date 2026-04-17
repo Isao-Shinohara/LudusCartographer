@@ -134,6 +134,7 @@ class BatchProcessor:
                 to_master_fp    TEXT    NOT NULL,
                 tap_label       TEXT,
                 action_name     TEXT,
+                edge_type       TEXT    DEFAULT 'tap',
                 count           INTEGER DEFAULT 1,
                 avg_duration    REAL,
                 min_duration    REAL,

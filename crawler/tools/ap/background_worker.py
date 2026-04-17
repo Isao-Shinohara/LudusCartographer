@@ -211,9 +211,10 @@ class BackgroundWorker:
                     logger.warning("[BG_WORKER] gemini 例外: %s", e)
                 last_gemini = time.time()
 
-            # 遷移グラフ構築 (120秒間隔)
+            # 合成エッジ + 遷移グラフ構築 (120秒間隔)
             if now - last_graph >= self._interval_graph:
                 try:
+                    self._synthesize_auto_edges()
                     self._run_graph_build()
                 except Exception as e:
                     logger.warning("[BG_WORKER] graph 例外: %s", e)
@@ -1050,6 +1051,92 @@ class BackgroundWorker:
                 logger.info("[BG_WORKER] gemini remerge: %d クラスタ統合", merged)
         except Exception as e:
             logger.warning("[BG_WORKER] gemini remerge 例外: %s", e)
+
+    # ─── 合成エッジ ─────────────────────────────────────
+
+    _AUTO_EDGE_TIMEOUT = 60  # 秒: これ以上離れていたら文脈切れ
+
+    def _synthesize_auto_edges(self) -> None:
+        """artifact でない有効画面間に合成エッジ (auto) を注入する。
+
+        is_representative=1 かつ is_artifact=0 の画面を discovered_at 順に走査し、
+        既に tap エッジがない隣接画面間に edge_type='auto' の遷移を追加する。
+        冪等: 既存の auto エッジがあれば INSERT OR IGNORE でスキップ。
+        """
+        conn = self._get_conn()
+        try:
+            sid_filter = ""
+            sid_params: tuple = ()
+            if self._session_id:
+                sid_filter = " AND session_id = ?"
+                sid_params = (self._session_id,)
+
+            # 有効な代表画面を時系列順に取得
+            rows = conn.execute(
+                "SELECT id, fingerprint, session_id, discovered_at"
+                " FROM lc_screens"
+                " WHERE is_representative = 1"
+                " AND COALESCE(is_artifact, 0) = 0"
+                + sid_filter +
+                " ORDER BY discovered_at ASC",
+                sid_params,
+            ).fetchall()
+
+            if len(rows) < 2:
+                return
+
+            # 既存の tap エッジを高速検索用にセット化
+            existing = set()
+            for r in conn.execute(
+                "SELECT from_fp, to_fp FROM lc_transitions"
+                " WHERE edge_type = 'tap' OR edge_type IS NULL"
+                + sid_filter,
+                sid_params,
+            ).fetchall():
+                existing.add((r["from_fp"], r["to_fp"]))
+
+            inserted = 0
+            prev = rows[0]
+            for cur in rows[1:]:
+                # セッションが異なる場合はスキップ
+                if cur["session_id"] != prev["session_id"]:
+                    prev = cur
+                    continue
+                # タイムアウト: 60秒以上空いていたら文脈切れ
+                from datetime import datetime
+                try:
+                    t_prev = datetime.fromisoformat(prev["discovered_at"])
+                    t_cur = datetime.fromisoformat(cur["discovered_at"])
+                    gap = (t_cur - t_prev).total_seconds()
+                except (ValueError, TypeError):
+                    gap = 0
+                if gap > self._AUTO_EDGE_TIMEOUT:
+                    prev = cur
+                    continue
+                # 既に tap エッジがあればスキップ
+                if (prev["fingerprint"], cur["fingerprint"]) in existing:
+                    prev = cur
+                    continue
+                # 合成エッジを挿入
+                conn.execute(
+                    "INSERT OR IGNORE INTO lc_transitions"
+                    " (session_id, from_screen_id, to_screen_id, from_fp, to_fp,"
+                    "  action_name, edge_type, discovered_at)"
+                    " VALUES (?, ?, ?, ?, ?, 'AUTO_TRANSITION', 'auto', ?)",
+                    (cur["session_id"], prev["id"], cur["id"],
+                     prev["fingerprint"], cur["fingerprint"],
+                     cur["discovered_at"]),
+                )
+                inserted += 1
+                prev = cur
+
+            if inserted > 0:
+                conn.commit()
+                logger.info("[BG_WORKER] auto edges: %d 件の合成エッジを追加", inserted)
+        except Exception as e:
+            logger.warning("[BG_WORKER] auto edges 例外: %s", e)
+        finally:
+            conn.close()
 
     # ─── 遷移グラフ構築 ───────────────────────────────────
 

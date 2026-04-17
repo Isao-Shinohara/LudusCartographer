@@ -53,6 +53,7 @@ def _setup_db(db_path: Path) -> sqlite3.Connection:
             tap_y INTEGER,
             tap_label TEXT,
             action_name TEXT,
+            edge_type TEXT DEFAULT 'tap',
             discovered_at TEXT
         );
         CREATE TABLE IF NOT EXISTS lc_master_nodes (
@@ -82,6 +83,7 @@ def _setup_db(db_path: Path) -> sqlite3.Connection:
             to_master_fp TEXT NOT NULL,
             tap_label TEXT,
             action_name TEXT,
+            edge_type TEXT DEFAULT 'tap',
             count INTEGER DEFAULT 1,
             first_seen_at TEXT,
             last_seen_at TEXT,

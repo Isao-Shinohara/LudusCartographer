@@ -311,6 +311,7 @@ while iters < MAX_ITERATIONS:
     if g == 0 and d == 0:
         break
 w._run_incremental_dedup()
+w._synthesize_auto_edges()
 _update_progress("graph", total, total, 0, 0)
 bp = BatchProcessor(db_path=DB)
 sccs = bp.build_graph(session_id=SID)
