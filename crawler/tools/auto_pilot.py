@@ -2511,12 +2511,7 @@ def main():
 
     def _cleanup_dashboard():
         # PHP サーバーは自動操縦終了後もダッシュボード閲覧のため残す
-        # ステータスバー復帰
-        try:
-            adb("shell settings put global policy_control null")
-            logger.info("[CLEANUP] ステータスバー復帰")
-        except Exception:
-            pass
+        pass
 
     def _sigint_handler(signum, frame):
         logger.info("\n[STOP] 停止シグナル受信 — シャットダウン開始")
@@ -2662,9 +2657,6 @@ def main():
             adb(f"shell am start -n '{APP_PACKAGE}/{APP_ACTIVITY}'")
         time.sleep(2)
 
-    # ── ステータスバー非表示 (スクショへの「緊急通報のみ」等の写り込み防止) ──
-    adb("shell settings put global policy_control immersive.full=*")
-    logger.info("[STARTUP] ステータスバー+ナビバー非表示 (immersive.full mode)")
     state.game_foreground = True  # ゲーム起動確認済み → スクショ記録を許可
     # 起動シーン記録: -r (新規) のみ有効。途中再開はタイトル画面を通らないため不要
     state.startup_phase = args.reinstall if recorder is not None else False
