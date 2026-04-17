@@ -430,6 +430,9 @@ def gemini_correct_single(
             ],
         )
 
+        if response.text is None:
+            logger.warning("[GEMINI] 単体応答が空 (safety filter?)")
+            return None
         text = response.text.strip()
         # ```json ... ``` を除去
         if text.startswith("```"):
@@ -504,6 +507,9 @@ def gemini_correct_multi(
             contents=contents,
         )
 
+        if response.text is None:
+            logger.warning("[GEMINI] バッチ応答が空 (safety filter?)")
+            return None
         text = response.text.strip()
         if text.startswith("```"):
             text = re.sub(r'^```\w*\n?', '', text)
@@ -565,6 +571,8 @@ def _stage3_gemini_batch(texts: list[dict[int, str]]) -> dict[int, str]:
                     contents=f"以下のOCRテキストの誤読を修正してください。"
                              f"修正後のテキストのみ返してください。\n\n{text}",
                 )
+                if response.text is None:
+                    continue
                 corrected = response.text.strip()
                 if corrected:
                     result_map[sid] = corrected

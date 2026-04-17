@@ -858,8 +858,16 @@ class BackgroundWorker:
 
                 results = gemini_correct_multi(items, client=client)
                 if results is None:
-                    # API エラー → 次回再試行のため更新しない
-                    break
+                    # API エラー (safety filter 等) → バッチ内の画像を空文字でマークして次へ
+                    logger.warning("[GEMINI] バッチ失敗 → %d 件を空文字マーク", len(items))
+                    for item in items:
+                        conn.execute(
+                            "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?",
+                            (item["id"],),
+                        )
+                    conn.commit()
+                    _time.sleep(_GEMINI_RATE_LIMIT)
+                    continue
 
                 # 結果を id でマップ
                 result_map = {r["id"]: r for r in results}
