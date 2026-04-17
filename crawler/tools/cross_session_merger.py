@@ -570,11 +570,27 @@ class CrossSessionMerger:
             "summary": summary,
         }
 
+    def _check_ocr_complete(self, session_id: str) -> None:
+        """Gemini OCR 補正が完了しているか確認。未完了なら例外。"""
+        pending = self._conn.execute(
+            "SELECT COUNT(*) FROM lc_screens"
+            " WHERE session_id = ? AND is_representative = 1"
+            " AND ocr_text_gemini IS NULL",
+            (session_id,),
+        ).fetchone()[0]
+        if pending > 0:
+            raise RuntimeError(
+                f"Gemini OCR 未完了: {session_id} ({pending} 件未処理)。"
+                " ダッシュボードの「再開」ボタンで OCR 補正を完了してからマージしてください。"
+            )
+
     def merge_to_master(self, session_id: str) -> int:
         """セッションのグラフをマスターグラフにマージする。
 
         Returns: 新規追加ノード数
+        Raises: RuntimeError — Gemini OCR 補正が未完了の場合
         """
+        self._check_ocr_complete(session_id)
         node_mapping, session_reps, is_seed = self._compute_matches(session_id)
 
         if is_seed:
@@ -906,7 +922,11 @@ class CrossSessionMerger:
     # ─── 内部ヘルパー ────────────────────────────────
 
     def _seed_master(self, session_id: str) -> int:
-        """最初のセッションをマスターにコピー。"""
+        """最初のセッションをマスターにコピー。
+
+        Raises: RuntimeError — Gemini OCR 補正が未完了の場合
+        """
+        self._check_ocr_complete(session_id)
         now = datetime.now().isoformat()
 
         # 代表画像をマスターノードにコピー

@@ -37,9 +37,11 @@ def _setup_db(db_path: Path) -> sqlite3.Connection:
             thumbnail_path TEXT,
             ocr_text TEXT,
             ocr_text_hq TEXT,
+            ocr_text_gemini TEXT,
             discovered_at TEXT,
             scene TEXT,
             is_representative BOOLEAN DEFAULT 0,
+            is_artifact INTEGER DEFAULT 0,
             cluster_id INTEGER
         );
         CREATE TABLE IF NOT EXISTS lc_transitions (
@@ -129,8 +131,8 @@ def _insert_screen(conn, session_id, fp, title=None, scene="MENU",
     cur = conn.execute(
         "INSERT INTO lc_screens"
         " (session_id, fingerprint, title, scene, phash, discovered_at,"
-        "  is_representative, screenshot_path)"
-        " VALUES (?, ?, ?, ?, ?, '2026-01-01', ?, '')",
+        "  is_representative, screenshot_path, ocr_text_gemini)"
+        " VALUES (?, ?, ?, ?, ?, '2026-01-01', ?, '', '')",
         (session_id, fp, title or f"Title_{fp}", scene, phash or fp, is_rep),
     )
     conn.commit()
