@@ -175,45 +175,6 @@ def compute_image_hash(image_path: Path) -> str:
     return sha256.hexdigest()[:32]  # 32文字に短縮
 
 
-# ============================================================
-# Vertex AI 解析
-# ============================================================
-
-def analyze_with_vertex_ai(screenshot_path: Path) -> dict:
-    """
-    Vertex AI GameAnalyzer でスクリーンショットを解析する。
-    GCP_PROJECT_ID が未設定の場合はスキップして空の結果を返す。
-    """
-    project_id = os.environ.get("GCP_PROJECT_ID", "")
-    if not project_id:
-        logger.info("[AI] GCP_PROJECT_ID 未設定 → Vertex AI 解析をスキップ")
-        return {"screen_type": "", "buttons": [], "confidence": 0.0, "skipped": True}
-
-    try:
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from ai_analyzer import analyzer_from_env
-
-        analyzer = analyzer_from_env()
-        logger.info(f"[AI] Vertex AI 解析中: {screenshot_path.name} ...")
-        result = analyzer.analyze(screenshot_path)
-
-        if result.is_ok:
-            logger.info(f"[AI] ┌─ 画面種別  : {result.screen_type} (信頼度: {result.confidence:.0%})")
-            for i, btn in enumerate(result.buttons[:5], 1):
-                logger.info(f"[AI] │  ボタン{i:02d} : [{btn.position}] {btn.name!r} — {btn.description}")
-            if not result.buttons:
-                logger.info("[AI] └─ ボタン    : (検出なし)")
-            else:
-                logger.info("[AI] └─ (以上)")
-        else:
-            logger.warning(f"[AI] 解析エラー: {result.error}")
-
-        return result.to_dict()
-
-    except Exception as e:
-        logger.warning(f"[AI] Vertex AI 解析失敗: {e}")
-        return {"screen_type": "", "buttons": [], "confidence": 0.0, "error": str(e)}
-
 
 # ============================================================
 # メイン
@@ -268,45 +229,29 @@ def main() -> None:
         # --------------------------------------------------
         # STEP 1: 起動確認
         # --------------------------------------------------
-        logger.info("[STEP 1/5] アプリ起動完了")
+        logger.info("[STEP 1/4] アプリ起動完了")
 
         # --------------------------------------------------
         # STEP 2: 描画待ち
         # --------------------------------------------------
-        logger.info("[STEP 2/5] 3秒待機（描画完了まで）...")
+        logger.info("[STEP 2/4] 3秒待機（描画完了まで）...")
         d.wait(3)
 
         # --------------------------------------------------
         # STEP 3: スクリーンショット撮影
         # --------------------------------------------------
-        logger.info("[STEP 3/5] スクリーンショット撮影...")
+        logger.info("[STEP 3/4] スクリーンショット撮影...")
         shot_path = d.screenshot("launch")
-        logger.info(f"[STEP 3/5] 保存: {shot_path}")
+        logger.info(f"[STEP 3/4] 保存: {shot_path}")
 
         # --------------------------------------------------
-        # STEP 4: Vertex AI 解析
+        # STEP 4: MySQL に保存
         # --------------------------------------------------
-        logger.info("[STEP 4/5] Vertex AI による画面解析...")
-        ai_result = analyze_with_vertex_ai(shot_path)
-
-        # --------------------------------------------------
-        # STEP 5: MySQL に保存
-        # --------------------------------------------------
-        logger.info("[STEP 5/5] MySQL への保存...")
+        logger.info("[STEP 4/4] MySQL への保存...")
 
         screen_hash = compute_image_hash(shot_path)
-        screen_name = ai_result.get("screen_type") or "未分類"
-        # screen_type から category を推定
-        category_map = {
-            "タイトル": "title", "ホーム": "home", "クエスト": "quest",
-            "バトル": "battle", "ショップ": "shop", "ガチャ": "gacha",
-            "ランキング": "ranking", "設定": "settings", "ログイン": "login",
-            "イベント": "event",
-        }
-        category = next(
-            (v for k, v in category_map.items() if k in screen_name),
-            "unknown",
-        )
+        screen_name = "未分類"
+        category = "unknown"
 
         saved = save_screen_to_db(
             game_id=         1,  # games テーブルのサンプルデータ ID
