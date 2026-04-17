@@ -874,7 +874,10 @@ class BackgroundWorker:
                     corrected = _clean_gemini_output(raw_corrected)
                     # is_artifact 検知 → 対応するマスターノードを user_excluded=1 に
                     is_artifact = bool(r.get("is_artifact", False)) if r else False
+                    screen_type = (r.get("screen_type", "") if r else "")
                     if is_artifact:
+                        logger.info("[BG_WORKER] artifact 検出: id=%d type=%s text=%s",
+                                    sid, screen_type, corrected[:30] if corrected else "(empty)")
                         # screen の fingerprint からマスターノードを特定
                         screen_fp = conn.execute(
                             "SELECT fingerprint FROM lc_screens WHERE id = ?",
