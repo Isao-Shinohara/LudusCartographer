@@ -619,7 +619,11 @@ class EvidenceRepository
                    m.visit_count, m.bfs_depth,
                    1 AS is_representative, s.cluster_id,
                    m.user_excluded, m.master_fp,
-                   m.manual_group_id, m.is_group_representative
+                   m.manual_group_id, m.is_group_representative,
+                   (SELECT GROUP_CONCAT(nm2.match_method || ':' || nm2.session_id, ',')
+                    FROM lc_node_mappings nm2
+                    WHERE nm2.master_fp = m.master_fp AND nm2.match_method != 'seed' AND nm2.match_method != 'new'
+                   ) AS anchor_info
             FROM lc_master_nodes m
             JOIN lc_screens s ON s.id = m.representative_screen_id
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
