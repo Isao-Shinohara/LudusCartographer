@@ -459,9 +459,12 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 
 ## 14. DB・スクショのクリーンアップ手順
 
-ユーザーが「DB とスクショをクリーンアップして」と指示した場合、以下を実行する：
+ユーザーが「クリーンアップして」と指示した場合、**セッション・画面データのみ**をクリアする。
+**OCR 修正ルール・学習パターンは絶対に削除しない（厳格）。**
 
-1. **crawler/storage/ludus.db**: 全テーブルのデータを DELETE → VACUUM（スキーマは保持）
+### 削除対象（セッション関連データのみ）
+
+1. **crawler/storage/ludus.db**: 以下のテーブルのみ DELETE → VACUUM（スキーマは保持）
    ```sql
    DELETE FROM lc_node_mappings;
    DELETE FROM lc_master_edges;
@@ -484,6 +487,17 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 5. **crawler/evidence/**: 中身を全削除（ディレクトリは残す）
 6. **crawler/screenshots/**: 中身を全削除（ディレクトリは残す）
 7. クリーンアップ後に行数とディスク使用量を確認して報告する
+
+### 保護対象（絶対に削除しない）
+
+| リソース | 内容 | 理由 |
+|---------|------|------|
+| `lc_ocr_corrections` テーブル | OCR 修正ルール (手動編集から自動抽出) | 周回を重ねて蓄積した学習資産 |
+| `crawler/storage/ocr_learned_patterns.json` | OCR 学習パターン | 同上 |
+
+- 「クリーンアップして」は上記の削除対象のみを実行する
+- OCR ルールの削除が必要な場合は「OCR ルールも含めてクリーンアップして」等の**明示的な指示が必要**
+- 迷った場合は確認してから実行する
 
 ### 起動コマンドの使い分け（厳格）
 
