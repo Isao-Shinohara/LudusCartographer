@@ -259,7 +259,11 @@
         if (s.is_representative) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-emerald-500" title="採用"></span>');
         if (s.has_gemini) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-amber-500" title="Gemini OCR済"></span>');
         if (s.has_manual) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-pink-500" title="手動編集済"></span>');
-        if (_debugMode && s.anchor_info) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-cyan-400" title="アンカー: ' + escapeHtml(s.anchor_info) + '"></span>');
+        if (_debugMode && s.anchor_info) {
+            const phaseMatch = s.anchor_info.match(/phase(\d)/);
+            const phaseLabel = phaseMatch ? 'P' + phaseMatch[1] : 'A';
+            dots.push('<span class="px-1 rounded text-[9px] font-bold bg-cyan-400/80 text-black" title="アンカー: ' + escapeHtml(s.anchor_info) + '">' + phaseLabel + '</span>');
+        }
         const statusDots = dots.length ? `<span class="flex gap-0.5 items-center">${dots.join('')}</span>` : '';
         const isExcluded = currentTab === 'final' && s.user_excluded;
         const dimClass = ((isThinned && filterSelect.value === 'all') || isExcluded) ? ' opacity-40' : '';
@@ -355,7 +359,10 @@
                     .filter(s => s.last_match_method === 'new').length;
                 if (between - betweenInserted === 0) adjacentPairs++;
             }
-            debugStats.textContent = `Anchor: ${anchors.length} | 隣接: ${adjacentPairs} | 挿入: ${inserted.length}`;
+            const p1 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase1')).length;
+            const p2 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase2')).length;
+            const p3 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase3')).length;
+            debugStats.textContent = `P1: ${p1} | P2: ${p2} | P3: ${p3} | 隣接: ${adjacentPairs} | 挿入: ${inserted.length}`;
             debugStats.classList.remove('hidden');
         } else {
             debugStats.classList.add('hidden');
