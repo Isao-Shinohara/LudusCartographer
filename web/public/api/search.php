@@ -319,7 +319,7 @@ total, g, d = _pending()
 print(json.dumps({"ok": True, "sccs": sccs, "iterations": iters, "remaining_gemini": g, "remaining_dedup": d}, ensure_ascii=False))
 PYTHON;
     $cmd = sprintf(
-        'cd %s && ./venv/bin/python -W ignore -c %s > %s 2>>storage/process_session_bg.err.log &',
+        'cd %s && exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- && ./venv/bin/python -W ignore -c %s > %s 2>>storage/process_session_bg.err.log </dev/null &',
         $crawlerDir,
         escapeshellarg($script),
         escapeshellarg($resultFile),
@@ -342,7 +342,7 @@ if ($action === 'build_session_graph') {
     @unlink($resultFile);
     // stderr は捨てて stdout (JSON) のみ結果ファイルに出力
     $cmd = sprintf(
-        'cd %s && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null &',
+        'cd %s && exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null </dev/null &',
         $crawlerDir,
         escapeshellarg(
             "import json; from pathlib import Path; from tools.batch_processor import BatchProcessor; "
@@ -370,7 +370,7 @@ if ($action === 'preview_merge') {
     $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
     $cmd = sprintf(
-        'cd %s && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null &',
+        'cd %s && exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null </dev/null &',
         $crawlerDir,
         escapeshellarg(
             "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
@@ -397,7 +397,7 @@ if ($action === 'execute_merge') {
     $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
     $cmd = sprintf(
-        'cd %s && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null &',
+        'cd %s && exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null </dev/null &',
         $crawlerDir,
         escapeshellarg(
             "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
