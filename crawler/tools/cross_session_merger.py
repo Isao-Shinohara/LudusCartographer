@@ -686,14 +686,14 @@ class CrossSessionMerger:
             ).fetchall()
         }
 
-        # 新規ノード (sort_order 未設定) を特定
+        # 新規ノード (このセッションで追加) を特定
         new_fps = set()
         for r in self._conn.execute(
-            "SELECT session_fp, master_fp, match_method FROM lc_node_mappings"
-            " WHERE session_id = ?", (session_id,),
+            "SELECT master_fp FROM lc_node_mappings"
+            " WHERE session_id = ? AND match_method = 'new'",
+            (session_id,),
         ).fetchall():
-            if r["match_method"] == "new" and r["master_fp"] not in sort_orders:
-                new_fps.add(r["master_fp"])
+            new_fps.add(r["master_fp"])
 
         if not new_fps:
             return
@@ -707,8 +707,15 @@ class CrossSessionMerger:
         ).fetchall()
 
         # セッション時系列を走査し、マッチノード間の新規ノードの位置を決定
-        # アンカー: セッションの時系列順で最初に出会うマッチノード
-        last_anchor_sort = -0.5  # 最初のアンカー前の新規ノード用
+        # 最初のアンカー前の新規ノードは、最初のアンカーの直後に配置
+        # (seed の先頭より前に S2 のノードが来ないようにする)
+        first_anchor_sort = None
+        for screen in session_screens:
+            m_fp = all_mappings.get(screen["fingerprint"])
+            if m_fp and m_fp in sort_orders and m_fp not in new_fps:
+                first_anchor_sort = sort_orders[m_fp]
+                break
+        last_anchor_sort = first_anchor_sort if first_anchor_sort is not None else 0.0
         new_count_after_anchor = 0
         placed_new: dict[str, float] = {}  # 配置済み新規ノード
 
@@ -741,11 +748,15 @@ class CrossSessionMerger:
 
         logger.info("[Merger] sort_order 再番号付け: %d ノード (%d 新規挿入)",
                     len(all_nodes), len(placed_new))
+        updated = 0
         for new_order, (fp, _) in enumerate(all_nodes):
-            self._conn.execute(
+            rowcount = self._conn.execute(
                 "UPDATE lc_master_nodes SET sort_order = ? WHERE master_fp = ?",
                 (new_order, fp),
-            )
+            ).rowcount
+            updated += rowcount
+        logger.info("[Merger] sort_order UPDATE: %d/%d rows updated", updated, len(all_nodes))
+        self._conn.commit()
 
     def rebuild_master(self) -> None:
         """全セッションからマスターグラフを再構築。"""
