@@ -380,7 +380,7 @@
             }
             renderAll();
         } catch (e) {
-            grid.innerHTML = '<div class="col-span-full text-center text-red-500 py-12">API エラー</div>';
+            grid.innerHTML = '<div class="col-span-full text-center text-gray-500 py-12">準備中...</div>';
         }
     }
 
@@ -513,7 +513,7 @@
             if (data.gemini_enabled !== undefined) geminiEnabled = data.gemini_enabled;
             renderAll();
         } catch (e) {
-            grid.innerHTML = '<div class="col-span-full text-center text-red-500 py-12">API エラー</div>';
+            grid.innerHTML = '<div class="col-span-full text-center text-gray-500 py-12">準備中...</div>';
         }
     }
 
@@ -816,7 +816,7 @@
             // 操作実行中ならボタンを再 disable
             if (_operationInProgress) _setOperationButtons(true);
         } catch (e) {
-            mc.innerHTML = '<div class="text-center text-red-500 py-12">API エラー</div>';
+            mc.innerHTML = '<div class="text-center text-gray-500 py-12">準備中...</div>';
         }
     }
 
