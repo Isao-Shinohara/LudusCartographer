@@ -898,30 +898,40 @@ class BackgroundWorker:
                                     "UPDATE lc_screens SET is_representative = 0"
                                     " WHERE id = ?", (sid,),
                                 )
-                    # プレースホルダ title (STARTUP, UNKNOWN等) なら、補正テキストから生成
-                    new_title = None
-                    if corrected:
+                    # Gemini がテキストなしと判断 → タイトルもクリア
+                    if not corrected and item["ocr_text"]:
+                        conn.execute(
+                            "UPDATE lc_screens SET ocr_text_gemini = '', title = '(UNKNOWN)'"
+                            " WHERE id = ?",
+                            (sid,),
+                        )
+                    elif corrected:
+                        # プレースホルダ title (STARTUP, UNKNOWN等) なら、補正テキストから生成
                         words = [w.strip() for w in corrected.split()
                                  if w.strip() and _has_text.search(w)
                                  and not _pure_num.match(w.strip())]
-                        if words:
-                            new_title = " / ".join(words[:3])
-                    if new_title:
-                        conn.execute(
-                            "UPDATE lc_screens SET ocr_text_gemini = ?, title = ?"
-                            " WHERE id = ? AND (title LIKE '(%' OR title IS NULL)",
-                            (corrected, new_title, sid),
-                        )
-                        # プレースホルダでない場合は ocr_text_gemini のみ更新
-                        conn.execute(
-                            "UPDATE lc_screens SET ocr_text_gemini = ?"
-                            " WHERE id = ? AND title NOT LIKE '(%' AND title IS NOT NULL",
-                            (corrected, sid),
-                        )
+                        new_title = " / ".join(words[:3]) if words else None
+                        if new_title:
+                            conn.execute(
+                                "UPDATE lc_screens SET ocr_text_gemini = ?, title = ?"
+                                " WHERE id = ? AND (title LIKE '(%' OR title IS NULL)",
+                                (corrected, new_title, sid),
+                            )
+                            # プレースホルダでない場合は ocr_text_gemini のみ更新
+                            conn.execute(
+                                "UPDATE lc_screens SET ocr_text_gemini = ?"
+                                " WHERE id = ? AND title NOT LIKE '(%' AND title IS NOT NULL",
+                                (corrected, sid),
+                            )
+                        else:
+                            conn.execute(
+                                "UPDATE lc_screens SET ocr_text_gemini = ? WHERE id = ?",
+                                (corrected, sid),
+                            )
                     else:
                         conn.execute(
-                            "UPDATE lc_screens SET ocr_text_gemini = ? WHERE id = ?",
-                            (corrected or "", sid),
+                            "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?",
+                            (sid,),
                         )
                     if corrected and corrected != item["ocr_text"]:
                         updated += 1
