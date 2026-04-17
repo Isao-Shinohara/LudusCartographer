@@ -906,7 +906,7 @@ class BackgroundWorker:
                             (sid,),
                         )
                     elif corrected:
-                        # プレースホルダ title (STARTUP, UNKNOWN等) なら、補正テキストから生成
+                        # Gemini 補正テキストからタイトルを常に再生成
                         words = [w.strip() for w in corrected.split()
                                  if w.strip() and _has_text.search(w)
                                  and not _pure_num.match(w.strip())]
@@ -914,14 +914,8 @@ class BackgroundWorker:
                         if new_title:
                             conn.execute(
                                 "UPDATE lc_screens SET ocr_text_gemini = ?, title = ?"
-                                " WHERE id = ? AND (title LIKE '(%' OR title IS NULL)",
+                                " WHERE id = ?",
                                 (corrected, new_title, sid),
-                            )
-                            # プレースホルダでない場合は ocr_text_gemini のみ更新
-                            conn.execute(
-                                "UPDATE lc_screens SET ocr_text_gemini = ?"
-                                " WHERE id = ? AND title NOT LIKE '(%' AND title IS NOT NULL",
-                                (corrected, sid),
                             )
                         else:
                             conn.execute(
