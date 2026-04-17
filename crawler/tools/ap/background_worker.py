@@ -1096,7 +1096,7 @@ class BackgroundWorker:
                 if judged_count >= MAX_JUDGEMENTS_PER_RUN:
                     break
 
-                # Step 1: phash で候補絞り込み (同シーン + 距離 < 30)
+                # Step 1: phash で候補絞り込み (同シーン + 距離 < 15)
                 candidates = []
                 for j, other in enumerate(items):
                     if j == i:
@@ -1109,7 +1109,7 @@ class BackgroundWorker:
                         continue
                     try:
                         d = phash_distance(anchor["phash"], other["phash"])
-                        if d < 30:
+                        if d < 15:
                             candidates.append((d, j, other))
                     except Exception:
                         continue
@@ -1142,6 +1142,10 @@ class BackgroundWorker:
                         if target_cluster != source_cluster:
                             merges.append((target_cluster, source_cluster))
                             merged_clusters.add(source_cluster)
+                            a_title = (anchor.get("ocr_text_gemini") or "")[:30]
+                            c_title = (candidates[pos][2].get("ocr_text_gemini") or "")[:30]
+                            logger.info("[BG_WORKER] gemini merge: cluster %d [%s] ← %d [%s] (phash=%d)",
+                                        target_cluster, a_title, source_cluster, c_title, candidates[pos][0])
 
             if not merges:
                 if judged_count > 0:
@@ -1155,10 +1159,11 @@ class BackgroundWorker:
                     " WHERE cluster_id = ?",
                     (target, source),
                 )
-                # ターゲットの代表を1つだけ残す
+                # ターゲットの代表: テキストが長い画面を優先
                 rep = conn.execute(
                     "SELECT id FROM lc_screens WHERE cluster_id = ?"
-                    " ORDER BY discovered_at LIMIT 1",
+                    " ORDER BY LENGTH(COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '')) DESC,"
+                    " discovered_at ASC LIMIT 1",
                     (target,),
                 ).fetchone()
                 if rep:
