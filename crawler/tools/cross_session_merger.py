@@ -910,14 +910,38 @@ class CrossSessionMerger:
         ).fetchall()
 
         master_fps = {r["fingerprint"] for r in reps}
+        # 不採用画面 → 同クラスタ代表画面の fingerprint に解決するマップ
+        non_rep_to_rep: dict[str, str] = {}
+        non_reps = self._conn.execute(
+            "SELECT s.fingerprint, rep.fingerprint AS rep_fp"
+            " FROM lc_screens s"
+            " JOIN lc_screens rep ON rep.cluster_id = s.cluster_id"
+            "   AND rep.session_id = s.session_id AND rep.is_representative = 1"
+            " WHERE s.session_id = ? AND s.is_representative = 0"
+            "   AND s.cluster_id IS NOT NULL",
+            (session_id,),
+        ).fetchall()
+        for nr in non_reps:
+            non_rep_to_rep[nr["fingerprint"]] = nr["rep_fp"]
+
         for e in edges:
-            if e["from_fp"] in master_fps and e["to_fp"] in master_fps:
-                self._conn.execute(
+            from_fp = e["from_fp"]
+            to_fp = e["to_fp"]
+            # 不採用画面はクラスタ代表に解決
+            if from_fp not in master_fps:
+                from_fp = non_rep_to_rep.get(from_fp, from_fp)
+            if to_fp not in master_fps:
+                to_fp = non_rep_to_rep.get(to_fp, to_fp)
+            if from_fp not in master_fps or to_fp not in master_fps:
+                continue
+            if from_fp == to_fp:
+                continue
+            self._conn.execute(
                     "INSERT OR IGNORE INTO lc_master_edges"
                     " (from_master_fp, to_master_fp, tap_label, action_name,"
                     "  count, first_seen_at, last_seen_at)"
                     " VALUES (?, ?, ?, ?, 1, ?, ?)",
-                    (e["from_fp"], e["to_fp"], e["tap_label"],
+                    (from_fp, to_fp, e["tap_label"],
                      e["action_name"], e["discovered_at"], now),
                 )
 
