@@ -551,6 +551,12 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: scene カラム追加")
+        if "is_artifact" not in cols:
+            self._conn.execute(
+                "ALTER TABLE lc_screens ADD COLUMN is_artifact INTEGER DEFAULT 0"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: is_artifact カラム追加")
         # lc_sessions に completion_type カラム
         sess_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_sessions)")}
         if "completion_type" not in sess_cols:

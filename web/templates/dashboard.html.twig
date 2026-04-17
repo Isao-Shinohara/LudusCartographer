@@ -250,7 +250,8 @@
             : '';
         const isThinned = s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative;
         const dots = [];
-        if (isThinned) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-gray-500" title="不採用"></span>');
+        if (s.is_artifact) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-red-500" title="Gemini除外"></span>');
+        if (isThinned && !s.is_artifact) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-gray-500" title="不採用"></span>');
         if (s.has_hq_ocr) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-sky-500" title="HQ OCR済"></span>');
         if (s.is_representative) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-emerald-500" title="採用"></span>');
         if (s.has_gemini) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-amber-500" title="Gemini OCR済"></span>');

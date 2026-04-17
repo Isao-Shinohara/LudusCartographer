@@ -290,7 +290,7 @@ class EvidenceRepository
 
         $sql = <<<SQL
             SELECT s.id, s.title, s.depth, s.screenshot_path, s.thumbnail_path,
-                   s.ocr_text, s.ocr_text_hq, s.ocr_text_gemini,
+                   s.ocr_text, s.ocr_text_hq, s.ocr_text_gemini, s.is_artifact,
                    s.discovered_at, s.session_id,
                    s.fingerprint, s.scene,
                    s.is_representative, s.cluster_id,
@@ -369,7 +369,7 @@ class EvidenceRepository
         $sql = <<<SQL
             SELECT s.id, COALESCE(m.title_manual, m.title) AS title, s.depth,
                    s.screenshot_path, s.thumbnail_path,
-                   s.ocr_text, s.ocr_text_hq, s.ocr_text_gemini,
+                   s.ocr_text, s.ocr_text_hq, s.ocr_text_gemini, s.is_artifact,
                    m.ocr_text_manual, m.title_manual, m.manual_edited_at,
                    m.last_seen_at AS discovered_at,
                    s.session_id, m.master_fp AS fingerprint, m.scene,
@@ -425,6 +425,7 @@ class EvidenceRepository
             'user_excluded'   => (bool)($raw['user_excluded'] ?? false),
             'master_fp'       => $raw['master_fp'] ?? null,
             'manual_group_id' => $raw['manual_group_id'] ?? null,
+            'is_artifact'     => (bool)($raw['is_artifact'] ?? false),
         ];
     }
 
@@ -605,7 +606,7 @@ class EvidenceRepository
         $sql = <<<SQL
             SELECT s.id, COALESCE(m.title_manual, m.title) AS title, s.depth,
                    s.screenshot_path, s.thumbnail_path,
-                   s.ocr_text, s.ocr_text_hq, s.ocr_text_gemini,
+                   s.ocr_text, s.ocr_text_hq, s.ocr_text_gemini, s.is_artifact,
                    m.ocr_text_manual, m.title_manual, m.manual_edited_at,
                    m.last_seen_at AS discovered_at,
                    s.session_id, m.master_fp AS fingerprint, m.scene,

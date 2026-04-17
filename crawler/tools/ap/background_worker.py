@@ -878,6 +878,11 @@ class BackgroundWorker:
                     if is_artifact:
                         logger.info("[BG_WORKER] artifact 検出: id=%d type=%s text=%s",
                                     sid, screen_type, corrected[:30] if corrected else "(empty)")
+                        # is_artifact フラグを DB に記録
+                        conn.execute(
+                            "UPDATE lc_screens SET is_artifact = 1 WHERE id = ?",
+                            (sid,),
+                        )
                         # screen の fingerprint からマスターノードを特定
                         screen_fp = conn.execute(
                             "SELECT fingerprint FROM lc_screens WHERE id = ?",
