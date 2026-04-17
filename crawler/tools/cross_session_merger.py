@@ -69,12 +69,14 @@ class AnchorPoint:
 class CrossSessionMerger:
     """セッション別グラフをマスターグラフに統合する。"""
 
-    def __init__(self, db_path: Path, sort_strategy=None):
+    def __init__(self, db_path: Path, sort_strategy=None, anchor_matcher=None):
         from tools.merge_sort_strategy import SafeInsertStrategy
+        from tools.anchor_matcher import AnchorMatcher
         self._db_path = db_path
         self._conn = sqlite3.connect(str(db_path), timeout=10)
         self._conn.row_factory = sqlite3.Row
         self._sort_strategy = sort_strategy or SafeInsertStrategy()
+        self._anchor_matcher = anchor_matcher or AnchorMatcher()
 
     def close(self) -> None:
         self._conn.close()
@@ -377,7 +379,7 @@ class CrossSessionMerger:
     def _compute_matches(
         self, session_id: str,
     ) -> tuple[dict[str, tuple[str, str, float]], list[sqlite3.Row], bool]:
-        """マッチ計算のみ (副作用なし)。
+        """マッチ計算のみ (副作用なし)。AnchorMatcher に委譲。
 
         Returns:
             (node_mapping, session_reps, is_seed)
@@ -392,98 +394,25 @@ class CrossSessionMerger:
             "SELECT COUNT(*) FROM lc_master_nodes"
         ).fetchone()[0]
 
-        if master_count == 0:
-            session_reps = self._conn.execute(
-                "SELECT fingerprint FROM lc_screens"
-                " WHERE session_id = ? AND is_representative = 1",
-                (session_id,),
-            ).fetchall()
-            self._clear_progress()
-            return {}, session_reps, True
-
-        self._report_progress("アンカー検出", 0, 1, 0)
-
-        # アンカー検出
-        s_anchors = self.find_anchors(session_id)
-        m_anchors = self.find_master_anchors()
-
         session_reps = self._conn.execute(
             "SELECT fingerprint FROM lc_screens"
             " WHERE session_id = ? AND is_representative = 1",
             (session_id,),
         ).fetchall()
 
-        if not s_anchors or not m_anchors:
-            logger.warning("[Merger] アンカーが見つからない")
+        if master_count == 0:
             self._clear_progress()
-            return {}, session_reps, False
+            return {}, session_reps, True
 
-        # アンカーマッチング
-        anchor_pairs: list[tuple[AnchorPoint, AnchorPoint, float]] = []
-        for sa in s_anchors:
-            for ma in m_anchors:
-                score = self.match_score(sa, ma)
-                if score >= 0.6:
-                    anchor_pairs.append((sa, ma, score))
-        anchor_pairs.sort(key=lambda x: -x[2])
+        self._report_progress("AnchorMatcher", 0, 1, 0)
 
-        logger.info("[Merger] アンカーマッチ: %d ペア", len(anchor_pairs))
-
-        # ノードマッピング構築
-        node_mapping: dict[str, tuple[str, str, float]] = {}
-
-        # Step 1: アンカーマッチ + Step 2: k-hop 拡張
-        self._report_progress("k-hop 拡張", 0, len(anchor_pairs),
-                              _time.time() - t0)
-        for i, (sa, ma, score) in enumerate(anchor_pairs):
-            if sa.fp not in node_mapping:
-                node_mapping[sa.fp] = (ma.fp, "anchor", score)
-                k_hop_map = self.k_hop_match(sa.fp, ma.fp, session_id, k=2)
-                for s_fp, m_fp in k_hop_map.items():
-                    if s_fp not in node_mapping:
-                        k_score = self.node_match_score(s_fp, session_id, m_fp, "master")
-                        node_mapping[s_fp] = (m_fp, "k_hop", k_score)
-            self._report_progress("k-hop 拡張", i + 1, len(anchor_pairs),
-                                  _time.time() - t0)
-
-        logger.info("[Merger] アンカー+k-hop マッチ: %d ノード", len(node_mapping))
-
-        # Step 3: transition_similarity で追加マッチング
-        master_fps = [r["master_fp"] for r in self._conn.execute(
-            "SELECT master_fp FROM lc_master_nodes"
-        ).fetchall()]
-        matched_master_fps = {v[0] for v in node_mapping.values()}
-
-        unmatched = [r for r in session_reps
-                     if r["fingerprint"] not in node_mapping]
-        for idx, row in enumerate(unmatched):
-            s_fp = row["fingerprint"]
-            best_score = 0.0
-            best_m_fp = None
-            s_info = self._get_node_info(s_fp, session_id)
-            if not s_info:
-                self._report_progress("transition マッチ", idx + 1,
-                                      len(unmatched), _time.time() - t0)
-                continue
-            for m_fp in master_fps:
-                if m_fp in matched_master_fps:
-                    continue
-                n_score = self.node_match_score(s_fp, session_id, m_fp, "master")
-                if n_score < 0.5:
-                    continue
-                t_score = self.transition_similarity(s_fp, session_id, m_fp)
-                combined = n_score * 0.6 + t_score * 0.4
-                if combined > best_score and combined >= 0.5:
-                    best_score = combined
-                    best_m_fp = m_fp
-            if best_m_fp:
-                node_mapping[s_fp] = (best_m_fp, "transition", best_score)
-                matched_master_fps.add(best_m_fp)
-            self._report_progress("transition マッチ", idx + 1,
-                                  len(unmatched), _time.time() - t0)
+        # AnchorMatcher に委譲
+        node_mapping, skipped = self._anchor_matcher.compute_matches(
+            self._conn, session_id
+        )
 
         elapsed = _time.time() - t0
-        logger.info("[Merger] 全マッチ完了: %d/%d ノード (%.1f秒)",
+        logger.info("[Merger] AnchorMatcher 完了: %d/%d ノード (%.1f秒)",
                     len(node_mapping), len(session_reps), elapsed)
 
         # 所要時間を記録
@@ -524,7 +453,7 @@ class CrossSessionMerger:
         node_mapping, session_reps, is_seed = self._compute_matches(session_id)
 
         # サマリー集計
-        summary = {"anchor": 0, "k_hop": 0, "transition": 0, "new": 0}
+        summary: dict[str, int] = {}
         for _, (_, method, _) in node_mapping.items():
             summary[method] = summary.get(method, 0) + 1
         new_fps = [r["fingerprint"] for r in session_reps
@@ -929,10 +858,10 @@ class CrossSessionMerger:
         self._check_ocr_complete(session_id)
         now = datetime.now().isoformat()
 
-        # 代表画像をマスターノードにコピー
+        # 代表画像をマスターノードにコピー (Gemini OCR 優先)
         reps = self._conn.execute(
             "SELECT id, fingerprint, title, scene, phash,"
-            "  COALESCE(ocr_text_hq, ocr_text, '') AS ocr, discovered_at"
+            "  COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS ocr, discovered_at"
             " FROM lc_screens"
             " WHERE session_id = ? AND is_representative = 1",
             (session_id,),
@@ -1022,7 +951,7 @@ class CrossSessionMerger:
         now = datetime.now().isoformat()
         reps = self._conn.execute(
             "SELECT id, fingerprint, title, scene, phash,"
-            "  COALESCE(ocr_text_hq, ocr_text, '') AS ocr, discovered_at"
+            "  COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS ocr, discovered_at"
             " FROM lc_screens"
             " WHERE session_id = ? AND is_representative = 1",
             (session_id,),
@@ -1310,9 +1239,10 @@ class CrossSessionMerger:
             )
 
     def _get_node_info(self, fp: str, session_id: str) -> Optional[dict]:
-        """セッション内のノード情報を取得。"""
+        """セッション内のノード情報を取得 (Gemini OCR 優先)。"""
         row = self._conn.execute(
-            "SELECT title, scene, phash, COALESCE(ocr_text_hq, ocr_text, '') AS ocr"
+            "SELECT title, scene, phash,"
+            " COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS ocr"
             " FROM lc_screens"
             " WHERE fingerprint = ? AND session_id = ? AND is_representative = 1",
             (fp, session_id),
@@ -1320,7 +1250,8 @@ class CrossSessionMerger:
         if not row:
             # 代表でなくても取得
             row = self._conn.execute(
-                "SELECT title, scene, phash, COALESCE(ocr_text_hq, ocr_text, '') AS ocr"
+                "SELECT title, scene, phash,"
+                " COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS ocr"
                 " FROM lc_screens"
                 " WHERE fingerprint = ? AND session_id = ?",
                 (fp, session_id),

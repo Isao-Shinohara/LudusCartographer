@@ -245,3 +245,123 @@ class TestPhase3TapPhash:
         p1 = m._phase1_tap_text(s_nodes, m_nodes, sort_map)
         p3 = m._phase3_tap_phash(s_nodes, m_nodes, sort_map, p1)
         assert len(p3) == 0  # no prev anchor → skip
+
+
+class TestCrossSessionMergerIntegration:
+    """CrossSessionMerger 経由で AnchorMatcher が呼ばれることを確認。"""
+
+    @pytest.fixture
+    def full_db(self):
+        """CrossSessionMerger が必要とする全テーブルを持つ DB。"""
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE lc_master_nodes (
+                master_fp TEXT PRIMARY KEY,
+                representative_screen_id INTEGER,
+                title TEXT, scene TEXT, phash TEXT,
+                ocr_text TEXT, ocr_text_manual TEXT, title_manual TEXT,
+                manual_edited_at TEXT,
+                bfs_depth INTEGER, scc_id INTEGER, scc_label TEXT,
+                visit_count INTEGER DEFAULT 1,
+                first_seen_at TEXT, last_seen_at TEXT,
+                sort_order INTEGER DEFAULT 0,
+                user_excluded INTEGER DEFAULT 0,
+                manual_group_id INTEGER DEFAULT NULL,
+                is_group_representative INTEGER DEFAULT 1
+            );
+            CREATE TABLE lc_master_edges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_master_fp TEXT NOT NULL, to_master_fp TEXT NOT NULL,
+                tap_label TEXT, action_name TEXT,
+                edge_type TEXT DEFAULT 'tap',
+                count INTEGER DEFAULT 1,
+                avg_duration REAL, min_duration REAL,
+                first_seen_at TEXT, last_seen_at TEXT,
+                UNIQUE(from_master_fp, to_master_fp, tap_label)
+            );
+            CREATE TABLE lc_screens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT, fingerprint TEXT, title TEXT,
+                is_representative INTEGER DEFAULT 1,
+                is_artifact INTEGER DEFAULT 0,
+                discovered_at TEXT, scene TEXT, phash TEXT,
+                ocr_text TEXT, ocr_text_hq TEXT, ocr_text_gemini TEXT,
+                cluster_id INTEGER, screenshot_path TEXT, thumbnail_path TEXT,
+                depth INTEGER DEFAULT 0, edge_type TEXT
+            );
+            CREATE TABLE lc_transitions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT, from_screen_id INTEGER,
+                to_screen_id INTEGER, from_fp TEXT, to_fp TEXT,
+                tap_x INTEGER, tap_y INTEGER, tap_label TEXT,
+                action_name TEXT, edge_type TEXT DEFAULT 'tap',
+                discovered_at TEXT
+            );
+            CREATE TABLE lc_node_mappings (
+                session_id TEXT, session_fp TEXT, master_fp TEXT,
+                match_method TEXT, match_score REAL
+            );
+            CREATE TABLE lc_session_graphs (
+                session_id TEXT PRIMARY KEY,
+                node_count INTEGER DEFAULT 0, edge_count INTEGER DEFAULT 0,
+                scc_count INTEGER DEFAULT 0, home_fp TEXT, built_at TEXT
+            );
+            CREATE TABLE auto_pilot_state (
+                key TEXT PRIMARY KEY, value TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        return conn
+
+    def test_compute_matches_uses_anchor_matcher(self, full_db):
+        """_compute_matches が AnchorMatcher に委譲されること。"""
+        from unittest.mock import patch, MagicMock
+        from tools.cross_session_merger import CrossSessionMerger
+
+        # マスターに1ノードあれば seed=False パスに入る
+        full_db.execute(
+            "INSERT INTO lc_master_nodes (master_fp, sort_order, ocr_text, phash, scene)"
+            " VALUES ('M_A', 0, 'hello', 'aa00aa00aa00aa00', 'ADV')"
+        )
+        _add_session_screen(full_db, "s2", "a", 1, text="hello", phash="aa00aa00aa00aa01")
+        _add_tap_edge(full_db, "s2", "a", "x")
+        full_db.commit()
+
+        # CrossSessionMerger の conn を差し替え
+        with patch.object(CrossSessionMerger, '__init__', lambda self, **kw: None):
+            merger = CrossSessionMerger.__new__(CrossSessionMerger)
+            merger._conn = full_db
+            from tools.merge_sort_strategy import SafeInsertStrategy
+            from tools.anchor_matcher import AnchorMatcher
+            merger._sort_strategy = SafeInsertStrategy()
+            merger._anchor_matcher = AnchorMatcher()
+
+            node_mapping, session_reps, is_seed = merger._compute_matches("s2")
+
+        assert is_seed is False
+        # AnchorMatcher で Phase 1 マッチが見つかるはず
+        assert "a" in node_mapping
+        assert node_mapping["a"][0] == "M_A"
+        assert node_mapping["a"][1] == "phase1_tap_text"
+
+    def test_seed_path_unchanged(self, full_db):
+        """マスター空の場合は seed パスに入り AnchorMatcher は不使用。"""
+        from unittest.mock import patch
+        from tools.cross_session_merger import CrossSessionMerger
+
+        _add_session_screen(full_db, "s1", "a", 1, text="hello")
+        full_db.commit()
+
+        with patch.object(CrossSessionMerger, '__init__', lambda self, **kw: None):
+            merger = CrossSessionMerger.__new__(CrossSessionMerger)
+            merger._conn = full_db
+            from tools.merge_sort_strategy import SafeInsertStrategy
+            merger._sort_strategy = SafeInsertStrategy()
+            merger._anchor_matcher = AnchorMatcher()
+
+            node_mapping, session_reps, is_seed = merger._compute_matches("s1")
+
+        assert is_seed is True
+        assert len(node_mapping) == 0
+        assert len(session_reps) == 1
