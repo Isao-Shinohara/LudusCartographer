@@ -526,6 +526,8 @@ def gemini_correct_multi(
                 "id": index_to_id[idx],
                 "corrected_text": corrected,
                 "corrections": r.get("corrections", []),
+                "is_artifact": r.get("is_artifact", False),
+                "screen_type": r.get("screen_type", ""),
             })
             # パターン学習
             orig = index_to_orig[idx]
