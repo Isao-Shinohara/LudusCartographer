@@ -187,6 +187,7 @@
     let selectedForGroup = new Set();  // Final タブ: 統合選択中の master_fp
     let geminiEnabled = false;  // GEMINI_API_KEY が設定されているか (API レスポンスで更新)
     let autoRefreshPaused = false;  // 自動更新一時停止フラグ
+    const TRASH_ICON = '<svg class="w-3.5 h-3.5 inline" viewBox="0 0 16 16" fill="currentColor"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM4.496 6.675a.75.75 0 10-1.492.15l.66 6.6A1.75 1.75 0 005.405 15h5.19a1.75 1.75 0 001.741-1.575l.66-6.6a.75.75 0 00-1.492-.15l-.66 6.6a.25.25 0 01-.249.225h-5.19a.25.25 0 01-.249-.225l-.66-6.6z"/></svg>';
     const filterSelect = document.getElementById('filter-select');
     const sessionSelect = document.getElementById('session-select');
     const sortToggle = document.getElementById('sort-toggle');
@@ -664,7 +665,7 @@
                             <button class="unmerge-btn px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" title="マージを解除して未マージ状態に戻す">Undo</button>
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.mapped_nodes}">🗑︎</button>
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.mapped_nodes}">${TRASH_ICON}</button>
                         </div>
                     </div>`;
                 }
@@ -689,7 +690,7 @@
                             <button class="merge-preview-btn px-3 py-1.5 bg-emerald-900/50 hover:bg-emerald-800/60 text-emerald-300 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" title="マージプレビュー → 実行">マージ</button>
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.node_count}">🗑︎</button>
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.node_count}">${TRASH_ICON}</button>
                         </div>
                     </div>`;
                 }
@@ -722,7 +723,7 @@
                             ${canResume ? `<button class="bg-process-btn px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" title="後処理 (OCR + 間引き + グラフ構築) を再開">再開</button>` : ''}
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">🗑︎</button>
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">${TRASH_ICON}</button>
                         </div>
                     </div>`;
                 }
@@ -768,7 +769,7 @@
                         </div>
                         <div class="flex items-center gap-2">
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">🗑︎</button>
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">${TRASH_ICON}</button>
                         </div>
                     </div>`;
                 }
@@ -1015,7 +1016,7 @@
                         <span class="text-gray-300">Final で除外済み＋セッション削除済みの画像が ${data.count} 件あります</span>
                         <p class="text-xs text-gray-500 mt-1">マスターノード・エッジ・画像ファイルを完全に削除できます</p>
                     </div>
-                    <button id="merge-cleanup-btn" class="px-3 py-1.5 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors">🗑︎</button>
+                    <button id="merge-cleanup-btn" class="px-3 py-1.5 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors">${TRASH_ICON}</button>
                 </div>`;
                 document.getElementById('merge-cleanup-btn').addEventListener('click', confirmCleanupExcluded);
             } else {
