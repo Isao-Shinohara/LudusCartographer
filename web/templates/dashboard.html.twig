@@ -1192,10 +1192,26 @@
         await withOperationLock('後処理実行', async () => {
             const sticky = showToast(`後処理実行中: ${sessionId} (Gemini OCR + 間引き + グラフ構築)`, 'info', { sticky: true });
             const startTime = Date.now();
-            const elapsedTimer = setInterval(() => {
+            const elapsedTimer = setInterval(async () => {
                 const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                if (sticky) sticky.update(`後処理実行中: ${sessionId} (${elapsed}秒経過)`);
-            }, 1000);
+                try {
+                    const pr = await fetch(API_BASE + '?action=merge_progress');
+                    const pd = await pr.json();
+                    if (pd.progress) {
+                        const p = pd.progress;
+                        const phase = p.phase || 'OCR';
+                        if (phase === 'graph') {
+                            sticky.update(`グラフ構築中: ${sessionId} (${elapsed}秒経過)`);
+                        } else {
+                            sticky.update(`後処理実行中: ${sessionId} — OCR ${p.ocr_done || 0}/${p.ocr_total || '?'} (${elapsed}秒経過)`);
+                        }
+                    } else {
+                        sticky.update(`後処理実行中: ${sessionId} (${elapsed}秒経過)`);
+                    }
+                } catch (e) {
+                    sticky.update(`後処理実行中: ${sessionId} (${elapsed}秒経過)`);
+                }
+            }, 2000);
             try {
                 await fetch(API_BASE + '?action=process_session_bg&session_id=' + encodeURIComponent(sessionId));
                 const result = await new Promise((resolve) => {

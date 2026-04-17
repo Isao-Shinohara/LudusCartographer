@@ -270,35 +270,56 @@ if ($action === 'process_session_bg') {
     @unlink($resultFile);
     // Gemini OCR + dedup + graph build をフルパイプライン実行
     // 内部的にループして全件完了させる (1クリックで完了)
-    $script = "import json, sqlite3; "
-            . "from pathlib import Path; "
-            . "from tools.ap.background_worker import BackgroundWorker; "
-            . "from tools.batch_processor import BatchProcessor; "
-            . "SID = '" . addslashes($sessionId) . "'; "
-            . "DB = Path('storage/ludus.db'); "
-            . "def _pending(): "
-            . "  c = sqlite3.connect(str(DB)); "
-            . "  g = c.execute('SELECT COUNT(*) FROM lc_screens WHERE session_id=? AND is_representative=1 AND ocr_text_gemini IS NULL', (SID,)).fetchone()[0]; "
-            . "  d = c.execute('SELECT COUNT(*) FROM lc_screens WHERE session_id=? AND cluster_id IS NULL AND phash IS NOT NULL AND phash !=\"\"', (SID,)).fetchone()[0]; "
-            . "  c.close(); "
-            . "  return g, d; "
-            . "w = BackgroundWorker(db_path=DB, session_id=SID); "
-            . "MAX_ITERATIONS = 100; "
-            . "iters = 0; "
-            . "while iters < MAX_ITERATIONS: "
-            . "  iters += 1; "
-            . "  w._run_incremental_dedup(); "
-            . "  w._run_gemini_batch_correction(); "
-            . "  g, d = _pending(); "
-            . "  if g == 0 and d == 0: break; "
-            . "w._run_incremental_dedup(); "
-            . "bp = BatchProcessor(db_path=DB); "
-            . "sccs = bp.build_graph(session_id=SID); "
-            . "bp.close(); "
-            . "g, d = _pending(); "
-            . "print(json.dumps({'ok': True, 'sccs': sccs, 'iterations': iters, 'remaining_gemini': g, 'remaining_dedup': d}, ensure_ascii=False))";
+    $sidEsc = addslashes($sessionId);
+    $script = <<<PYTHON
+import json, sqlite3, os
+from pathlib import Path
+try:
+    from dotenv import load_dotenv
+    _env_path = Path("config/.env")
+    if _env_path.exists():
+        load_dotenv(_env_path)
+except ImportError:
+    pass
+from tools.ap.background_worker import BackgroundWorker
+from tools.batch_processor import BatchProcessor
+SID = "$sidEsc"
+DB = Path("storage/ludus.db")
+def _pending():
+    c = sqlite3.connect(str(DB))
+    total = c.execute("SELECT COUNT(*) FROM lc_screens WHERE session_id=? AND is_representative=1", (SID,)).fetchone()[0]
+    g = c.execute("SELECT COUNT(*) FROM lc_screens WHERE session_id=? AND is_representative=1 AND ocr_text_gemini IS NULL", (SID,)).fetchone()[0]
+    d = c.execute("SELECT COUNT(*) FROM lc_screens WHERE session_id=? AND cluster_id IS NULL AND phash IS NOT NULL AND phash != ''", (SID,)).fetchone()[0]
+    c.close()
+    return total, g, d
+def _update_progress(phase, total, done, remaining_g, remaining_d):
+    c = sqlite3.connect(str(DB))
+    c.execute("INSERT OR REPLACE INTO auto_pilot_state (key, value) VALUES ('merge_progress', ?)",
+              (json.dumps({"phase": phase, "total": total, "ocr_done": total - remaining_g, "ocr_total": total, "dedup_remaining": remaining_d}),))
+    c.commit()
+    c.close()
+w = BackgroundWorker(db_path=DB, session_id=SID)
+MAX_ITERATIONS = 100
+iters = 0
+total, g, d = _pending()
+while iters < MAX_ITERATIONS:
+    iters += 1
+    w._run_incremental_dedup()
+    w._run_gemini_batch_correction()
+    total, g, d = _pending()
+    _update_progress("OCR", total, total - g, g, d)
+    if g == 0 and d == 0:
+        break
+w._run_incremental_dedup()
+_update_progress("graph", total, total, 0, 0)
+bp = BatchProcessor(db_path=DB)
+sccs = bp.build_graph(session_id=SID)
+bp.close()
+total, g, d = _pending()
+print(json.dumps({"ok": True, "sccs": sccs, "iterations": iters, "remaining_gemini": g, "remaining_dedup": d}, ensure_ascii=False))
+PYTHON;
     $cmd = sprintf(
-        'cd %s && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null &',
+        'cd %s && ./venv/bin/python -W ignore -c %s > %s 2>>storage/process_session_bg.err.log &',
         $crawlerDir,
         escapeshellarg($script),
         escapeshellarg($resultFile),
