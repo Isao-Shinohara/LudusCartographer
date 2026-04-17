@@ -61,6 +61,7 @@ class AnchorPoint:
     ocr_text: str
     phash: str
     scene: str
+    title: str = ""
 
 
 # ─── メインクラス ─────────────────────────────────────
@@ -629,6 +630,7 @@ class CrossSessionMerger:
                     " WHERE fingerprint = ? AND session_id = ? AND is_representative = 1",
                     (s_fp, session_id),
                 ).fetchone()
+                screen_time = screen["discovered_at"] if screen else now
                 self._conn.execute(
                     "INSERT OR IGNORE INTO lc_master_nodes"
                     " (master_fp, representative_screen_id, title, scene, phash,"
@@ -636,7 +638,7 @@ class CrossSessionMerger:
                     " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
                     (s_fp, screen["id"] if screen else None,
                      s_info.get("title", ""), s_info["scene"], s_info["phash"],
-                     s_info["ocr_text"], now, now),
+                     s_info["ocr_text"], screen_time, now),
                 )
                 self._conn.execute(
                     "INSERT OR REPLACE INTO lc_node_mappings"
@@ -1022,13 +1024,12 @@ class CrossSessionMerger:
         self, session_id: str,
         node_mapping: dict[str, tuple[str, str, float]],
     ) -> None:
-        """セッションのエッジをマスターにマージ。auto エッジは除外。"""
+        """セッションのエッジをマスターにマージ (tap + auto 両方)。"""
         now = datetime.now().isoformat()
         edges = self._conn.execute(
-            "SELECT from_fp, to_fp, tap_label, action_name, discovered_at"
+            "SELECT from_fp, to_fp, tap_label, action_name, edge_type, discovered_at"
             " FROM lc_transitions"
-            " WHERE session_id = ? AND to_fp IS NOT NULL"
-            " AND COALESCE(edge_type, 'tap') != 'auto'",
+            " WHERE session_id = ? AND to_fp IS NOT NULL",
             (session_id,),
         ).fetchall()
 
@@ -1075,9 +1076,10 @@ class CrossSessionMerger:
                 self._conn.execute(
                     "INSERT OR IGNORE INTO lc_master_edges"
                     " (from_master_fp, to_master_fp, tap_label, action_name,"
-                    "  count, first_seen_at, last_seen_at)"
-                    " VALUES (?, ?, ?, ?, 1, ?, ?)",
+                    "  edge_type, count, first_seen_at, last_seen_at)"
+                    " VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
                     (m_from, m_to, e["tap_label"], e["action_name"],
+                     (e["edge_type"] if "edge_type" in e.keys() else "tap") or "tap",
                      e["discovered_at"], now),
                 )
 
