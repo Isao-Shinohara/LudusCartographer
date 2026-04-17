@@ -101,6 +101,7 @@
 <!-- 固定フッター (画面数) -->
 <div id="dashboard-footer" class="fixed bottom-0 left-0 right-0 z-30 bg-gray-900/90 border-t border-gray-800 py-1.5">
     <div class="max-w-7xl mx-auto px-4 flex justify-end gap-4">
+        <span id="debug-stats" class="text-xs text-cyan-600 hidden"></span>
         <span id="final-select-count" class="text-xs text-gray-500"></span>
         <span id="stats" class="text-xs text-gray-500"></span>
     </div>
@@ -335,6 +336,30 @@
         stats.textContent = filter === 'all'
             ? `全${allScreens.length}枚 (代表 ${repsCount})`
             : `全${filtered.length}枚`;
+        // デバッグ統計
+        const debugStats = document.getElementById('debug-stats');
+        if (_debugMode && currentTab === 'final') {
+            const anchors = allScreens.filter(s => s.anchor_info);
+            const inserted = allScreens.filter(s => s.last_match_method === 'new');
+            // 隣接アンカーペア数: sort_order が連続しているアンカーのペア
+            const anchorSorts = anchors.map(s => {
+                const idx = allScreens.indexOf(s);
+                return idx;
+            }).sort((a, b) => a - b);
+            let adjacentPairs = 0;
+            for (let i = 1; i < anchorSorts.length; i++) {
+                // 2つのアンカー間に非アンカーのseedノードしかないか確認
+                // 簡易版: allScreens 上のインデックス差で判定
+                const between = anchorSorts[i] - anchorSorts[i-1] - 1;
+                const betweenInserted = allScreens.slice(anchorSorts[i-1]+1, anchorSorts[i])
+                    .filter(s => s.last_match_method === 'new').length;
+                if (between - betweenInserted === 0) adjacentPairs++;
+            }
+            debugStats.textContent = `Anchor: ${anchors.length} | 隣接: ${adjacentPairs} | 挿入: ${inserted.length}`;
+            debugStats.classList.remove('hidden');
+        } else {
+            debugStats.classList.add('hidden');
+        }
     }
 
     // 昇順で末尾に画像追加時のスクロール追従
