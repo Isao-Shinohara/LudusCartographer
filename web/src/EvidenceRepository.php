@@ -454,7 +454,7 @@ class EvidenceRepository
                 SELECT 1 FROM lc_node_mappings nm
                 WHERE nm.session_id = sg.session_id
               )
-            ORDER BY sg.built_at DESC
+            ORDER BY s.started_at ASC
         SQL;
         return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
     }
