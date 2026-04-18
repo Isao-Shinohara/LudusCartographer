@@ -979,10 +979,11 @@
     }
     async function _showMergePreview(sessionId) {
         const mc = document.getElementById('merge-container');
-        mc.innerHTML = '<div class="text-center text-gray-600 py-12"><span class="animate-pulse">プレビュー計算中...</span></div>';
+        const toastHandle = showToast('プレビュー計算中...', 'info', { sticky: true });
         try {
             await fetch(API_BASE + '?action=preview_merge&session_id=' + encodeURIComponent(sessionId));
             const data = await pollMergeResult(mc, 'プレビュー計算中');
+            if (toastHandle) toastHandle.remove();
             if (!data || data.error) { mc.innerHTML = `<div class="text-red-500 py-12">${escapeHtml(data?.error || 'プレビュー失敗')}</div>`; return; }
             let html = '<div class="space-y-6">';
             html += `<div class="flex items-center justify-between">
@@ -1053,6 +1054,7 @@
             mc.innerHTML = html;
             document.getElementById('execute-merge-btn').addEventListener('click', () => executeMerge(sessionId));
         } catch (e) {
+            if (toastHandle) toastHandle.remove();
             mc.innerHTML = '<div class="text-red-500 py-12">プレビュー失敗</div>';
         }
     }
