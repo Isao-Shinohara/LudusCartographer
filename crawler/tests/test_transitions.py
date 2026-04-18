@@ -17,9 +17,9 @@ def tmp_env(tmp_path):
     storage = tmp_path / "screenshots"
     storage.mkdir()
 
-    # ダミー画像 (1440x720 白)
+    # ダミー画像 (1440x720, 中間輝度 — 明るすぎると白画面判定でスキップされる)
     img_path = tmp_path / "dummy.png"
-    img = np.ones((720, 1440, 3), dtype=np.uint8) * 200
+    img = np.ones((720, 1440, 3), dtype=np.uint8) * 128
     cv2.imwrite(str(img_path), img)
 
     return db_path, storage, img_path
