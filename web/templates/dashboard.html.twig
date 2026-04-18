@@ -262,9 +262,8 @@
         if (s.is_representative) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-emerald-500" title="採用"></span>');
         if (s.has_gemini) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-amber-500" title="Gemini OCR済"></span>');
         if (s.has_manual) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-pink-500" title="手動編集済"></span>');
-        if (_debugMode && s.anchor_info) {
-            const phaseMatch = s.anchor_info.match(/phase(\d)/);
-            const phaseLabel = phaseMatch ? 'P' + phaseMatch[1] : 'A';
+        if (_debugMode && s.anchor_info && _debugAnchorMatchesSession(s.anchor_info, _debugFilterSession)) {
+            const phaseLabel = _debugGetPhaseForSession(s.anchor_info, _debugFilterSession) || 'A';
             dots.push('<span class="px-1 rounded text-[9px] font-bold bg-cyan-400/80 text-black" title="アンカー: ' + escapeHtml(s.anchor_info) + '">' + phaseLabel + '</span>');
         }
         const statusDots = dots.length ? `<span class="flex gap-0.5 items-center">${dots.join('')}</span>` : '';
@@ -278,7 +277,7 @@
         const groupSelectMark = isGroupSelected ? ' ring-2 ring-blue-500' : '';
         const excludedBorder = '';
         const anchorMark = _debugMode
-            ? (s.anchor_info ? ' ring-2 ring-cyan-400'
+            ? (_debugAnchorMatchesSession(s.anchor_info, _debugFilterSession) ? ' ring-2 ring-cyan-400'
                : s.last_match_method === 'new' ? ' ring-2 ring-lime-400' : '')
             : '';
         return `
@@ -346,26 +345,18 @@
         // デバッグ統計
         const debugStats = document.getElementById('debug-stats');
         if (_debugMode && currentTab === 'final') {
-            const anchors = allScreens.filter(s => s.anchor_info);
+            if (_debugSessionList.length === 0) _debugBuildSessionList();
+            const fs = _debugFilterSession;
+            const anchors = allScreens.filter(s => _debugAnchorMatchesSession(s.anchor_info, fs));
             const inserted = allScreens.filter(s => s.last_match_method === 'new');
-            // 隣接アンカーペア数: sort_order が連続しているアンカーのペア
-            const anchorSorts = anchors.map(s => {
-                const idx = allScreens.indexOf(s);
-                return idx;
-            }).sort((a, b) => a - b);
-            let adjacentPairs = 0;
-            for (let i = 1; i < anchorSorts.length; i++) {
-                // 2つのアンカー間に非アンカーのseedノードしかないか確認
-                // 簡易版: allScreens 上のインデックス差で判定
-                const between = anchorSorts[i] - anchorSorts[i-1] - 1;
-                const betweenInserted = allScreens.slice(anchorSorts[i-1]+1, anchorSorts[i])
-                    .filter(s => s.last_match_method === 'new').length;
-                if (between - betweenInserted === 0) adjacentPairs++;
-            }
             const p1 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase1')).length;
             const p2 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase2')).length;
             const p3 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase3')).length;
-            debugStats.textContent = `P1: ${p1} | P2: ${p2} | P3: ${p3} | 隣接: ${adjacentPairs} | 挿入: ${inserted.length}`;
+            // セッション情報
+            const sessionLabel = fs
+                ? `${fs.replace('ap_', '')} (${_debugSessionIdx + 1}/${_debugSessionList.length})`
+                : (_debugSessionList.length > 0 ? `↑↓でセッション切替 (${_debugSessionList.length}件)` : '');
+            debugStats.textContent = `${sessionLabel}  P1:${p1} P2:${p2} P3:${p3} 挿入:${inserted.length}`;
             debugStats.classList.remove('hidden');
         } else {
             debugStats.classList.add('hidden');
@@ -545,11 +536,61 @@
     // --- デバッグモード ---
     let _debugAnchorIdx = -1;  // 選択中のアンカーインデックス (-1 = 未選択)
     let _debugAnchorIndices = [];  // filteredScreens 内のアンカーのインデックス列
+    let _debugSessionList = [];   // マージ済みセッションID一覧 (seed除外、古い順)
+    let _debugSessionIdx = -1;    // 選択中のセッション (-1 = 最新セッション)
+    let _debugFilterSession = null; // フィルタ中のセッションID (null = 最新)
+
+    function _debugBuildSessionList() {
+        // anchor_info からセッションIDを抽出 (seed/new 以外)
+        const sessionSet = new Set();
+        for (const s of allScreens) {
+            if (!s.anchor_info) continue;
+            for (const part of s.anchor_info.split(',')) {
+                const m = part.match(/:(.+)$/);
+                if (m) sessionSet.add(m[1]);
+            }
+        }
+        _debugSessionList = Array.from(sessionSet).sort();
+    }
+
+    function _debugAnchorMatchesSession(anchorInfo, sessionId) {
+        if (!anchorInfo || !sessionId) return !!anchorInfo;
+        return anchorInfo.split(',').some(p => p.endsWith(':' + sessionId));
+    }
+
+    function _debugGetPhaseForSession(anchorInfo, sessionId) {
+        if (!anchorInfo) return null;
+        const parts = anchorInfo.split(',');
+        for (const p of parts) {
+            if (!sessionId || p.endsWith(':' + sessionId)) {
+                const m = p.match(/phase(\d)/);
+                if (m) return 'P' + m[1];
+            }
+        }
+        return 'A';
+    }
+
+    function _debugNavigateSession(direction) {
+        if (!_debugMode || currentTab !== 'final') return;
+        if (_debugSessionList.length === 0) _debugBuildSessionList();
+        if (_debugSessionList.length === 0) return;
+
+        _debugSessionIdx += direction;
+        if (_debugSessionIdx < 0) _debugSessionIdx = 0;
+        if (_debugSessionIdx >= _debugSessionList.length) _debugSessionIdx = _debugSessionList.length - 1;
+
+        _debugFilterSession = _debugSessionList[_debugSessionIdx];
+        _debugAnchorIdx = -1;
+        renderAll();
+    }
 
     window.toggleDebug = function() {
         _debugMode = !_debugMode;
         localStorage.setItem('lc_debug', _debugMode ? '1' : '0');
         _debugAnchorIdx = -1;
+        _debugSessionIdx = -1;
+        _debugFilterSession = null;
+        _debugSessionList = [];
         _updateDebugBtn();
         renderAll();
     };
@@ -566,10 +607,11 @@
 
     function _debugNavigateAnchor(direction) {
         if (!_debugMode || currentTab !== 'final') return;
-        // アンカーインデックス列を構築
+        // アンカーインデックス列を構築 (セッションフィルタ適用)
         _debugAnchorIndices = [];
         for (let i = 0; i < filteredScreens.length; i++) {
-            if (filteredScreens[i].anchor_info) _debugAnchorIndices.push(i);
+            if (_debugAnchorMatchesSession(filteredScreens[i].anchor_info, _debugFilterSession))
+                _debugAnchorIndices.push(i);
         }
         if (_debugAnchorIndices.length === 0) return;
 
@@ -2001,11 +2043,13 @@
             if (e.key === 'ArrowRight' && canGoNewer()) showModal(newerIdx());
             return;
         }
-        // デバッグモード: ←→ でアンカーナビゲーション
+        // デバッグモード: ←→ でアンカーナビゲーション、↑↓ でセッション切替
         if (_debugMode && currentTab === 'final') {
             if (e.key === 'ArrowLeft') { e.preventDefault(); _debugNavigateAnchor(-1); }
             if (e.key === 'ArrowRight') { e.preventDefault(); _debugNavigateAnchor(1); }
-            if (e.key === 'Escape') { _debugAnchorIdx = -1; _updateDebugSelection(-1); }
+            if (e.key === 'ArrowUp') { e.preventDefault(); _debugNavigateSession(-1); }
+            if (e.key === 'ArrowDown') { e.preventDefault(); _debugNavigateSession(1); }
+            if (e.key === 'Escape') { _debugAnchorIdx = -1; _debugSessionIdx = -1; _debugFilterSession = null; _updateDebugSelection(-1); renderAll(); }
         }
     });
 })();
