@@ -371,10 +371,10 @@ if ($action === 'preview_merge') {
     $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
     $cmd = sprintf(
-        'cd %s && exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null </dev/null &',
+        'cd %s && exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- && ./venv/bin/python -W ignore -c %s > %s 2>>storage/preview_merge.err.log </dev/null &',
         $crawlerDir,
         escapeshellarg(
-            "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
+            "import json, logging; logging.disable(logging.CRITICAL); from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
             . "m = CrossSessionMerger(Path('storage/ludus.db')); "
             . "print(json.dumps(m.preview_merge('" . addslashes($sessionId) . "'), ensure_ascii=False)); "
             . "m.close()"
