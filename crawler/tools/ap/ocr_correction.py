@@ -515,7 +515,13 @@ def gemini_correct_multi(
             text = re.sub(r'^```\w*\n?', '', text)
             text = re.sub(r'\n?```$', '', text)
 
-        result = json.loads(text)
+        # Gemini が不正な制御文字を含むことがあるため strict=False + 制御文字除去
+        try:
+            result = json.loads(text, strict=False)
+        except json.JSONDecodeError:
+            # 制御文字 (0x00-0x1F, タブ/改行/CR 以外) を除去してリトライ
+            cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
+            result = json.loads(cleaned, strict=False)
         results = result.get("results", [])
 
         # index → 元の id にマッピング
