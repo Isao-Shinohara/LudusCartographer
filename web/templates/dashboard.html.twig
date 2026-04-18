@@ -780,7 +780,7 @@
                             <span class="text-xs text-gray-600 ml-3">${s.mapped_nodes} ノードマッピング済</span>
                         </div>
                         <div class="flex items-center gap-3">
-                            <button class="unmerge-btn px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded transition-colors"
+                            <button class="unmerge-btn px-3 py-1 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" title="マージを解除して未マージ状態に戻す">Undo</button>
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.mapped_nodes}">${TRASH_ICON}</button>
@@ -805,7 +805,7 @@
                             <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.built_at || '')}</span>
                         </div>
                         <div class="flex items-center gap-2">
-                            <button class="merge-preview-btn px-3 py-1.5 bg-emerald-900/50 hover:bg-emerald-800/60 text-emerald-300 text-xs rounded transition-colors"
+                            <button class="merge-preview-btn px-3 py-1.5 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" title="マージプレビュー → 実行">マージ</button>
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.node_count}">${TRASH_ICON}</button>
@@ -838,7 +838,7 @@
                             ${noGraphBadge}
                         </div>
                         <div class="flex items-center gap-2">
-                            ${canResume ? `<button class="bg-process-btn px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded transition-colors"
+                            ${canResume ? `<button class="bg-process-btn px-3 py-1 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" title="後処理 (OCR + 間引き + グラフ構築) を再開">再開</button>` : ''}
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">${TRASH_ICON}</button>
@@ -993,7 +993,7 @@
                 </div>
                 <div class="flex gap-2">
                     <button onclick="fetchMergeTab()" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded">戻る</button>
-                    <button id="execute-merge-btn" class="px-4 py-1.5 bg-green-700 hover:bg-green-600 text-white text-sm font-bold rounded">マージ実行</button>
+                    <button id="execute-merge-btn" class="px-4 py-1.5 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-sm font-bold rounded">マージ実行</button>
                 </div>
             </div>`;
             // サマリー
