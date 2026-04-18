@@ -115,19 +115,30 @@ class BackgroundWorker:
 
     def wait_until_idle(self, timeout: float = 600.0) -> None:
         """未処理がなくなるまで待機 (最大 timeout 秒)。"""
+        import os as _os
+        _has_gemini = bool(_os.environ.get("GEMINI_API_KEY"))
         _start = time.time()
         while time.time() - _start < timeout:
             conn = self._get_conn()
             try:
-                pending_ocr = conn.execute(
-                    "SELECT COUNT(*) FROM lc_screens"
-                    " WHERE ocr_text_hq IS NULL"
-                    " AND screenshot_path IS NOT NULL AND screenshot_path != ''"
-                ).fetchone()[0]
+                if _has_gemini:
+                    # Gemini 有効時: 代表画像の Gemini OCR 完了を待つ
+                    pending_ocr = conn.execute(
+                        "SELECT COUNT(*) FROM lc_screens"
+                        " WHERE is_representative = 1"
+                        " AND ocr_text_gemini IS NULL"
+                        " AND screenshot_path IS NOT NULL AND screenshot_path != ''"
+                    ).fetchone()[0]
+                else:
+                    # PaddleOCR のみ: HQ OCR 完了を待つ
+                    pending_ocr = conn.execute(
+                        "SELECT COUNT(*) FROM lc_screens"
+                        " WHERE ocr_text_hq IS NULL"
+                        " AND screenshot_path IS NOT NULL AND screenshot_path != ''"
+                    ).fetchone()[0]
                 pending_cluster = conn.execute(
                     "SELECT COUNT(*) FROM lc_screens"
                     " WHERE cluster_id IS NULL AND phash IS NOT NULL AND phash != ''"
-                    " AND ocr_text_hq IS NOT NULL"
                 ).fetchone()[0]
             finally:
                 conn.close()
