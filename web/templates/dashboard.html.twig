@@ -100,10 +100,10 @@
 
 <!-- 固定フッター (画面数) -->
 <div id="dashboard-footer" class="fixed bottom-0 left-0 right-0 z-30 bg-gray-900/90 border-t border-gray-800 py-1.5">
-    <div class="max-w-7xl mx-auto px-4 flex items-center justify-end gap-6">
-        <span id="debug-stats" class="text-xs hidden text-right"></span>
-        <span id="final-select-count" class="text-xs text-gray-500"></span>
-        <span id="stats" class="text-xs text-emerald-400/70"></span>
+    <div class="max-w-7xl mx-auto px-4 flex items-center gap-6">
+        <span id="debug-stats" class="text-xs hidden flex-1 min-w-0 flex items-center"></span>
+        <span id="final-select-count" class="text-xs text-gray-500 shrink-0"></span>
+        <span id="stats" class="text-xs text-emerald-400/70 shrink-0"></span>
     </div>
 </div>
 
@@ -590,7 +590,7 @@
         if (ds) {
             const s = filteredScreens[screenIdx];
             const label = s.name || s.ocr_text?.substring(0, 30) || '';
-            ds.innerHTML = `<span class="text-gray-400">${escapeHtml(label)}</span>&nbsp;&nbsp;<span class="text-cyan-400">Anchor ${_debugAnchorIdx + 1}/${_debugAnchorIndices.length}</span>`;
+            ds.innerHTML = `<span class="text-gray-400 truncate">${escapeHtml(label)}</span><span class="text-cyan-400 shrink-0 ml-4">Anchor ${_debugAnchorIdx + 1}/${_debugAnchorIndices.length}</span>`;
         }
     }
 
