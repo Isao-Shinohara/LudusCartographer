@@ -558,6 +558,9 @@ class EvidenceRepository
                       WHERE session_id = s.session_id AND to_fp IS NOT NULL) AS transitions
             FROM lc_sessions s
             WHERE s.status = 'completed'
+              AND NOT EXISTS (
+                SELECT 1 FROM lc_node_mappings nm WHERE nm.session_id = s.session_id
+              )
               AND (
                 EXISTS (
                   SELECT 1 FROM lc_screens
