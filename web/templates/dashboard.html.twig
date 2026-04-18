@@ -813,8 +813,8 @@
             };
             // completion_type バッジ (完走時はバッジなし、未完走時のみ表示)
             const completionBadge = (ct) => {
-                if (ct === 'manual_stop') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-yellow-900/50 text-yellow-300" title="手動停止（Ctrl+C等）">未完走</span>';
-                if (ct === 'orphaned') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-red-900/50 text-red-300" title="プロセス異常終了">未完走（異常終了）</span>';
+                if (ct === 'manual_stop') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-yellow-900/30 text-yellow-600" title="手動停止（Ctrl+C等）">未完走</span>';
+                if (ct === 'orphaned') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-red-900/30 text-red-600" title="プロセス異常終了">未完走（異常終了）</span>';
                 return '';
             };
             let html = '<div class="space-y-6">';
