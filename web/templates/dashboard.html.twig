@@ -589,7 +589,8 @@
         const ds = document.getElementById('debug-stats');
         if (ds) {
             const s = filteredScreens[screenIdx];
-            ds.textContent = `Anchor ${_debugAnchorIdx + 1}/${_debugAnchorIndices.length} | ${s.name || s.ocr_text?.substring(0, 30) || ''}`;
+            const label = s.name || s.ocr_text?.substring(0, 30) || '';
+            ds.innerHTML = `<span class="text-gray-400">${escapeHtml(label)}</span> <span class="text-cyan-400">Anchor ${_debugAnchorIdx + 1}/${_debugAnchorIndices.length}</span>`;
         }
     }
 
