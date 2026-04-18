@@ -341,20 +341,25 @@ if ($action === 'build_session_graph') {
     $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
     $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
-    // stderr は捨てて stdout (JSON) のみ結果ファイルに出力
-    $cmd = sprintf(
-        'cd %s && exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null </dev/null &',
-        $crawlerDir,
-        escapeshellarg(
-            "import json; from pathlib import Path; from tools.batch_processor import BatchProcessor; "
-            . "bp = BatchProcessor(db_path=Path('storage/ludus.db')); "
-            . "sccs = bp.build_graph(session_id='" . addslashes($sessionId) . "'); "
-            . "bp.close(); "
-            . "print(json.dumps({'ok': True, 'sccs': sccs}, ensure_ascii=False))"
-        ),
-        escapeshellarg($resultFile),
-    );
-    exec($cmd);
+    $scriptFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/_build_graph.py';
+    file_put_contents($scriptFile, <<<PYTHON
+import json, logging, sys, os
+sys.path.insert(0, os.getcwd())
+logging.disable(logging.CRITICAL)
+from pathlib import Path
+from tools.batch_processor import BatchProcessor
+bp = BatchProcessor(db_path=Path("storage/ludus.db"))
+sccs = bp.build_graph(session_id="{$sessionId}")
+bp.close()
+with open(sys.argv[1], "w") as f:
+    json.dump({"ok": True, "sccs": sccs}, f, ensure_ascii=False)
+PYTHON);
+    $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
+    $bgCmd = "cd " . escapeshellarg($crawlerDirRaw)
+           . " && ./venv/bin/python -W ignore " . escapeshellarg($scriptFile)
+           . " " . escapeshellarg($resultFile)
+           . " > /dev/null 2>>storage/preview_merge.err.log &";
+    pclose(popen($bgCmd, 'r'));
     header('Content-Type: application/json');
     echo json_encode(['started' => true]);
     exit;
@@ -370,18 +375,26 @@ if ($action === 'preview_merge') {
     $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
     $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
-    $cmd = sprintf(
-        'cd %s && exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- && ./venv/bin/python -W ignore -c %s > %s 2>>storage/preview_merge.err.log </dev/null &',
-        $crawlerDir,
-        escapeshellarg(
-            "import json, logging; logging.disable(logging.CRITICAL); from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
-            . "m = CrossSessionMerger(Path('storage/ludus.db')); "
-            . "print(json.dumps(m.preview_merge('" . addslashes($sessionId) . "'), ensure_ascii=False)); "
-            . "m.close()"
-        ),
-        escapeshellarg($resultFile),
-    );
-    exec($cmd);
+    // スクリプトファイルに書き出してバックグラウンド実行 (クォート問題を回避)
+    $scriptFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/_preview_merge.py';
+    file_put_contents($scriptFile, <<<PYTHON
+import json, logging, sys, os
+sys.path.insert(0, os.getcwd())
+logging.disable(logging.CRITICAL)
+from pathlib import Path
+from tools.cross_session_merger import CrossSessionMerger
+m = CrossSessionMerger(Path("storage/ludus.db"))
+r = m.preview_merge("{$sessionId}")
+m.close()
+with open(sys.argv[1], "w") as f:
+    json.dump(r, f, ensure_ascii=False)
+PYTHON);
+    $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
+    $bgCmd = "cd " . escapeshellarg($crawlerDirRaw)
+           . " && ./venv/bin/python -W ignore " . escapeshellarg($scriptFile)
+           . " " . escapeshellarg($resultFile)
+           . " > /dev/null 2>>storage/preview_merge.err.log &";
+    pclose(popen($bgCmd, 'r'));
     header('Content-Type: application/json');
     echo json_encode(['started' => true]);
     exit;
@@ -397,19 +410,25 @@ if ($action === 'execute_merge') {
     $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
     $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
-    $cmd = sprintf(
-        'cd %s && exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- && ./venv/bin/python -W ignore -c %s > %s 2>/dev/null </dev/null &',
-        $crawlerDir,
-        escapeshellarg(
-            "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
-            . "m = CrossSessionMerger(Path('storage/ludus.db')); "
-            . "n = m.merge_to_master('" . addslashes($sessionId) . "'); "
-            . "m.close(); "
-            . "print(json.dumps({'ok': True, 'new_nodes': n}, ensure_ascii=False))"
-        ),
-        escapeshellarg($resultFile),
-    );
-    exec($cmd);
+    $scriptFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/_execute_merge.py';
+    file_put_contents($scriptFile, <<<PYTHON
+import json, logging, sys, os
+sys.path.insert(0, os.getcwd())
+logging.disable(logging.CRITICAL)
+from pathlib import Path
+from tools.cross_session_merger import CrossSessionMerger
+m = CrossSessionMerger(Path("storage/ludus.db"))
+n = m.merge_to_master("{$sessionId}")
+m.close()
+with open(sys.argv[1], "w") as f:
+    json.dump({"ok": True, "new_nodes": n}, f, ensure_ascii=False)
+PYTHON);
+    $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
+    $bgCmd = "cd " . escapeshellarg($crawlerDirRaw)
+           . " && ./venv/bin/python -W ignore " . escapeshellarg($scriptFile)
+           . " " . escapeshellarg($resultFile)
+           . " > /dev/null 2>>storage/preview_merge.err.log &";
+    pclose(popen($bgCmd, 'r'));
     header('Content-Type: application/json');
     echo json_encode(['started' => true]);
     exit;
