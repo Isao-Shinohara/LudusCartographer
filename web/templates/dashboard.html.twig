@@ -594,15 +594,19 @@
     }
 
     function _updateDebugSelection(selectedScreenIdx) {
-        // 全カードの選択枠をリセット
+        // 全カードの選択枠をリセット (ring-2 はアンカー枠と共有なので触らない)
         grid.querySelectorAll('.debug-selected').forEach(el => {
-            el.classList.remove('debug-selected', 'ring-2', 'ring-orange-400');
+            el.classList.remove('debug-selected', 'ring-4', 'ring-orange-400');
+            // アンカー/挿入枠がなければ ring-2 も外す
+            if (!el.classList.contains('ring-cyan-400') && !el.classList.contains('ring-lime-400')) {
+                el.classList.remove('ring-2');
+            }
         });
-        // 選択カードに枠を追加
+        // 選択カードに枠を追加 (ring-4 でアンカー枠より太く)
         if (selectedScreenIdx >= 0) {
             const card = grid.querySelector(`[data-idx="${selectedScreenIdx}"]`);
             if (card) {
-                card.classList.add('debug-selected', 'ring-2', 'ring-orange-400');
+                card.classList.add('debug-selected', 'ring-4', 'ring-orange-400');
             }
         }
     }
