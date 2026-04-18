@@ -809,8 +809,7 @@ class BackgroundWorker:
                 gemini_correct_multi,
             )
             # 1バッチ = _GEMINI_BATCH_SIZE 枚, 1回の起動で 6 バッチまで処理
-            # 自動処理は self._session_id があればそのセッション、なければ status='running' のセッション
-            # を優先 (古い完了済みセッションは「バックグラウンド未完了」セクションで手動処理)
+            # 自動処理: self._session_id → running → completed (OCR未完了) の順で対象を探す
             fetch_limit = _GEMINI_BATCH_SIZE * 6
             target_sid = self._session_id
             if not target_sid:
@@ -821,7 +820,23 @@ class BackgroundWorker:
                 if row:
                     target_sid = row["session_id"]
             if not target_sid:
-                return  # アクティブセッションがない → 自動処理しない
+                # completed セッションで OCR 未完了のものを古い順に処理
+                row = conn.execute(
+                    "SELECT s.session_id FROM lc_sessions s"
+                    " WHERE s.status = 'completed'"
+                    " AND EXISTS ("
+                    "   SELECT 1 FROM lc_screens sc"
+                    "   WHERE sc.session_id = s.session_id"
+                    "     AND sc.is_representative = 1"
+                    "     AND sc.ocr_text_gemini IS NULL"
+                    "     AND sc.screenshot_path IS NOT NULL AND sc.screenshot_path != ''"
+                    " )"
+                    " ORDER BY s.started_at ASC LIMIT 1"
+                ).fetchone()
+                if row:
+                    target_sid = row["session_id"]
+            if not target_sid:
+                return
             rows = conn.execute(
                 "SELECT id, screenshot_path,"
                 " COALESCE(ocr_text_hq, ocr_text, '') AS ocr"
@@ -1075,6 +1090,15 @@ class BackgroundWorker:
 
     _AUTO_EDGE_TIMEOUT = 60  # 秒: これ以上離れていたら文脈切れ
 
+    def _synthesize_auto_edges_for(self, session_id: str) -> None:
+        """指定セッションの合成エッジを生成。"""
+        orig = self._session_id
+        self._session_id = session_id
+        try:
+            self._synthesize_auto_edges()
+        finally:
+            self._session_id = orig
+
     def _synthesize_auto_edges(self) -> None:
         """artifact でない有効画面間に合成エッジ (auto) を注入する。
 
@@ -1160,24 +1184,36 @@ class BackgroundWorker:
     # ─── 遷移グラフ構築 ───────────────────────────────────
 
     def _run_graph_build(self) -> None:
-        """全セッションの dedup + OCR が完了してから遷移グラフを構築。"""
+        """OCR + dedup 完了済みセッションの遷移グラフを構築。"""
+        import os as _os
+        _has_gemini = bool(_os.environ.get("GEMINI_API_KEY"))
         conn = self._get_conn()
         try:
-            # 未処理が残っていたらスキップ
-            pending_cluster = conn.execute(
-                "SELECT COUNT(*) FROM lc_screens"
-                " WHERE cluster_id IS NULL AND phash IS NOT NULL AND phash != ''"
-            ).fetchone()[0]
-            pending_ocr = conn.execute(
-                "SELECT COUNT(*) FROM lc_screens"
-                " WHERE ocr_text_hq IS NULL"
-                " AND screenshot_path IS NOT NULL AND screenshot_path != ''"
-            ).fetchone()[0]
-            if pending_cluster > 0 or pending_ocr > 0:
-                logger.debug(
-                    "[BG_WORKER] graph: 待機中 (cluster残=%d, ocr残=%d)",
-                    pending_cluster, pending_ocr,
-                )
+            # グラフ未構築の completed セッションを探す
+            # OCR + dedup が完了しているセッションのみ対象
+            targets = conn.execute(
+                "SELECT s.session_id FROM lc_sessions s"
+                " WHERE s.status = 'completed'"
+                " AND NOT EXISTS ("
+                "   SELECT 1 FROM lc_session_graphs sg WHERE sg.session_id = s.session_id"
+                " )"
+                " AND NOT EXISTS ("
+                "   SELECT 1 FROM lc_screens sc WHERE sc.session_id = s.session_id"
+                "     AND sc.cluster_id IS NULL AND sc.phash IS NOT NULL AND sc.phash != ''"
+                " )"
+                + (" AND NOT EXISTS ("
+                   "   SELECT 1 FROM lc_screens sc WHERE sc.session_id = s.session_id"
+                   "     AND sc.is_representative = 1 AND sc.ocr_text_gemini IS NULL"
+                   "     AND sc.screenshot_path IS NOT NULL AND sc.screenshot_path != ''"
+                   " )" if _has_gemini else
+                   " AND NOT EXISTS ("
+                   "   SELECT 1 FROM lc_screens sc WHERE sc.session_id = s.session_id"
+                   "     AND sc.ocr_text_hq IS NULL"
+                   "     AND sc.screenshot_path IS NOT NULL AND sc.screenshot_path != ''"
+                   " )")
+                + " ORDER BY s.started_at ASC"
+            ).fetchall()
+            if not targets:
                 return
         finally:
             conn.close()
@@ -1186,10 +1222,14 @@ class BackgroundWorker:
             from tools.batch_processor import BatchProcessor
             bp = BatchProcessor(db_path=self._db_path)
             try:
-                sccs = bp.build_graph(session_id=self._session_id)
-                if sccs > 0:
-                    self.graph_sccs = sccs
-                    logger.info("[BG_WORKER] graph: %d SCC 構築完了", sccs)
+                for row in targets:
+                    sid = row["session_id"]
+                    # 合成エッジを先に生成
+                    self._synthesize_auto_edges_for(sid)
+                    sccs = bp.build_graph(session_id=sid)
+                    if sccs > 0:
+                        self.graph_sccs = sccs
+                        logger.info("[BG_WORKER] graph: session=%s, %d SCC 構築完了", sid, sccs)
             finally:
                 bp.close()
         except Exception as e:
