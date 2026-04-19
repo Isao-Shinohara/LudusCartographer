@@ -1075,6 +1075,26 @@
             const previewItems = [];
             const GRID_CLS = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3';
 
+            // 新規追加ノード (アンカーの上に表示)
+            if (data.new_nodes.length > 0) {
+                html += '<h4 class="text-sm font-bold text-green-400 mt-4">新規追加ノード</h4>';
+                html += `<div class="${GRID_CLS}">`;
+                for (const n of data.new_nodes) {
+                    const item = { thumb: n.thumb, title: n.title, scene: n.scene,
+                                   discovered_at: n.discovered_at, ocr_text: n.ocr_text,
+                                   screenshot: n.screenshot, fp: n.fp };
+                    html += buildCard({
+                        thumb: item.thumb ? imgUrl(item.thumb) : '', title: item.title,
+                        ocrPreview: (item.ocr_text || '').substring(0, 80),
+                        scene: item.scene, time: item.discovered_at || '',
+                        badge: { color: 'bg-green-900/50 text-green-300', label: 'NEW' },
+                        extraClass: ' ring-2 ring-lime-400',
+                        dataAttr: `data-preview-idx="${previewItems.length}"`,
+                    });
+                    previewItems.push(item);
+                }
+                html += '</div>';
+            }
             // アンカー一覧
             if (data.matches.length > 0) {
                 html += '<h4 class="text-sm font-bold text-gray-300 mt-4">アンカー一覧</h4>';
@@ -1092,25 +1112,6 @@
                         ocrPreview: (item.ocr_text || '').substring(0, 80),
                         scene: item.scene, time: item.discovered_at || '',
                         badge: { color, label },
-                        dataAttr: `data-preview-idx="${previewItems.length}"`,
-                    });
-                    previewItems.push(item);
-                }
-                html += '</div>';
-            }
-            // 新規追加ノード
-            if (data.new_nodes.length > 0) {
-                html += '<h4 class="text-sm font-bold text-green-400 mt-4">新規追加ノード</h4>';
-                html += `<div class="${GRID_CLS}">`;
-                for (const n of data.new_nodes) {
-                    const item = { thumb: n.thumb, title: n.title, scene: n.scene,
-                                   discovered_at: n.discovered_at, ocr_text: n.ocr_text,
-                                   screenshot: n.screenshot, fp: n.fp };
-                    html += buildCard({
-                        thumb: item.thumb ? imgUrl(item.thumb) : '', title: item.title,
-                        ocrPreview: (item.ocr_text || '').substring(0, 80),
-                        scene: item.scene, time: item.discovered_at || '',
-                        badge: { color: 'bg-green-900/50 text-green-300', label: 'NEW' },
                         dataAttr: `data-preview-idx="${previewItems.length}"`,
                     });
                     previewItems.push(item);
