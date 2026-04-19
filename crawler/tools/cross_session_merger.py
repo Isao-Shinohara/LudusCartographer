@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 class CrossSessionMerger:
     """セッション別グラフをマスターグラフに統合する。"""
 
-    def __init__(self, db_path: Path, sort_strategy=None, anchor_matcher=None):
+    def __init__(self, db_path: Path, sort_strategy=None, anchor_matcher=None,
+                 version_id: int | None = None):
         from tools.merge_sort_strategy import SafeInsertStrategy
         from tools.anchor_matcher import AnchorMatcher
         self._db_path = db_path
@@ -36,6 +37,15 @@ class CrossSessionMerger:
         self._conn.row_factory = sqlite3.Row
         self._sort_strategy = sort_strategy or SafeInsertStrategy()
         self._anchor_matcher = anchor_matcher or AnchorMatcher()
+
+        # version_id: 明示指定がなければ lc_versions のアクティブバージョンを使用
+        if version_id is not None:
+            self._version_id = version_id
+        else:
+            row = self._conn.execute(
+                "SELECT id FROM lc_versions WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self._version_id = row["id"] if row else 1
 
     def close(self) -> None:
         self._conn.close()
@@ -86,7 +96,8 @@ class CrossSessionMerger:
         t0 = _time.time()
 
         master_count = self._conn.execute(
-            "SELECT COUNT(*) FROM lc_master_nodes"
+            "SELECT COUNT(*) FROM lc_master_nodes WHERE version_id = ?",
+            (self._version_id,),
         ).fetchone()[0]
 
         session_reps = self._conn.execute(
@@ -142,7 +153,8 @@ class CrossSessionMerger:
         }
         """
         master_count = self._conn.execute(
-            "SELECT COUNT(*) FROM lc_master_nodes"
+            "SELECT COUNT(*) FROM lc_master_nodes WHERE version_id = ?",
+            (self._version_id,),
         ).fetchone()[0]
 
         node_mapping, session_reps, is_seed = self._compute_matches(session_id)
@@ -178,7 +190,8 @@ class CrossSessionMerger:
         _master_text: dict[str, str] = {}
         for r in self._conn.execute(
             "SELECT master_fp, phash, COALESCE(ocr_text_manual, ocr_text, '') AS text"
-            " FROM lc_master_nodes"
+            " FROM lc_master_nodes WHERE version_id = ?",
+            (self._version_id,),
         ).fetchall():
             _master_phash[r["master_fp"]] = r["phash"] or ""
             _master_text[r["master_fp"]] = r["text"] or ""
@@ -290,12 +303,15 @@ class CrossSessionMerger:
         group_rows = self._conn.execute(
             "SELECT master_fp, manual_group_id FROM lc_master_nodes"
             " WHERE manual_group_id IS NOT NULL AND is_group_representative = 0"
+            " AND version_id = ?",
+            (self._version_id,),
         ).fetchall()
         for gr in group_rows:
             rep = self._conn.execute(
                 "SELECT master_fp FROM lc_master_nodes"
-                " WHERE manual_group_id = ? AND is_group_representative = 1",
-                (gr["manual_group_id"],),
+                " WHERE manual_group_id = ? AND is_group_representative = 1"
+                " AND version_id = ?",
+                (gr["manual_group_id"], self._version_id),
             ).fetchone()
             if rep:
                 group_redirect[gr["master_fp"]] = rep["master_fp"]
@@ -315,14 +331,14 @@ class CrossSessionMerger:
                 m_fp, method, score = node_mapping[s_fp]
                 self._conn.execute(
                     "UPDATE lc_master_nodes SET visit_count = visit_count + 1,"
-                    " last_seen_at = ? WHERE master_fp = ?",
-                    (now, m_fp),
+                    " last_seen_at = ? WHERE master_fp = ? AND version_id = ?",
+                    (now, m_fp, self._version_id),
                 )
                 self._conn.execute(
                     "INSERT OR REPLACE INTO lc_node_mappings"
-                    " (session_id, session_fp, master_fp, match_method, match_score)"
-                    " VALUES (?, ?, ?, ?, ?)",
-                    (session_id, s_fp, m_fp, method, score),
+                    " (session_id, session_fp, master_fp, match_method, match_score, version_id)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (session_id, s_fp, m_fp, method, score, self._version_id),
                 )
             else:
                 s_info = self._get_node_info(s_fp, session_id)
@@ -337,17 +353,17 @@ class CrossSessionMerger:
                 self._conn.execute(
                     "INSERT OR IGNORE INTO lc_master_nodes"
                     " (master_fp, representative_screen_id, title, scene, phash,"
-                    "  ocr_text, visit_count, first_seen_at, last_seen_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                    "  ocr_text, visit_count, first_seen_at, last_seen_at, version_id)"
+                    " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
                     (s_fp, screen["id"] if screen else None,
                      s_info.get("title", ""), s_info["scene"], s_info["phash"],
-                     s_info["ocr_text"], screen_time, now),
+                     s_info["ocr_text"], screen_time, now, self._version_id),
                 )
                 self._conn.execute(
                     "INSERT OR REPLACE INTO lc_node_mappings"
-                    " (session_id, session_fp, master_fp, match_method, match_score)"
-                    " VALUES (?, ?, ?, 'new', 1.0)",
-                    (session_id, s_fp, s_fp),
+                    " (session_id, session_fp, master_fp, match_method, match_score, version_id)"
+                    " VALUES (?, ?, ?, 'new', 1.0, ?)",
+                    (session_id, s_fp, s_fp, self._version_id),
                 )
                 new_count += 1
 
@@ -362,22 +378,25 @@ class CrossSessionMerger:
         # 挿入するノードの sort_order を設定
         for fp, sort_pos in result.inserts:
             self._conn.execute(
-                "UPDATE lc_master_nodes SET sort_order = ? WHERE master_fp = ?",
-                (sort_pos, fp),
+                "UPDATE lc_master_nodes SET sort_order = ? WHERE master_fp = ? AND version_id = ?",
+                (sort_pos, fp, self._version_id),
             )
 
         # skipped ノードをマスターから削除
         for fp in result.skipped:
             self._conn.execute(
-                "DELETE FROM lc_master_nodes WHERE master_fp = ?", (fp,),
+                "DELETE FROM lc_master_nodes WHERE master_fp = ? AND version_id = ?",
+                (fp, self._version_id),
             )
             self._conn.execute(
-                "DELETE FROM lc_node_mappings WHERE master_fp = ? AND session_id = ?",
-                (fp, session_id),
+                "DELETE FROM lc_node_mappings WHERE master_fp = ? AND session_id = ?"
+                " AND version_id = ?",
+                (fp, session_id, self._version_id),
             )
             self._conn.execute(
-                "DELETE FROM lc_master_edges WHERE from_master_fp = ? OR to_master_fp = ?",
-                (fp, fp),
+                "DELETE FROM lc_master_edges WHERE (from_master_fp = ? OR to_master_fp = ?)"
+                " AND version_id = ?",
+                (fp, fp, self._version_id),
             )
             new_count -= 1
 
@@ -394,14 +413,19 @@ class CrossSessionMerger:
         logger.info("[Merger] マスターグラフ再構築開始")
 
         # クリア
-        self._conn.execute("DELETE FROM lc_master_nodes")
-        self._conn.execute("DELETE FROM lc_master_edges")
-        self._conn.execute("DELETE FROM lc_node_mappings")
+        self._conn.execute("DELETE FROM lc_master_nodes WHERE version_id = ?",
+                           (self._version_id,))
+        self._conn.execute("DELETE FROM lc_master_edges WHERE version_id = ?",
+                           (self._version_id,))
+        self._conn.execute("DELETE FROM lc_node_mappings WHERE version_id = ?",
+                           (self._version_id,))
         self._conn.commit()
 
         # セッション一覧
         sessions = self._conn.execute(
-            "SELECT session_id FROM lc_session_graphs ORDER BY built_at"
+            "SELECT session_id FROM lc_session_graphs"
+            " WHERE version_id = ? ORDER BY built_at",
+            (self._version_id,),
         ).fetchall()
 
         if not sessions:
@@ -417,10 +441,12 @@ class CrossSessionMerger:
                         i + 1, len(sessions), sid, new_count)
 
         master_count = self._conn.execute(
-            "SELECT COUNT(*) FROM lc_master_nodes"
+            "SELECT COUNT(*) FROM lc_master_nodes WHERE version_id = ?",
+            (self._version_id,),
         ).fetchone()[0]
         edge_count = self._conn.execute(
-            "SELECT COUNT(*) FROM lc_master_edges"
+            "SELECT COUNT(*) FROM lc_master_edges WHERE version_id = ?",
+            (self._version_id,),
         ).fetchone()[0]
         logger.info("[Merger] 再構築完了: %d ノード, %d エッジ", master_count, edge_count)
 
@@ -433,8 +459,9 @@ class CrossSessionMerger:
         """
         # session_graphs に存在するか
         sg = self._conn.execute(
-            "SELECT session_id, built_at FROM lc_session_graphs WHERE session_id = ?",
-            (session_id,),
+            "SELECT session_id, built_at FROM lc_session_graphs"
+            " WHERE session_id = ? AND version_id = ?",
+            (session_id, self._version_id),
         ).fetchone()
         if not sg:
             return {"ok": False, "reason": "セッショングラフが存在しません"}
@@ -443,8 +470,9 @@ class CrossSessionMerger:
 
         # node_mappings にマッピングがあるか
         mapping_count = self._conn.execute(
-            "SELECT COUNT(*) FROM lc_node_mappings WHERE session_id = ?",
-            (session_id,),
+            "SELECT COUNT(*) FROM lc_node_mappings WHERE session_id = ?"
+            " AND version_id = ?",
+            (session_id, self._version_id),
         ).fetchone()[0]
         if mapping_count == 0:
             return {"ok": False, "reason": "マージ記録（node_mappings）がありません"}
@@ -452,8 +480,9 @@ class CrossSessionMerger:
         # 残りのマージ済みセッションの transitions/screens が存在するか
         other_sessions = self._conn.execute(
             "SELECT sg.session_id FROM lc_session_graphs sg"
-            " WHERE sg.session_id != ? AND sg.built_at IS NOT NULL",
-            (session_id,),
+            " WHERE sg.session_id != ? AND sg.built_at IS NOT NULL"
+            " AND sg.version_id = ?",
+            (session_id, self._version_id),
         ).fetchall()
 
         for other in other_sessions:
@@ -504,25 +533,30 @@ class CrossSessionMerger:
                 " SELECT master_fp, user_excluded, manual_group_id,"
                 "   is_group_representative, title,"
                 "   ocr_text_manual, title_manual, manual_edited_at"
-                " FROM lc_master_nodes"
+                " FROM lc_master_nodes WHERE version_id = ?",
+                (self._version_id,),
             )
             backup_count = self._conn.execute(
                 "SELECT COUNT(*) FROM _unmerge_backup"
             ).fetchone()[0]
             logger.info("[Unmerge] バックアップ: %d ノード", backup_count)
 
-            # 3. マスターグラフ全削除
-            self._conn.execute("DELETE FROM lc_master_nodes")
-            self._conn.execute("DELETE FROM lc_master_edges")
-            self._conn.execute("DELETE FROM lc_node_mappings")
+            # 3. マスターグラフ全削除 (このバージョンのみ)
+            self._conn.execute("DELETE FROM lc_master_nodes WHERE version_id = ?",
+                               (self._version_id,))
+            self._conn.execute("DELETE FROM lc_master_edges WHERE version_id = ?",
+                               (self._version_id,))
+            self._conn.execute("DELETE FROM lc_node_mappings WHERE version_id = ?",
+                               (self._version_id,))
             self._conn.commit()
 
             # 4. 対象セッションを除外して再構築
             sessions = self._conn.execute(
                 "SELECT session_id FROM lc_session_graphs"
                 " WHERE session_id != ? AND built_at IS NOT NULL"
+                " AND version_id = ?"
                 " ORDER BY built_at",
-                (session_id,),
+                (session_id, self._version_id),
             ).fetchall()
 
             for i, row in enumerate(sessions):
@@ -543,6 +577,8 @@ class CrossSessionMerger:
                 "  manual_edited_at = b.manual_edited_at"
                 " FROM _unmerge_backup b"
                 " WHERE lc_master_nodes.master_fp = b.master_fp"
+                " AND lc_master_nodes.version_id = ?",
+                (self._version_id,),
             ).rowcount
             logger.info("[Unmerge] 手動変更復元: %d ノード", restored)
 
@@ -550,10 +586,12 @@ class CrossSessionMerger:
             orphans = self._conn.execute(
                 "SELECT m.master_fp, m.representative_screen_id"
                 " FROM lc_master_nodes m"
-                " WHERE m.representative_screen_id IS NOT NULL"
+                " WHERE m.version_id = ?"
+                "   AND m.representative_screen_id IS NOT NULL"
                 "   AND NOT EXISTS ("
                 "     SELECT 1 FROM lc_screens s"
-                "     WHERE s.id = m.representative_screen_id)"
+                "     WHERE s.id = m.representative_screen_id)",
+                (self._version_id,),
             ).fetchall()
             for orph in orphans:
                 alt = self._conn.execute(
@@ -565,26 +603,29 @@ class CrossSessionMerger:
                 new_id = alt["id"] if alt else None
                 self._conn.execute(
                     "UPDATE lc_master_nodes SET representative_screen_id = ?"
-                    " WHERE master_fp = ?",
-                    (new_id, orph["master_fp"]),
+                    " WHERE master_fp = ? AND version_id = ?",
+                    (new_id, orph["master_fp"], self._version_id),
                 )
             if orphans:
                 logger.info("[Unmerge] orphan 修復: %d ノード", len(orphans))
 
             # 7. 対象セッションの built_at をクリア（未マージ状態に戻す）
             self._conn.execute(
-                "UPDATE lc_session_graphs SET built_at = NULL WHERE session_id = ?",
-                (session_id,),
+                "UPDATE lc_session_graphs SET built_at = NULL"
+                " WHERE session_id = ? AND version_id = ?",
+                (session_id, self._version_id),
             )
 
             self._conn.execute("DROP TABLE IF EXISTS _unmerge_backup")
             self._conn.commit()
 
             master_nodes = self._conn.execute(
-                "SELECT COUNT(*) FROM lc_master_nodes"
+                "SELECT COUNT(*) FROM lc_master_nodes WHERE version_id = ?",
+                (self._version_id,),
             ).fetchone()[0]
             master_edges = self._conn.execute(
-                "SELECT COUNT(*) FROM lc_master_edges"
+                "SELECT COUNT(*) FROM lc_master_edges WHERE version_id = ?",
+                (self._version_id,),
             ).fetchone()[0]
 
             logger.info("[Unmerge] 完了: %d ノード, %d エッジ, 復元 %d 件",
@@ -627,17 +668,17 @@ class CrossSessionMerger:
             self._conn.execute(
                 "INSERT OR IGNORE INTO lc_master_nodes"
                 " (master_fp, representative_screen_id, title, scene, phash,"
-                "  ocr_text, visit_count, first_seen_at, last_seen_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                "  ocr_text, visit_count, first_seen_at, last_seen_at, version_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
                 (r["fingerprint"], r["id"], r["title"], r["scene"],
                  r["phash"], r["ocr"],
-                 r["discovered_at"], now),
+                 r["discovered_at"], now, self._version_id),
             )
             self._conn.execute(
                 "INSERT OR REPLACE INTO lc_node_mappings"
-                " (session_id, session_fp, master_fp, match_method, match_score)"
-                " VALUES (?, ?, ?, 'seed', 1.0)",
-                (session_id, r["fingerprint"], r["fingerprint"]),
+                " (session_id, session_fp, master_fp, match_method, match_score, version_id)"
+                " VALUES (?, ?, ?, 'seed', 1.0, ?)",
+                (session_id, r["fingerprint"], r["fingerprint"], self._version_id),
             )
 
         # エッジをコピー (tap + auto 両方。位相ソートに使うため)
@@ -678,22 +719,25 @@ class CrossSessionMerger:
             self._conn.execute(
                     "INSERT OR IGNORE INTO lc_master_edges"
                     " (from_master_fp, to_master_fp, tap_label, action_name,"
-                    "  edge_type, count, first_seen_at, last_seen_at)"
-                    " VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+                    "  edge_type, count, first_seen_at, last_seen_at, version_id)"
+                    " VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)",
                     (from_fp, to_fp, e["tap_label"],
                      e["action_name"], (e["edge_type"] if "edge_type" in e.keys() else "tap") or "tap",
-                     e["discovered_at"], now),
+                     e["discovered_at"], now, self._version_id),
                 )
 
         # Seed: sort_order は first_seen_at 順 (位相ソートは使わない)
         # 初回セッションは一本道なので時系列 = ゲーム進行順
         sorted_nodes = self._conn.execute(
-            "SELECT master_fp FROM lc_master_nodes ORDER BY first_seen_at ASC"
+            "SELECT master_fp FROM lc_master_nodes"
+            " WHERE version_id = ? ORDER BY first_seen_at ASC",
+            (self._version_id,),
         ).fetchall()
         for i, row in enumerate(sorted_nodes):
             self._conn.execute(
-                "UPDATE lc_master_nodes SET sort_order = ? WHERE master_fp = ?",
-                (i, row["master_fp"]),
+                "UPDATE lc_master_nodes SET sort_order = ? WHERE master_fp = ?"
+                " AND version_id = ?",
+                (i, row["master_fp"], self._version_id),
             )
 
         self._conn.commit()
@@ -717,17 +761,17 @@ class CrossSessionMerger:
             self._conn.execute(
                 "INSERT OR IGNORE INTO lc_master_nodes"
                 " (master_fp, representative_screen_id, title, scene, phash,"
-                "  ocr_text, visit_count, first_seen_at, last_seen_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                "  ocr_text, visit_count, first_seen_at, last_seen_at, version_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
                 (r["fingerprint"], r["id"], r["title"], r["scene"],
                  r["phash"], r["ocr"],
-                 r["discovered_at"], now),
+                 r["discovered_at"], now, self._version_id),
             )
             self._conn.execute(
                 "INSERT OR REPLACE INTO lc_node_mappings"
-                " (session_id, session_fp, master_fp, match_method, match_score)"
-                " VALUES (?, ?, ?, 'new', 1.0)",
-                (session_id, r["fingerprint"], r["fingerprint"]),
+                " (session_id, session_fp, master_fp, match_method, match_score, version_id)"
+                " VALUES (?, ?, ?, 'new', 1.0, ?)",
+                (session_id, r["fingerprint"], r["fingerprint"], self._version_id),
             )
 
         self._merge_edges(session_id, {})
@@ -777,14 +821,16 @@ class CrossSessionMerger:
         # 新規ノード (session_fp == master_fp)
         new_nodes = self._conn.execute(
             "SELECT session_fp, master_fp FROM lc_node_mappings"
-            " WHERE session_id = ? AND match_method IN ('new', 'seed')",
-            (session_id,),
+            " WHERE session_id = ? AND match_method IN ('new', 'seed')"
+            " AND version_id = ?",
+            (session_id, self._version_id),
         ).fetchall()
         for r in new_nodes:
             fp_map[r["session_fp"]] = r["master_fp"]
 
         master_fps = set(r["master_fp"] for r in self._conn.execute(
-            "SELECT master_fp FROM lc_master_nodes"
+            "SELECT master_fp FROM lc_master_nodes WHERE version_id = ?",
+            (self._version_id,),
         ).fetchall())
 
         for e in edges:
@@ -799,8 +845,9 @@ class CrossSessionMerger:
 
             existing = self._conn.execute(
                 "SELECT id, count FROM lc_master_edges"
-                " WHERE from_master_fp = ? AND to_master_fp = ? AND tap_label IS ?",
-                (m_from, m_to, e["tap_label"]),
+                " WHERE from_master_fp = ? AND to_master_fp = ? AND tap_label IS ?"
+                " AND version_id = ?",
+                (m_from, m_to, e["tap_label"], self._version_id),
             ).fetchone()
 
             if existing:
@@ -813,21 +860,23 @@ class CrossSessionMerger:
                 self._conn.execute(
                     "INSERT OR IGNORE INTO lc_master_edges"
                     " (from_master_fp, to_master_fp, tap_label, action_name,"
-                    "  edge_type, count, first_seen_at, last_seen_at)"
-                    " VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+                    "  edge_type, count, first_seen_at, last_seen_at, version_id)"
+                    " VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)",
                     (m_from, m_to, e["tap_label"], e["action_name"],
                      (e["edge_type"] if "edge_type" in e.keys() else "tap") or "tap",
-                     e["discovered_at"], now),
+                     e["discovered_at"], now, self._version_id),
                 )
 
     def _recalculate_master_graph(self) -> None:
         """マスターグラフの BFS depth + SCC + sort_order を再計算。"""
         nodes = self._conn.execute(
-            "SELECT master_fp FROM lc_master_nodes"
+            "SELECT master_fp FROM lc_master_nodes WHERE version_id = ?",
+            (self._version_id,),
         ).fetchall()
         edges = self._conn.execute(
             "SELECT from_master_fp, to_master_fp, COALESCE(edge_type, 'tap') AS edge_type"
-            " FROM lc_master_edges"
+            " FROM lc_master_edges WHERE version_id = ?",
+            (self._version_id,),
         ).fetchall()
 
         if not nodes or not edges:
@@ -850,9 +899,12 @@ class CrossSessionMerger:
         # ROOT 検出: エッジを持つノードのうち first_seen_at が最古
         root = self._conn.execute(
             "SELECT m.master_fp FROM lc_master_nodes m"
-            " WHERE EXISTS (SELECT 1 FROM lc_master_edges e"
-            "   WHERE e.from_master_fp = m.master_fp OR e.to_master_fp = m.master_fp)"
-            " ORDER BY m.first_seen_at ASC LIMIT 1"
+            " WHERE m.version_id = ?"
+            " AND EXISTS (SELECT 1 FROM lc_master_edges e"
+            "   WHERE e.version_id = ?"
+            "   AND (e.from_master_fp = m.master_fp OR e.to_master_fp = m.master_fp))"
+            " ORDER BY m.first_seen_at ASC LIMIT 1",
+            (self._version_id, self._version_id),
         ).fetchone()
         home_fp = root["master_fp"] if root else None
 
@@ -862,7 +914,11 @@ class CrossSessionMerger:
                 home_fp = max(G.nodes(), key=lambda n: G.out_degree(n))
 
         # BFS depth (前回の値をリセット)
-        self._conn.execute("UPDATE lc_master_nodes SET bfs_depth = NULL, scc_id = NULL, scc_label = NULL")
+        self._conn.execute(
+            "UPDATE lc_master_nodes SET bfs_depth = NULL, scc_id = NULL, scc_label = NULL"
+            " WHERE version_id = ?",
+            (self._version_id,),
+        )
         depth_map: dict[str, int] = {}
         if home_fp and home_fp in G:
             undirected = G.to_undirected()
@@ -872,8 +928,9 @@ class CrossSessionMerger:
 
         for fp, depth in depth_map.items():
             self._conn.execute(
-                "UPDATE lc_master_nodes SET bfs_depth = ? WHERE master_fp = ?",
-                (depth, fp),
+                "UPDATE lc_master_nodes SET bfs_depth = ? WHERE master_fp = ?"
+                " AND version_id = ?",
+                (depth, fp, self._version_id),
             )
 
         # SCC
@@ -890,8 +947,9 @@ class CrossSessionMerger:
         for idx, scc_fps in enumerate(sccs, 1):
             for fp in scc_fps:
                 self._conn.execute(
-                    "UPDATE lc_master_nodes SET scc_id = ?, scc_label = ? WHERE master_fp = ?",
-                    (idx, f"SCC#{idx}", fp),
+                    "UPDATE lc_master_nodes SET scc_id = ?, scc_label = ? WHERE master_fp = ?"
+                    " AND version_id = ?",
+                    (idx, f"SCC#{idx}", fp, self._version_id),
                 )
 
         # sort_order: 位相ソート (チュートリアル進行順)
@@ -902,6 +960,8 @@ class CrossSessionMerger:
             r["master_fp"]: r["first_seen_at"] or ""
             for r in self._conn.execute(
                 "SELECT master_fp, first_seen_at FROM lc_master_nodes"
+                " WHERE version_id = ?",
+                (self._version_id,),
             ).fetchall()
         }
 
@@ -990,8 +1050,9 @@ class CrossSessionMerger:
 
         for i, fp in enumerate(ordered_fps):
             self._conn.execute(
-                "UPDATE lc_master_nodes SET sort_order = ? WHERE master_fp = ?",
-                (i, fp),
+                "UPDATE lc_master_nodes SET sort_order = ? WHERE master_fp = ?"
+                " AND version_id = ?",
+                (i, fp, self._version_id),
             )
 
     def _get_node_info(self, fp: str, session_id: str) -> Optional[dict]:
@@ -1024,8 +1085,9 @@ class CrossSessionMerger:
     def _get_master_node_info(self, fp: str) -> Optional[dict]:
         """マスターノードの情報を取得。"""
         row = self._conn.execute(
-            "SELECT title, scene, phash, ocr_text FROM lc_master_nodes WHERE master_fp = ?",
-            (fp,),
+            "SELECT title, scene, phash, ocr_text FROM lc_master_nodes"
+            " WHERE master_fp = ? AND version_id = ?",
+            (fp, self._version_id),
         ).fetchone()
         if not row:
             return None
@@ -1064,8 +1126,8 @@ class CrossSessionMerger:
             "SELECT m.title, s.thumbnail_path, s.screenshot_path, m.scene"
             " FROM lc_master_nodes m"
             " LEFT JOIN lc_screens s ON s.id = m.representative_screen_id"
-            " WHERE m.master_fp = ?",
-            (master_fp,),
+            " WHERE m.master_fp = ? AND m.version_id = ?",
+            (master_fp, self._version_id),
         ).fetchone()
         if not row:
             return None
@@ -1101,9 +1163,10 @@ class CrossSessionMerger:
                 f" s.thumbnail_path"
                 f" FROM lc_master_edges e"
                 f" LEFT JOIN lc_master_nodes m ON m.master_fp = e.{col_to}"
+                f"   AND m.version_id = ?"
                 f" LEFT JOIN lc_screens s ON s.id = m.representative_screen_id"
-                f" WHERE e.{col_from} = ?",
-                (master_fp,),
+                f" WHERE e.{col_from} = ? AND e.version_id = ?",
+                (self._version_id, master_fp, self._version_id),
             ).fetchall()
             for r in rows:
                 neighbors.append({
@@ -1178,12 +1241,16 @@ class CrossSessionMerger:
             "SELECT m.master_fp, m.title, s.thumbnail_path"
             " FROM lc_master_nodes m"
             " LEFT JOIN lc_screens s ON s.id = m.representative_screen_id"
+            " WHERE m.version_id = ?",
+            (self._version_id,),
         ).fetchall():
             node_info[r["master_fp"]] = (r["title"] or "", r["thumbnail_path"] or "")
 
         # 2) 全マスターエッジを一括取得 (JOIN なし)
         rows = self._conn.execute(
             "SELECT DISTINCT from_master_fp, to_master_fp FROM lc_master_edges"
+            " WHERE version_id = ?",
+            (self._version_id,),
         ).fetchall()
 
         fp_set = set(master_fps)
