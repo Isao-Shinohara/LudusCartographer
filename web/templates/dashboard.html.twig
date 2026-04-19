@@ -1088,7 +1088,6 @@
                         thumb: item.thumb ? imgUrl(item.thumb) : '', title: item.title,
                         ocrPreview: (item.ocr_text || '').substring(0, 80),
                         scene: item.scene, time: item.discovered_at || '',
-                        extraClass: ' ring-2 ring-lime-400',
                         dataAttr: `data-preview-idx="${previewItems.length}"`,
                     });
                     previewItems.push(item);
@@ -1100,7 +1099,7 @@
 
             // アンカー一覧
             if (data.matches.length > 0) {
-                html += '<h4 class="text-sm font-bold text-gray-300 mt-4">アンカー一覧</h4>';
+                html += '<h4 class="text-sm font-bold text-cyan-400 mt-4">アンカー一覧</h4>';
                 html += `<div class="${GRID_CLS}">`;
                 for (const m of data.matches) {
                     const color = m.method.includes('phase1') ? 'bg-blue-900/50 text-blue-300'
@@ -1115,7 +1114,6 @@
                         ocrPreview: (item.ocr_text || '').substring(0, 80),
                         scene: item.scene, time: item.discovered_at || '',
                         badge: { color, label },
-                        extraClass: ' ring-2 ring-cyan-400',
                         dataAttr: `data-preview-idx="${previewItems.length}"`,
                     });
                     previewItems.push(item);
