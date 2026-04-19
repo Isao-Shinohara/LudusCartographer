@@ -1560,32 +1560,11 @@
 
     function renderOcrSources(s) {
         const area = document.getElementById('modal-ocr-sources');
-        // 初期・(Gemini or HQ) を常時表示。手動は編集時のみ。
-        // Gemini と HQ は排他実行のため、どちらかが存在する方を表示。
+        // 手動編集のみ表示
         const sources = [];
         if (s.ocr_text_manual !== undefined && s.ocr_text_manual !== null) {
             sources.push({label: '手動', color: 'bg-pink-900/40 text-pink-300', value: s.ocr_text_manual});
         }
-        // Gemini を優先 (実行済みなら空文字でも表示)
-        const geminiVal = s.ocr_text_gemini;
-        const hqVal = s.ocr_text_hq;
-        if (geminiVal !== undefined && geminiVal !== null) {
-            // Gemini 実行済 (テキストあり or 空文字)
-            sources.push({label: 'Gemini', color: 'bg-amber-900/40 text-amber-300',
-                          value: geminiVal});
-        } else if (hqVal !== undefined && hqVal !== null) {
-            // HQ 実行済
-            sources.push({label: 'HQ', color: 'bg-sky-900/40 text-sky-300',
-                          value: hqVal});
-        } else if (geminiEnabled) {
-            // Gemini 有効時は Gemini 未実行と表示
-            sources.push({label: 'Gemini', color: 'bg-amber-900/40 text-amber-300', value: null});
-        } else {
-            // Gemini 無効時は HQ 未実行と表示
-            sources.push({label: 'HQ', color: 'bg-sky-900/40 text-sky-300', value: null});
-        }
-        sources.push({label: '初期', color: 'bg-gray-700 text-gray-400',
-                      value: s.ocr_text_raw === undefined ? null : s.ocr_text_raw});
 
         area.innerHTML = sources.map((src, i) => {
             // 表示テキスト & コピー対象の決定
