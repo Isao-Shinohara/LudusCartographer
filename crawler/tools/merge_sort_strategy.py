@@ -61,12 +61,15 @@ class SafeInsertStrategy(MergeSortStrategy):
         conn: sqlite3.Connection,
         session_id: str,
         node_mapping: dict[str, tuple[str, str, float]],
+        version_id: int | None = None,
     ) -> MergeSortResult:
         # 現在の sort_order マップ
+        _v = " WHERE version_id = ?" if version_id else ""
+        _vp = (version_id,) if version_id else ()
         sort_orders: dict[str, int] = {
             r["master_fp"]: r["sort_order"]
             for r in conn.execute(
-                "SELECT master_fp, sort_order FROM lc_master_nodes"
+                "SELECT master_fp, sort_order FROM lc_master_nodes" + _v, _vp
             ).fetchall()
         }
         if not sort_orders:
@@ -192,6 +195,7 @@ class SafeInsertStrategy(MergeSortStrategy):
         conn: sqlite3.Connection,
         session_id: str,
         node_mapping: dict[str, tuple[str, str, float]],
+        version_id: int | None = None,
     ) -> tuple[list[str], list[str]]:
         """プレビュー用: SafeInsert 判定のみ実行し、挿入/スキップの session_fp を返す。
 
@@ -199,10 +203,12 @@ class SafeInsertStrategy(MergeSortStrategy):
             (insertable_fps, skipped_fps) — session_fp のリスト
         """
         # sort_order マップ
+        _v = " WHERE version_id = ?" if version_id else ""
+        _vp = (version_id,) if version_id else ()
         sort_orders: dict[str, int] = {
             r["master_fp"]: r["sort_order"]
             for r in conn.execute(
-                "SELECT master_fp, sort_order FROM lc_master_nodes"
+                "SELECT master_fp, sort_order FROM lc_master_nodes" + _v, _vp
             ).fetchall()
         }
         if not sort_orders:
@@ -304,13 +310,16 @@ class SafeInsertStrategy(MergeSortStrategy):
         return anchors
 
 
-def renumber_sort_orders(conn: sqlite3.Connection) -> None:
+def renumber_sort_orders(conn: sqlite3.Connection, version_id: int | None = None) -> None:
     """全マスターノードの sort_order を 0 から連番で振り直す。
 
     既存ノードの相対順序は不変。
     """
+    _v = " WHERE version_id = ?" if version_id else ""
+    _vp = (version_id,) if version_id else ()
     rows = conn.execute(
-        "SELECT master_fp, sort_order FROM lc_master_nodes ORDER BY sort_order ASC"
+        "SELECT master_fp, sort_order FROM lc_master_nodes" + _v + " ORDER BY sort_order ASC",
+        _vp,
     ).fetchall()
     for i, r in enumerate(rows):
         if r["sort_order"] != i:

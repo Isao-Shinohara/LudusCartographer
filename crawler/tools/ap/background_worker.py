@@ -815,6 +815,7 @@ class BackgroundWorker:
             if not target_sid:
                 row = conn.execute(
                     "SELECT session_id FROM lc_sessions WHERE status = 'running'"
+                    " AND version_id = (SELECT id FROM lc_versions WHERE is_active = 1)"
                     " ORDER BY started_at DESC LIMIT 1"
                 ).fetchone()
                 if row:
@@ -824,6 +825,7 @@ class BackgroundWorker:
                 row = conn.execute(
                     "SELECT s.session_id FROM lc_sessions s"
                     " WHERE s.status = 'completed'"
+                    " AND s.version_id = (SELECT id FROM lc_versions WHERE is_active = 1)"
                     " AND EXISTS ("
                     "   SELECT 1 FROM lc_screens sc"
                     "   WHERE sc.session_id = s.session_id"
@@ -1194,6 +1196,7 @@ class BackgroundWorker:
             targets = conn.execute(
                 "SELECT s.session_id FROM lc_sessions s"
                 " WHERE s.status = 'completed'"
+                " AND s.version_id = (SELECT id FROM lc_versions WHERE is_active = 1)"
                 " AND NOT EXISTS ("
                 "   SELECT 1 FROM lc_session_graphs sg WHERE sg.session_id = s.session_id"
                 " )"
@@ -1246,6 +1249,7 @@ class BackgroundWorker:
                 "SELECT sg.session_id FROM lc_session_graphs sg"
                 " JOIN lc_sessions s ON s.session_id = sg.session_id"
                 " WHERE s.status = 'completed'"
+                " AND s.version_id = (SELECT id FROM lc_versions WHERE is_active = 1)"
                 " AND NOT EXISTS ("
                 "   SELECT 1 FROM lc_node_mappings nm"
                 "   WHERE nm.session_id = sg.session_id"

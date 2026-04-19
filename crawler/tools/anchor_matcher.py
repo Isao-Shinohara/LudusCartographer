@@ -95,6 +95,7 @@ class AnchorMatcher:
         self,
         conn: sqlite3.Connection,
         session_id: str,
+        version_id: int | None = None,
     ) -> tuple[dict[str, tuple[str, str, float]], list[str]]:
         """全 Phase を実行し、マッチ結果を返す。
 
@@ -103,7 +104,7 @@ class AnchorMatcher:
             node_mapping: session_fp → (master_fp, method, score)
             skipped_fps: マッチしなかった session_fp のリスト
         """
-        session_nodes, master_nodes, master_sort_map = self._prepare_data(conn, session_id)
+        session_nodes, master_nodes, master_sort_map = self._prepare_data(conn, session_id, version_id)
 
         if not session_nodes or not master_nodes:
             return {}, [n.fp for n in session_nodes]
@@ -158,6 +159,7 @@ class AnchorMatcher:
         self,
         conn: sqlite3.Connection,
         session_id: str,
+        version_id: int | None = None,
     ) -> tuple[list[NodeInfo], list[NodeInfo], dict[str, int]]:
         """DB からデータ取得し、ノード分類する。"""
         from lc.utils import phash_distance  # noqa: F401 (import test)
@@ -210,11 +212,14 @@ class AnchorMatcher:
             ))
 
         # マスター側
+        _v_filter = " WHERE version_id = ?" if version_id else ""
+        _v_params = (version_id,) if version_id else ()
         master_rows = conn.execute(
             "SELECT master_fp, phash, scene, sort_order,"
             " COALESCE(ocr_text_manual, ocr_text, '') AS text"
-            " FROM lc_master_nodes"
-            " ORDER BY sort_order ASC"
+            " FROM lc_master_nodes" + _v_filter
+            + " ORDER BY sort_order ASC",
+            _v_params,
         ).fetchall()
 
         master_nodes: list[NodeInfo] = []

@@ -152,12 +152,18 @@ class ScreenRecorder:
         self._conn.executescript(_SCHEMA)
         self._migrate()
 
+        # active version_id を取得
+        v_row = self._conn.execute(
+            "SELECT id FROM lc_versions WHERE is_active = 1"
+        ).fetchone()
+        self._version_id = v_row[0] if v_row else 1
+
         # セッション登録 (新規) または継続再開時の status 更新
         self._conn.execute(
             "INSERT OR IGNORE INTO lc_sessions"
-            " (session_id, screens_found, started_at, status, game_title)"
-            " VALUES (?, 0, ?, 'running', ?)",
-            (self._session_id, datetime.now().isoformat(), self._game_title),
+            " (session_id, screens_found, started_at, status, game_title, version_id)"
+            " VALUES (?, 0, ?, 'running', ?, ?)",
+            (self._session_id, datetime.now().isoformat(), self._game_title, self._version_id),
         )
         # 継続再開時は status を 'running' に戻し、completion_type をクリア
         self._conn.execute(
@@ -525,9 +531,9 @@ class ScreenRecorder:
         # 新セッション登録
         self._conn.execute(
             "INSERT OR IGNORE INTO lc_sessions"
-            " (session_id, screens_found, started_at, status, game_title)"
-            " VALUES (?, 0, ?, 'running', ?)",
-            (self._session_id, datetime.now().isoformat(), self._game_title),
+            " (session_id, screens_found, started_at, status, game_title, version_id)"
+            " VALUES (?, 0, ?, 'running', ?, ?)",
+            (self._session_id, datetime.now().isoformat(), self._game_title, self._version_id),
         )
         self._conn.commit()
 
