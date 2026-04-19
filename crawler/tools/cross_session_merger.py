@@ -183,7 +183,15 @@ class CrossSessionMerger:
                 "master_neighbors": master_neighbors_map.get(m_fp, []),
             })
 
-        # 新規ノード詳細
+        # SafeInsert 判定: 実際に挿入されるノードを特定
+        insertable_fps, skipped_fps = self._sort_strategy.preview_insertable(
+            self._conn, session_id, node_mapping
+        )
+        insertable_set = set(insertable_fps)
+        summary["insertable"] = len(insertable_fps)
+        summary["skipped"] = len(skipped_fps)
+
+        # 新規ノード詳細 (全追加候補)
         new_nodes = []
         for fp in new_fps:
             s_info = self._get_screen_info(fp, session_id)
@@ -196,6 +204,7 @@ class CrossSessionMerger:
                 "ocr_text": s_info.get("ocr_text", "") if s_info else "",
                 "screenshot": s_info.get("screenshot_path", "") if s_info else "",
                 "neighbors": session_neighbors_map.get(fp, []),
+                "insertable": fp in insertable_set,
             })
 
         return {
