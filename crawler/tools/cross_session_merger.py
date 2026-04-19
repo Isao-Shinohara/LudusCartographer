@@ -162,15 +162,46 @@ class CrossSessionMerger:
         master_neighbors_map = self._get_master_neighbors_batch(master_fps_list)
 
         # マッチ詳細
+        from lc.utils import phash_distance
+        from difflib import SequenceMatcher as _SM
+        # phash/テキスト情報を一括取得
+        _screen_phash: dict[str, str] = {}
+        _screen_text: dict[str, str] = {}
+        for r in self._conn.execute(
+            "SELECT fingerprint, phash, COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS text"
+            " FROM lc_screens WHERE session_id = ? AND is_representative = 1",
+            (session_id,),
+        ).fetchall():
+            _screen_phash[r["fingerprint"]] = r["phash"] or ""
+            _screen_text[r["fingerprint"]] = r["text"] or ""
+        _master_phash: dict[str, str] = {}
+        _master_text: dict[str, str] = {}
+        for r in self._conn.execute(
+            "SELECT master_fp, phash, COALESCE(ocr_text_manual, ocr_text, '') AS text"
+            " FROM lc_master_nodes"
+        ).fetchall():
+            _master_phash[r["master_fp"]] = r["phash"] or ""
+            _master_text[r["master_fp"]] = r["text"] or ""
+
         matches = []
         for s_fp, (m_fp, method, score) in node_mapping.items():
             s_info = self._get_screen_info(s_fp, session_id)
             m_info = self._get_master_screen_info(m_fp)
+            # phash distance
+            s_ph = _screen_phash.get(s_fp, "")
+            m_ph = _master_phash.get(m_fp, "")
+            ph_dist = phash_distance(s_ph, m_ph) if s_ph and m_ph else -1
+            # text similarity
+            s_txt = _screen_text.get(s_fp, "")
+            m_txt = _master_text.get(m_fp, "")
+            text_sim = round(_SM(None, s_txt, m_txt).ratio(), 3) if s_txt and m_txt else -1
             matches.append({
                 "session_fp": s_fp,
                 "master_fp": m_fp,
                 "method": method,
                 "score": round(score, 3),
+                "phash_dist": ph_dist,
+                "text_sim": text_sim,
                 "session_title": s_info.get("title", "") if s_info else "",
                 "session_thumb": s_info.get("thumbnail_path", "") if s_info else "",
                 "session_scene": s_info.get("scene", "") if s_info else "",

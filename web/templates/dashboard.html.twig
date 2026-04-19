@@ -1119,9 +1119,10 @@
                                    discovered_at: m.session_discovered_at, ocr_text: m.session_ocr_text,
                                    screenshot: m.session_screenshot, fp: m.session_fp,
                                    method: m.method, master_fp: m.master_fp };
+                    const scoreInfo = (m.phash_dist >= 0 ? `phash:${m.phash_dist}` : '') + (m.text_sim >= 0 ? ` sim:${m.text_sim}` : '');
                     html += buildCard({
                         thumb: item.thumb ? imgUrl(item.thumb) : '', title: item.title,
-                        ocrPreview: (item.ocr_text || '').substring(0, 80),
+                        ocrPreview: scoreInfo ? scoreInfo + '  ' + (item.ocr_text || '').substring(0, 60) : (item.ocr_text || '').substring(0, 80),
                         scene: item.scene, time: item.discovered_at || '',
                         badge: { color, label },
                         dataAttr: `data-preview-idx="${previewItems.length}"` + (m.method === 'phase15_gemini' ? ` data-gemini-fp="${escapeHtml(m.session_fp)}"` : ''),
