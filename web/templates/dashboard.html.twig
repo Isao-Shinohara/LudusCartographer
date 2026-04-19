@@ -2270,12 +2270,14 @@
             const badge = isActive ? '<span class="px-2 py-0.5 text-[10px] rounded bg-cyan-900/50 text-cyan-300">ACTIVE</span>' : '';
             html += `<div class="bg-gray-900 border ${border} rounded-lg p-3 flex items-center justify-between">
                 <div class="flex items-center gap-3">
-                    <span class="text-sm font-mono text-gray-300">${escapeHtml(v.name)}</span>
+                    <span class="text-sm font-mono text-gray-300 version-name" data-version-id="${v.id}">${escapeHtml(v.name)}</span>
                     ${badge}
                     <span class="text-xs text-gray-500">${fmtShort(v.created_at)}</span>
                 </div>
                 <div class="flex items-center gap-2">
+                    <button class="rename-version-btn px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-400 text-xs rounded transition-colors" data-version-id="${v.id}" data-version-name="${escapeHtml(v.name)}" title="名前変更">✎</button>
                     ${!isActive ? `<button class="activate-version-btn px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors" data-version-id="${v.id}">有効化</button>` : ''}
+                    ${!isActive ? `<button class="delete-version-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors" data-version-id="${v.id}" data-version-name="${escapeHtml(v.name)}" title="削除">🗑</button>` : ''}
                 </div>
             </div>`;
         }
@@ -2294,6 +2296,27 @@
                 await fetch(API_BASE + '?action=activate_version&version_id=' + vid);
                 _currentVersionId = parseInt(vid);
                 fetchVersions();
+            });
+        });
+        sc.querySelectorAll('.rename-version-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const vid = btn.dataset.versionId;
+                const oldName = btn.dataset.versionName;
+                const newName = prompt('新しいバージョン名:', oldName);
+                if (newName && newName !== oldName) {
+                    fetch(API_BASE + '?action=rename_version&version_id=' + vid + '&name=' + encodeURIComponent(newName))
+                        .then(() => fetchVersions());
+                }
+            });
+        });
+        sc.querySelectorAll('.delete-version-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const vid = btn.dataset.versionId;
+                const name = btn.dataset.versionName;
+                if (confirm(`バージョン "${name}" を削除しますか？\n\n関連するセッションとローカルファイルも削除されます。\nDB上のデータは論理削除されます。`)) {
+                    fetch(API_BASE + '?action=delete_version&version_id=' + vid)
+                        .then(() => fetchVersions());
+                }
             });
         });
         // バージョンセレクター更新

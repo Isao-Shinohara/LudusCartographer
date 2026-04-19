@@ -208,9 +208,15 @@ class BatchProcessor:
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 name       TEXT    UNIQUE NOT NULL,
                 created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-                is_active  INTEGER DEFAULT 0
+                is_active  INTEGER DEFAULT 0,
+                is_deleted INTEGER DEFAULT 0
             )
         """)
+        # is_deleted カラム追加マイグレーション
+        ver_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_versions)")}
+        if "is_deleted" not in ver_cols:
+            self._conn.execute("ALTER TABLE lc_versions ADD COLUMN is_deleted INTEGER DEFAULT 0")
+            self._conn.commit()
         if not self._conn.execute("SELECT 1 FROM lc_versions LIMIT 1").fetchone():
             self._conn.execute(
                 "INSERT INTO lc_versions (name, is_active) VALUES ('v1.0.0', 1)"

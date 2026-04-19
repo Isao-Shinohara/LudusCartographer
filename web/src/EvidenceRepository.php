@@ -43,7 +43,7 @@ class EvidenceRepository
     public function getVersions(): array
     {
         return $this->db->query(
-            "SELECT id, name, created_at, is_active FROM lc_versions ORDER BY id DESC"
+            "SELECT id, name, created_at, is_active FROM lc_versions WHERE COALESCE(is_deleted, 0) = 0 ORDER BY id DESC"
         )->fetchAll(\PDO::FETCH_ASSOC);
     }
 
@@ -94,6 +94,51 @@ class EvidenceRepository
         $stmt->execute([':vid' => $versionId]);
         $row = $stmt->fetch(\PDO::FETCH_ASSOC);
         return $row ?: ['error' => 'version not found'];
+    }
+
+    /**
+     * バージョン名を変更する。
+     */
+    public function renameVersion(int $versionId, string $newName): array
+    {
+        $stmt = $this->db->prepare(
+            "UPDATE lc_versions SET name = :name WHERE id = :vid"
+        );
+        $stmt->execute([':name' => $newName, ':vid' => $versionId]);
+        return ['ok' => true, 'id' => $versionId, 'name' => $newName];
+    }
+
+    /**
+     * バージョンを論理削除する。
+     * active バージョンは削除不可。
+     * 関連セッションも archived に変更。
+     */
+    public function deleteVersion(int $versionId): array
+    {
+        // active バージョンは削除不可
+        $activeId = $this->getActiveVersionId();
+        if ($activeId === $versionId) {
+            return ['ok' => false, 'error' => 'active バージョンは削除できません'];
+        }
+
+        // 論理削除
+        $this->db->prepare(
+            "UPDATE lc_versions SET is_deleted = 1 WHERE id = :vid"
+        )->execute([':vid' => $versionId]);
+
+        // 関連セッションを archived に
+        $this->db->prepare(
+            "UPDATE lc_sessions SET status = 'archived' WHERE version_id = :vid"
+        )->execute([':vid' => $versionId]);
+
+        // ローカルファイルのパスを取得 (スクリーンショット削除用)
+        $stmt = $this->db->prepare(
+            "SELECT DISTINCT s.session_id FROM lc_sessions s WHERE s.version_id = :vid"
+        );
+        $stmt->execute([':vid' => $versionId]);
+        $sessionIds = array_column($stmt->fetchAll(\PDO::FETCH_ASSOC), 'session_id');
+
+        return ['ok' => true, 'deleted_version_id' => $versionId, 'session_ids' => $sessionIds];
     }
 
     // ------------------------------------------------------------------

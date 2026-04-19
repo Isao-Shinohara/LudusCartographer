@@ -92,6 +92,42 @@ if ($action === 'activate_version') {
     exit;
 }
 
+// --- rename_version アクション ---
+if ($action === 'rename_version') {
+    $versionId = (int)($_GET['version_id'] ?? 0);
+    $newName = trim(strip_tags($_GET['name'] ?? ''));
+    if ($versionId <= 0 || $newName === '' || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'version_id and name required']);
+        exit;
+    }
+    $result = $repository->renameVersion($versionId, $newName);
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
+// --- delete_version アクション ---
+if ($action === 'delete_version') {
+    $versionId = (int)($_GET['version_id'] ?? 0);
+    if ($versionId <= 0 || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'valid version_id required']);
+        exit;
+    }
+    $result = $repository->deleteVersion($versionId);
+    // ローカルファイル削除
+    if (($result['ok'] ?? false) && !empty($result['session_ids'])) {
+        $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+        foreach ($result['session_ids'] as $sid) {
+            $dir = $crawlerDir . '/storage/screenshots/' . $sid;
+            if (is_dir($dir)) {
+                array_map('unlink', glob("$dir/*"));
+                @rmdir($dir);
+            }
+        }
+    }
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
 // --- get_active_version アクション ---
 if ($action === 'get_active_version') {
     if ($useDb && $repository instanceof EvidenceRepository) {
