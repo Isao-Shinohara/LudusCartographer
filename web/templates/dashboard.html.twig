@@ -248,12 +248,42 @@
         return div.innerHTML;
     }
 
+    // --- 共通カード生成 (Live / Final / マージプレビュー) ---
+    function buildCard(opts) {
+        // opts: { thumb, title, ocrPreview, scene, time, badge, dots, dimClass, extraClass, dataAttr }
+        const thumb = opts.thumb || '';
+        const title = opts.title || '';
+        const ocrPreview = opts.ocrPreview || '';
+        const scene = opts.scene || '';
+        const time = opts.time || '';
+        const sceneBadge = scene && scene !== 'depth=0'
+            ? `<span class="inline-block px-1.5 py-0.5 text-[9px] rounded bg-gray-800 text-gray-400">${escapeHtml(scene)}</span>`
+            : '';
+        const badgeHtml = opts.badge
+            ? `<span class="absolute top-1 left-1 px-1 py-0.5 text-[9px] rounded ${opts.badge.color}">${opts.badge.label}</span>`
+            : '';
+        const dotsHtml = (opts.dots && opts.dots.length) ? `<span class="flex gap-0.5 items-center">${opts.dots.join('')}</span>` : '';
+        const dimClass = opts.dimClass || '';
+        const extraClass = opts.extraClass || '';
+        const dataAttr = opts.dataAttr || '';
+        return `<div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer relative hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${extraClass}" ${dataAttr}>
+            <div class="relative">
+                ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800 flex items-center justify-center text-3xl">📱</div>'}
+                ${badgeHtml}
+            </div>
+            <div class="p-2">
+                <p class="text-xs font-semibold text-gray-200 truncate">${escapeHtml(title)}</p>
+                <p class="text-[10px] text-gray-500 truncate mt-0.5">${escapeHtml(ocrPreview)}</p>
+                <div class="flex items-center justify-between mt-1">
+                    <div class="flex items-center gap-1.5">${sceneBadge}${dotsHtml}</div>
+                    <span class="text-[10px] text-gray-600">${escapeHtml(time)}</span>
+                </div>
+            </div>
+        </div>`;
+    }
+
     function renderCard(s, idx) {
         const thumb = s.thumbnail_path ? imgUrl(s.thumbnail_path) : (s.screenshot_path ? imgUrl(s.screenshot_path) : '');
-        const ocrPreview = (s.ocr_text || '').substring(0, 80);
-        const sceneBadge = s.category && s.category !== 'depth=0'
-            ? `<span class="inline-block px-1.5 py-0.5 text-[9px] rounded bg-gray-800 text-gray-400">${escapeHtml(s.category)}</span>`
-            : '';
         const isThinned = s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative;
         const dots = [];
         if (s.is_artifact) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-red-500" title="Gemini除外"></span>');
@@ -266,40 +296,24 @@
             const phaseLabel = _debugGetPhaseForSession(s.anchor_info, _debugFilterSession) || 'A';
             dots.push('<span class="px-1 rounded text-[9px] font-bold bg-cyan-400/80 text-black" title="アンカー: ' + escapeHtml(s.anchor_info) + '">' + phaseLabel + '</span>');
         }
-        const statusDots = dots.length ? `<span class="flex gap-0.5 items-center">${dots.join('')}</span>` : '';
         const isExcluded = currentTab === 'final' && s.user_excluded;
         const dimClass = ((isThinned && filterSelect.value === 'all') || isExcluded) ? ' opacity-40' : '';
-        // ペンディング変更を考慮した表示状態
         const hasPending = s.master_fp && (s.master_fp in pendingChanges);
-        const effectiveExcluded = hasPending ? pendingChanges[s.master_fp] : s.user_excluded;
         const pendingMark = hasPending ? ' ring-2 ring-yellow-500/50' : '';
         const isGroupSelected = currentTab === 'final' && s.master_fp && selectedForGroup.has(s.master_fp);
         const groupSelectMark = isGroupSelected ? ' ring-2 ring-blue-500' : '';
-        const excludedBorder = '';
         const anchorMark = _debugMode
             ? (_debugAnchorMatchesSession(s.anchor_info, _debugFilterSession) ? ' ring-2 ring-cyan-400'
                : s.last_match_method === 'new' ? ' ring-2 ring-lime-400' : '')
             : '';
-        return `
-            <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer relative
-                        hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${excludedBorder}${pendingMark}${groupSelectMark}${anchorMark}"
-                 data-idx="${idx}">
-                <div>
-                ${thumb
-                    ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />`
-                    : `<div class="w-full aspect-video bg-gray-800 flex items-center justify-center text-3xl">📱</div>`
-                }
-                <div class="p-2">
-                    <p class="text-xs font-semibold text-gray-200 truncate">${escapeHtml(s.name && s.name !== '(UNKNOWN)' ? s.name : '')}</p>
-                    <p class="text-[10px] text-gray-500 truncate mt-0.5">${escapeHtml(ocrPreview)}</p>
-                    <div class="flex items-center justify-between mt-1">
-                        <div class="flex items-center gap-1.5">${sceneBadge}${statusDots}</div>
-                        <span class="text-[10px] text-gray-600">${escapeHtml(s.last_seen_at || '')}</span>
-                    </div>
-                </div>
-                </div>
-            </div>
-        `;
+        return buildCard({
+            thumb, title: s.name && s.name !== '(UNKNOWN)' ? s.name : '',
+            ocrPreview: (s.ocr_text || '').substring(0, 80),
+            scene: s.category, time: s.last_seen_at || '',
+            dots, dimClass,
+            extraClass: pendingMark + groupSelectMark + anchorMark,
+            dataAttr: `data-idx="${idx}"`,
+        });
     }
 
     function renderAll() {
@@ -1059,32 +1073,6 @@
             </div>`;
             // プレビュー用アイテムリスト (モーダル表示用)
             const previewItems = [];
-
-            // 共通カード生成 (Final と同じ構造)
-            const mergeCard = (item, idx, badge) => {
-                const thumb = item.thumb ? imgUrl(item.thumb) : '';
-                const ocrPreview = (item.ocr_text || '').substring(0, 80);
-                const sceneBadge = item.scene
-                    ? `<span class="inline-block px-1.5 py-0.5 text-[9px] rounded bg-gray-800 text-gray-400">${escapeHtml(item.scene)}</span>`
-                    : '';
-                const badgeHtml = badge
-                    ? `<span class="absolute top-1 left-1 px-1 py-0.5 text-[9px] rounded ${badge.color}">${badge.label}</span>`
-                    : '';
-                return `<div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all" data-preview-idx="${idx}">
-                    <div class="relative">
-                        ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800 flex items-center justify-center text-3xl">📱</div>'}
-                        ${badgeHtml}
-                    </div>
-                    <div class="p-2">
-                        <p class="text-xs font-semibold text-gray-200 truncate">${escapeHtml(item.title)}</p>
-                        <p class="text-[10px] text-gray-500 truncate mt-0.5">${escapeHtml(ocrPreview)}</p>
-                        <div class="flex items-center justify-between mt-1">
-                            ${sceneBadge}
-                            <span class="text-[10px] text-gray-600">${escapeHtml(item.discovered_at || '')}</span>
-                        </div>
-                    </div>
-                </div>`;
-            };
             const GRID_CLS = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3';
 
             // アンカー一覧
@@ -1099,7 +1087,13 @@
                     const item = { thumb: m.session_thumb, title: m.session_title, scene: m.session_scene,
                                    discovered_at: m.session_discovered_at, ocr_text: m.session_ocr_text,
                                    screenshot: m.session_screenshot, fp: m.session_fp };
-                    html += mergeCard(item, previewItems.length, { color, label });
+                    html += buildCard({
+                        thumb: item.thumb ? imgUrl(item.thumb) : '', title: item.title,
+                        ocrPreview: (item.ocr_text || '').substring(0, 80),
+                        scene: item.scene, time: item.discovered_at || '',
+                        badge: { color, label },
+                        dataAttr: `data-preview-idx="${previewItems.length}"`,
+                    });
                     previewItems.push(item);
                 }
                 html += '</div>';
@@ -1112,7 +1106,13 @@
                     const item = { thumb: n.thumb, title: n.title, scene: n.scene,
                                    discovered_at: n.discovered_at, ocr_text: n.ocr_text,
                                    screenshot: n.screenshot, fp: n.fp };
-                    html += mergeCard(item, previewItems.length, { color: 'bg-green-900/50 text-green-300', label: 'NEW' });
+                    html += buildCard({
+                        thumb: item.thumb ? imgUrl(item.thumb) : '', title: item.title,
+                        ocrPreview: (item.ocr_text || '').substring(0, 80),
+                        scene: item.scene, time: item.discovered_at || '',
+                        badge: { color: 'bg-green-900/50 text-green-300', label: 'NEW' },
+                        dataAttr: `data-preview-idx="${previewItems.length}"`,
+                    });
                     previewItems.push(item);
                 }
                 html += '</div>';
