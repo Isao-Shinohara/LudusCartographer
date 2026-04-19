@@ -162,7 +162,7 @@
                     </div>
                 </div>
                 <!-- 同クラスタ (右サイド) -->
-                <div id="modal-cluster" class="hidden w-56 flex-shrink-0 border-l border-gray-800 flex flex-col">
+                <div id="modal-cluster" class="hidden w-64 flex-shrink-0 border-l border-gray-800 flex flex-col">
                     <div class="flex items-center justify-between p-3 border-b border-gray-800 flex-shrink-0">
                         <h4 class="text-xs font-bold text-gray-400">同クラスタ</h4>
                         <button id="cluster-promote-btn" class="px-2 py-0.5 bg-green-700 hover:bg-green-600 text-white text-[10px] font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed hidden" disabled>変更</button>
@@ -1815,7 +1815,7 @@
             const thumb = sib.thumbnail_path ? imgUrl(sib.thumbnail_path) : (sib.screenshot_path ? imgUrl(sib.screenshot_path) : '');
             const isSelected = sib.id == selectedId;
             const border = isSelected ? 'border-2 border-emerald-500' : 'border border-gray-700 hover:border-brand/50 cursor-pointer';
-            return `<div class="cluster-sib ${border} rounded overflow-hidden bg-gray-900" data-sib-id="${sib.id}">
+            return `<div class="cluster-sib ${border} rounded overflow-hidden bg-gray-900 flex-shrink-0" data-sib-id="${sib.id}">
                 ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
             </div>`;
         }).join('');
