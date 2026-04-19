@@ -471,7 +471,7 @@ class EvidenceRepository
             JOIN lc_node_mappings nm ON nm.session_id = sg.session_id
             WHERE s.status != 'archived'
             GROUP BY sg.session_id
-            ORDER BY sg.built_at DESC
+            ORDER BY s.started_at DESC
         SQL;
         return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
     }
