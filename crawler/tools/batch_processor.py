@@ -129,7 +129,8 @@ class BatchProcessor:
                 user_excluded            INTEGER DEFAULT 0,
                 sort_order               INTEGER DEFAULT 0,
                 manual_group_id          INTEGER DEFAULT NULL,
-                is_group_representative  INTEGER DEFAULT 1
+                is_group_representative  INTEGER DEFAULT 1,
+                version_id               INTEGER DEFAULT 1
             );
 
             CREATE TABLE IF NOT EXISTS lc_master_edges (
@@ -144,6 +145,7 @@ class BatchProcessor:
                 min_duration    REAL,
                 first_seen_at   TEXT,
                 last_seen_at    TEXT,
+                version_id      INTEGER DEFAULT 1,
                 UNIQUE(from_master_fp, to_master_fp, tap_label)
             );
             CREATE INDEX IF NOT EXISTS idx_master_edge_from ON lc_master_edges(from_master_fp);
@@ -157,6 +159,7 @@ class BatchProcessor:
                 match_method TEXT    NOT NULL,
                 match_score  REAL    DEFAULT 1.0,
                 created_at   TEXT    DEFAULT (datetime('now')),
+                version_id   INTEGER DEFAULT 1,
                 UNIQUE(session_id, session_fp)
             );
             CREATE INDEX IF NOT EXISTS idx_nm_session ON lc_node_mappings(session_id);
@@ -168,7 +171,8 @@ class BatchProcessor:
                 edge_count  INTEGER DEFAULT 0,
                 scc_count   INTEGER DEFAULT 0,
                 home_fp     TEXT,
-                built_at    TEXT
+                built_at    TEXT,
+                version_id  INTEGER DEFAULT 1
             );
         """)
 
@@ -197,6 +201,38 @@ class BatchProcessor:
             if col not in master_cols:
                 self._conn.execute(f"ALTER TABLE lc_master_nodes ADD COLUMN {col} {typ}")
                 logger.info("[BatchProcessor] migrate (master): %s カラム追加", col)
+
+        # lc_versions テーブル + 初期バージョン
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS lc_versions (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT    UNIQUE NOT NULL,
+                created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+                is_active  INTEGER DEFAULT 0
+            )
+        """)
+        if not self._conn.execute("SELECT 1 FROM lc_versions LIMIT 1").fetchone():
+            self._conn.execute(
+                "INSERT INTO lc_versions (name, is_active) VALUES ('v1.0.0', 1)"
+            )
+        # lc_sessions.version_id
+        sess_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_sessions)")}
+        if "version_id" not in sess_cols:
+            self._conn.execute("ALTER TABLE lc_sessions ADD COLUMN version_id INTEGER")
+            self._conn.execute("UPDATE lc_sessions SET version_id = 1 WHERE version_id IS NULL")
+
+        # version_id カラム追加マイグレーション
+        for tbl, col_set in [
+            ("lc_master_nodes", master_cols),
+            ("lc_master_edges", {r[1] for r in self._conn.execute("PRAGMA table_info(lc_master_edges)")}),
+            ("lc_node_mappings", {r[1] for r in self._conn.execute("PRAGMA table_info(lc_node_mappings)")}),
+            ("lc_session_graphs", {r[1] for r in self._conn.execute("PRAGMA table_info(lc_session_graphs)")}),
+        ]:
+            if "version_id" not in col_set:
+                self._conn.execute(f"ALTER TABLE {tbl} ADD COLUMN version_id INTEGER DEFAULT 1")
+                self._conn.execute(f"UPDATE {tbl} SET version_id = 1 WHERE version_id IS NULL")
+                logger.info("[BatchProcessor] migrate: %s.version_id カラム追加", tbl)
+        self._conn.commit()
 
         # OCR 修正ルールテーブル（Phase 2: ルール展開用）
         self._conn.execute("""

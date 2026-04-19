@@ -61,6 +61,13 @@ CREATE TABLE IF NOT EXISTS lc_projects (
     created_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS lc_versions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    UNIQUE NOT NULL,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    is_active  INTEGER DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS lc_sessions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id      TEXT    UNIQUE NOT NULL,
@@ -70,7 +77,8 @@ CREATE TABLE IF NOT EXISTS lc_sessions (
     completion_type TEXT,   -- NULL/goal_reached/manual_stop/orphaned
     game_title      TEXT    DEFAULT 'Unknown Game',
     device_mode     TEXT    DEFAULT 'SIMULATOR',
-    project_id      INTEGER
+    project_id      INTEGER,
+    version_id      INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS lc_screens (
@@ -577,6 +585,31 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: completion_type カラム追加")
+        # version_id マイグレーション
+        if "version_id" not in sess_cols:
+            self._conn.execute(
+                "ALTER TABLE lc_sessions ADD COLUMN version_id INTEGER"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: lc_sessions.version_id カラム追加")
+        # lc_versions テーブル + 初期バージョン
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS lc_versions (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT    UNIQUE NOT NULL,
+                created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+                is_active  INTEGER DEFAULT 0
+            )
+        """)
+        if not self._conn.execute("SELECT 1 FROM lc_versions LIMIT 1").fetchone():
+            self._conn.execute(
+                "INSERT INTO lc_versions (name, is_active) VALUES ('v1.0.0', 1)"
+            )
+            self._conn.execute(
+                "UPDATE lc_sessions SET version_id = 1 WHERE version_id IS NULL"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: v1.0.0 初期バージョン作成")
 
     # ─── 画像保存 ─────────────────────────────────────
 
