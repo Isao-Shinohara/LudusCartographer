@@ -1052,9 +1052,9 @@
             // サマリー
             const sm = data.summary;
             html += `<div class="flex gap-4 text-sm">
-                <span class="px-2 py-1 bg-blue-900/50 rounded text-blue-300">anchor: ${sm.anchor}</span>
-                <span class="px-2 py-1 bg-purple-900/50 rounded text-purple-300">k-hop: ${sm.k_hop}</span>
-                <span class="px-2 py-1 bg-yellow-900/50 rounded text-yellow-300">transition: ${sm.transition}</span>
+                <span class="px-2 py-1 bg-blue-900/50 rounded text-blue-300">Phase1 テキスト+tap: ${sm.phase1_tap_text || 0}</span>
+                <span class="px-2 py-1 bg-purple-900/50 rounded text-purple-300">Phase2 テキスト+auto: ${sm.phase2_auto_text || 0}</span>
+                <span class="px-2 py-1 bg-yellow-900/50 rounded text-yellow-300">Phase3 phash: ${sm.phase3_tap_phash || 0}</span>
                 <span class="px-2 py-1 bg-green-900/50 rounded text-green-300">新規: ${sm.new}</span>
             </div>`;
             // マッチ一覧
