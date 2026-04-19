@@ -393,7 +393,7 @@
             debugStats.classList.remove('hidden');
             // フッターにセッション情報表示
             const dsi = document.getElementById('debug-session-info');
-            dsi.textContent = `${fs}  アンカー:${anchors.length} (P1:${p1} P2:${p2} P3:${p3} P4:${p4}) 新規:${inserted.length}`;
+            dsi.textContent = fs || '';
             dsi.classList.remove('hidden');
         } else {
             debugStats.classList.add('hidden');
