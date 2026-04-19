@@ -1115,6 +1115,7 @@
                         ocrPreview: (item.ocr_text || '').substring(0, 80),
                         scene: item.scene, time: item.discovered_at || '',
                         badge: { color, label },
+                        extraClass: ' ring-2 ring-cyan-400',
                         dataAttr: `data-preview-idx="${previewItems.length}"`,
                     });
                     previewItems.push(item);
