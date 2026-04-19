@@ -1098,9 +1098,9 @@
                 }
                 html += '</div>';
             }
-            // 新規追加ノード
+            // 追加ノード
             if (data.new_nodes.length > 0) {
-                html += '<h4 class="text-sm font-bold text-green-400 mt-4">新規追加ノード</h4>';
+                html += '<h4 class="text-sm font-bold text-green-400 mt-4">追加ノード</h4>';
                 html += `<div class="${GRID_CLS}">`;
                 for (const n of data.new_nodes) {
                     const item = { thumb: n.thumb, title: n.title, scene: n.scene,
@@ -1110,7 +1110,6 @@
                         thumb: item.thumb ? imgUrl(item.thumb) : '', title: item.title,
                         ocrPreview: (item.ocr_text || '').substring(0, 80),
                         scene: item.scene, time: item.discovered_at || '',
-                        badge: { color: 'bg-green-900/50 text-green-300', label: 'NEW' },
                         dataAttr: `data-preview-idx="${previewItems.length}"`,
                     });
                     previewItems.push(item);
