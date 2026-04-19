@@ -2101,6 +2101,26 @@
             if (e.key === 'Escape') closeModal();
             if (e.key === 'ArrowLeft' && canGoOlder()) showModal(olderIdx());
             if (e.key === 'ArrowRight' && canGoNewer()) showModal(newerIdx());
+            // ↑↓ で同クラスタ画像を選択
+            if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && _clusterSiblings.length > 1) {
+                e.preventDefault();
+                const currentId = _clusterSelectedId || _clusterOriginalRepId;
+                const curIdx = _clusterSiblings.findIndex(s => s.id == currentId);
+                if (curIdx < 0) return;
+                const nextIdx = e.key === 'ArrowUp'
+                    ? (curIdx - 1 + _clusterSiblings.length) % _clusterSiblings.length
+                    : (curIdx + 1) % _clusterSiblings.length;
+                const sib = _clusterSiblings[nextIdx];
+                _clusterSelectedId = sib.id;
+                if (sib) {
+                    document.getElementById('modal-img').src = sib.screenshot_path ? imgUrl(sib.screenshot_path) : '';
+                    document.getElementById('modal-ocr').textContent = sib.ocr_text_hq || sib.ocr_text || '';
+                }
+                renderClusterGrid();
+                // 選択したサムネをスクロールに表示
+                const selectedEl = document.querySelector(`.cluster-sib[data-sib-id="${sib.id}"]`);
+                if (selectedEl) selectedEl.scrollIntoView({ block: 'nearest' });
+            }
             return;
         }
         // デバッグモード: ←→ でアンカーナビゲーション、↑↓ でセッション切替
