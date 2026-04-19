@@ -324,6 +324,8 @@
                 filtered = allScreens.filter(s => s.user_excluded);
             } else if (filter === 'adopted') {
                 filtered = allScreens.filter(s => !s.user_excluded);
+            } else if (filter === 'new_nodes') {
+                filtered = allScreens.filter(s => s.last_match_method === 'new' && !s.user_excluded);
             }
             // 'all' はそのまま全件
         } else if (filter === 'reps') {
@@ -750,7 +752,7 @@
             statusDot.classList.add('hidden');
             statusText.textContent = '';
             filterSelect.classList.remove('hidden');
-            filterSelect.innerHTML = '<option value="adopted">採用</option><option value="excluded">不採用</option><option value="all">すべて</option>';
+            filterSelect.innerHTML = '<option value="adopted">採用</option><option value="new_nodes">新規追加ノード</option><option value="excluded">不採用</option><option value="all">すべて</option>';
             filterSelect.value = restoreFromUrl ? getUrlParam('filter', 'adopted') : 'adopted';
             filterSelect.onchange = function() { showExcluded = this.value === 'all' || this.value === 'excluded'; renderAll(); syncUrlParams(); updateFinalActionBar(); };
             sessionSelect.classList.add('hidden');
