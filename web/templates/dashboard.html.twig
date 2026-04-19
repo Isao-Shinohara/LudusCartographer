@@ -385,7 +385,7 @@
             const p3 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase3')).length;
             // セッション情報
             const sessionLabel = fs
-                ? `${fs.replace('ap_', '')} (${_debugSessionIdx + 1}/${_debugSessionList.length})`
+                ? `${fs} (${_debugSessionIdx + 1}/${_debugSessionList.length})`
                 : (_debugSessionList.length > 0 ? `↑↓でセッション切替 (${_debugSessionList.length}件)` : '');
             const p4 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase4')).length;
             debugStats.textContent = `${sessionLabel}  P1:${p1} P2:${p2} P3:${p3} P4:${p4} 挿入:${inserted.length}`;
@@ -659,7 +659,7 @@
             _debugFilterSession = _debugSessionList[_debugSessionIdx];
         }
         _debugSessionSelect.innerHTML = _debugSessionList.map(sid =>
-            `<option value="${escapeHtml(sid)}"${sid === _debugFilterSession ? ' selected' : ''}>${escapeHtml(sid.replace('ap_', ''))}</option>`
+            `<option value="${escapeHtml(sid)}"${sid === _debugFilterSession ? ' selected' : ''}>${escapeHtml(sid)}</option>`
         ).join('');
     }
     _debugSessionSelect.addEventListener('change', function() {
