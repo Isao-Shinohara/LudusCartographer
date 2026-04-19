@@ -1057,19 +1057,31 @@
                 <span class="px-2 py-1 bg-yellow-900/50 rounded text-yellow-300">Phase3 phash: ${sm.phase3_tap_phash || 0}</span>
                 <span class="px-2 py-1 bg-green-900/50 rounded text-green-300">新規: ${sm.new}</span>
             </div>`;
-            // 共通カード生成
-            const mergeCard = (thumb, title, subtitle, badge) => {
+            // プレビュー用アイテムリスト (モーダル表示用)
+            const previewItems = [];
+
+            // 共通カード生成 (Final と同じ構造)
+            const mergeCard = (item, idx, badge) => {
+                const thumb = item.thumb ? imgUrl(item.thumb) : '';
+                const ocrPreview = (item.ocr_text || '').substring(0, 80);
+                const sceneBadge = item.scene
+                    ? `<span class="inline-block px-1.5 py-0.5 text-[9px] rounded bg-gray-800 text-gray-400">${escapeHtml(item.scene)}</span>`
+                    : '';
                 const badgeHtml = badge
                     ? `<span class="absolute top-1 left-1 px-1 py-0.5 text-[9px] rounded ${badge.color}">${badge.label}</span>`
                     : '';
-                return `<div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all">
+                return `<div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all" data-preview-idx="${idx}">
                     <div class="relative">
-                        ${thumb ? `<img src="${imgUrl(thumb)}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800 flex items-center justify-center text-3xl">📱</div>'}
+                        ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800 flex items-center justify-center text-3xl">📱</div>'}
                         ${badgeHtml}
                     </div>
                     <div class="p-2">
-                        <p class="text-xs font-semibold text-gray-200 truncate">${escapeHtml(title)}</p>
-                        ${subtitle ? `<p class="text-[10px] text-gray-500 truncate mt-0.5">${escapeHtml(subtitle)}</p>` : ''}
+                        <p class="text-xs font-semibold text-gray-200 truncate">${escapeHtml(item.title)}</p>
+                        <p class="text-[10px] text-gray-500 truncate mt-0.5">${escapeHtml(ocrPreview)}</p>
+                        <div class="flex items-center justify-between mt-1">
+                            ${sceneBadge}
+                            <span class="text-[10px] text-gray-600">${escapeHtml(item.discovered_at || '')}</span>
+                        </div>
                     </div>
                 </div>`;
             };
@@ -1084,7 +1096,11 @@
                         : m.method.includes('phase2') ? 'bg-purple-900/50 text-purple-300'
                         : 'bg-yellow-900/50 text-yellow-300';
                     const label = m.method.replace('phase1_tap_text','P1').replace('phase2_auto_text','P2').replace('phase3_tap_phash','P3');
-                    html += mergeCard(m.session_thumb, m.session_title, m.master_title, { color, label });
+                    const item = { thumb: m.session_thumb, title: m.session_title, scene: m.session_scene,
+                                   discovered_at: m.session_discovered_at, ocr_text: m.session_ocr_text,
+                                   screenshot: m.session_screenshot, fp: m.session_fp };
+                    html += mergeCard(item, previewItems.length, { color, label });
+                    previewItems.push(item);
                 }
                 html += '</div>';
             }
@@ -1093,12 +1109,45 @@
                 html += '<h4 class="text-sm font-bold text-green-400 mt-4">新規追加ノード</h4>';
                 html += `<div class="${GRID_CLS}">`;
                 for (const n of data.new_nodes) {
-                    html += mergeCard(n.thumb, n.title, '', { color: 'bg-green-900/50 text-green-300', label: 'NEW' });
+                    const item = { thumb: n.thumb, title: n.title, scene: n.scene,
+                                   discovered_at: n.discovered_at, ocr_text: n.ocr_text,
+                                   screenshot: n.screenshot, fp: n.fp };
+                    html += mergeCard(item, previewItems.length, { color: 'bg-green-900/50 text-green-300', label: 'NEW' });
+                    previewItems.push(item);
                 }
                 html += '</div>';
             }
             html += '</div>';
             mc.innerHTML = html;
+            // プレビューカードのクリックでモーダル表示
+            mc.querySelectorAll('[data-preview-idx]').forEach(card => {
+                card.addEventListener('click', () => {
+                    const idx = parseInt(card.dataset.previewIdx, 10);
+                    const item = previewItems[idx];
+                    if (!item) return;
+                    const badge = document.getElementById('modal-scene-badge');
+                    badge.textContent = item.scene || '';
+                    document.getElementById('modal-title').textContent = item.title || '';
+                    document.getElementById('modal-img').src = item.screenshot ? imgUrl(item.screenshot) : (item.thumb ? imgUrl(item.thumb) : '');
+                    document.getElementById('modal-ocr').textContent = item.ocr_text || '';
+                    document.getElementById('modal-fp').textContent = 'fp: ' + (item.fp || '');
+                    document.getElementById('modal-time').textContent = item.discovered_at || '';
+                    document.getElementById('modal-counter').textContent = (idx + 1) + ' / ' + previewItems.length;
+                    document.getElementById('modal-ocr-sources').innerHTML = '';
+                    document.getElementById('modal-edit-area').classList.add('hidden');
+                    document.getElementById('modal-edit-btn').style.display = 'none';
+                    document.getElementById('modal-cluster').classList.add('hidden');
+                    // ナビゲーション
+                    const prevBtn = document.getElementById('modal-prev');
+                    const nextBtn = document.getElementById('modal-next');
+                    prevBtn.onclick = (e) => { e.stopPropagation(); if (idx > 0) card.closest('[data-preview-idx]') || mc.querySelector(`[data-preview-idx="${idx-1}"]`)?.click(); };
+                    nextBtn.onclick = (e) => { e.stopPropagation(); if (idx < previewItems.length - 1) mc.querySelector(`[data-preview-idx="${idx+1}"]`)?.click(); };
+                    prevBtn.classList.toggle('invisible', idx <= 0);
+                    nextBtn.classList.toggle('invisible', idx >= previewItems.length - 1);
+                    modal.classList.remove('hidden');
+                    modal.classList.add('flex');
+                });
+            });
             document.getElementById('execute-merge-btn').addEventListener('click', () => executeMerge(sessionId));
         } catch (e) {
             if (toastHandle) toastHandle.remove();

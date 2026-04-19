@@ -173,6 +173,10 @@ class CrossSessionMerger:
                 "score": round(score, 3),
                 "session_title": s_info.get("title", "") if s_info else "",
                 "session_thumb": s_info.get("thumbnail_path", "") if s_info else "",
+                "session_scene": s_info.get("scene", "") if s_info else "",
+                "session_discovered_at": s_info.get("discovered_at", "") if s_info else "",
+                "session_ocr_text": s_info.get("ocr_text", "") if s_info else "",
+                "session_screenshot": s_info.get("screenshot_path", "") if s_info else "",
                 "master_title": m_info.get("title", "") if m_info else "",
                 "master_thumb": m_info.get("thumbnail_path", "") if m_info else "",
                 "session_neighbors": session_neighbors_map.get(s_fp, []),
@@ -187,6 +191,10 @@ class CrossSessionMerger:
                 "fp": fp,
                 "title": s_info.get("title", "") if s_info else "",
                 "thumb": s_info.get("thumbnail_path", "") if s_info else "",
+                "scene": s_info.get("scene", "") if s_info else "",
+                "discovered_at": s_info.get("discovered_at", "") if s_info else "",
+                "ocr_text": s_info.get("ocr_text", "") if s_info else "",
+                "screenshot": s_info.get("screenshot_path", "") if s_info else "",
                 "neighbors": session_neighbors_map.get(fp, []),
             })
 
@@ -986,14 +994,16 @@ class CrossSessionMerger:
     def _get_screen_info(self, fp: str, session_id: str) -> Optional[dict]:
         """セッション画面の表示用情報を取得。"""
         row = self._conn.execute(
-            "SELECT title, thumbnail_path, screenshot_path, scene"
+            "SELECT title, thumbnail_path, screenshot_path, scene,"
+            " discovered_at, COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS ocr_text"
             " FROM lc_screens"
             " WHERE fingerprint = ? AND session_id = ? AND is_representative = 1",
             (fp, session_id),
         ).fetchone()
         if not row:
             row = self._conn.execute(
-                "SELECT title, thumbnail_path, screenshot_path, scene"
+                "SELECT title, thumbnail_path, screenshot_path, scene,"
+                " discovered_at, COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS ocr_text"
                 " FROM lc_screens WHERE fingerprint = ? AND session_id = ?",
                 (fp, session_id),
             ).fetchone()
