@@ -1183,12 +1183,12 @@
     }
     async function _executeMerge(sessionId) {
         const mc = document.getElementById('merge-container');
-        mc.innerHTML = '<div class="text-center text-gray-600 py-12"><span class="animate-pulse">マージ実行中...</span></div>';
+        mc.innerHTML = '<div class="text-center text-gray-300 py-12"><span class="animate-pulse">マージ実行中...</span></div>';
         try {
             await fetch(API_BASE + '?action=execute_merge&session_id=' + encodeURIComponent(sessionId));
             const data = await pollMergeResult(mc, 'マージ実行中');
             if (data && data.ok) {
-                mc.innerHTML = `<div class="text-center text-green-500 py-12">マージ完了: ${data.new_nodes} 新規ノード追加</div>`;
+                mc.innerHTML = `<div class="text-center text-green-400 py-12">マージ完了: 新規追加 ${data.new_nodes} / アンカー ${data.anchors || 0} / マスター合計 ${data.master_nodes || '?'} ノード</div>`;
                 setTimeout(() => fetchMergeTab(), 1500);
             } else {
                 mc.innerHTML = `<div class="text-center text-red-500 py-12">エラー: ${escapeHtml(data?.error || '不明')}</div>`;

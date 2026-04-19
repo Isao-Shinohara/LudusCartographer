@@ -417,11 +417,16 @@ sys.path.insert(0, os.getcwd())
 logging.disable(logging.CRITICAL)
 from pathlib import Path
 from tools.cross_session_merger import CrossSessionMerger
+import sqlite3
 m = CrossSessionMerger(Path("storage/ludus.db"))
 n = m.merge_to_master("{$sessionId}")
+conn = sqlite3.connect("storage/ludus.db")
+master_nodes = conn.execute("SELECT COUNT(*) FROM lc_master_nodes").fetchone()[0]
+anchors = conn.execute("SELECT COUNT(*) FROM lc_node_mappings WHERE session_id=? AND match_method != 'new'", ("{$sessionId}",)).fetchone()[0]
+conn.close()
 m.close()
 with open(sys.argv[1], "w") as f:
-    json.dump({"ok": True, "new_nodes": n}, f, ensure_ascii=False)
+    json.dump({"ok": True, "new_nodes": n, "anchors": anchors, "master_nodes": master_nodes}, f, ensure_ascii=False)
 PYTHON);
     $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
     $bgCmd = "cd " . escapeshellarg($crawlerDirRaw)
