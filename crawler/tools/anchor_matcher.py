@@ -4,10 +4,10 @@ anchor_matcher.py — 段階的アンカーマッチング
 安全性最優先: 安全性が担保できないなら破棄。
 周回を重ねれば自然にアンカーは増える。
 
-Phase 1:   tap + テキスト完全/前方一致 (最も確実)
-Phase 1.5: tap + phash近接 + テキスト類似 + Gemini Flash 判定
-Phase 2:   auto + テキストあり (Phase 1 を基準に精度向上)
-Phase 3:   tap + テキスト空   (Phase 1+2 を基準に候補限定)
+Phase 1: tap + テキスト完全/前方一致 (最も確実)
+Phase 2: tap + phash近接 + テキスト類似 + Gemini Flash 判定
+Phase 3: auto + テキストあり (Phase 1+2 を基準に精度向上)
+Phase 4: tap + テキスト空 (Phase 1-3 を基準に候補限定)
 auto + テキスト空 → マッチ対象外
 """
 from __future__ import annotations
@@ -54,7 +54,7 @@ class AnchorMatch:
     session_fp: str
     master_fp: str
     master_sort: int
-    method: str          # "phase1_tap_text" / "phase2_auto_text" / "phase3_tap_phash"
+    method: str          # "phase1_tap_text" / "phase2_gemini" / "phase3_auto_text" / "phase4_tap_phash"
     score: float
     phase: int
 
@@ -84,12 +84,12 @@ class AnchorMatcher:
     # Phase 1: テキスト一致 + phash 閾値
     PHASE1_PHASH_THRESHOLD = 30
 
-    # Phase 1.5: phash 近接 + テキスト類似 → Gemini 判定
-    PHASE15_PHASH_THRESHOLD = 5
-    PHASE15_TEXT_SIMILARITY = 0.7
+    # Phase 2: phash 近接 + テキスト類似 → Gemini 判定
+    PHASE2_PHASH_THRESHOLD = 5
+    PHASE2_TEXT_SIMILARITY = 0.7
 
     # Phase 3: phash のみの閾値 (より厳しく)
-    PHASE3_PHASH_THRESHOLD = 15
+    PHASE4_PHASH_THRESHOLD = 15
 
     def compute_matches(
         self,
@@ -113,23 +113,23 @@ class AnchorMatcher:
         anchors = self._verify_consistency(anchors)
         logger.info("[AnchorMatcher] Phase 1: %d アンカー確定", len(anchors))
 
-        # Phase 1.5: tap + phash近接 + テキスト類似 + Gemini判定
-        phase15 = self._phase15_gemini(conn, session_nodes, master_nodes, master_sort_map, anchors)
-        anchors.extend(phase15)
-        anchors = self._verify_consistency(anchors)
-        logger.info("[AnchorMatcher] Phase 1.5: +%d → 合計 %d アンカー", len(phase15), len(anchors))
-
-        # Phase 2: auto + テキストあり
-        phase2 = self._phase2_auto_text(session_nodes, master_nodes, master_sort_map, anchors)
+        # Phase 2: tap + phash近接 + テキスト類似 + Gemini判定
+        phase2 = self._phase2_gemini(conn, session_nodes, master_nodes, master_sort_map, anchors)
         anchors.extend(phase2)
         anchors = self._verify_consistency(anchors)
         logger.info("[AnchorMatcher] Phase 2: +%d → 合計 %d アンカー", len(phase2), len(anchors))
 
-        # Phase 3: tap + テキスト空
-        phase3 = self._phase3_tap_phash(session_nodes, master_nodes, master_sort_map, anchors)
+        # Phase 3: auto + テキストあり
+        phase3 = self._phase3_auto_text(session_nodes, master_nodes, master_sort_map, anchors)
         anchors.extend(phase3)
         anchors = self._verify_consistency(anchors)
         logger.info("[AnchorMatcher] Phase 3: +%d → 合計 %d アンカー", len(phase3), len(anchors))
+
+        # Phase 4: tap + テキスト空
+        phase4 = self._phase4_tap_phash(session_nodes, master_nodes, master_sort_map, anchors)
+        anchors.extend(phase4)
+        anchors = self._verify_consistency(anchors)
+        logger.info("[AnchorMatcher] Phase 4: +%d → 合計 %d アンカー", len(phase4), len(anchors))
 
         # 結果を node_mapping 形式に変換
         matched_session_fps = set()
@@ -141,12 +141,12 @@ class AnchorMatcher:
         skipped = [n.fp for n in session_nodes if n.fp not in matched_session_fps]
 
         logger.info(
-            "[AnchorMatcher] session=%s: matched=%d (P1=%d, P1.5=%d, P2=%d, P3=%d), skipped=%d",
+            "[AnchorMatcher] session=%s: matched=%d (P1=%d, P2=%d, P3=%d, P4=%d), skipped=%d",
             session_id, len(node_mapping),
             sum(1 for a in anchors if a.phase == 1),
-            sum(1 for a in anchors if a.phase == 15),
             sum(1 for a in anchors if a.phase == 2),
             sum(1 for a in anchors if a.phase == 3),
+            sum(1 for a in anchors if a.phase == 4),
             len(skipped),
         )
 
@@ -284,9 +284,9 @@ class AnchorMatcher:
 
         return anchors
 
-    # ─── Phase 1.5: phash近接 + テキスト類似 + Gemini判定 ───
+    # ─── Phase 2: phash近接 + テキスト類似 + Gemini判定 ────
 
-    def _phase15_gemini(
+    def _phase2_gemini(
         self,
         conn: sqlite3.Connection,
         session_nodes: list[NodeInfo],
@@ -316,10 +316,10 @@ class AnchorMatcher:
                 if m.fp in matched_master_fps or not m.phash or not m.has_text:
                     continue
                 dist = phash_distance(s.phash, m.phash)
-                if dist >= self.PHASE15_PHASH_THRESHOLD:
+                if dist >= self.PHASE2_PHASH_THRESHOLD:
                     continue
                 sim = SequenceMatcher(None, s.text, m.text).ratio()
-                if sim >= self.PHASE15_TEXT_SIMILARITY and sim > best_sim:
+                if sim >= self.PHASE2_TEXT_SIMILARITY and sim > best_sim:
                     best_m = m
                     best_sim = sim
             if best_m:
@@ -328,7 +328,7 @@ class AnchorMatcher:
         if not candidates:
             return []
 
-        logger.info("[AnchorMatcher] Phase 1.5: %d 候補ペアを Gemini に判定依頼", len(candidates))
+        logger.info("[AnchorMatcher] Phase 2: %d 候補ペアを Gemini に判定依頼", len(candidates))
 
         # キャッシュテーブル準備
         _ensure_judgment_table(conn)
@@ -375,7 +375,7 @@ class AnchorMatcher:
                 anchors.append(AnchorMatch(
                     session_fp=s.fp, master_fp=m.fp,
                     master_sort=master_sort_map[m.fp],
-                    method="phase15_gemini", score=round(sim, 3), phase=15,
+                    method="phase2_gemini", score=round(sim, 3), phase=2,
                 ))
                 matched_master_fps.add(m.fp)
 
@@ -392,7 +392,7 @@ class AnchorMatcher:
 
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
-            logger.warning("[AnchorMatcher] GEMINI_API_KEY 未設定: Phase 1.5 スキップ")
+            logger.warning("[AnchorMatcher] GEMINI_API_KEY 未設定: Phase 2 スキップ")
             return [False] * len(pairs)
 
         try:
@@ -455,9 +455,9 @@ class AnchorMatcher:
 
         return results
 
-    # ─── Phase 2: auto + テキストあり ─────────────────
+    # ─── Phase 3: auto + テキストあり ─────────────────
 
-    def _phase2_auto_text(
+    def _phase3_auto_text(
         self,
         session_nodes: list[NodeInfo],
         master_nodes: list[NodeInfo],
@@ -523,15 +523,15 @@ class AnchorMatcher:
             anchors.append(AnchorMatch(
                 session_fp=s.fp, master_fp=m.fp,
                 master_sort=master_sort_map[m.fp],
-                method="phase2_auto_text", score=1.0, phase=2,
+                method="phase3_auto_text", score=1.0, phase=3,
             ))
             matched_master_fps.add(m.fp)
 
         return anchors
 
-    # ─── Phase 3: tap + テキスト空 ────────────────────
+    # ─── Phase 4: tap + テキスト空 ────────────────────
 
-    def _phase3_tap_phash(
+    def _phase4_tap_phash(
         self,
         session_nodes: list[NodeInfo],
         master_nodes: list[NodeInfo],
@@ -570,7 +570,7 @@ class AnchorMatcher:
                     continue
                 if s.phash and m.phash:
                     dist = phash_distance(s.phash, m.phash)
-                    if dist < self.PHASE3_PHASH_THRESHOLD:
+                    if dist < self.PHASE4_PHASH_THRESHOLD:
                         candidates.append((m, dist))
 
             if len(candidates) != 1:
@@ -581,7 +581,7 @@ class AnchorMatcher:
             anchors.append(AnchorMatch(
                 session_fp=s.fp, master_fp=m.fp,
                 master_sort=master_sort_map[m.fp],
-                method="phase3_tap_phash", score=score, phase=3,
+                method="phase4_tap_phash", score=score, phase=4,
             ))
             matched_master_fps.add(m.fp)
 

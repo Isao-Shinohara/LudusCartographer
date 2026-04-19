@@ -1107,14 +1107,14 @@
 
             // アンカー一覧
             if (data.matches.length > 0) {
-                html += `<div class="flex items-center justify-between mt-4"><h4 class="text-sm font-bold text-cyan-400">アンカー一覧 (${data.matches.length})</h4><div class="flex gap-3 text-xs"><span class="px-2 py-0.5 bg-blue-900/50 rounded text-blue-300">P1: ${sm.phase1_tap_text || 0} (テキスト+tap)</span><span class="px-2 py-0.5 bg-amber-900/50 rounded text-amber-300">P1.5: ${sm.phase15_gemini || 0} (Gemini)</span><span class="px-2 py-0.5 bg-purple-900/50 rounded text-purple-300">P2: ${sm.phase2_auto_text || 0} (テキスト+auto)</span><span class="px-2 py-0.5 bg-yellow-900/50 rounded text-yellow-300">P3: ${sm.phase3_tap_phash || 0} (phash)</span></div></div>`;
+                html += `<div class="flex items-center justify-between mt-4"><h4 class="text-sm font-bold text-cyan-400">アンカー一覧 (${data.matches.length})</h4><div class="flex gap-3 text-xs"><span class="px-2 py-0.5 bg-blue-900/50 rounded text-blue-300">P1: ${sm.phase1_tap_text || 0} (テキスト+tap)</span><span class="px-2 py-0.5 bg-amber-900/50 rounded text-amber-300">P2: ${sm.phase2_gemini || 0} (Gemini)</span><span class="px-2 py-0.5 bg-purple-900/50 rounded text-purple-300">P3: ${sm.phase3_auto_text || 0} (テキスト+auto)</span><span class="px-2 py-0.5 bg-yellow-900/50 rounded text-yellow-300">P4: ${sm.phase4_tap_phash || 0} (phash)</span></div></div>`;
                 html += `<div class="${GRID_CLS}">`;
                 for (const m of data.matches) {
-                    const color = m.method === 'phase15_gemini' ? 'bg-amber-900/50 text-amber-300'
-                        : m.method.includes('phase1') ? 'bg-blue-900/50 text-blue-300'
-                        : m.method.includes('phase2') ? 'bg-purple-900/50 text-purple-300'
+                    const color = m.method === 'phase2_gemini' ? 'bg-amber-900/50 text-amber-300'
+                        : m.method === 'phase1_tap_text' ? 'bg-blue-900/50 text-blue-300'
+                        : m.method === 'phase3_auto_text' ? 'bg-purple-900/50 text-purple-300'
                         : 'bg-yellow-900/50 text-yellow-300';
-                    const label = m.method.replace('phase15_gemini','G').replace('phase1_tap_text','P1').replace('phase2_auto_text','P2').replace('phase3_tap_phash','P3');
+                    const label = m.method.replace('phase2_gemini','P2').replace('phase1_tap_text','P1').replace('phase3_auto_text','P3').replace('phase4_tap_phash','P4');
                     const item = { thumb: m.session_thumb, title: m.session_title, scene: m.session_scene,
                                    discovered_at: m.session_discovered_at, ocr_text: m.session_ocr_text,
                                    screenshot: m.session_screenshot, fp: m.session_fp,
@@ -1125,7 +1125,7 @@
                         ocrPreview: scoreInfo ? scoreInfo + '  ' + (item.ocr_text || '').substring(0, 60) : (item.ocr_text || '').substring(0, 80),
                         scene: item.scene, time: item.discovered_at || '',
                         badge: { color, label },
-                        dataAttr: `data-preview-idx="${previewItems.length}"` + (m.method === 'phase15_gemini' ? ` data-gemini-fp="${escapeHtml(m.session_fp)}"` : ''),
+                        dataAttr: `data-preview-idx="${previewItems.length}"` + (m.method === 'phase2_gemini' ? ` data-gemini-fp="${escapeHtml(m.session_fp)}"` : ''),
                     });
                     previewItems.push(item);
                 }
