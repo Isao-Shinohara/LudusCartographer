@@ -41,6 +41,8 @@
     <select id="session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="">最新セッション</option>
     </select>
+    <select id="debug-session-select" class="ml-1 bg-gray-800 text-amber-300 text-xs rounded px-2 py-1 border border-amber-700 focus:border-amber-500 outline-none hidden">
+    </select>
     <!-- Final 採用/不採用アクション (右詰) -->
     <div class="ml-auto flex items-center gap-2">
         <div id="status" class="flex items-center gap-2 cursor-pointer select-none" onclick="toggleAutoRefresh()" title="クリックで自動更新を切り替え">
@@ -385,11 +387,13 @@
             const sessionLabel = fs
                 ? `${fs.replace('ap_', '')} (${_debugSessionIdx + 1}/${_debugSessionList.length})`
                 : (_debugSessionList.length > 0 ? `↑↓でセッション切替 (${_debugSessionList.length}件)` : '');
-            debugStats.textContent = `${sessionLabel}  P1:${p1} P2:${p2} P3:${p3} 挿入:${inserted.length}`;
+            const p4 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase4')).length;
+            debugStats.textContent = `${sessionLabel}  P1:${p1} P2:${p2} P3:${p3} P4:${p4} 挿入:${inserted.length}`;
             debugStats.classList.remove('hidden');
         } else {
             debugStats.classList.add('hidden');
         }
+        _updateDebugSessionSelect();
     }
 
     // 昇順で末尾に画像追加時のスクロール追従
@@ -610,6 +614,7 @@
 
         _debugFilterSession = _debugSessionList[_debugSessionIdx];
         _debugAnchorIdx = -1;
+        _updateDebugSessionSelect();
         renderAll();
     }
 
@@ -621,6 +626,7 @@
         _debugFilterSession = null;
         _debugSessionList = [];
         _updateDebugBtn();
+        _updateDebugSessionSelect();
         renderAll();
     };
     function _updateDebugBtn() {
@@ -633,6 +639,37 @@
         }
     }
     _updateDebugBtn();
+
+    // デバッグセッション選択セレクトボックス
+    const _debugSessionSelect = document.getElementById('debug-session-select');
+    function _updateDebugSessionSelect() {
+        if (!_debugMode || currentTab !== 'final') {
+            _debugSessionSelect.classList.add('hidden');
+            return;
+        }
+        if (_debugSessionList.length === 0) _debugBuildSessionList();
+        if (_debugSessionList.length === 0) {
+            _debugSessionSelect.classList.add('hidden');
+            return;
+        }
+        _debugSessionSelect.classList.remove('hidden');
+        _debugSessionSelect.innerHTML = '<option value="">全セッション</option>'
+            + _debugSessionList.map(sid =>
+                `<option value="${escapeHtml(sid)}"${sid === _debugFilterSession ? ' selected' : ''}>${escapeHtml(sid.replace('ap_', ''))}</option>`
+            ).join('');
+    }
+    _debugSessionSelect.addEventListener('change', function() {
+        const val = this.value;
+        if (val) {
+            _debugFilterSession = val;
+            _debugSessionIdx = _debugSessionList.indexOf(val);
+        } else {
+            _debugFilterSession = null;
+            _debugSessionIdx = -1;
+        }
+        _debugAnchorIdx = -1;
+        renderAll();
+    });
 
     function _debugNavigateAnchor(direction) {
         if (!_debugMode || currentTab !== 'final') return;
