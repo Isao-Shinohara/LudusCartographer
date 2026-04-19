@@ -832,7 +832,7 @@
                             ${completionBadge(s.completion_type)}
                         </div>
                         <div class="flex items-center gap-3">
-                            <span class="text-[11px] text-gray-600">開始 ${fmtDate(s.started_at)}　マージ ${fmtDate(s.built_at)}</span>
+                            <span class="text-[11px] text-gray-600">開始 ${fmtDate(s.started_at)}　マージ完了 ${fmtDate(s.built_at)}</span>
                             <button class="unmerge-btn px-3 py-1 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" title="マージを解除して未マージ状態に戻す">Undo</button>
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
@@ -857,7 +857,7 @@
                             ${completionBadge(s.completion_type)}
                         </div>
                         <div class="flex items-center gap-3">
-                            <span class="text-[11px] text-gray-500">開始 ${fmtDate(s.started_at)}　構築 ${fmtDate(s.built_at)}</span>
+                            <span class="text-[11px] text-gray-500">開始 ${fmtDate(s.started_at)}　構築完了 ${fmtDate(s.built_at)}</span>
                             <button class="merge-preview-btn px-3 py-1.5 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" title="マージプレビュー → 実行">マージ</button>
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
