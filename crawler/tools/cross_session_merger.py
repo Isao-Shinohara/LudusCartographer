@@ -155,6 +155,12 @@ class CrossSessionMerger:
                    if r["fingerprint"] not in node_mapping]
         summary["new"] = len(new_fps)
 
+        # セッション・マスターの neighbors を一括取得
+        all_session_fps = list(node_mapping.keys()) + new_fps
+        session_neighbors_map = self._get_neighbors_batch(all_session_fps, session_id)
+        master_fps_list = [m_fp for (m_fp, _, _) in node_mapping.values()]
+        master_neighbors_map = self._get_master_neighbors_batch(master_fps_list)
+
         # マッチ詳細
         matches = []
         for s_fp, (m_fp, method, score) in node_mapping.items():
@@ -169,8 +175,8 @@ class CrossSessionMerger:
                 "session_thumb": s_info.get("thumbnail_path", "") if s_info else "",
                 "master_title": m_info.get("title", "") if m_info else "",
                 "master_thumb": m_info.get("thumbnail_path", "") if m_info else "",
-                "session_neighbors": self._get_neighbors(s_fp, session_id),
-                "master_neighbors": self._get_master_neighbors(m_fp),
+                "session_neighbors": session_neighbors_map.get(s_fp, []),
+                "master_neighbors": master_neighbors_map.get(m_fp, []),
             })
 
         # 新規ノード詳細
@@ -181,7 +187,7 @@ class CrossSessionMerger:
                 "fp": fp,
                 "title": s_info.get("title", "") if s_info else "",
                 "thumb": s_info.get("thumbnail_path", "") if s_info else "",
-                "neighbors": self._get_neighbors(fp, session_id),
+                "neighbors": session_neighbors_map.get(fp, []),
             })
 
         return {
@@ -1050,4 +1056,106 @@ class CrossSessionMerger:
                     "thumb": r["thumbnail_path"] or "",
                 })
         return neighbors
+
+    def _get_neighbors_batch(self, fps: list[str], session_id: str) -> dict[str, list[dict]]:
+        """セッション内の遷移先/遷移元を一括取得。"""
+        result: dict[str, list[dict]] = {fp: [] for fp in fps}
+        if not fps:
+            return result
+
+        # 1) セッションの代表画面の title/thumbnail を一括ルックアップ
+        screen_info: dict[str, tuple[str, str]] = {}
+        for r in self._conn.execute(
+            "SELECT fingerprint, title, thumbnail_path FROM lc_screens"
+            " WHERE session_id = ? AND is_representative = 1",
+            (session_id,),
+        ).fetchall():
+            screen_info[r["fingerprint"]] = (r["title"] or "", r["thumbnail_path"] or "")
+
+        # 2) 該当セッションの全遷移を一括取得 (JOIN なし)
+        rows = self._conn.execute(
+            "SELECT DISTINCT from_fp, to_fp FROM lc_transitions"
+            " WHERE session_id = ?",
+            (session_id,),
+        ).fetchall()
+
+        fp_set = set(fps)
+        for r in rows:
+            from_fp = r["from_fp"]
+            to_fp = r["to_fp"]
+            if from_fp in fp_set and to_fp:
+                info = screen_info.get(to_fp, ("", ""))
+                result[from_fp].append({
+                    "direction": "to", "fp": to_fp,
+                    "title": info[0], "thumb": info[1],
+                })
+            if to_fp in fp_set and from_fp:
+                info = screen_info.get(from_fp, ("", ""))
+                result[to_fp].append({
+                    "direction": "from", "fp": from_fp,
+                    "title": info[0], "thumb": info[1],
+                })
+
+        # 重複除去
+        for fp in result:
+            seen = set()
+            deduped = []
+            for n in result[fp]:
+                key = (n["direction"], n["fp"])
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(n)
+            result[fp] = deduped
+
+        return result
+
+    def _get_master_neighbors_batch(self, master_fps: list[str]) -> dict[str, list[dict]]:
+        """マスターグラフの遷移先/遷移元を一括取得。"""
+        result: dict[str, list[dict]] = {fp: [] for fp in master_fps}
+        if not master_fps:
+            return result
+
+        # 1) マスターノードの title/thumbnail を一括ルックアップ
+        node_info: dict[str, tuple[str, str]] = {}
+        for r in self._conn.execute(
+            "SELECT m.master_fp, m.title, s.thumbnail_path"
+            " FROM lc_master_nodes m"
+            " LEFT JOIN lc_screens s ON s.id = m.representative_screen_id"
+        ).fetchall():
+            node_info[r["master_fp"]] = (r["title"] or "", r["thumbnail_path"] or "")
+
+        # 2) 全マスターエッジを一括取得 (JOIN なし)
+        rows = self._conn.execute(
+            "SELECT DISTINCT from_master_fp, to_master_fp FROM lc_master_edges"
+        ).fetchall()
+
+        fp_set = set(master_fps)
+        for r in rows:
+            from_fp = r["from_master_fp"]
+            to_fp = r["to_master_fp"]
+            if from_fp in fp_set and to_fp:
+                info = node_info.get(to_fp, ("", ""))
+                result[from_fp].append({
+                    "direction": "to", "fp": to_fp,
+                    "title": info[0], "thumb": info[1],
+                })
+            if to_fp in fp_set and from_fp:
+                info = node_info.get(from_fp, ("", ""))
+                result[to_fp].append({
+                    "direction": "from", "fp": from_fp,
+                    "title": info[0], "thumb": info[1],
+                })
+
+        # 重複除去
+        for fp in result:
+            seen = set()
+            deduped = []
+            for n in result[fp]:
+                key = (n["direction"], n["fp"])
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(n)
+            result[fp] = deduped
+
+        return result
 

@@ -109,6 +109,10 @@ CREATE TABLE IF NOT EXISTS lc_transitions (
 CREATE INDEX IF NOT EXISTS idx_trans_from ON lc_transitions(from_fp);
 CREATE INDEX IF NOT EXISTS idx_trans_to ON lc_transitions(to_fp);
 CREATE INDEX IF NOT EXISTS idx_trans_session ON lc_transitions(session_id);
+CREATE INDEX IF NOT EXISTS idx_trans_from_session ON lc_transitions(from_fp, session_id);
+CREATE INDEX IF NOT EXISTS idx_trans_to_session ON lc_transitions(to_fp, session_id);
+CREATE INDEX IF NOT EXISTS idx_screens_fp_session ON lc_screens(fingerprint, session_id);
+CREATE INDEX IF NOT EXISTS idx_screens_session_rep ON lc_screens(session_id, is_representative);
 """
 
 
