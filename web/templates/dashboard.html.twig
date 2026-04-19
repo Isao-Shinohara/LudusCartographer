@@ -106,6 +106,7 @@
         <span id="debug-stats" class="text-xs hidden flex-1 min-w-0 truncate text-gray-400"></span>
         <span class="shrink-0 flex items-center gap-1.5">
             <span id="debug-anchor" class="text-xs hidden text-cyan-400"></span>
+            <span id="debug-session-info" class="text-xs text-gray-400 hidden"></span>
             <span id="final-select-count" class="text-xs text-gray-500"></span>
             <span id="stats" class="text-xs text-emerald-400/70"></span>
         </span>
@@ -390,8 +391,13 @@
             const p4 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase4')).length;
             debugStats.textContent = `${sessionLabel}  P1:${p1} P2:${p2} P3:${p3} P4:${p4} 挿入:${inserted.length}`;
             debugStats.classList.remove('hidden');
+            // フッターにセッション情報表示
+            const dsi = document.getElementById('debug-session-info');
+            dsi.textContent = `${fs}  アンカー:${anchors.length} (P1:${p1} P2:${p2} P3:${p3} P4:${p4}) 新規:${inserted.length}`;
+            dsi.classList.remove('hidden');
         } else {
             debugStats.classList.add('hidden');
+            document.getElementById('debug-session-info').classList.add('hidden');
         }
         _updateDebugSessionSelect();
     }
