@@ -31,6 +31,10 @@
             onclick="switchTab('cleanup')">
         Cleanup
     </button>
+    <button id="tab-settings" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300"
+            onclick="switchTab('settings')">
+        Settings
+    </button>
     <select id="filter-select" class="ml-3 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="reps" selected>採用</option>
         <option value="thinned">不採用</option>
@@ -42,6 +46,8 @@
         <option value="">最新セッション</option>
     </select>
     <select id="debug-session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none hidden">
+    </select>
+    <select id="version-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none hidden">
     </select>
     <!-- Final 採用/不採用アクション (右詰) -->
     <div class="ml-auto flex items-center gap-2">
@@ -99,6 +105,7 @@
 
 <!-- Merge タブ用コンテナ -->
 <div id="merge-container" class="hidden"></div>
+<div id="settings-container" class="hidden"></div>
 
 <!-- 固定フッター (画面数) -->
 <div id="dashboard-footer" class="fixed bottom-0 left-0 right-0 z-30 bg-gray-900/90 border-t border-gray-800 py-1.5">
@@ -740,6 +747,7 @@
         const game = getGameParam();
         const params = new URLSearchParams({ action: 'get_final_screens_all', limit: '10000' });
         if (game) params.set('game', game);
+        if (_currentVersionId) params.set('version', _currentVersionId);
         try {
             const res = await fetch(API_BASE + '?' + params);
             const data = await res.json();
@@ -802,6 +810,8 @@
             sortToggle.classList.remove('hidden');
             grid.classList.remove('hidden');
             mergeContainer.classList.add('hidden');
+            versionSelect.classList.add('hidden');
+            document.getElementById('settings-container').classList.add('hidden');
             grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>';
             syncUrlParams();
             fetchLiveInitial();
@@ -816,11 +826,17 @@
             filterSelect.onchange = function() { showExcluded = this.value === 'all' || this.value === 'excluded'; renderAll(); syncUrlParams(); updateFinalActionBar(); };
             sessionSelect.classList.add('hidden');
             sortToggle.classList.remove('hidden');
+            versionSelect.classList.remove('hidden');
             grid.classList.remove('hidden');
             mergeContainer.classList.add('hidden');
+            document.getElementById('settings-container').classList.add('hidden');
             grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>';
             updateGroupSelectUI();
             syncUrlParams();
+            // バージョンセレクター初期化
+            fetch(API_BASE + '?action=get_versions').then(r => r.json()).then(d => {
+                updateVersionSelect(d.versions || []);
+            }).catch(() => {});
             fetchFinal();
         } else if (tab === 'merge') {
             finalActions.classList.add('hidden');
@@ -830,8 +846,10 @@
             filterSelect.classList.add('hidden');
             sessionSelect.classList.add('hidden');
             sortToggle.classList.add('hidden');
+            versionSelect.classList.add('hidden');
             grid.classList.add('hidden');
             mergeContainer.classList.remove('hidden');
+            document.getElementById('settings-container').classList.add('hidden');
             syncUrlParams();
             fetchMergeTab();
         } else if (tab === 'rules') {
@@ -842,8 +860,10 @@
             filterSelect.classList.add('hidden');
             sessionSelect.classList.add('hidden');
             sortToggle.classList.add('hidden');
+            versionSelect.classList.add('hidden');
             grid.classList.add('hidden');
             mergeContainer.classList.remove('hidden');
+            document.getElementById('settings-container').classList.add('hidden');
             mergeContainer.innerHTML = '<div><h3 class="text-lg font-bold text-gray-300 mb-3">OCR 修正ルール</h3><div id="correction-rules-area" class="text-sm text-gray-500">確認中...</div></div>';
             syncUrlParams();
             checkCorrectionRules();
@@ -857,9 +877,24 @@
             sortToggle.classList.add('hidden');
             grid.classList.add('hidden');
             mergeContainer.classList.remove('hidden');
+            document.getElementById('settings-container').classList.add('hidden');
             mergeContainer.innerHTML = '<div><h3 class="text-lg font-bold text-gray-300 mb-3">データ整理</h3><div id="merge-cleanup-area" class="text-sm text-gray-500">確認中...</div></div>';
             syncUrlParams();
             checkCleanableInMerge();
+        } else if (tab === 'settings') {
+            finalActions.classList.add('hidden');
+            statusDot.classList.add('hidden');
+            statusText.textContent = '';
+            stats.textContent = '';
+            filterSelect.classList.add('hidden');
+            sessionSelect.classList.add('hidden');
+            sortToggle.classList.add('hidden');
+            grid.classList.add('hidden');
+            mergeContainer.classList.add('hidden');
+            const sc = document.getElementById('settings-container');
+            sc.classList.remove('hidden');
+            syncUrlParams();
+            fetchVersions();
         }
     };
 
@@ -2201,6 +2236,92 @@
             if (e.key === 'Escape') { _debugAnchorIdx = -1; _debugSessionIdx = -1; _debugFilterSession = null; _updateDebugSelection(-1); renderAll(); }
         }
     });
+    // --- バージョン管理 ---
+    let _currentVersionId = null;
+    const versionSelect = document.getElementById('version-select');
+
+    async function fetchVersions() {
+        try {
+            const res = await fetch(API_BASE + '?action=get_versions');
+            const data = await res.json();
+            const versions = data.versions || [];
+            // active version を取得
+            const activeRes = await fetch(API_BASE + '?action=get_active_version');
+            const activeData = await activeRes.json();
+            _currentVersionId = activeData.version?.id || 1;
+            renderVersions(versions);
+        } catch (e) {}
+    }
+
+    function renderVersions(versions) {
+        // Settings タブのバージョン一覧
+        const sc = document.getElementById('settings-container');
+        let html = '<div class="max-w-2xl"><h3 class="text-lg font-bold text-gray-300 mb-4">バージョン管理</h3>';
+        // 新規作成フォーム
+        html += `<div class="flex gap-2 mb-4">
+            <input id="new-version-name" type="text" placeholder="バージョン名 (例: v2.0.0)" class="bg-gray-800 text-gray-200 text-sm rounded px-3 py-1.5 border border-gray-700 focus:border-brand outline-none flex-1" />
+            <button id="create-version-btn" class="px-4 py-1.5 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-sm rounded transition-colors">作成</button>
+        </div>`;
+        // バージョン一覧
+        html += '<div class="space-y-2">';
+        for (const v of versions) {
+            const isActive = v.is_active == 1;
+            const border = isActive ? 'border-cyan-700 bg-cyan-950/30' : 'border-gray-800';
+            const badge = isActive ? '<span class="px-2 py-0.5 text-[10px] rounded bg-cyan-900/50 text-cyan-300">ACTIVE</span>' : '';
+            html += `<div class="bg-gray-900 border ${border} rounded-lg p-3 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <span class="text-sm font-mono text-gray-300">${escapeHtml(v.name)}</span>
+                    ${badge}
+                    <span class="text-xs text-gray-500">${fmtShort(v.created_at)}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    ${!isActive ? `<button class="activate-version-btn px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors" data-version-id="${v.id}">有効化</button>` : ''}
+                </div>
+            </div>`;
+        }
+        html += '</div></div>';
+        sc.innerHTML = html;
+        // イベント
+        document.getElementById('create-version-btn')?.addEventListener('click', async () => {
+            const name = document.getElementById('new-version-name').value.trim();
+            if (!name) return;
+            await fetch(API_BASE + '?action=create_version&name=' + encodeURIComponent(name));
+            fetchVersions();
+        });
+        sc.querySelectorAll('.activate-version-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const vid = btn.dataset.versionId;
+                await fetch(API_BASE + '?action=activate_version&version_id=' + vid);
+                _currentVersionId = parseInt(vid);
+                fetchVersions();
+            });
+        });
+        // バージョンセレクター更新
+        updateVersionSelect(versions);
+    }
+
+    function updateVersionSelect(versions) {
+        if (!versions) return;
+        versionSelect.innerHTML = versions.map(v =>
+            `<option value="${v.id}"${v.id == _currentVersionId ? ' selected' : ''}>${escapeHtml(v.name)}</option>`
+        ).join('');
+    }
+
+    versionSelect.addEventListener('change', function() {
+        _currentVersionId = parseInt(this.value);
+        // Final タブ再読み込み
+        if (currentTab === 'final') fetchFinal();
+    });
+
+    // Final タブ切替時にバージョンセレクターを表示
+    const _origSwitchTab = window.switchTab;
+    // バージョンセレクターの表示制御は switchTab 内で行う (Final のみ表示)
+
+    // 初期化: active version を取得
+    fetch(API_BASE + '?action=get_active_version').then(r => r.json()).then(d => {
+        _currentVersionId = d.version?.id || 1;
+    }).catch(() => {});
+
 })();
 </script>
 {% endblock %}
