@@ -1042,7 +1042,7 @@
                     const r = await fetch(API_BASE + '?action=merge_progress');
                     const d = await r.json();
                     if (d.progress) {
-                        mc.innerHTML = `<div class="text-center text-gray-600 py-12">
+                        mc.innerHTML = `<div class="text-center text-gray-300 py-12">
                             <span class="animate-pulse">${label}...</span>${renderProgress(d.progress)}</div>`;
                     }
                     if (d.done) {

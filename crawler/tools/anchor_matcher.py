@@ -330,6 +330,20 @@ class AnchorMatcher:
 
         logger.info("[AnchorMatcher] Phase 2: %d 候補ペアを Gemini に判定依頼", len(candidates))
 
+        # 進捗報告ヘルパー
+        def _report(stage: str, current: int, total: int, elapsed: float):
+            import json as _json
+            eta = (elapsed / current * (total - current)) if current > 0 else 0
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO auto_pilot_state (key, value) VALUES ('merge_progress', ?)",
+                    (_json.dumps({"stage": stage, "current": current, "total": total,
+                                  "elapsed": round(elapsed, 1), "eta": round(eta, 1)}, ensure_ascii=False),),
+                )
+                conn.commit()
+            except Exception:
+                pass
+
         # キャッシュテーブル準備
         _ensure_judgment_table(conn)
 
@@ -349,9 +363,14 @@ class AnchorMatcher:
             else:
                 uncached.append((s, m, sim, s_hash, m_hash))
 
+        _report(f"Gemini判定 候補{len(candidates)}件 (キャッシュ{len(candidates)-len(uncached)}件)", 0, max(len(uncached), 1), 0)
+
         # Gemini 判定 (バッチ)
         if uncached:
-            gemini_results = self._gemini_batch_judge(uncached)
+            import time as _time
+            _t0 = _time.time()
+            gemini_results = self._gemini_batch_judge(uncached, lambda done, total: _report(
+                f"Gemini判定 {done}/{total}件", done, total, _time.time() - _t0))
             for (s, m, sim, s_hash, m_hash), is_same in zip(uncached, gemini_results):
                 # キャッシュに保存
                 try:
@@ -384,6 +403,7 @@ class AnchorMatcher:
     @staticmethod
     def _gemini_batch_judge(
         pairs: list[tuple[NodeInfo, NodeInfo, float, str, str]],
+        on_progress=None,
     ) -> list[bool]:
         """Gemini Flash にテキストペアの同一画面判定をバッチで問い合わせる。"""
         import json
@@ -448,6 +468,10 @@ class AnchorMatcher:
             except Exception as e:
                 logger.warning("[AnchorMatcher] Gemini 判定失敗: %s", e)
                 results.extend([False] * len(batch))
+
+            # 進捗報告
+            if on_progress:
+                on_progress(min(i + len(batch), len(pairs)), len(pairs))
 
             # レートリミット
             if i + BATCH_SIZE < len(pairs):
