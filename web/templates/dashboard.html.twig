@@ -1070,7 +1070,7 @@
 
             // 新規追加ノード (SafeInsert 判定済み)
             const insertableNodes = (data.new_nodes || []).filter(n => n.insertable);
-            html += `<h4 class="text-sm font-bold text-lime-400 mt-4">新規追加ノード <span class="text-gray-500 font-normal">(${insertableNodes.length})</span></h4>`;
+            html += `<h4 class="text-sm font-bold text-lime-400 mt-4">新規追加ノード (${insertableNodes.length})</h4>`;
             if (insertableNodes.length > 0) {
                 html += `<div class="${GRID_CLS}">`;
                 for (const n of insertableNodes) {
@@ -1092,7 +1092,7 @@
 
             // アンカー一覧
             if (data.matches.length > 0) {
-                html += `<div class="flex items-center justify-between mt-4"><h4 class="text-sm font-bold text-cyan-400">アンカー一覧</h4><div class="flex gap-3 text-xs"><span class="px-2 py-0.5 bg-blue-900/50 rounded text-blue-300">P1 テキスト+tap: ${sm.phase1_tap_text || 0}</span><span class="px-2 py-0.5 bg-purple-900/50 rounded text-purple-300">P2 テキスト+auto: ${sm.phase2_auto_text || 0}</span><span class="px-2 py-0.5 bg-yellow-900/50 rounded text-yellow-300">P3 phash: ${sm.phase3_tap_phash || 0}</span></div></div>`;
+                html += `<div class="flex items-center justify-between mt-4"><h4 class="text-sm font-bold text-cyan-400">アンカー一覧 (${data.matches.length})</h4><div class="flex gap-3 text-xs"><span class="px-2 py-0.5 bg-blue-900/50 rounded text-blue-300">P1 テキスト+tap: ${sm.phase1_tap_text || 0}</span><span class="px-2 py-0.5 bg-purple-900/50 rounded text-purple-300">P2 テキスト+auto: ${sm.phase2_auto_text || 0}</span><span class="px-2 py-0.5 bg-yellow-900/50 rounded text-yellow-300">P3 phash: ${sm.phase3_tap_phash || 0}</span></div></div>`;
                 html += `<div class="${GRID_CLS}">`;
                 for (const m of data.matches) {
                     const color = m.method.includes('phase1') ? 'bg-blue-900/50 text-blue-300'
