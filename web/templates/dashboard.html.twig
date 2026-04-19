@@ -813,7 +813,7 @@
             };
             // completion_type バッジ (完走時はバッジなし、未完走時のみ表示)
             const completionBadge = (ct) => {
-                if (ct === 'manual_stop') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-yellow-900/30 text-yellow-600" title="手動停止（Ctrl+C等）">未完走</span>';
+                if (ct === 'manual_stop') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-cyan-900/30 text-cyan-700" title="手動停止（Ctrl+C等）">未完走</span>';
                 if (ct === 'orphaned') return '<span class="px-1.5 py-0.5 text-[10px] rounded bg-red-900/30 text-red-600" title="プロセス異常終了">未完走（異常終了）</span>';
                 return '';
             };
@@ -828,8 +828,8 @@
                     html += `<div class="bg-gray-900/50 border border-gray-800/50 rounded-lg p-3 flex items-center justify-between">
                         <div>
                             <span class="text-sm font-mono text-gray-500">${escapeHtml(s.session_id)}</span>
-                            ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-600 ml-3">${s.mapped_nodes} ノードマッピング済</span>
+                            ${completionBadge(s.completion_type)}
                         </div>
                         <div class="flex items-center gap-3">
                             <span class="text-[11px] text-gray-600">開始 ${fmtDate(s.started_at)}　マージ ${fmtDate(s.built_at)}</span>
@@ -853,8 +853,8 @@
                     html += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 flex items-center justify-between">
                         <div>
                             <span class="text-sm font-mono text-gray-300">${escapeHtml(s.session_id)}</span>
-                            ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-500 ml-3">${s.node_count} ノード / ${s.edge_count} エッジ</span>
+                            ${completionBadge(s.completion_type)}
                         </div>
                         <div class="flex items-center gap-3">
                             <span class="text-[11px] text-gray-600">開始 ${fmtDate(s.started_at)}　構築 ${fmtDate(s.built_at)}</span>
