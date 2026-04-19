@@ -41,7 +41,7 @@
     <select id="session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="">最新セッション</option>
     </select>
-    <select id="debug-session-select" class="ml-1 bg-gray-800 text-amber-300 text-xs rounded px-2 py-1 border border-amber-700 focus:border-amber-500 outline-none hidden">
+    <select id="debug-session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none hidden">
     </select>
     <!-- Final 採用/不採用アクション (右詰) -->
     <div class="ml-auto flex items-center gap-2">
@@ -653,7 +653,7 @@
             return;
         }
         _debugSessionSelect.classList.remove('hidden');
-        _debugSessionSelect.innerHTML = '<option value="">全セッション</option>'
+        _debugSessionSelect.innerHTML = '<option value="">セッション選択</option>'
             + _debugSessionList.map(sid =>
                 `<option value="${escapeHtml(sid)}"${sid === _debugFilterSession ? ' selected' : ''}>${escapeHtml(sid.replace('ap_', ''))}</option>`
             ).join('');
