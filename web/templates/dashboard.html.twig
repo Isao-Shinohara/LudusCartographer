@@ -1063,14 +1063,7 @@
                     <button id="execute-merge-btn" class="px-4 py-1.5 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-sm font-bold rounded">マージ実行</button>
                 </div>
             </div>`;
-            // サマリー
             const sm = data.summary;
-            html += `<div class="flex gap-4 text-sm">
-                <span class="px-2 py-1 bg-blue-900/50 rounded text-blue-300">Phase1 テキスト+tap: ${sm.phase1_tap_text || 0}</span>
-                <span class="px-2 py-1 bg-purple-900/50 rounded text-purple-300">Phase2 テキスト+auto: ${sm.phase2_auto_text || 0}</span>
-                <span class="px-2 py-1 bg-yellow-900/50 rounded text-yellow-300">Phase3 phash: ${sm.phase3_tap_phash || 0}</span>
-                <span class="px-2 py-1 bg-green-900/50 rounded text-green-300">新規: ${sm.new}</span>
-            </div>`;
             // プレビュー用アイテムリスト (モーダル表示用)
             const previewItems = [];
             const GRID_CLS = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3';
@@ -1099,7 +1092,7 @@
 
             // アンカー一覧
             if (data.matches.length > 0) {
-                html += '<h4 class="text-sm font-bold text-cyan-400 mt-4">アンカー一覧</h4>';
+                html += `<div class="flex items-center justify-between mt-4"><h4 class="text-sm font-bold text-cyan-400">アンカー一覧</h4><div class="flex gap-3 text-xs"><span class="px-2 py-0.5 bg-blue-900/50 rounded text-blue-300">P1 テキスト+tap: ${sm.phase1_tap_text || 0}</span><span class="px-2 py-0.5 bg-purple-900/50 rounded text-purple-300">P2 テキスト+auto: ${sm.phase2_auto_text || 0}</span><span class="px-2 py-0.5 bg-yellow-900/50 rounded text-yellow-300">P3 phash: ${sm.phase3_tap_phash || 0}</span></div></div>`;
                 html += `<div class="${GRID_CLS}">`;
                 for (const m of data.matches) {
                     const color = m.method.includes('phase1') ? 'bg-blue-900/50 text-blue-300'
