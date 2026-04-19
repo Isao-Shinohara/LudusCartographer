@@ -1057,34 +1057,23 @@
                 <span class="px-2 py-1 bg-yellow-900/50 rounded text-yellow-300">Phase3 phash: ${sm.phase3_tap_phash || 0}</span>
                 <span class="px-2 py-1 bg-green-900/50 rounded text-green-300">新規: ${sm.new}</span>
             </div>`;
-            // マッチ一覧
+            // アンカー一覧
             if (data.matches.length > 0) {
-                html += '<h4 class="text-sm font-bold text-gray-300 mt-4">マッチ一覧</h4>';
-                html += '<div class="space-y-3 max-h-[50vh] overflow-auto">';
+                html += '<h4 class="text-sm font-bold text-gray-300 mt-4">アンカー一覧</h4>';
+                html += '<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 max-h-[50vh] overflow-auto">';
                 for (const m of data.matches) {
-                    const methodColor = m.method === 'anchor' ? 'text-blue-400' : m.method === 'k_hop' ? 'text-purple-400' : 'text-yellow-400';
-                    html += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
-                        <div class="flex items-center gap-2 mb-2">
-                            <span class="text-xs font-bold ${methodColor}">${m.method}</span>
-                            <span class="text-xs text-gray-500">score: ${m.score}</span>
+                    const methodColor = m.method.includes('phase1') ? 'bg-blue-900/50 text-blue-300'
+                        : m.method.includes('phase2') ? 'bg-purple-900/50 text-purple-300'
+                        : 'bg-yellow-900/50 text-yellow-300';
+                    const methodLabel = m.method.replace('phase1_tap_text','P1').replace('phase2_auto_text','P2').replace('phase3_tap_phash','P3');
+                    html += `<div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+                        <div class="relative">
+                            ${m.session_thumb ? `<img src="${imgUrl(m.session_thumb)}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
+                            <span class="absolute top-1 left-1 px-1 py-0.5 text-[9px] rounded ${methodColor}">${methodLabel}</span>
                         </div>
-                        <div class="grid grid-cols-2 gap-4">
-                            <div>
-                                <p class="text-[10px] text-gray-500 mb-1">セッション</p>
-                                <div class="flex items-center gap-2">
-                                    ${m.session_thumb ? `<img src="${imgUrl(m.session_thumb)}" class="w-20 h-12 object-cover rounded bg-gray-800" />` : ''}
-                                    <span class="text-xs text-gray-300 truncate">${escapeHtml(m.session_title)}</span>
-                                </div>
-                                ${renderNeighbors(m.session_neighbors)}
-                            </div>
-                            <div>
-                                <p class="text-[10px] text-gray-500 mb-1">マスター</p>
-                                <div class="flex items-center gap-2">
-                                    ${m.master_thumb ? `<img src="${imgUrl(m.master_thumb)}" class="w-20 h-12 object-cover rounded bg-gray-800" />` : ''}
-                                    <span class="text-xs text-gray-300 truncate">${escapeHtml(m.master_title)}</span>
-                                </div>
-                                ${renderNeighbors(m.master_neighbors)}
-                            </div>
+                        <div class="p-2">
+                            <p class="text-xs font-semibold text-gray-200 truncate">${escapeHtml(m.session_title)}</p>
+                            <p class="text-[10px] text-gray-500 truncate mt-0.5">${escapeHtml(m.master_title)}</p>
                         </div>
                     </div>`;
                 }
