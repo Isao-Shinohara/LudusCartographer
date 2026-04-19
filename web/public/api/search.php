@@ -29,6 +29,7 @@ header('Content-Type: application/json; charset=utf-8');
 
 $action    = $_GET['action'] ?? 'search';
 $gameTitle = trim(strip_tags($_GET['game'] ?? ''));
+$versionParam = isset($_GET['version']) ? (int)$_GET['version'] : null;
 
 try {
     $pdo        = Database::getConnection();
@@ -53,10 +54,67 @@ if ($action === 'heartbeat') {
     exit;
 }
 
+// --- get_versions アクション ---
+if ($action === 'get_versions') {
+    if ($useDb && $repository instanceof EvidenceRepository) {
+        $versions = $repository->getVersions();
+    } else {
+        $versions = [];
+    }
+    echo json_encode(
+        ['versions' => $versions],
+        JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+    );
+    exit;
+}
+
+// --- create_version アクション ---
+if ($action === 'create_version') {
+    $name = trim(strip_tags($_GET['name'] ?? ''));
+    if ($name === '' || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'name required']);
+        exit;
+    }
+    $result = $repository->createVersion($name);
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
+// --- activate_version アクション ---
+if ($action === 'activate_version') {
+    $versionId = (int)($_GET['version_id'] ?? 0);
+    if ($versionId <= 0 || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'valid version_id required']);
+        exit;
+    }
+    $result = $repository->activateVersion($versionId);
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
+// --- get_active_version アクション ---
+if ($action === 'get_active_version') {
+    if ($useDb && $repository instanceof EvidenceRepository) {
+        $activeId = $repository->getActiveVersionId();
+        $stmt = $repository->getPdo()->prepare(
+            "SELECT id, name, created_at, is_active FROM lc_versions WHERE id = :vid"
+        );
+        $stmt->execute([':vid' => $activeId]);
+        $version = $stmt->fetch(\PDO::FETCH_ASSOC);
+        echo json_encode(
+            ['version' => $version ?: ['id' => $activeId, 'name' => 'default']],
+            JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+        );
+    } else {
+        echo json_encode(['version' => ['id' => 1, 'name' => 'default']]);
+    }
+    exit;
+}
+
 // --- get_games アクション ---
 if ($action === 'get_games') {
     $games = ($useDb && $repository instanceof EvidenceRepository)
-        ? $repository->getGameTitles()
+        ? $repository->getGameTitles($versionParam)
         : [];
     echo json_encode(
         ['games' => $games, 'count' => count($games)],
@@ -70,7 +128,9 @@ if ($action === 'get_sessions') {
     $limit = min((int)($_GET['limit'] ?? 20), 100);
 
     if ($useDb) {
-        $sessions = $repository->getSessions($limit, $gameTitle);
+        $sessions = ($repository instanceof EvidenceRepository)
+            ? $repository->getSessions($limit, $gameTitle, $versionParam)
+            : $repository->getSessions($limit, $gameTitle);
     } else {
         $sessions = ScreenRepository::getSampleSessions();
     }
@@ -111,7 +171,7 @@ if ($action === 'get_recent_screens') {
     $sessionId = $_GET['session_id'] ?? '';
 
     if ($useDb && $repository instanceof EvidenceRepository) {
-        $screens = $repository->getRecentScreens($limit, $gameTitle, $afterId, $sessionId);
+        $screens = $repository->getRecentScreens($limit, $gameTitle, $afterId, $sessionId, $versionParam);
     } else {
         $screens = [];
     }
@@ -126,7 +186,7 @@ if ($action === 'get_recent_screens') {
 // --- get_sessions アクション (セッション一覧) ---
 if ($action === 'get_sessions') {
     if ($useDb && $repository instanceof EvidenceRepository) {
-        $sessions = $repository->getSessions(100, $gameTitle);
+        $sessions = $repository->getSessions(100, $gameTitle, $versionParam);
     } else {
         $sessions = [];
     }
@@ -142,7 +202,7 @@ if ($action === 'get_final_screens') {
     $limit = min((int)($_GET['limit'] ?? 10000), 10000);
 
     if ($useDb && $repository instanceof EvidenceRepository) {
-        $screens = $repository->getFinalScreens($limit, $gameTitle);
+        $screens = $repository->getFinalScreens($limit, $gameTitle, $versionParam);
     } else {
         $screens = [];
     }
@@ -186,7 +246,7 @@ if ($action === 'promote_representative') {
 if ($action === 'get_final_screens_all') {
     $limit = min((int)($_GET['limit'] ?? 10000), 10000);
     if ($useDb && $repository instanceof EvidenceRepository) {
-        $screens = $repository->getFinalScreensIncludeExcluded($limit, $gameTitle);
+        $screens = $repository->getFinalScreensIncludeExcluded($limit, $gameTitle, $versionParam);
     } else {
         $screens = [];
     }
@@ -204,7 +264,7 @@ if ($action === 'toggle_exclude') {
         echo json_encode(['error' => 'invalid request']);
         exit;
     }
-    $result = $repository->toggleExclude($masterFp);
+    $result = $repository->toggleExclude($masterFp, $versionParam);
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     exit;
 }
@@ -212,12 +272,12 @@ if ($action === 'toggle_exclude') {
 // --- get_pending_merges アクション ---
 if ($action === 'get_pending_merges') {
     if ($useDb && $repository instanceof EvidenceRepository) {
-        $pending = $repository->getPendingMerges();
-        $merged = $repository->getMergedSessions();
-        $empty = $repository->getEmptySessions();
-        $running = $repository->getRunningSessions();
-        $no_transition = $repository->getNoTransitionSessions();
-        $bg_pending = $repository->getBgPendingSessions();
+        $pending = $repository->getPendingMerges($versionParam);
+        $merged = $repository->getMergedSessions($versionParam);
+        $empty = $repository->getEmptySessions($versionParam);
+        $running = $repository->getRunningSessions($versionParam);
+        $no_transition = $repository->getNoTransitionSessions($versionParam);
+        $bg_pending = $repository->getBgPendingSessions($versionParam);
     } else {
         $pending = [];
         $merged = [];
@@ -678,7 +738,7 @@ if ($action === 'delete_session') {
 // --- get_cleanable_excluded アクション ---
 if ($action === 'get_cleanable_excluded') {
     if ($useDb && $repository instanceof EvidenceRepository) {
-        $items = $repository->getCleanableExcluded();
+        $items = $repository->getCleanableExcluded($versionParam);
     } else {
         $items = [];
     }
@@ -695,7 +755,7 @@ if ($action === 'cleanup_excluded') {
         echo json_encode(['error' => 'invalid request']);
         exit;
     }
-    $result = $repository->cleanupExcluded();
+    $result = $repository->cleanupExcluded($versionParam);
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     exit;
 }
@@ -708,7 +768,7 @@ if ($action === 'merge_manual_group') {
         echo json_encode(['error' => 'invalid request']);
         exit;
     }
-    $result = $repository->mergeManualGroup($masterFps, $repFp);
+    $result = $repository->mergeManualGroup($masterFps, $repFp, $versionParam);
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     exit;
 }
@@ -732,7 +792,7 @@ if ($action === 'get_manual_group_members') {
         echo json_encode(['members' => []]);
         exit;
     }
-    $members = $repository->getManualGroupMembers($groupId);
+    $members = $repository->getManualGroupMembers($groupId, $versionParam);
     echo json_encode(['members' => $members], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     exit;
 }

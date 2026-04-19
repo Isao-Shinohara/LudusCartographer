@@ -22,6 +22,81 @@ class EvidenceRepository
     }
 
     // ------------------------------------------------------------------
+    // version management
+    // ------------------------------------------------------------------
+
+    /**
+     * アクティブな version_id を返す（フォールバック: 1）。
+     */
+    public function getActiveVersionId(): int
+    {
+        $stmt = $this->db->query("SELECT id FROM lc_versions WHERE is_active = 1 LIMIT 1");
+        $id = $stmt ? $stmt->fetchColumn() : false;
+        return $id !== false ? (int)$id : 1;
+    }
+
+    /**
+     * 全バージョン一覧を返す。
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getVersions(): array
+    {
+        return $this->db->query(
+            "SELECT id, name, created_at, is_active FROM lc_versions ORDER BY id DESC"
+        )->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * 新しいバージョンを作成して返す。
+     *
+     * @return array<string, mixed>
+     */
+    public function createVersion(string $name): array
+    {
+        $stmt = $this->db->prepare(
+            "INSERT INTO lc_versions (name, is_active) VALUES (:name, 0)"
+        );
+        $stmt->execute([':name' => $name]);
+        $id = (int)$this->db->lastInsertId();
+        return ['id' => $id, 'name' => $name, 'is_active' => 0];
+    }
+
+    /**
+     * 指定バージョンをアクティブにする（他は非アクティブ）。
+     * 切替前に旧アクティブバージョンの running セッションを完了扱いにする。
+     *
+     * @return array<string, mixed>
+     */
+    public function activateVersion(int $versionId): array
+    {
+        // 旧アクティブバージョンの running セッションを強制完了
+        $oldVersionId = $this->getActiveVersionId();
+        if ($oldVersionId !== $versionId) {
+            $this->db->prepare(
+                "UPDATE lc_sessions SET status = 'completed', completion_type = 'version_switch'"
+                . " WHERE status = 'running' AND version_id = :old_vid"
+            )->execute([':old_vid' => $oldVersionId]);
+        }
+
+        // 全バージョンを非アクティブ
+        $this->db->exec("UPDATE lc_versions SET is_active = 0");
+
+        // 指定バージョンをアクティブ
+        $this->db->prepare(
+            "UPDATE lc_versions SET is_active = 1 WHERE id = :vid"
+        )->execute([':vid' => $versionId]);
+
+        // 返却
+        $stmt = $this->db->prepare(
+            "SELECT id, name, created_at, is_active FROM lc_versions WHERE id = :vid"
+        );
+        $stmt->execute([':vid' => $versionId]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        return $row ?: ['error' => 'version not found'];
+    }
+
+    // ------------------------------------------------------------------
     // public API
     // ------------------------------------------------------------------
 
@@ -30,12 +105,21 @@ class EvidenceRepository
      *
      * @return string[]
      */
-    public function getGameTitles(): array
+    public function getGameTitles(?int $versionId = null): array
     {
-        $stmt = $this->db->query(
-            "SELECT DISTINCT game_title FROM lc_sessions"
-            . " WHERE game_title IS NOT NULL ORDER BY game_title"
+        $where = "WHERE game_title IS NOT NULL";
+        $bindings = [];
+        if ($versionId !== null) {
+            $where .= " AND version_id = :vid";
+            $bindings[':vid'] = $versionId;
+        }
+        $stmt = $this->db->prepare(
+            "SELECT DISTINCT game_title FROM lc_sessions {$where} ORDER BY game_title"
         );
+        foreach ($bindings as $k => $v) {
+            $stmt->bindValue($k, $v, PDO::PARAM_INT);
+        }
+        $stmt->execute();
         return array_column($stmt->fetchAll(), 'game_title');
     }
 
@@ -166,7 +250,7 @@ class EvidenceRepository
      *
      * @return array<int, array<string, mixed>>
      */
-    public function getSessions(int $limit = 20, string $gameTitle = ''): array
+    public function getSessions(int $limit = 20, string $gameTitle = '', ?int $versionId = null): array
     {
         $conditions = ["status != 'archived'"];
         $bindings   = [':limit' => $limit];
@@ -174,6 +258,10 @@ class EvidenceRepository
         if ($gameTitle !== '') {
             $conditions[]          = 'game_title = :game_title';
             $bindings[':game_title'] = $gameTitle;
+        }
+        if ($versionId !== null) {
+            $conditions[]      = 'version_id = :vid';
+            $bindings[':vid']  = $versionId;
         }
 
         $where = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
@@ -198,7 +286,7 @@ class EvidenceRepository
 
         $stmt = $this->db->prepare($sql);
         foreach ($bindings as $key => $value) {
-            $type = ($key === ':limit') ? PDO::PARAM_INT : PDO::PARAM_STR;
+            $type = ($key === ':limit' || $key === ':vid') ? PDO::PARAM_INT : PDO::PARAM_STR;
             $stmt->bindValue($key, $value, $type);
         }
         $stmt->execute();
@@ -269,6 +357,7 @@ class EvidenceRepository
         string $gameTitle = '',
         int    $afterId   = 0,
         string $sessionId = '',
+        ?int   $versionId = null,
     ): array {
         $conditions = ["COALESCE(sess.status, '') != 'archived'"];
         $bindings   = [':limit' => $limit];
@@ -284,6 +373,10 @@ class EvidenceRepository
         if ($sessionId !== '') {
             $conditions[]            = 's.session_id = :session_id';
             $bindings[':session_id'] = $sessionId;
+        }
+        if ($versionId !== null) {
+            $conditions[]      = 'sess.version_id = :vid';
+            $bindings[':vid']  = $versionId;
         }
 
         $where = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
@@ -304,7 +397,7 @@ class EvidenceRepository
 
         $stmt = $this->db->prepare($sql);
         foreach ($bindings as $key => $value) {
-            $type = ($key === ':limit' || $key === ':after_id') ? PDO::PARAM_INT : PDO::PARAM_STR;
+            $type = ($key === ':limit' || $key === ':after_id' || $key === ':vid') ? PDO::PARAM_INT : PDO::PARAM_STR;
             $stmt->bindValue($key, $value, $type);
         }
         $stmt->execute();
@@ -356,8 +449,10 @@ class EvidenceRepository
     public function getFinalScreens(
         int    $limit     = 10000,
         string $gameTitle = '',
+        ?int   $versionId = null,
     ): array {
-        $bindings = [':limit' => $limit];
+        $versionId ??= $this->getActiveVersionId();
+        $bindings = [':limit' => $limit, ':vid' => $versionId];
 
         // lc_master_nodes (クロスセッションマージ済み) から取得
         $gameFilter = '';
@@ -389,14 +484,15 @@ class EvidenceRepository
             FROM lc_master_nodes m
             JOIN lc_screens s ON s.id = m.representative_screen_id
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
-            WHERE m.user_excluded = 0 AND m.is_group_representative = 1 {$gameFilter}
+            WHERE m.user_excluded = 0 AND m.is_group_representative = 1
+              AND m.version_id = :vid {$gameFilter}
             ORDER BY m.sort_order ASC
             LIMIT :limit
         SQL;
 
         $stmt = $this->db->prepare($sql);
         foreach ($bindings as $key => $value) {
-            $type = ($key === ':limit') ? PDO::PARAM_INT : PDO::PARAM_STR;
+            $type = ($key === ':limit' || $key === ':vid') ? PDO::PARAM_INT : PDO::PARAM_STR;
             $stmt->bindValue($key, $value, $type);
         }
         $stmt->execute();
@@ -441,8 +537,9 @@ class EvidenceRepository
 
     // ─── マージ管理 ─────────────────────────────────
 
-    public function getPendingMerges(): array
+    public function getPendingMerges(?int $versionId = null): array
     {
+        $versionId ??= $this->getActiveVersionId();
         $sql = <<<SQL
             SELECT sg.session_id, sg.node_count, sg.edge_count, sg.built_at,
                    s.screens_found, s.started_at, s.status, s.completion_type,
@@ -450,17 +547,22 @@ class EvidenceRepository
             FROM lc_session_graphs sg
             JOIN lc_sessions s ON s.session_id = sg.session_id
             WHERE s.status = 'completed'
+              AND s.version_id = :vid
               AND NOT EXISTS (
                 SELECT 1 FROM lc_node_mappings nm
                 WHERE nm.session_id = sg.session_id
               )
             ORDER BY s.started_at ASC
         SQL;
-        return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+        $stmt = $this->db->prepare($sql);
+        $stmt->bindValue(':vid', $versionId, \PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
     }
 
-    public function getMergedSessions(): array
+    public function getMergedSessions(?int $versionId = null): array
     {
+        $versionId ??= $this->getActiveVersionId();
         $sql = <<<SQL
             SELECT sg.session_id, sg.node_count, sg.edge_count, sg.built_at,
                    s.screens_found, s.started_at, s.completion_type,
@@ -472,14 +574,19 @@ class EvidenceRepository
             JOIN lc_sessions s ON s.session_id = sg.session_id
             JOIN lc_node_mappings nm ON nm.session_id = sg.session_id
             WHERE s.status != 'archived'
+              AND s.version_id = :vid
             GROUP BY sg.session_id
             ORDER BY s.started_at DESC
         SQL;
-        return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+        $stmt = $this->db->prepare($sql);
+        $stmt->bindValue(':vid', $versionId, \PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
     }
 
-    public function getEmptySessions(): array
+    public function getEmptySessions(?int $versionId = null): array
     {
+        $versionId ??= $this->getActiveVersionId();
         // 完了済みだが session_graph がないセッション (画面ありで遷移ありのもの = グラフ構築可能)
         // または画面なし (削除のみ可能)
         $sql = <<<SQL
@@ -489,12 +596,16 @@ class EvidenceRepository
                    (SELECT COUNT(*) FROM lc_transitions WHERE session_id = s.session_id AND to_fp IS NOT NULL) AS transitions
             FROM lc_sessions s
             WHERE s.status = 'completed'
+              AND s.version_id = :vid
               AND NOT EXISTS (
                 SELECT 1 FROM lc_session_graphs sg WHERE sg.session_id = s.session_id
               )
             ORDER BY s.started_at DESC
         SQL;
-        $rows = $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+        $stmt = $this->db->prepare($sql);
+        $stmt->bindValue(':vid', $versionId, \PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
         // 遷移データなしのものは getNoTransitionSessions で扱うため除外
         // (画面あり+遷移0 = 遷移データなし)
         return array_values(array_filter($rows, function ($r) {
@@ -502,8 +613,9 @@ class EvidenceRepository
         }));
     }
 
-    public function getNoTransitionSessions(): array
+    public function getNoTransitionSessions(?int $versionId = null): array
     {
+        $versionId ??= $this->getActiveVersionId();
         // 画面はあるが遷移データなし → グラフ構築不可、削除のみ可能
         $sql = <<<SQL
             SELECT s.session_id, s.started_at, s.screens_found, s.completion_type,
@@ -511,6 +623,7 @@ class EvidenceRepository
                    (SELECT COUNT(*) FROM lc_screens WHERE session_id = s.session_id) AS actual_screens
             FROM lc_sessions s
             WHERE s.status = 'completed'
+              AND s.version_id = :vid
               AND NOT EXISTS (
                 SELECT 1 FROM lc_session_graphs sg WHERE sg.session_id = s.session_id
               )
@@ -523,11 +636,15 @@ class EvidenceRepository
               )
             ORDER BY s.started_at DESC
         SQL;
-        return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+        $stmt = $this->db->prepare($sql);
+        $stmt->bindValue(':vid', $versionId, \PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
     }
 
-    public function getRunningSessions(): array
+    public function getRunningSessions(?int $versionId = null): array
     {
+        $versionId ??= $this->getActiveVersionId();
         // 進行中セッション: status='running' のみ
         $sql = <<<SQL
             SELECT s.session_id, s.started_at, s.screens_found, s.status, s.completion_type,
@@ -535,13 +652,18 @@ class EvidenceRepository
                    (SELECT COUNT(*) FROM lc_screens WHERE session_id = s.session_id) AS actual_screens
             FROM lc_sessions s
             WHERE s.status = 'running'
+              AND s.version_id = :vid
             ORDER BY s.started_at DESC
         SQL;
-        return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+        $stmt = $this->db->prepare($sql);
+        $stmt->bindValue(':vid', $versionId, \PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
     }
 
-    public function getBgPendingSessions(): array
+    public function getBgPendingSessions(?int $versionId = null): array
     {
+        $versionId ??= $this->getActiveVersionId();
         // バックグラウンド未完了: 完了済み + 後処理が未完了 (Gemini未処理 or グラフ未構築)
         $sql = <<<SQL
             SELECT s.session_id, s.started_at, s.completion_type,
@@ -560,6 +682,7 @@ class EvidenceRepository
                       WHERE session_id = s.session_id AND to_fp IS NOT NULL) AS transitions
             FROM lc_sessions s
             WHERE s.status = 'completed'
+              AND s.version_id = :vid
               AND NOT EXISTS (
                 SELECT 1 FROM lc_node_mappings nm WHERE nm.session_id = s.session_id
               )
@@ -576,31 +699,37 @@ class EvidenceRepository
               )
             ORDER BY s.started_at DESC
         SQL;
-        return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+        $stmt = $this->db->prepare($sql);
+        $stmt->bindValue(':vid', $versionId, \PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
     }
 
-    public function toggleExclude(string $masterFp): array
+    public function toggleExclude(string $masterFp, ?int $versionId = null): array
     {
+        $versionId ??= $this->getActiveVersionId();
         $row = $this->db->prepare(
-            "SELECT user_excluded FROM lc_master_nodes WHERE master_fp = ?"
+            "SELECT user_excluded FROM lc_master_nodes WHERE master_fp = :fp AND version_id = :vid"
         );
-        $row->execute([$masterFp]);
+        $row->execute([':fp' => $masterFp, ':vid' => $versionId]);
         $current = $row->fetchColumn();
         if ($current === false) {
             return ['error' => 'not found'];
         }
         $newVal = $current ? 0 : 1;
         $this->db->prepare(
-            "UPDATE lc_master_nodes SET user_excluded = ? WHERE master_fp = ?"
-        )->execute([$newVal, $masterFp]);
+            "UPDATE lc_master_nodes SET user_excluded = :val WHERE master_fp = :fp AND version_id = :vid"
+        )->execute([':val' => $newVal, ':fp' => $masterFp, ':vid' => $versionId]);
         return ['master_fp' => $masterFp, 'user_excluded' => (bool)$newVal];
     }
 
     public function getFinalScreensIncludeExcluded(
         int    $limit     = 10000,
         string $gameTitle = '',
+        ?int   $versionId = null,
     ): array {
-        $bindings = [':limit' => $limit];
+        $versionId ??= $this->getActiveVersionId();
+        $bindings = [':limit' => $limit, ':vid' => $versionId];
         $gameFilter = '';
         if ($gameTitle !== '') {
             $gameFilter = "AND COALESCE(sess.game_title, 'Unknown Game') = :game_title";
@@ -629,13 +758,14 @@ class EvidenceRepository
             FROM lc_master_nodes m
             JOIN lc_screens s ON s.id = m.representative_screen_id
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
-            WHERE m.is_group_representative = 1 {$gameFilter}
+            WHERE m.is_group_representative = 1
+              AND m.version_id = :vid {$gameFilter}
             ORDER BY m.sort_order ASC
             LIMIT :limit
         SQL;
         $stmt = $this->db->prepare($sql);
         foreach ($bindings as $key => $value) {
-            $type = ($key === ':limit') ? \PDO::PARAM_INT : \PDO::PARAM_STR;
+            $type = ($key === ':limit' || $key === ':vid') ? \PDO::PARAM_INT : \PDO::PARAM_STR;
             $stmt->bindValue($key, $value, $type);
         }
         $stmt->execute();
@@ -779,8 +909,9 @@ class EvidenceRepository
 
     // ─── 除外済みマスターノードのクリーンアップ ──────
 
-    public function getCleanableExcluded(): array
+    public function getCleanableExcluded(?int $versionId = null): array
     {
+        $versionId ??= $this->getActiveVersionId();
         $sql = <<<SQL
             SELECT m.master_fp, m.title, s.screenshot_path, s.thumbnail_path,
                    sess.session_id, sess.status AS session_status
@@ -788,13 +919,18 @@ class EvidenceRepository
             JOIN lc_screens s ON s.id = m.representative_screen_id
             JOIN lc_sessions sess ON sess.session_id = s.session_id
             WHERE m.user_excluded = 1 AND sess.status = 'archived'
+              AND m.version_id = :vid
         SQL;
-        return $this->db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+        $stmt = $this->db->prepare($sql);
+        $stmt->bindValue(':vid', $versionId, \PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
     }
 
-    public function cleanupExcluded(): array
+    public function cleanupExcluded(?int $versionId = null): array
     {
-        $targets = $this->getCleanableExcluded();
+        $versionId ??= $this->getActiveVersionId();
+        $targets = $this->getCleanableExcluded($versionId);
         if (empty($targets)) {
             return ['ok' => true, 'deleted_nodes' => 0, 'deleted_files' => 0];
         }
@@ -844,8 +980,9 @@ class EvidenceRepository
 
     // ─── 手動グループ統合 ────────────────────────────
 
-    public function mergeManualGroup(array $masterFps, string $representativeFp): array
+    public function mergeManualGroup(array $masterFps, string $representativeFp, ?int $versionId = null): array
     {
+        $versionId ??= $this->getActiveVersionId();
         if (count($masterFps) < 2) {
             return ['error' => '2件以上選択してください'];
         }
@@ -861,16 +998,16 @@ class EvidenceRepository
 
         $placeholders = implode(',', array_fill(0, count($masterFps), '?'));
 
-        // 全メンバーに group_id を設定
+        // 全メンバーに group_id を設定 (version_id で絞り込み)
         $this->db->prepare(
             "UPDATE lc_master_nodes SET manual_group_id = ?, is_group_representative = 0"
-            . " WHERE master_fp IN ($placeholders)"
-        )->execute(array_merge([$groupId], $masterFps));
+            . " WHERE master_fp IN ($placeholders) AND version_id = ?"
+        )->execute(array_merge([$groupId], $masterFps, [$versionId]));
 
         // 代表を設定
         $this->db->prepare(
-            "UPDATE lc_master_nodes SET is_group_representative = 1 WHERE master_fp = ?"
-        )->execute([$representativeFp]);
+            "UPDATE lc_master_nodes SET is_group_representative = 1 WHERE master_fp = ? AND version_id = ?"
+        )->execute([$representativeFp, $versionId]);
 
         return ['ok' => true, 'group_id' => $groupId, 'count' => count($masterFps)];
     }
@@ -884,18 +1021,19 @@ class EvidenceRepository
         return ['ok' => true, 'group_id' => $groupId];
     }
 
-    public function getManualGroupMembers(int $groupId): array
+    public function getManualGroupMembers(int $groupId, ?int $versionId = null): array
     {
+        $versionId ??= $this->getActiveVersionId();
         $sql = <<<SQL
             SELECT m.master_fp, m.title, m.is_group_representative,
                    s.screenshot_path, s.thumbnail_path
             FROM lc_master_nodes m
             LEFT JOIN lc_screens s ON s.id = m.representative_screen_id
-            WHERE m.manual_group_id = ?
+            WHERE m.manual_group_id = :gid AND m.version_id = :vid
             ORDER BY m.is_group_representative DESC, m.first_seen_at ASC
         SQL;
         $stmt = $this->db->prepare($sql);
-        $stmt->execute([$groupId]);
+        $stmt->execute([':gid' => $groupId, ':vid' => $versionId]);
         return $stmt->fetchAll(\PDO::FETCH_ASSOC);
     }
 }
