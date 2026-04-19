@@ -158,12 +158,12 @@
                 </div>
             </div>
             <!-- クラスタ兄弟 (Final タブのみ) — 右サイドパネル -->
-            <div id="modal-cluster" class="hidden w-56 flex-shrink-0 bg-gray-900 rounded-xl border border-green-800 overflow-hidden flex flex-col">
-                <div class="flex items-center justify-between p-3 border-b border-gray-800">
+            <div id="modal-cluster" class="hidden w-56 flex-shrink-0 bg-gray-900 rounded-xl border border-green-800 overflow-hidden flex flex-col max-h-[85vh]">
+                <div class="flex items-center justify-between p-3 border-b border-gray-800 flex-shrink-0">
                     <h4 class="text-xs font-bold text-gray-400">同クラスタ</h4>
                     <button id="cluster-promote-btn" class="px-2 py-0.5 bg-green-700 hover:bg-green-600 text-white text-[10px] font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed hidden" disabled>変更</button>
                 </div>
-                <div id="modal-cluster-grid" class="flex flex-col gap-2 p-2 overflow-y-auto flex-1"></div>
+                <div id="modal-cluster-grid" class="flex flex-col gap-2 p-2 overflow-y-auto flex-1 min-h-0"></div>
             </div>
         </div>
         <button id="modal-next" class="flex-shrink-0 w-10 h-10 rounded-full bg-gray-700/80 hover:bg-gray-600 text-white text-xl flex items-center justify-center transition-colors" title="次へ (→)">&#8250;</button>
