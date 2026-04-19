@@ -231,14 +231,21 @@ class CrossSessionMerger:
                 " ダッシュボードの「再開」ボタンで OCR 補正を完了してからマージしてください。"
             )
 
-    def merge_to_master(self, session_id: str) -> int:
+    def merge_to_master(self, session_id: str, exclude_fps: set[str] | None = None) -> int:
         """セッションのグラフをマスターグラフにマージする。
 
+        Args:
+            exclude_fps: マッチから除外する session_fp のセット (Gemini 判定アンカーの除外用)
         Returns: 新規追加ノード数
         Raises: RuntimeError — Gemini OCR 補正が未完了の場合
         """
         self._check_ocr_complete(session_id)
         node_mapping, session_reps, is_seed = self._compute_matches(session_id)
+
+        # ユーザーが除外指定した session_fp をマッピングから除去
+        if exclude_fps:
+            for fp in exclude_fps:
+                node_mapping.pop(fp, None)
 
         if is_seed:
             return self._seed_master(session_id)

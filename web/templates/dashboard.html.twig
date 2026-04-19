@@ -1107,22 +1107,24 @@
 
             // アンカー一覧
             if (data.matches.length > 0) {
-                html += `<div class="flex items-center justify-between mt-4"><h4 class="text-sm font-bold text-cyan-400">アンカー一覧 (${data.matches.length})</h4><div class="flex gap-3 text-xs"><span class="px-2 py-0.5 bg-blue-900/50 rounded text-blue-300">P1: ${sm.phase1_tap_text || 0} (テキスト+tap)</span><span class="px-2 py-0.5 bg-purple-900/50 rounded text-purple-300">P2: ${sm.phase2_auto_text || 0} (テキスト+auto)</span><span class="px-2 py-0.5 bg-yellow-900/50 rounded text-yellow-300">P3: ${sm.phase3_tap_phash || 0} (phash)</span></div></div>`;
+                html += `<div class="flex items-center justify-between mt-4"><h4 class="text-sm font-bold text-cyan-400">アンカー一覧 (${data.matches.length})</h4><div class="flex gap-3 text-xs"><span class="px-2 py-0.5 bg-blue-900/50 rounded text-blue-300">P1: ${sm.phase1_tap_text || 0} (テキスト+tap)</span><span class="px-2 py-0.5 bg-amber-900/50 rounded text-amber-300">P1.5: ${sm.phase15_gemini || 0} (Gemini)</span><span class="px-2 py-0.5 bg-purple-900/50 rounded text-purple-300">P2: ${sm.phase2_auto_text || 0} (テキスト+auto)</span><span class="px-2 py-0.5 bg-yellow-900/50 rounded text-yellow-300">P3: ${sm.phase3_tap_phash || 0} (phash)</span></div></div>`;
                 html += `<div class="${GRID_CLS}">`;
                 for (const m of data.matches) {
-                    const color = m.method.includes('phase1') ? 'bg-blue-900/50 text-blue-300'
+                    const color = m.method === 'phase15_gemini' ? 'bg-amber-900/50 text-amber-300'
+                        : m.method.includes('phase1') ? 'bg-blue-900/50 text-blue-300'
                         : m.method.includes('phase2') ? 'bg-purple-900/50 text-purple-300'
                         : 'bg-yellow-900/50 text-yellow-300';
-                    const label = m.method.replace('phase1_tap_text','P1').replace('phase2_auto_text','P2').replace('phase3_tap_phash','P3');
+                    const label = m.method.replace('phase15_gemini','G').replace('phase1_tap_text','P1').replace('phase2_auto_text','P2').replace('phase3_tap_phash','P3');
                     const item = { thumb: m.session_thumb, title: m.session_title, scene: m.session_scene,
                                    discovered_at: m.session_discovered_at, ocr_text: m.session_ocr_text,
-                                   screenshot: m.session_screenshot, fp: m.session_fp };
+                                   screenshot: m.session_screenshot, fp: m.session_fp,
+                                   method: m.method, master_fp: m.master_fp };
                     html += buildCard({
                         thumb: item.thumb ? imgUrl(item.thumb) : '', title: item.title,
                         ocrPreview: (item.ocr_text || '').substring(0, 80),
                         scene: item.scene, time: item.discovered_at || '',
                         badge: { color, label },
-                        dataAttr: `data-preview-idx="${previewItems.length}"`,
+                        dataAttr: `data-preview-idx="${previewItems.length}"` + (m.method === 'phase15_gemini' ? ` data-gemini-fp="${escapeHtml(m.session_fp)}"` : ''),
                     });
                     previewItems.push(item);
                 }
@@ -1130,6 +1132,33 @@
             }
             html += '</div>';
             mc.innerHTML = html;
+            // Gemini 判定アンカーの除外管理
+            const excludedGeminiFps = new Set();
+            mc.querySelectorAll('[data-gemini-fp]').forEach(card => {
+                const fp = card.dataset.geminiFp;
+                const btn = document.createElement('button');
+                btn.className = 'absolute top-1 right-1 px-1.5 py-0.5 text-[9px] rounded bg-red-900/70 text-red-300 hover:bg-red-800 transition-colors z-10';
+                btn.textContent = '除外';
+                btn.title = 'このアンカーをマージから除外';
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (excludedGeminiFps.has(fp)) {
+                        excludedGeminiFps.delete(fp);
+                        card.classList.remove('opacity-30');
+                        btn.textContent = '除外';
+                        btn.classList.remove('bg-green-900/70', 'text-green-300');
+                        btn.classList.add('bg-red-900/70', 'text-red-300');
+                    } else {
+                        excludedGeminiFps.add(fp);
+                        card.classList.add('opacity-30');
+                        btn.textContent = '復帰';
+                        btn.classList.remove('bg-red-900/70', 'text-red-300');
+                        btn.classList.add('bg-green-900/70', 'text-green-300');
+                    }
+                });
+                card.style.position = 'relative';
+                card.appendChild(btn);
+            });
             // プレビュー用モーダル表示
             _previewModalItems = previewItems;
             function showPreviewModal(idx) {
@@ -1160,7 +1189,7 @@
             mc.querySelectorAll('[data-preview-idx]').forEach(card => {
                 card.addEventListener('click', () => showPreviewModal(parseInt(card.dataset.previewIdx, 10)));
             });
-            document.getElementById('execute-merge-btn').addEventListener('click', () => executeMerge(sessionId));
+            document.getElementById('execute-merge-btn').addEventListener('click', () => executeMerge(sessionId, Array.from(excludedGeminiFps)));
         } catch (e) {
             if (toastHandle) toastHandle.remove();
             mc.innerHTML = '<div class="text-red-500 py-12">プレビュー失敗</div>';
@@ -1176,16 +1205,17 @@
         return `<div class="flex flex-wrap gap-1 mt-1">${items.join('')}</div>`;
     }
 
-    async function executeMerge(sessionId) {
+    async function executeMerge(sessionId, excludeFps) {
         await withOperationLock('マージ実行', async () => {
-            await _executeMerge(sessionId);
+            await _executeMerge(sessionId, excludeFps);
         });
     }
-    async function _executeMerge(sessionId) {
+    async function _executeMerge(sessionId, excludeFps) {
         const mc = document.getElementById('merge-container');
         mc.innerHTML = '<div class="text-center text-gray-300 py-12"><span class="animate-pulse">マージ実行中...</span></div>';
         try {
-            await fetch(API_BASE + '?action=execute_merge&session_id=' + encodeURIComponent(sessionId));
+            const excludeParam = (excludeFps && excludeFps.length > 0) ? '&exclude_fps=' + encodeURIComponent(JSON.stringify(excludeFps)) : '';
+            await fetch(API_BASE + '?action=execute_merge&session_id=' + encodeURIComponent(sessionId) + excludeParam);
             const data = await pollMergeResult(mc, 'マージ実行中');
             if (data && data.ok) {
                 mc.innerHTML = `<div class="text-center text-green-400 py-12">マージ完了: 新規追加 ${data.new_nodes} / アンカー ${data.anchors || 0} / マスター合計 ${data.master_nodes || '?'} ノード</div>`;

@@ -411,6 +411,7 @@ if ($action === 'execute_merge') {
     $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
     $scriptFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/_execute_merge.py';
+    $excludeFps = $_GET['exclude_fps'] ?? '[]';
     file_put_contents($scriptFile, <<<PYTHON
 import json, logging, sys, os
 sys.path.insert(0, os.getcwd())
@@ -418,8 +419,9 @@ logging.disable(logging.CRITICAL)
 from pathlib import Path
 from tools.cross_session_merger import CrossSessionMerger
 import sqlite3
+exclude_fps = set(json.loads('{$excludeFps}'))
 m = CrossSessionMerger(Path("storage/ludus.db"))
-n = m.merge_to_master("{$sessionId}")
+n = m.merge_to_master("{$sessionId}", exclude_fps=exclude_fps)
 conn = sqlite3.connect("storage/ludus.db")
 master_nodes = conn.execute("SELECT COUNT(*) FROM lc_master_nodes").fetchone()[0]
 anchors = conn.execute("SELECT COUNT(*) FROM lc_node_mappings WHERE session_id=? AND match_method != 'new'", ("{$sessionId}",)).fetchone()[0]
