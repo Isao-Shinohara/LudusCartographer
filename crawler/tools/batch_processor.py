@@ -704,7 +704,6 @@ class BatchProcessor:
         Returns: SCC グループ数
         """
         import networkx as nx
-        from tools.ap.image_proc import phash_distance
 
         _bg_sid_filter = ""
         _bg_sid_params: tuple = ()
@@ -712,49 +711,51 @@ class BatchProcessor:
             _bg_sid_filter = " WHERE session_id = ?"
             _bg_sid_params = (session_id,)
 
-        # --- Step 0: phash 名寄せ ---
+        # --- Step 0: 代表画面のみ取得 (クラスタリング済み) ---
+        _rep_filter = " AND is_representative = 1" if _bg_sid_filter else " WHERE is_representative = 1"
         screens = self._conn.execute(
-            "SELECT fingerprint, phash, scene FROM lc_screens" + _bg_sid_filter,
+            "SELECT fingerprint, phash, scene FROM lc_screens" + _bg_sid_filter + _rep_filter,
             _bg_sid_params,
         ).fetchall()
         if not screens:
-            logger.info("[build_graph] 画面データなし → スキップ")
+            logger.info("[build_graph] 代表画面なし → スキップ")
             return 0
 
-        fp_to_phash: dict[str, str] = {}
+        rep_fps: set[str] = set()
         fp_to_scene: dict[str, str] = {}
         for row in screens:
-            fp, ph, sc = row["fingerprint"], row["phash"] or "", row["scene"] or ""
-            fp_to_phash[fp] = ph
-            fp_to_scene[fp] = sc
+            fp = row["fingerprint"]
+            rep_fps.add(fp)
+            fp_to_scene[fp] = row["scene"] or ""
 
-        # phash 距離 < 8 の fp を代表 fp にマッピング (Union-Find 的)
-        fp_list = list(fp_to_phash.keys())
-        canonical: dict[str, str] = {fp: fp for fp in fp_list}
-
-        def find(x: str) -> str:
-            while canonical[x] != x:
-                canonical[x] = canonical[canonical[x]]
-                x = canonical[x]
-            return x
-
-        for i in range(len(fp_list)):
-            for j in range(i + 1, len(fp_list)):
-                ph_i, ph_j = fp_to_phash[fp_list[i]], fp_to_phash[fp_list[j]]
-                if ph_i and ph_j:
-                    dist = phash_distance(ph_i, ph_j)
-                    if dist < _PHASH_CLUSTER_THRESHOLD:
-                        ri, rj = find(fp_list[i]), find(fp_list[j])
-                        if ri != rj:
-                            canonical[rj] = ri
+        # 不採用 fp → 代表 fp のマッピング (同クラスタの代表にリダイレクト)
+        _non_rep_filter = " AND (is_representative = 0 OR is_representative IS NULL)" if _bg_sid_filter else " WHERE (is_representative = 0 OR is_representative IS NULL)"
+        non_reps = self._conn.execute(
+            "SELECT fingerprint, cluster_id FROM lc_screens" + _bg_sid_filter + _non_rep_filter,
+            _bg_sid_params,
+        ).fetchall()
+        fp_redirect: dict[str, str] = {}
+        if non_reps:
+            # cluster_id → 代表 fp
+            cluster_to_rep: dict[int, str] = {}
+            for row in self._conn.execute(
+                "SELECT fingerprint, cluster_id FROM lc_screens"
+                + _bg_sid_filter + _rep_filter + " AND cluster_id IS NOT NULL",
+                _bg_sid_params,
+            ).fetchall():
+                cluster_to_rep[row["cluster_id"]] = row["fingerprint"]
+            for row in non_reps:
+                cid = row["cluster_id"]
+                if cid is not None and cid in cluster_to_rep:
+                    fp_redirect[row["fingerprint"]] = cluster_to_rep[cid]
 
         def canon(fp: str) -> str:
-            return find(fp) if fp in canonical else fp
+            return fp_redirect.get(fp, fp)
 
-        logger.info("[build_graph] Step 0: %d fp → %d 代表fp",
-                    len(fp_list), len(set(find(fp) for fp in fp_list)))
+        logger.info("[build_graph] Step 0: 代表 %d 画面, リダイレクト %d fp",
+                    len(rep_fps), len(fp_redirect))
 
-        # --- Step 1: グラフ構築 ---
+        # --- Step 1: グラフ構築 (代表画面のみ) ---
         _trans_where = " WHERE to_fp IS NOT NULL"
         if session_id:
             _trans_where += " AND session_id = ?"
@@ -767,10 +768,15 @@ class BatchProcessor:
             logger.info("[build_graph] 遷移データなし → スキップ")
             return 0
 
-        # 集約 (canonical fp)
+        # 集約 (代表 fp にリダイレクト)
         edge_counts: dict[tuple[str, str], dict] = {}
         for row in edges_raw:
-            key = (canon(row["from_fp"]), canon(row["to_fp"]))
+            src = canon(row["from_fp"])
+            tgt = canon(row["to_fp"])
+            # 代表画面にないノードはスキップ
+            if src not in rep_fps or tgt not in rep_fps:
+                continue
+            key = (src, tgt)
             if key[0] == key[1]:
                 continue  # 自己ループ除外
             if key not in edge_counts:
