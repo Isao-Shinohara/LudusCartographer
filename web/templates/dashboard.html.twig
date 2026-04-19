@@ -378,6 +378,11 @@
         const debugStats = document.getElementById('debug-stats');
         if (_debugMode && currentTab === 'final') {
             if (_debugSessionList.length === 0) _debugBuildSessionList();
+            // デフォルトセッション設定
+            if (!_debugFilterSession && _debugSessionList.length > 0) {
+                _debugSessionIdx = 0;
+                _debugFilterSession = _debugSessionList[0];
+            }
             const fs = _debugFilterSession;
             const anchors = allScreens.filter(s => _debugAnchorMatchesSession(s.anchor_info, fs));
             const inserted = allScreens.filter(s => s.last_match_method === 'new');
@@ -575,7 +580,7 @@
     // --- デバッグモード ---
     let _debugAnchorIdx = -1;  // 選択中のアンカーインデックス (-1 = 未選択)
     let _debugAnchorIndices = [];  // filteredScreens 内のアンカーのインデックス列
-    let _debugSessionList = [];   // マージ済みセッションID一覧 (seed除外、古い順)
+    let _debugSessionList = [];   // マージ済みセッションID一覧 (seed除外、新しい順)
     let _debugSessionIdx = -1;    // 選択中のセッション (-1 = 最新セッション)
     let _debugFilterSession = null; // フィルタ中のセッションID (null = 最新)
 
@@ -589,7 +594,7 @@
                 if (m) sessionSet.add(m[1]);
             }
         }
-        _debugSessionList = Array.from(sessionSet).sort();
+        _debugSessionList = Array.from(sessionSet).sort().reverse();
     }
 
     function _debugAnchorMatchesSession(anchorInfo, sessionId) {
@@ -659,10 +664,10 @@
             return;
         }
         _debugSessionSelect.classList.remove('hidden');
-        // デフォルト: 最新セッション（リストの末尾）
+        // デフォルト: 最新セッション（リストの先頭）
         if (!_debugFilterSession && _debugSessionList.length > 0) {
-            _debugSessionIdx = _debugSessionList.length - 1;
-            _debugFilterSession = _debugSessionList[_debugSessionIdx];
+            _debugSessionIdx = 0;
+            _debugFilterSession = _debugSessionList[0];
         }
         _debugSessionSelect.innerHTML = _debugSessionList.map(sid =>
             `<option value="${escapeHtml(sid)}"${sid === _debugFilterSession ? ' selected' : ''}>${escapeHtml(sid)}</option>`
