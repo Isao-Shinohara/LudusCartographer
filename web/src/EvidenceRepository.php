@@ -465,7 +465,9 @@ class EvidenceRepository
             SELECT sg.session_id, sg.node_count, sg.edge_count, sg.built_at,
                    s.screens_found, s.started_at, s.completion_type,
                    COALESCE(s.game_title, 'Unknown Game') AS game_title,
-                   COUNT(nm.id) AS mapped_nodes
+                   COUNT(nm.id) AS mapped_nodes,
+                   SUM(CASE WHEN nm.match_method = 'new' THEN 1 ELSE 0 END) AS new_nodes,
+                   SUM(CASE WHEN nm.match_method != 'new' THEN 1 ELSE 0 END) AS anchor_nodes
             FROM lc_session_graphs sg
             JOIN lc_sessions s ON s.session_id = sg.session_id
             JOIN lc_node_mappings nm ON nm.session_id = sg.session_id

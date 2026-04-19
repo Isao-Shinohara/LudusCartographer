@@ -857,7 +857,7 @@
                     html += `<div class="bg-gray-900/50 border border-gray-800/50 rounded-lg p-3 flex items-center justify-between">
                         <div>
                             <span class="text-sm font-mono text-gray-500">${escapeHtml(s.session_id)}</span>
-                            <span class="text-xs text-gray-600 ml-3">${s.mapped_nodes} ノードマッピング済</span>
+                            <span class="text-xs text-gray-400 ml-3">新規 ${s.new_nodes || 0} / アンカー ${s.anchor_nodes || 0}</span>
                             ${completionBadge(s.completion_type)}
                         </div>
                         <div class="flex items-center gap-3">
