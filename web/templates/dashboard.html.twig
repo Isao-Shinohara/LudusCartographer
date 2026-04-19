@@ -115,52 +115,55 @@
 
 <!-- モーダル -->
 <div id="modal" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center p-4">
-    <div class="flex items-center gap-3 max-w-4xl w-full">
+    <div class="flex items-center gap-3 max-w-5xl w-full">
         <button id="modal-prev" class="flex-shrink-0 w-10 h-10 rounded-full bg-gray-700/80 hover:bg-gray-600 text-white text-xl flex items-center justify-center transition-colors" title="前へ (←)">&#8249;</button>
-        <div class="bg-gray-900 rounded-xl flex-1 min-w-0 border border-gray-700" onclick="event.stopPropagation()">
-            <div class="flex justify-between items-center p-4 border-b border-gray-800">
-                <div class="flex items-center gap-3 min-w-0">
-                    <span id="modal-counter" class="text-xs text-gray-500 flex-shrink-0"></span>
-                    <span id="modal-scene-badge" class="inline-block px-2 py-0.5 text-xs font-medium rounded bg-gray-700 text-gray-400 flex-shrink-0"></span>
-                    <h3 id="modal-title" class="text-lg font-bold text-brand-light truncate"></h3>
+        <div class="flex gap-3 flex-1 min-w-0" onclick="event.stopPropagation()">
+            <!-- メインコンテンツ -->
+            <div class="bg-gray-900 rounded-xl flex-1 min-w-0 border border-gray-700">
+                <div class="flex justify-between items-center p-4 border-b border-gray-800">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <span id="modal-counter" class="text-xs text-gray-500 flex-shrink-0"></span>
+                        <span id="modal-scene-badge" class="inline-block px-2 py-0.5 text-xs font-medium rounded bg-gray-700 text-gray-400 flex-shrink-0"></span>
+                        <h3 id="modal-title" class="text-lg font-bold text-brand-light truncate"></h3>
+                    </div>
+                    <button id="modal-close-btn" class="text-gray-500 hover:text-white text-2xl flex-shrink-0 ml-4">&times;</button>
                 </div>
-                <button id="modal-close-btn" class="text-gray-500 hover:text-white text-2xl flex-shrink-0 ml-4">&times;</button>
-            </div>
-            <div class="p-4">
-                <img id="modal-img" src="" class="w-full rounded-lg bg-gray-800 mb-4" />
-                <div class="relative">
-                    <div id="modal-ocr" class="bg-gray-800 rounded-lg px-3 py-2 pr-10 text-sm text-gray-300 whitespace-pre-wrap overflow-y-scroll leading-5 h-[5.6rem]"></div>
-                    <button id="modal-ocr-copy" class="group absolute top-2 right-2 w-6 h-6 rounded bg-gray-700 hover:bg-gray-600 text-gray-400 hover:text-white text-xs flex items-center justify-center transition-colors">&#x2398;<span class="hidden group-hover:block absolute right-8 top-0 whitespace-nowrap bg-gray-900 text-gray-300 text-[10px] px-2 py-1 rounded shadow-lg border border-gray-700">クリップボードにコピー</span></button>
-                </div>
-                <!-- OCR ソース別 diff 表示 (Phase 3) -->
-                <div id="modal-ocr-sources" class="mt-2 space-y-1 text-xs"></div>
-                <!-- 手動編集 UI (Phase 1) -->
-                <div id="modal-edit-area" class="hidden mt-3 bg-gray-800/50 rounded-lg p-3 border border-gray-700">
-                    <div class="flex items-center justify-between mb-2">
-                        <label class="text-xs font-bold text-amber-400">手動編集</label>
-                        <div class="flex gap-2">
-                            <button id="modal-edit-cancel" class="px-2 py-0.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded">キャンセル</button>
-                            <button id="modal-edit-save" class="px-3 py-0.5 text-xs bg-emerald-700 hover:bg-emerald-600 text-white rounded">保存</button>
+                <div class="p-4">
+                    <img id="modal-img" src="" class="w-full rounded-lg bg-gray-800 mb-4" />
+                    <div class="relative">
+                        <div id="modal-ocr" class="bg-gray-800 rounded-lg px-3 py-2 pr-10 text-sm text-gray-300 whitespace-pre-wrap overflow-y-scroll leading-5 h-[5.6rem]"></div>
+                        <button id="modal-ocr-copy" class="group absolute top-2 right-2 w-6 h-6 rounded bg-gray-700 hover:bg-gray-600 text-gray-400 hover:text-white text-xs flex items-center justify-center transition-colors">&#x2398;<span class="hidden group-hover:block absolute right-8 top-0 whitespace-nowrap bg-gray-900 text-gray-300 text-[10px] px-2 py-1 rounded shadow-lg border border-gray-700">クリップボードにコピー</span></button>
+                    </div>
+                    <!-- OCR ソース別 diff 表示 (Phase 3) -->
+                    <div id="modal-ocr-sources" class="mt-2 space-y-1 text-xs"></div>
+                    <!-- 手動編集 UI (Phase 1) -->
+                    <div id="modal-edit-area" class="hidden mt-3 bg-gray-800/50 rounded-lg p-3 border border-gray-700">
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="text-xs font-bold text-amber-400">手動編集</label>
+                            <div class="flex gap-2">
+                                <button id="modal-edit-cancel" class="px-2 py-0.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded">キャンセル</button>
+                                <button id="modal-edit-save" class="px-3 py-0.5 text-xs bg-emerald-700 hover:bg-emerald-600 text-white rounded">保存</button>
+                            </div>
                         </div>
+                        <textarea id="modal-edit-text" class="w-full bg-gray-900 text-gray-200 text-sm rounded p-2 border border-gray-700 focus:border-brand outline-none" rows="3"></textarea>
                     </div>
-                    <textarea id="modal-edit-text" class="w-full bg-gray-900 text-gray-200 text-sm rounded p-2 border border-gray-700 focus:border-brand outline-none" rows="3"></textarea>
-                </div>
-                <div class="mt-2 flex items-center gap-2">
-                    <button id="modal-edit-btn" class="px-2 py-0.5 text-xs bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 rounded transition-colors">✎ 編集</button>
-                </div>
-                <div class="mt-3 flex gap-4 text-xs text-gray-600">
-                    <span id="modal-scene"></span>
-                    <span id="modal-fp" class="font-mono"></span>
-                    <span id="modal-time"></span>
-                </div>
-                <!-- クラスタ兄弟 (Final タブのみ) -->
-                <div id="modal-cluster" class="hidden mt-4">
-                    <div class="flex items-center justify-between mb-2">
-                        <h4 class="text-xs font-bold text-gray-400">同クラスタの画像</h4>
-                        <button id="cluster-promote-btn" class="px-3 py-1 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed hidden" disabled>変更</button>
+                    <div class="mt-2 flex items-center gap-2">
+                        <button id="modal-edit-btn" class="px-2 py-0.5 text-xs bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 rounded transition-colors">✎ 編集</button>
                     </div>
-                    <div id="modal-cluster-grid" class="grid grid-cols-4 sm:grid-cols-6 gap-2 min-h-[5rem]"></div>
+                    <div class="mt-3 flex gap-4 text-xs text-gray-600">
+                        <span id="modal-scene"></span>
+                        <span id="modal-fp" class="font-mono"></span>
+                        <span id="modal-time"></span>
+                    </div>
                 </div>
+            </div>
+            <!-- クラスタ兄弟 (Final タブのみ) — 右サイドパネル -->
+            <div id="modal-cluster" class="hidden w-48 flex-shrink-0 bg-gray-900 rounded-xl border border-gray-700 overflow-hidden">
+                <div class="flex items-center justify-between p-3 border-b border-gray-800">
+                    <h4 class="text-xs font-bold text-gray-400">同クラスタ</h4>
+                    <button id="cluster-promote-btn" class="px-2 py-0.5 bg-green-700 hover:bg-green-600 text-white text-[10px] font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed hidden" disabled>変更</button>
+                </div>
+                <div id="modal-cluster-grid" class="flex flex-col gap-2 p-2 overflow-y-auto max-h-[70vh]"></div>
             </div>
         </div>
         <button id="modal-next" class="flex-shrink-0 w-10 h-10 rounded-full bg-gray-700/80 hover:bg-gray-600 text-white text-xl flex items-center justify-center transition-colors" title="次へ (→)">&#8250;</button>
