@@ -653,20 +653,18 @@
             return;
         }
         _debugSessionSelect.classList.remove('hidden');
-        _debugSessionSelect.innerHTML = '<option value="">セッション選択</option>'
-            + _debugSessionList.map(sid =>
-                `<option value="${escapeHtml(sid)}"${sid === _debugFilterSession ? ' selected' : ''}>${escapeHtml(sid.replace('ap_', ''))}</option>`
-            ).join('');
+        // デフォルト: 最新セッション（リストの末尾）
+        if (!_debugFilterSession && _debugSessionList.length > 0) {
+            _debugSessionIdx = _debugSessionList.length - 1;
+            _debugFilterSession = _debugSessionList[_debugSessionIdx];
+        }
+        _debugSessionSelect.innerHTML = _debugSessionList.map(sid =>
+            `<option value="${escapeHtml(sid)}"${sid === _debugFilterSession ? ' selected' : ''}>${escapeHtml(sid.replace('ap_', ''))}</option>`
+        ).join('');
     }
     _debugSessionSelect.addEventListener('change', function() {
-        const val = this.value;
-        if (val) {
-            _debugFilterSession = val;
-            _debugSessionIdx = _debugSessionList.indexOf(val);
-        } else {
-            _debugFilterSession = null;
-            _debugSessionIdx = -1;
-        }
+        _debugFilterSession = this.value;
+        _debugSessionIdx = _debugSessionList.indexOf(this.value);
         _debugAnchorIdx = -1;
         renderAll();
     });
