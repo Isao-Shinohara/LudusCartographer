@@ -1259,7 +1259,7 @@
 
             // 新規追加ノード (SafeInsert 判定済み)
             const insertableNodes = (data.new_nodes || []).filter(n => n.insertable);
-            html += `<h4 class="text-sm font-bold text-lime-400 mt-4">新規追加ノード (${insertableNodes.length})</h4>`;
+            html += `<h4 class="text-sm font-bold text-lime-400 mt-4">新規追加ノード (${insertableNodes.length}/${data.session_screens})</h4>`;
             if (insertableNodes.length > 0) {
                 html += `<div class="${GRID_CLS}">`;
                 for (const n of insertableNodes) {
@@ -1297,7 +1297,7 @@
                 }).join('');
                 html += `<div class="flex items-center justify-between mt-4">
                     <div class="flex items-center gap-3">
-                        <h4 class="text-sm font-bold text-cyan-400">アンカー一覧 (採用${activeCount}${discardedCount > 0 ? ', 不採用' + discardedCount : ''})</h4>
+                        <h4 class="text-sm font-bold text-cyan-400">アンカー一覧 (採用${activeCount}/${data.session_screens}${discardedCount > 0 ? ', 不採用' + discardedCount : ''})</h4>
                     </div>
                     <div class="flex gap-1.5 text-xs">${phaseBtns}</div>
                 </div>`;
