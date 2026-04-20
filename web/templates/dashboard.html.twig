@@ -1345,7 +1345,6 @@
                 document.querySelectorAll('[data-phase-btn]').forEach(b => {
                     const hidden = _hiddenPhases.has(b.dataset.phaseBtn);
                     b.style.opacity = hidden ? '0.3' : '';
-                    b.style.textDecoration = hidden ? 'line-through' : '';
                 });
             }
             document.querySelectorAll('[data-phase-btn]').forEach(btn => {
