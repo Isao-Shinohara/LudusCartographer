@@ -613,6 +613,7 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 - **並列化**: ThreadPoolExecutor 5並列で 1ペアずつ送信（asyncio はサブプロセスでデッドロック）
 - **レスポンス**: `{"is_same": bool, "prefer": "A"|"B"|""}`（A=セッション, B=マスター）
 - **キャッシュ**: `lc_anchor_judgments` テーブルで `(session_fp, master_fp)` + `model` カラムで永続化。P4(gemini-text)/P5(flash-lite)/P6(flash) は model で区別
+- **エラー時のキャッシュ禁止（厳格）**: Gemini API 呼び出しが失敗した場合、その結果を `is_same=False` としてキャッシュしてはならない。エラー結果には `error: True` フラグを付与し、キャッシュをスキップする。エラーをキャッシュすると誤った棄却が永続化され、再実行しても修復できない
 - **判定ルール**: 迷ったら true（false の誤りは取り返しがつかないが、true は人間が後から修正できる）
 - **別画面判定**: キャラ編成（下部アイコン列）が異なるバトル画面、見切れ/不完全キャプチャ
 - **PHP→Python サブプロセス**: `-B` フラグ + dotenv 読み込み必須（pyc キャッシュ問題対策）

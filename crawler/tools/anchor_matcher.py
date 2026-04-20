@@ -585,10 +585,12 @@ class AnchorMatcher:
             len(candidates), len(cached_results), len(uncached),
         )
 
-        # Gemini テキスト判定
+        # Gemini テキスト判定 — エラー結果はキャッシュしない (§17 厳格ルール)
         if uncached:
             results = self._gemini_text_judge(uncached)
             for (s, m, sim), result in zip(uncached, results):
+                if result.get("error"):
+                    continue  # エラーはキャッシュせずスキップ
                 is_same = result["is_same"]
                 try:
                     conn.execute(
@@ -623,23 +625,24 @@ class AnchorMatcher:
         """Gemini にテキストペアの同一画面判定を問い合わせる (画像なし、安価)。
 
         candidates: [(session_node, master_node, similarity)]
-        Returns: [{"is_same": bool}, ...]
+        Returns: [{"is_same": bool, "error": bool}, ...]
+            error=True の結果はキャッシュしてはならない。
         """
         import json
         import re
 
-        _default = {"is_same": False}
+        _error = {"is_same": False, "error": True}
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
             logger.warning("[AnchorMatcher] GEMINI_API_KEY 未設定: Phase 4 スキップ")
-            return [_default.copy() for _ in candidates]
+            return [_error.copy() for _ in candidates]
 
         try:
             from google import genai
             client = genai.Client(api_key=api_key)
         except Exception as e:
             logger.warning("[AnchorMatcher] Gemini 初期化失敗: %s", e)
-            return [_default.copy() for _ in candidates]
+            return [_error.copy() for _ in candidates]
 
         model_name = "gemini-2.5-flash-lite"
         CONCURRENCY = 5
@@ -658,7 +661,7 @@ class AnchorMatcher:
             "- バトル画面で敵や味方の構成が異なれば別画面\n\n"
             "重要: 迷ったら true (同じ画面) と判定してください。\n\n"
             "JSON のみ返してください。\n"
-            '{"is_same": true}\n\n'
+            '{{"is_same": true}}\n\n'
             "テキストA (セッション):\n{text_a}\n\n"
             "テキストB (マスター):\n{text_b}"
         )
@@ -692,14 +695,14 @@ class AnchorMatcher:
                 except (json.JSONDecodeError, AttributeError):
                     is_same = '"is_same": true' in raw.lower()
 
-                results[idx] = {"is_same": is_same}
+                results[idx] = {"is_same": is_same, "error": False}
                 logger.info(
                     "[AnchorMatcher] Gemini テキスト判定: s=%s m=%s → same=%s",
                     s.fp[:12], m.fp[:12], is_same,
                 )
             except Exception as e:
                 logger.warning("[AnchorMatcher] Gemini テキスト判定失敗: s=%s: %s", s.fp[:12], e)
-                results[idx] = _default.copy()
+                results[idx] = _error.copy()
 
         with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
             futures = [
@@ -709,10 +712,12 @@ class AnchorMatcher:
             for f in as_completed(futures):
                 f.result()
 
-        logger.info("[AnchorMatcher] Gemini テキスト判定完了: %d/%d 件",
-                    sum(1 for r in results if r and r.get("is_same")), len(candidates))
+        ok = sum(1 for r in results if r and not r.get("error"))
+        err = sum(1 for r in results if r and r.get("error"))
+        logger.info("[AnchorMatcher] Gemini テキスト判定完了: %d/%d 件 (エラー%d件)",
+                    sum(1 for r in results if r and r.get("is_same")), ok, err)
 
-        return [r or _default.copy() for r in results]
+        return [r or _error.copy() for r in results]
 
     # ─── Phase 5: phash近接 + 画像 Gemini Flash-Lite 判定 ────
 
@@ -855,6 +860,8 @@ class AnchorMatcher:
         if all_uncached:
             gemini_results = self._gemini_batch_judge(all_uncached, model=model_name)
             for (s, m, sim, _, _), result in zip(all_uncached, gemini_results):
+                if result.get("error"):
+                    continue  # エラーはキャッシュせずスキップ (§17 厳格ルール)
                 is_same = result["is_same"]
                 prefer = result.get("prefer", "")
                 try:
@@ -906,18 +913,19 @@ class AnchorMatcher:
 
         pairs: [(session_node, master_node, similarity, session_img_path, master_img_path)]
         model: 使用する Gemini モデル名
-        Returns: [{"is_same": bool, "prefer": "A"|"B"|""}, ...]
+        Returns: [{"is_same": bool, "prefer": str, "error": bool}, ...]
+            error=True の結果はキャッシュしてはならない。
         """
         import json
         import re
         import time
         from pathlib import Path
 
-        _default = {"is_same": False, "prefer": ""}
+        _error = {"is_same": False, "prefer": "", "error": True}
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
             logger.warning("[AnchorMatcher] GEMINI_API_KEY 未設定: スキップ")
-            return [_default.copy() for _ in pairs]
+            return [_error.copy() for _ in pairs]
 
         try:
             from google import genai
@@ -925,7 +933,7 @@ class AnchorMatcher:
             client = genai.Client(api_key=api_key)
         except Exception as e:
             logger.warning("[AnchorMatcher] Gemini 初期化失敗: %s", e)
-            return [_default.copy() for _ in pairs]
+            return [_error.copy() for _ in pairs]
 
         CONCURRENCY = 5  # 同時並列リクエスト数
         results: list[dict] = []
@@ -959,13 +967,13 @@ class AnchorMatcher:
         for idx, (s, m, sim, s_img, m_img) in enumerate(pairs):
             if not s_img or not m_img or not Path(s_img).exists() or not Path(m_img).exists():
                 logger.warning("[AnchorMatcher] 画像なし: s=%s m=%s", s.fp[:12], m.fp[:12])
-                results.append(_default.copy())
+                results.append(_error.copy())
             else:
                 valid_pairs.append((idx, s, m, sim, s_img, m_img))
                 results.append(None)  # placeholder
 
         if not valid_pairs:
-            return [r or _default.copy() for r in results]
+            return [r or _error.copy() for r in results]
 
         # スレッド並列リクエスト (1ペア=1リクエスト、同時N件)
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1013,14 +1021,14 @@ class AnchorMatcher:
                     is_same = raw.lower().startswith("true") or '"is_same": true' in raw.lower()
                     prefer = ""
 
-                results[orig_idx] = {"is_same": is_same, "prefer": prefer}
+                results[orig_idx] = {"is_same": is_same, "prefer": prefer, "error": False}
                 logger.info(
                     "[AnchorMatcher] Gemini [%s]: s=%s m=%s → same=%s prefer=%s",
                     model, s.fp[:12], m.fp[:12], is_same, prefer,
                 )
             except Exception as e:
                 logger.warning("[AnchorMatcher] Gemini [%s] 判定失敗: s=%s: %s", model, s.fp[:12], e)
-                results[orig_idx] = _default.copy()
+                results[orig_idx] = _error.copy()
 
         with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
             futures = [
@@ -1170,6 +1178,8 @@ class AnchorMatcher:
         if all_uncached:
             gemini_results = self._gemini_batch_judge(all_uncached, model=model_name)
             for (s, m, sim, _, _), result in zip(all_uncached, gemini_results):
+                if result.get("error"):
+                    continue  # エラーはキャッシュせずスキップ (§17 厳格ルール)
                 is_same = result["is_same"]
                 prefer = result.get("prefer", "")
                 try:
