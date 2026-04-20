@@ -168,8 +168,9 @@ class TestVerifyConsistency:
             AnchorMatch("b", "M_B", 5, "p1", 1.0, 1),
             AnchorMatch("c", "M_C", 10, "p1", 1.0, 1),
         ]
-        result = m._verify_consistency(anchors)
-        assert len(result) == 3
+        kept, discarded = m._verify_consistency(anchors)
+        assert len(kept) == 3
+        assert len(discarded) == 0
 
     def test_one_contradiction(self, db):
         m = AnchorMatcher()
@@ -178,13 +179,15 @@ class TestVerifyConsistency:
             AnchorMatch("b", "M_B", 10, "p1", 1.0, 1),
             AnchorMatch("c", "M_C", 5, "p1", 1.0, 1),  # 10 > 5 → contradiction
         ]
-        result = m._verify_consistency(anchors)
-        assert len(result) == 2  # LIS keeps 2
+        kept, discarded = m._verify_consistency(anchors)
+        assert len(kept) == 2  # LIS keeps 2
+        assert len(discarded) == 1
 
     def test_empty(self, db):
         m = AnchorMatcher()
-        result = m._verify_consistency([])
-        assert len(result) == 0
+        kept, discarded = m._verify_consistency([])
+        assert len(kept) == 0
+        assert len(discarded) == 0
 
 
 class TestPhase2AutoText:
@@ -257,7 +260,7 @@ class TestCrossSessionMergerIntegration:
         conn.row_factory = sqlite3.Row
         conn.executescript("""
             CREATE TABLE lc_master_nodes (
-                master_fp TEXT PRIMARY KEY,
+                master_fp TEXT NOT NULL,
                 representative_screen_id INTEGER,
                 title TEXT, scene TEXT, phash TEXT,
                 ocr_text TEXT, ocr_text_manual TEXT, title_manual TEXT,
@@ -268,7 +271,9 @@ class TestCrossSessionMergerIntegration:
                 sort_order INTEGER DEFAULT 0,
                 user_excluded INTEGER DEFAULT 0,
                 manual_group_id INTEGER DEFAULT NULL,
-                is_group_representative INTEGER DEFAULT 1
+                is_group_representative INTEGER DEFAULT 1,
+                version_id INTEGER DEFAULT 1,
+                PRIMARY KEY (master_fp, version_id)
             );
             CREATE TABLE lc_master_edges (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -311,6 +316,12 @@ class TestCrossSessionMergerIntegration:
                 key TEXT PRIMARY KEY, value TEXT,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE lc_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL, is_active INTEGER DEFAULT 0,
+                is_deleted INTEGER DEFAULT 0, created_at TEXT
+            );
+            INSERT INTO lc_versions (name, is_active) VALUES ('default', 1);
         """)
         return conn
 
@@ -336,8 +347,9 @@ class TestCrossSessionMergerIntegration:
             from tools.anchor_matcher import AnchorMatcher
             merger._sort_strategy = SafeInsertStrategy()
             merger._anchor_matcher = AnchorMatcher()
+            merger._version_id = 1
 
-            node_mapping, session_reps, is_seed = merger._compute_matches("s2")
+            node_mapping, session_reps, is_seed, _discarded = merger._compute_matches("s2")
 
         assert is_seed is False
         # AnchorMatcher で Phase 1 マッチが見つかるはず
@@ -359,8 +371,9 @@ class TestCrossSessionMergerIntegration:
             from tools.merge_sort_strategy import SafeInsertStrategy
             merger._sort_strategy = SafeInsertStrategy()
             merger._anchor_matcher = AnchorMatcher()
+            merger._version_id = 1
 
-            node_mapping, session_reps, is_seed = merger._compute_matches("s1")
+            node_mapping, session_reps, is_seed, _discarded = merger._compute_matches("s1")
 
         assert is_seed is True
         assert len(node_mapping) == 0

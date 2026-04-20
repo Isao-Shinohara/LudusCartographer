@@ -138,11 +138,13 @@ class ScreenRecorder:
         storage_dir: Path,
         session_id: str,
         game_title: str = "Unknown Game",
+        version_id: int | None = None,
     ) -> None:
         self._db_path = Path(db_path)
         self._storage_dir = Path(storage_dir) / session_id
         self._session_id = session_id
         self._game_title = game_title
+        self._explicit_version_id = version_id
 
         # ディレクトリ先行作成
         self._storage_dir.mkdir(parents=True, exist_ok=True)
@@ -153,11 +155,27 @@ class ScreenRecorder:
         self._conn.executescript(_SCHEMA)
         self._migrate()
 
-        # active version_id を取得
-        v_row = self._conn.execute(
-            "SELECT id FROM lc_versions WHERE is_active = 1"
-        ).fetchone()
-        self._version_id = v_row[0] if v_row else 1
+        # version_id: 明示指定 > active version > デフォルト 1
+        if self._explicit_version_id is not None:
+            # 指定バージョンが存在しなければ新規作成
+            exists = self._conn.execute(
+                "SELECT id FROM lc_versions WHERE id = ?",
+                (self._explicit_version_id,),
+            ).fetchone()
+            if not exists:
+                self._conn.execute(
+                    "INSERT INTO lc_versions (id, name, is_active, created_at)"
+                    " VALUES (?, ?, 0, datetime('now'))",
+                    (self._explicit_version_id, f"Ver{self._explicit_version_id}"),
+                )
+                self._conn.commit()
+                logger.info("[ScreenRecorder] バージョン %d を新規作成", self._explicit_version_id)
+            self._version_id = self._explicit_version_id
+        else:
+            v_row = self._conn.execute(
+                "SELECT id FROM lc_versions WHERE is_active = 1"
+            ).fetchone()
+            self._version_id = v_row[0] if v_row else 1
 
         # セッション登録 (新規) または継続再開時の status 更新
         self._conn.execute(

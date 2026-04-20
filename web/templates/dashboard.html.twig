@@ -10,7 +10,7 @@
 </div>
 
 <!-- タブ -->
-<div class="flex items-center gap-1 mb-0 border-b border-gray-800">
+<div class="flex items-center gap-1 mb-4 border-b border-gray-800">
     <button id="tab-live" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-brand text-brand-light"
             onclick="switchTab('live')">
         Live
@@ -31,6 +31,10 @@
             onclick="switchTab('cleanup')">
         Cleanup
     </button>
+    <button id="tab-cost" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300"
+            onclick="switchTab('cost')">
+        Cost
+    </button>
     <button id="tab-settings" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300"
             onclick="switchTab('settings')">
         Settings
@@ -42,12 +46,12 @@
         <option value="all">すべて</option>
     </select>
     <button id="sort-toggle" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 hover:border-brand hover:text-brand-light transition-colors outline-none" data-sort="desc">降順</button>
+    <select id="version-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none hidden">
+    </select>
     <select id="session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="">最新セッション</option>
     </select>
     <select id="debug-session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none hidden">
-    </select>
-    <select id="version-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none hidden">
     </select>
     <!-- Final 採用/不採用アクション (右詰) -->
     <div class="ml-auto flex items-center gap-2">
@@ -123,6 +127,32 @@
 <!-- 通知トースト -->
 <div id="toast-container" class="fixed bottom-4 right-4 z-[80] space-y-2 pointer-events-none"></div>
 
+<!-- リネームモーダル -->
+<div id="rename-modal" class="fixed inset-0 bg-black/60 z-[60] hidden items-center justify-center">
+    <div class="bg-gray-800 border border-gray-700 rounded-xl p-6 w-80 shadow-2xl">
+        <h3 class="text-sm font-bold text-gray-200 mb-3">バージョン名の変更</h3>
+        <input id="rename-input" type="text" class="w-full bg-gray-900 text-gray-200 text-sm rounded-lg px-3 py-2 border border-gray-600 focus:border-brand outline-none mb-4" />
+        <input id="rename-vid" type="hidden" />
+        <div class="flex justify-end gap-2">
+            <button id="rename-cancel" class="px-4 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors">キャンセル</button>
+            <button id="rename-submit" class="px-4 py-1.5 text-sm bg-brand hover:bg-blue-600 text-white rounded-lg transition-colors">更新</button>
+        </div>
+    </div>
+</div>
+
+<!-- 削除確認モーダル -->
+<div id="delete-modal" class="fixed inset-0 bg-black/60 z-[60] hidden items-center justify-center">
+    <div class="bg-gray-800 border border-gray-700 rounded-xl p-6 w-96 shadow-2xl">
+        <h3 class="text-sm font-bold text-red-400 mb-3">バージョンの削除</h3>
+        <p id="delete-msg" class="text-sm text-gray-300 mb-4 whitespace-pre-line"></p>
+        <input id="delete-vid" type="hidden" />
+        <div class="flex justify-end gap-2">
+            <button id="delete-cancel" class="px-4 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors">キャンセル</button>
+            <button id="delete-submit" class="px-4 py-1.5 text-sm bg-red-700 hover:bg-red-600 text-white rounded-lg transition-colors">削除</button>
+        </div>
+    </div>
+</div>
+
 <!-- モーダル -->
 <div id="modal" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center p-4">
     <div class="flex items-center gap-3 max-w-5xl w-full">
@@ -166,6 +196,29 @@
                         <span id="modal-scene"></span>
                         <span id="modal-fp" class="font-mono"></span>
                         <span id="modal-time"></span>
+                    </div>
+                </div>
+                <!-- アンカー比較 (右サイド) -->
+                <div id="modal-anchor-compare" class="hidden w-72 flex-shrink-0 border-l border-gray-800 flex flex-col">
+                    <div class="flex items-center justify-between p-3 border-b border-gray-800 flex-shrink-0">
+                        <h4 class="text-xs font-bold text-amber-400">マスターノード</h4>
+                        <div class="flex gap-1">
+                            <button id="anchor-adopt-btn" class="px-2 py-0.5 bg-emerald-900/70 hover:bg-emerald-800 text-emerald-200 text-[10px] font-bold rounded transition-colors">✓ 採用に変更</button>
+                            <button id="anchor-exclude-btn" class="px-2 py-0.5 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-[10px] font-bold rounded transition-colors">✕ 不採用に変更</button>
+                        </div>
+                    </div>
+                    <div id="modal-anchor-content" class="flex flex-col gap-2 p-2 overflow-y-auto flex-1 min-h-0">
+                        <img id="anchor-master-img" src="" class="w-full rounded-lg bg-gray-800" />
+                        <div class="space-y-1">
+                            <div id="anchor-master-ocr" class="bg-gray-800 rounded-lg px-3 py-2 text-xs text-gray-300 whitespace-pre-wrap max-h-24 overflow-y-auto"></div>
+                            <div class="flex gap-2 text-[10px] text-gray-500">
+                                <span id="anchor-phash" class="font-mono"></span>
+                                <span id="anchor-textsim" class="font-mono"></span>
+                            </div>
+                            <div id="anchor-method-badge" class="inline-block px-2 py-0.5 text-[10px] font-medium rounded"></div>
+                            <div id="anchor-discard-reason" class="hidden px-2 py-1 text-[10px] rounded bg-red-900/40 text-red-300 mt-1"></div>
+                            <div id="anchor-master-fp" class="text-[10px] text-gray-600 font-mono"></div>
+                        </div>
                     </div>
                 </div>
                 <!-- 同クラスタ (右サイド) -->
@@ -396,11 +449,11 @@
             const p1 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase1')).length;
             const p2 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase2')).length;
             const p3 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase3')).length;
+            const p4 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase4')).length;
             // セッション情報
             const sessionLabel = fs
                 ? `${fs} (${_debugSessionIdx + 1}/${_debugSessionList.length})`
                 : (_debugSessionList.length > 0 ? `↑↓でセッション切替 (${_debugSessionList.length}件)` : '');
-            const p4 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase4')).length;
             debugStats.textContent = `${sessionLabel}  P1:${p1} P2:${p2} P3:${p3} P4:${p4} 挿入:${inserted.length}`;
             debugStats.classList.remove('hidden');
             // フッターにセッション情報表示
@@ -431,6 +484,7 @@
         const game = getGameParam();
         const params = new URLSearchParams({ action: 'get_sessions' });
         if (game) params.set('game', game);
+        if (_currentVersionId) params.set('version', _currentVersionId);
         try {
             const res = await fetch(API_BASE + '?' + params);
             const data = await res.json();
@@ -454,6 +508,7 @@
         const params = new URLSearchParams({ action: 'get_recent_screens', limit: '10000' });
         if (game) params.set('game', game);
         if (sid) params.set('session_id', sid);
+        if (_currentVersionId) params.set('version', _currentVersionId);
         try {
             const res = await fetch(API_BASE + '?' + params);
             const data = await res.json();
@@ -474,6 +529,7 @@
         const game = getGameParam();
         const sessParams = new URLSearchParams({ action: 'get_sessions' });
         if (game) sessParams.set('game', game);
+        if (_currentVersionId) sessParams.set('version', _currentVersionId);
         try {
             const sessRes = await fetch(API_BASE + '?' + sessParams);
             const sessData = await sessRes.json();
@@ -502,6 +558,7 @@
             const fullParams = new URLSearchParams({ action: 'get_recent_screens', limit: '10000' });
             if (game) fullParams.set('game', game);
             if (sid) fullParams.set('session_id', sid);
+            if (_currentVersionId) fullParams.set('version', _currentVersionId);
             try {
                 const _modalScreenId = modalIdx >= 0 && filteredScreens[modalIdx] ? filteredScreens[modalIdx].id : null;
                 const res = await fetch(API_BASE + '?' + fullParams);
@@ -534,6 +591,7 @@
         });
         if (game) params.set('game', game);
         if (sid) params.set('session_id', sid);
+        if (_currentVersionId) params.set('version', _currentVersionId);
         try {
             const res = await fetch(API_BASE + '?' + params);
             const data = await res.json();
@@ -760,6 +818,11 @@
     }
 
 
+    // --- バージョンセレクター (switchTab より前に宣言) ---
+    let _currentVersionId = null;
+    let _currentVersionName = '';
+    const versionSelect = document.getElementById('version-select');
+
     // --- タブ切り替え ---
     window.switchTab = function(tab, restoreFromUrl) {
         currentTab = tab;
@@ -810,10 +873,13 @@
             sortToggle.classList.remove('hidden');
             grid.classList.remove('hidden');
             mergeContainer.classList.add('hidden');
-            versionSelect.classList.add('hidden');
+            versionSelect.classList.remove('hidden');
             document.getElementById('settings-container').classList.add('hidden');
             grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>';
             syncUrlParams();
+            fetch(API_BASE + '?action=get_versions').then(r => r.json()).then(d => {
+                updateVersionSelect(d.versions || []);
+            }).catch(() => {});
             fetchLiveInitial();
             pollTimer = setInterval(pollLive, POLL_INTERVAL);
         } else if (tab === 'final') {
@@ -846,11 +912,14 @@
             filterSelect.classList.add('hidden');
             sessionSelect.classList.add('hidden');
             sortToggle.classList.add('hidden');
-            versionSelect.classList.add('hidden');
+            versionSelect.classList.remove('hidden');
             grid.classList.add('hidden');
             mergeContainer.classList.remove('hidden');
             document.getElementById('settings-container').classList.add('hidden');
             syncUrlParams();
+            fetch(API_BASE + '?action=get_versions').then(r => r.json()).then(d => {
+                updateVersionSelect(d.versions || []);
+            }).catch(() => {});
             fetchMergeTab();
         } else if (tab === 'rules') {
             finalActions.classList.add('hidden');
@@ -864,9 +933,10 @@
             grid.classList.add('hidden');
             mergeContainer.classList.remove('hidden');
             document.getElementById('settings-container').classList.add('hidden');
-            mergeContainer.innerHTML = '<div><h3 class="text-lg font-bold text-gray-300 mb-3">OCR 修正ルール</h3><div id="correction-rules-area" class="text-sm text-gray-500">確認中...</div></div>';
+            mergeContainer.innerHTML = '<div class="space-y-8"><div><h3 class="text-lg font-bold text-gray-300 mb-3">OCR 修正ルール</h3><div id="correction-rules-area" class="text-sm text-gray-500">確認中...</div></div><div><h3 class="text-lg font-bold text-gray-300 mb-3">OCR ノイズ語辞書</h3><div id="noise-words-area" class="text-sm text-gray-500">読み込み中...</div></div></div>';
             syncUrlParams();
             checkCorrectionRules();
+            fetchNoiseWords();
         } else if (tab === 'cleanup') {
             finalActions.classList.add('hidden');
             statusDot.classList.add('hidden');
@@ -881,6 +951,21 @@
             mergeContainer.innerHTML = '<div><h3 class="text-lg font-bold text-gray-300 mb-3">データ整理</h3><div id="merge-cleanup-area" class="text-sm text-gray-500">確認中...</div></div>';
             syncUrlParams();
             checkCleanableInMerge();
+        } else if (tab === 'cost') {
+            finalActions.classList.add('hidden');
+            statusDot.classList.add('hidden');
+            statusText.textContent = '';
+            stats.textContent = '';
+            filterSelect.classList.add('hidden');
+            sessionSelect.classList.add('hidden');
+            sortToggle.classList.add('hidden');
+            versionSelect.classList.add('hidden');
+            grid.classList.add('hidden');
+            mergeContainer.classList.remove('hidden');
+            document.getElementById('settings-container').classList.add('hidden');
+            mergeContainer.innerHTML = '<div class="text-center text-gray-600 py-12">読み込み中...</div>';
+            syncUrlParams();
+            fetchCostTab();
         } else if (tab === 'settings') {
             finalActions.classList.add('hidden');
             statusDot.classList.add('hidden');
@@ -899,11 +984,14 @@
     };
 
     // --- Merge タブ ---
+    window.fetchMergeTab = fetchMergeTab;
     async function fetchMergeTab() {
         const mc = document.getElementById('merge-container');
         mc.innerHTML = '<div class="text-center text-gray-600 py-12">読み込み中...</div>';
         try {
-            const res = await fetch(API_BASE + '?action=get_pending_merges');
+            const mergeParams = new URLSearchParams({ action: 'get_pending_merges' });
+            if (_currentVersionId) mergeParams.set('version', _currentVersionId);
+            const res = await fetch(API_BASE + '?' + mergeParams);
             const data = await res.json();
             const pending = data.pending || [];
             const merged = data.merged || [];
@@ -937,7 +1025,7 @@
                 for (const s of merged) {
                     html += `<div class="bg-gray-900/50 border border-gray-800/50 rounded-lg p-3 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-gray-500">${escapeHtml(s.session_id)}</span>
+                            <span class="text-sm font-mono text-gray-500">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</span>
                             <span class="text-xs text-gray-400 ml-3">新規 ${s.new_nodes || 0} / アンカー ${s.anchor_nodes || 0}</span>
                             ${completionBadge(s.completion_type)}
                         </div>
@@ -962,12 +1050,12 @@
                 for (const s of pending) {
                     html += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-gray-300">${escapeHtml(s.session_id)}</span>
+                            <span class="text-sm font-mono text-gray-300">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</span>
                             <span class="text-xs text-gray-400 ml-3">${s.node_count} ノード / ${s.edge_count} エッジ</span>
                             ${completionBadge(s.completion_type)}
                         </div>
                         <div class="flex items-center gap-3">
-                            <span class="text-[11px] text-gray-500">開始 ${fmtDate(s.started_at)}　構築完了 ${fmtDate(s.built_at)}</span>
+                            <span class="text-[11px] text-gray-500">開始 ${fmtDate(s.started_at)}${s.built_at ? '　構築完了 ' + fmtDate(s.built_at) : ''}</span>
                             <button class="merge-preview-btn px-3 py-1.5 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" title="マージプレビュー → 実行">マージ</button>
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
@@ -993,7 +1081,7 @@
                         ? '<span class="text-xs text-amber-500 ml-2">グラフ未構築</span>' : '';
                     html += `<div class="bg-gray-900/50 border border-slate-700/40 rounded-lg p-3 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-slate-300">${escapeHtml(s.session_id)}</span>
+                            <span class="text-sm font-mono text-slate-300">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</span>
                             ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
                             ${s.pending_gemini > 0 ? `<span class="text-xs text-amber-500 ml-2">OCR ${s.pending_gemini} 件</span>` : ''}
@@ -1021,7 +1109,7 @@
                 for (const s of running) {
                     html += `<div class="bg-gray-900/50 border border-violet-900/30 rounded-lg p-3 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-violet-300">${escapeHtml(s.session_id)}</span>
+                            <span class="text-sm font-mono text-violet-300">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</span>
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
                             <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.started_at || '')}</span>
                         </div>
@@ -1043,7 +1131,7 @@
                 for (const s of noTransition) {
                     html += `<div class="bg-gray-900/50 border border-gray-800/50 rounded-lg p-3 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-gray-400">${escapeHtml(s.session_id)}</span>
+                            <span class="text-sm font-mono text-gray-400">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</span>
                             ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件・遷移 0 件</span>
                             <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.started_at || '')}</span>
@@ -1100,21 +1188,6 @@
         }
     }
 
-    function renderProgress(p) {
-        if (!p) return '';
-        const pct = p.total > 0 ? Math.round(p.current / p.total * 100) : 0;
-        const eta = p.eta > 0 ? `残り約 ${Math.ceil(p.eta)}秒` : '';
-        return `<div class="mt-3 max-w-md mx-auto">
-            <div class="flex justify-between text-xs text-gray-500 mb-1">
-                <span>${escapeHtml(p.stage)} (${p.current}/${p.total})</span>
-                <span>${eta}</span>
-            </div>
-            <div class="w-full bg-gray-800 rounded-full h-2">
-                <div class="bg-brand h-2 rounded-full transition-all" style="width:${pct}%"></div>
-            </div>
-            <div class="text-xs text-gray-600 mt-1 text-center">経過 ${Math.round(p.elapsed)}秒</div>
-        </div>`;
-    }
 
     async function pollMergeResult(mc, label) {
         return new Promise((resolve) => {
@@ -1122,16 +1195,12 @@
                 try {
                     const r = await fetch(API_BASE + '?action=merge_progress');
                     const d = await r.json();
-                    if (d.progress) {
-                        mc.innerHTML = `<div class="text-center text-gray-300 py-12">
-                            <span class="animate-pulse">${label}...</span>${renderProgress(d.progress)}</div>`;
-                    }
                     if (d.done) {
                         clearInterval(timer);
                         resolve(d.result);
                     }
                 } catch (e) {}
-            }, 1000);
+            }, 2000);
         });
     }
 
@@ -1148,13 +1217,32 @@
             const data = await pollMergeResult(mc, 'プレビュー計算中');
             if (toastHandle) toastHandle.remove();
             if (!data || data.error) { mc.innerHTML = `<div class="text-red-500 py-12">${escapeHtml(data?.error || 'プレビュー失敗')}</div>`; return; }
+            // フェーズ定義 (バックエンドから取得、フォールバック付き)
+            const phaseDefs = data.phase_defs || {};
+            function phaseColor(method) {
+                const d = phaseDefs[method];
+                return d ? `${d.color_bg} ${d.color_text}` : 'bg-gray-700 text-gray-400';
+            }
+            function phaseLabel(method) {
+                const d = phaseDefs[method];
+                return d ? d.label : method;
+            }
+            function phaseDesc(method) {
+                const d = phaseDefs[method];
+                return d ? `${d.label}: ${d.description}` : method;
+            }
             let html = '<div class="space-y-6">';
             html += `<div class="flex items-center justify-between">
                 <div>
                     <h3 class="text-lg font-bold text-brand-light">マージプレビュー: ${escapeHtml(sessionId)}</h3>
                     <p class="text-sm text-gray-400 mt-1">新規追加ノード: ${(data.new_nodes || []).filter(n => n.insertable).length} / アンカー: ${data.matches.length} / セッション画面: ${data.session_screens} / マスター現状: ${data.master_nodes_before} ノード</p>
                 </div>
-                <div class="flex gap-2">
+                <div class="flex items-center gap-2">
+                    <span id="preview-select-hint" class="text-xs text-gray-500">Shift+クリックで選択</span>
+                    <span id="preview-select-count" class="text-xs text-amber-300"></span>
+                    <button id="preview-restore-btn" class="px-3 py-1 bg-emerald-900/70 hover:bg-emerald-800/80 text-emerald-200 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✓ 採用</button>
+                    <button id="preview-exclude-btn" class="px-3 py-1 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✕ 不採用</button>
+                    <button id="preview-recalc-btn" class="hidden px-3 py-1.5 bg-violet-900/60 hover:bg-violet-800/70 text-violet-200 text-xs rounded transition-colors">再計算</button>
                     <button onclick="fetchMergeTab()" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded">戻る</button>
                     <button id="execute-merge-btn" class="px-4 py-1.5 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-sm font-bold rounded">マージ実行</button>
                 </div>
@@ -1186,27 +1274,44 @@
                 html += '<p class="text-gray-600 text-sm">新規追加ノードはありません</p>';
             }
 
-            // アンカー一覧
+            // アンカー一覧 (時系列順、採用+棄却混在)
+            const activeCount = data.matches.filter(m => !m.discarded).length;
+            const discardedCount = data.matches.filter(m => m.discarded).length;
             if (data.matches.length > 0) {
-                html += `<div class="flex items-center justify-between mt-4"><h4 class="text-sm font-bold text-cyan-400">アンカー一覧 (${data.matches.length})</h4><div class="flex gap-3 text-xs"><span class="px-2 py-0.5 bg-blue-900/50 rounded text-blue-300">P1: ${sm.phase1_tap_text || 0} (テキスト+tap)</span><span class="px-2 py-0.5 bg-amber-900/50 rounded text-amber-300">P2: ${sm.phase2_gemini || 0} (Gemini)</span><span class="px-2 py-0.5 bg-purple-900/50 rounded text-purple-300">P3: ${sm.phase3_auto_text || 0} (テキスト+auto)</span><span class="px-2 py-0.5 bg-yellow-900/50 rounded text-yellow-300">P4: ${sm.phase4_tap_phash || 0} (phash)</span></div></div>`;
-                html += `<div class="${GRID_CLS}">`;
+                html += `<div class="flex items-center justify-between mt-4">
+                    <div class="flex items-center gap-3">
+                        <h4 class="text-sm font-bold text-cyan-400">アンカー一覧 (採用${activeCount}${discardedCount > 0 ? ', 不採用' + discardedCount : ''})</h4>
+                        <select id="anchor-filter-select" class="text-xs bg-gray-800 border border-gray-700 text-gray-300 rounded px-2 py-0.5">
+                            <option value="all">すべて</option>
+                            <option value="adopted">採用</option>
+                        </select>
+                    </div>
+                    <div class="flex gap-3 text-xs">${Object.entries(phaseDefs).sort((a,b) => a[1].order - b[1].order).map(([k,d]) => `<span class="px-2 py-0.5 ${d.color_bg} rounded ${d.color_text}">${d.label}: ${sm[k] || 0}</span>`).join('')}</div>
+                </div>`;
+                html += `<div id="anchor-grid" class="${GRID_CLS}">`;
                 for (const m of data.matches) {
-                    const color = m.method === 'phase2_gemini' ? 'bg-amber-900/50 text-amber-300'
-                        : m.method === 'phase1_tap_text' ? 'bg-blue-900/50 text-blue-300'
-                        : m.method === 'phase3_auto_text' ? 'bg-purple-900/50 text-purple-300'
-                        : 'bg-yellow-900/50 text-yellow-300';
-                    const label = m.method.replace('phase2_gemini','P2').replace('phase1_tap_text','P1').replace('phase3_auto_text','P3').replace('phase4_tap_phash','P4');
+                    const color = phaseColor(m.method);
+                    let badgeLabel;
+                    if (m.discarded) {
+                        // 元フェーズ + P4取消線
+                        badgeLabel = `${phaseLabel(m.method)} <span class="${phaseColor('phase4_gemini')} px-1 py-0.5 rounded"><s>${phaseLabel('phase4_gemini')}</s></span>`;
+                    } else {
+                        badgeLabel = phaseLabel(m.method);
+                    }
                     const item = { thumb: m.session_thumb, title: m.session_title, scene: m.session_scene,
                                    discovered_at: m.session_discovered_at, ocr_text: m.session_ocr_text,
                                    screenshot: m.session_screenshot, fp: m.session_fp,
-                                   method: m.method, master_fp: m.master_fp };
+                                   method: m.method, master_fp: m.master_fp,
+                                   discarded: !!m.discarded, discard_reason: m.discard_reason || '' };
                     const scoreInfo = (m.phash_dist >= 0 ? `phash:${m.phash_dist}` : '') + (m.text_sim >= 0 ? ` sim:${m.text_sim}` : '');
+                    const extraCls = m.discarded ? ' opacity-40' : '';
                     html += buildCard({
                         thumb: item.thumb ? imgUrl(item.thumb) : '', title: item.title,
                         ocrPreview: scoreInfo ? scoreInfo + '  ' + (item.ocr_text || '').substring(0, 60) : (item.ocr_text || '').substring(0, 80),
                         scene: item.scene, time: item.discovered_at || '',
-                        badge: { color, label },
-                        dataAttr: `data-preview-idx="${previewItems.length}"` + (m.method === 'phase2_gemini' ? ` data-gemini-fp="${escapeHtml(m.session_fp)}"` : ''),
+                        badge: { color, label: badgeLabel },
+                        dataAttr: `data-preview-idx="${previewItems.length}" data-discarded="${m.discarded ? '1' : '0'}"`,
+                        extraClass: extraCls,
                     });
                     previewItems.push(item);
                 }
@@ -1214,32 +1319,110 @@
             }
             html += '</div>';
             mc.innerHTML = html;
-            // Gemini 判定アンカーの除外管理
-            const excludedGeminiFps = new Set();
-            mc.querySelectorAll('[data-gemini-fp]').forEach(card => {
-                const fp = card.dataset.geminiFp;
-                const btn = document.createElement('button');
-                btn.className = 'absolute top-1 right-1 px-1.5 py-0.5 text-[9px] rounded bg-red-900/70 text-red-300 hover:bg-red-800 transition-colors z-10';
-                btn.textContent = '除外';
-                btn.title = 'このアンカーをマージから除外';
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    if (excludedGeminiFps.has(fp)) {
-                        excludedGeminiFps.delete(fp);
-                        card.classList.remove('opacity-30');
-                        btn.textContent = '除外';
-                        btn.classList.remove('bg-green-900/70', 'text-green-300');
-                        btn.classList.add('bg-red-900/70', 'text-red-300');
-                    } else {
-                        excludedGeminiFps.add(fp);
-                        card.classList.add('opacity-30');
-                        btn.textContent = '復帰';
-                        btn.classList.remove('bg-red-900/70', 'text-red-300');
-                        btn.classList.add('bg-green-900/70', 'text-green-300');
+            // アンカーフィルター
+            const anchorFilterEl = document.getElementById('anchor-filter-select');
+            if (anchorFilterEl) {
+                anchorFilterEl.addEventListener('change', () => {
+                    const showAll = anchorFilterEl.value === 'all';
+                    mc.querySelectorAll('[data-discarded]').forEach(card => {
+                        if (card.dataset.discarded === '1') {
+                            card.style.display = showAll ? '' : 'none';
+                        }
+                    });
+                });
+                // 初期状態: すべて表示
+            }
+            // アンカー除外・復帰管理 (Shift+クリック選択方式)
+            const excludedGeminiFps = new Set();    // 手動除外
+            const restoredDiscardedFps = new Set(); // 棄却ノードの手動復帰
+            const selectedPreviewFps = new Set();
+            function updatePreviewActionBar() {
+                const cnt = selectedPreviewFps.size;
+                document.getElementById('preview-select-count').textContent = cnt > 0 ? `${cnt} 件選択中` : '';
+                document.getElementById('preview-exclude-btn').disabled = cnt === 0;
+                document.getElementById('preview-restore-btn').disabled = cnt === 0;
+            }
+            function renderPreviewSelection() {
+                mc.querySelectorAll('[data-preview-idx]').forEach(card => {
+                    const idx = parseInt(card.dataset.previewIdx, 10);
+                    const item = previewItems[idx];
+                    if (!item) return;
+                    const isSelected = selectedPreviewFps.has(item.fp);
+                    const isExcluded = excludedGeminiFps.has(item.fp);
+                    card.classList.toggle('ring-2', isSelected);
+                    card.classList.toggle('ring-cyan-400', isSelected);
+                    card.classList.toggle('opacity-30', isExcluded);
+                    // バッジの取消線
+                    const badgeEl = card.querySelector('.font-bold');
+                    if (badgeEl) {
+                        badgeEl.innerHTML = isExcluded ? `<s>${badgeEl.textContent}</s>` : badgeEl.textContent;
                     }
                 });
-                card.style.position = 'relative';
-                card.appendChild(btn);
+            }
+            // Shift+クリックでアンカー選択
+            mc.addEventListener('click', (e) => {
+                if (!e.shiftKey) return;
+                const card = e.target.closest('[data-preview-idx]');
+                if (!card) return;
+                e.preventDefault();
+                const idx = parseInt(card.dataset.previewIdx, 10);
+                const item = previewItems[idx];
+                if (!item || !item.master_fp) return; // アンカーのみ対象
+                if (selectedPreviewFps.has(item.fp)) {
+                    selectedPreviewFps.delete(item.fp);
+                } else {
+                    selectedPreviewFps.add(item.fp);
+                }
+                renderPreviewSelection();
+                updatePreviewActionBar();
+            });
+            // 除外ボタン
+            document.getElementById('preview-exclude-btn').addEventListener('click', () => {
+                const fps = [...selectedPreviewFps];
+                const items = fps.map(fp => previewItems.find(i => i.fp === fp)).filter(Boolean);
+                let body = `<p class="text-sm text-gray-300 mb-3">${items.length} 件のアンカーを不採用にします。</p>`;
+                body += '<div class="flex flex-wrap gap-2 max-h-48 overflow-y-auto">';
+                for (const item of items) {
+                    body += `<div class="w-28"><img src="${item.thumb ? imgUrl(item.thumb) : ''}" class="w-full rounded" /><p class="text-[9px] text-gray-500 truncate mt-1">${escapeHtml(item.title || '')}</p></div>`;
+                }
+                body += '</div>';
+                showConfirmDialog(body, () => {
+                    for (const fp of fps) excludedGeminiFps.add(fp);
+                    selectedPreviewFps.clear();
+                    renderPreviewSelection();
+                    updatePreviewActionBar();
+                    document.getElementById('confirm-popup').classList.add('hidden');
+                    document.getElementById('confirm-popup').classList.remove('flex');
+                    if (typeof showRecalcIfNeeded === 'function') showRecalcIfNeeded();
+                }, { okLabel: '不採用', danger: true });
+            });
+            // 復帰ボタン (除外済み or 棄却ノード)
+            document.getElementById('preview-restore-btn').addEventListener('click', () => {
+                const fps = [...selectedPreviewFps].filter(fp => {
+                    const item = previewItems.find(i => i.fp === fp);
+                    return excludedGeminiFps.has(fp) || (item && item.discarded && !restoredDiscardedFps.has(fp));
+                });
+                if (fps.length === 0) { showToast('不採用または棄却済みのアンカーを選択してください', 'error'); return; }
+                const items = fps.map(fp => previewItems.find(i => i.fp === fp)).filter(Boolean);
+                let body = `<p class="text-sm text-gray-300 mb-3">${items.length} 件のアンカーを採用します。</p>`;
+                body += '<div class="flex flex-wrap gap-2 max-h-48 overflow-y-auto">';
+                for (const item of items) {
+                    body += `<div class="w-28"><img src="${item.thumb ? imgUrl(item.thumb) : ''}" class="w-full rounded" /><p class="text-[9px] text-gray-500 truncate mt-1">${escapeHtml(item.title || '')}</p></div>`;
+                }
+                body += '</div>';
+                showConfirmDialog(body, () => {
+                    for (const fp of fps) {
+                        excludedGeminiFps.delete(fp);
+                        const item = previewItems.find(i => i.fp === fp);
+                        if (item && item.discarded) restoredDiscardedFps.add(fp);
+                    }
+                    selectedPreviewFps.clear();
+                    renderPreviewSelection();
+                    updatePreviewActionBar();
+                    document.getElementById('confirm-popup').classList.add('hidden');
+                    document.getElementById('confirm-popup').classList.remove('flex');
+                    if (typeof showRecalcIfNeeded === 'function') showRecalcIfNeeded();
+                }, { okLabel: '採用' });
             });
             // プレビュー用モーダル表示
             _previewModalItems = previewItems;
@@ -1258,6 +1441,80 @@
                 document.getElementById('modal-edit-area').classList.add('hidden');
                 document.getElementById('modal-edit-btn').style.display = 'none';
                 document.getElementById('modal-cluster').classList.add('hidden');
+                // アンカー比較パネル
+                const anchorPanel = document.getElementById('modal-anchor-compare');
+                if (item.master_fp) {
+                    const match = data.matches.find(m => m.session_fp === item.fp && m.master_fp === item.master_fp);
+                    if (match) {
+                        document.getElementById('anchor-master-img').src = match.master_screenshot ? imgUrl(match.master_screenshot) : (match.master_thumb ? imgUrl(match.master_thumb) : '');
+                        document.getElementById('anchor-master-ocr').textContent = match.master_ocr_text || '(テキストなし)';
+                        document.getElementById('anchor-phash').textContent = match.phash_dist >= 0 ? 'phash: ' + match.phash_dist : '';
+                        document.getElementById('anchor-textsim').textContent = match.text_sim >= 0 ? 'sim: ' + match.text_sim : '';
+                        document.getElementById('anchor-master-fp').textContent = 'master: ' + match.master_fp;
+                        const badge = document.getElementById('anchor-method-badge');
+                        badge.textContent = phaseDesc(match.method);
+                        badge.className = 'inline-block px-2 py-0.5 text-[10px] font-medium rounded ' + phaseColor(match.method);
+                        // 採用・不採用ボタン
+                        const adoptBtn = document.getElementById('anchor-adopt-btn');
+                        const excludeBtn = document.getElementById('anchor-exclude-btn');
+                        const isExcluded = excludedGeminiFps.has(item.fp);
+                        const isRestored = item.discarded && restoredDiscardedFps.has(item.fp);
+                        const isActive = !item.discarded && !isExcluded || isRestored;
+                        // 採用状態 → 不採用ボタン表示、不採用/棄却状態 → 採用ボタン表示
+                        adoptBtn.style.display = isActive ? 'none' : '';
+                        excludeBtn.style.display = isActive ? '' : 'none';
+                        adoptBtn.onclick = () => {
+                            const thumb = item.thumb ? imgUrl(item.thumb) : '';
+                            showConfirmDialog(
+                                `<p class="text-sm text-gray-300 mb-3">このアンカーを採用しますか？</p>
+                                 <div class="w-32"><img src="${thumb}" class="w-full rounded" /><p class="text-[9px] text-gray-500 truncate mt-1">${escapeHtml(item.title || '')}</p></div>`,
+                                () => {
+                                    excludedGeminiFps.delete(item.fp);
+                                    if (item.discarded) restoredDiscardedFps.add(item.fp);
+                                    selectedPreviewFps.clear();
+                                    renderPreviewSelection();
+                                    updatePreviewActionBar();
+                                    document.getElementById('confirm-popup').classList.add('hidden');
+                                    document.getElementById('confirm-popup').classList.remove('flex');
+                                    showPreviewModal(_previewModalIdx);
+                                }, { okLabel: '採用' }
+                            );
+                        };
+                        excludeBtn.onclick = () => {
+                            const thumb = item.thumb ? imgUrl(item.thumb) : '';
+                            showConfirmDialog(
+                                `<p class="text-sm text-gray-300 mb-3">このアンカーを不採用にしますか？</p>
+                                 <div class="w-32"><img src="${thumb}" class="w-full rounded" /><p class="text-[9px] text-gray-500 truncate mt-1">${escapeHtml(item.title || '')}</p></div>`,
+                                () => {
+                                    excludedGeminiFps.add(item.fp);
+                                    restoredDiscardedFps.delete(item.fp);
+                                    selectedPreviewFps.clear();
+                                    renderPreviewSelection();
+                                    updatePreviewActionBar();
+                                    document.getElementById('confirm-popup').classList.add('hidden');
+                                    document.getElementById('confirm-popup').classList.remove('flex');
+                                    showPreviewModal(_previewModalIdx);
+                                }, { okLabel: '不採用', danger: true }
+                            );
+                        };
+                        // 棄却理由
+                        const reasonEl = document.getElementById('anchor-discard-reason');
+                        if (item.discarded && item.discard_reason) {
+                            reasonEl.textContent = item.discard_reason;
+                            reasonEl.classList.remove('hidden');
+                        } else {
+                            reasonEl.classList.add('hidden');
+                        }
+                        anchorPanel.classList.remove('hidden');
+                        anchorPanel.classList.add('flex');
+                    } else {
+                        anchorPanel.classList.add('hidden');
+                        anchorPanel.classList.remove('flex');
+                    }
+                } else {
+                    anchorPanel.classList.add('hidden');
+                    anchorPanel.classList.remove('flex');
+                }
                 const prevBtn = document.getElementById('modal-prev');
                 const nextBtn = document.getElementById('modal-next');
                 prevBtn.onclick = (e) => { e.stopPropagation(); showPreviewModal(idx - 1); };
@@ -1269,9 +1526,52 @@
             }
             _previewModalShow = showPreviewModal;
             mc.querySelectorAll('[data-preview-idx]').forEach(card => {
-                card.addEventListener('click', () => showPreviewModal(parseInt(card.dataset.previewIdx, 10)));
+                card.addEventListener('click', (e) => {
+                    if (e.shiftKey) return; // Shift+クリックは選択のみ
+                    showPreviewModal(parseInt(card.dataset.previewIdx, 10));
+                });
             });
-            document.getElementById('execute-merge-btn').addEventListener('click', () => executeMerge(sessionId, Array.from(excludedGeminiFps)));
+            // 画像外クリックで選択解除
+            document.addEventListener('click', function _previewDeselectHandler(e) {
+                if (selectedPreviewFps.size === 0) return;
+                if (e.target.closest('[data-preview-idx]') || e.target.closest('#preview-exclude-btn') || e.target.closest('#preview-restore-btn') || e.target.closest('#confirm-popup') || e.target.closest('#modal')) return;
+                selectedPreviewFps.clear();
+                renderPreviewSelection();
+                updatePreviewActionBar();
+            });
+            document.getElementById('execute-merge-btn').addEventListener('click', () => executeMerge(sessionId, Array.from(excludedGeminiFps), Array.from(restoredDiscardedFps)));
+            // 再計算ボタン: 採用/不採用変更後にプレビューを再実行
+            const recalcBtn = document.getElementById('preview-recalc-btn');
+            function showRecalcIfNeeded() {
+                recalcBtn.classList.toggle('hidden', excludedGeminiFps.size === 0 && restoredDiscardedFps.size === 0);
+            }
+            recalcBtn.addEventListener('click', async () => {
+                const excl = JSON.stringify(Array.from(excludedGeminiFps));
+                const incl = JSON.stringify(Array.from(restoredDiscardedFps));
+                const url = API_BASE + '?action=preview_merge&session_id=' + encodeURIComponent(sessionId)
+                    + '&exclude_fps=' + encodeURIComponent(excl)
+                    + '&include_fps=' + encodeURIComponent(incl);
+                recalcBtn.disabled = true;
+                recalcBtn.textContent = '再計算中...';
+                try {
+                    await fetch(url);
+                    const newData = await pollMergeResult(mc, '再計算中');
+                    if (newData && !newData.error) {
+                        // 新規追加ノード数を更新
+                        const newInsertable = (newData.new_nodes || []).filter(n => n.insertable).length;
+                        const infoEl = mc.querySelector('p.text-sm.text-gray-400');
+                        if (infoEl) {
+                            infoEl.textContent = '新規追加ノード: ' + newInsertable + ' / アンカー: ' + newData.matches.length + ' / セッション画面: ' + newData.session_screens + ' / マスター現状: ' + newData.master_nodes_before + ' ノード';
+                        }
+                        showToast('再計算完了: 新規追加ノード ' + newInsertable + ' 件', 'success');
+                    }
+                } catch (e) {
+                    showToast('再計算に失敗しました', 'error');
+                }
+                recalcBtn.disabled = false;
+                recalcBtn.textContent = '再計算';
+                recalcBtn.classList.add('hidden');
+            });
         } catch (e) {
             if (toastHandle) toastHandle.remove();
             mc.innerHTML = '<div class="text-red-500 py-12">プレビュー失敗</div>';
@@ -1287,17 +1587,18 @@
         return `<div class="flex flex-wrap gap-1 mt-1">${items.join('')}</div>`;
     }
 
-    async function executeMerge(sessionId, excludeFps) {
+    async function executeMerge(sessionId, excludeFps, includeFps) {
         await withOperationLock('マージ実行', async () => {
-            await _executeMerge(sessionId, excludeFps);
+            await _executeMerge(sessionId, excludeFps, includeFps);
         });
     }
-    async function _executeMerge(sessionId, excludeFps) {
+    async function _executeMerge(sessionId, excludeFps, includeFps) {
         const mc = document.getElementById('merge-container');
         mc.innerHTML = '<div class="text-center text-gray-300 py-12"><span class="animate-pulse">マージ実行中...</span></div>';
         try {
             const excludeParam = (excludeFps && excludeFps.length > 0) ? '&exclude_fps=' + encodeURIComponent(JSON.stringify(excludeFps)) : '';
-            await fetch(API_BASE + '?action=execute_merge&session_id=' + encodeURIComponent(sessionId) + excludeParam);
+            const includeParam = (includeFps && includeFps.length > 0) ? '&include_fps=' + encodeURIComponent(JSON.stringify(includeFps)) : '';
+            await fetch(API_BASE + '?action=execute_merge&session_id=' + encodeURIComponent(sessionId) + excludeParam + includeParam);
             const data = await pollMergeResult(mc, 'マージ実行中');
             if (data && data.ok) {
                 mc.innerHTML = `<div class="text-center text-green-400 py-12">マージ完了: 新規追加 ${data.new_nodes} / アンカー ${data.anchors || 0} / マスター合計 ${data.master_nodes || '?'} ノード</div>`;
@@ -1341,6 +1642,134 @@
             }
         } catch (e) {
             mc.innerHTML = '<div class="text-center text-red-500 py-12">削除失敗</div>';
+        }
+    }
+
+    // --- Cost タブ ---
+    const COST_PRICING = {
+        'gemini-2.5-flash':      { input: 0.15,  output: 0.60 },
+        'gemini-2.5-flash-lite': { input: 0.075, output: 0.30 },
+    };
+    function calcCost(model, inputTokens, outputTokens) {
+        const p = COST_PRICING[model] || { input: 0.15, output: 0.60 };
+        return (inputTokens / 1e6) * p.input + (outputTokens / 1e6) * p.output;
+    }
+    function fmtCost(cost) {
+        return cost < 0.001 ? '< $0.001' : '$' + cost.toFixed(4);
+    }
+    function fmtTokens(n) {
+        if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+        if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+        return String(n);
+    }
+    const PURPOSE_LABELS = { 'hq_ocr': 'HQ OCR', 'anchor_judgment': 'Anchor Judgment' };
+
+    async function fetchCostTab() {
+        const mc = document.getElementById('merge-container');
+        try {
+            const res = await fetch(API_BASE + '?action=get_api_usage');
+            const data = await res.json();
+
+            const daily = data.daily || [];
+            const byModel = data.by_model || [];
+            const byPurpose = data.by_purpose || [];
+            const total = data.total || {};
+
+            // 全体合計コスト計算
+            let totalCost = 0;
+            for (const row of byModel) {
+                totalCost += calcCost(row.model, +row.input_tokens, +row.output_tokens);
+            }
+
+            if (+total.count === 0) {
+                mc.innerHTML = '<div class="space-y-6"><h3 class="text-lg font-bold text-gray-300">API Cost</h3><p class="text-gray-600 text-sm">API 使用データがありません</p></div>';
+                return;
+            }
+
+            let html = '<div class="space-y-6">';
+
+            // 合計サマリー
+            html += '<div class="grid grid-cols-3 gap-4">';
+            html += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
+                <div class="text-2xl font-bold text-emerald-400">${fmtCost(totalCost)}</div>
+                <div class="text-xs text-gray-500 mt-1">Total Cost</div>
+            </div>`;
+            html += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
+                <div class="text-2xl font-bold text-cyan-400">${fmtTokens(+total.input_tokens + +total.output_tokens)}</div>
+                <div class="text-xs text-gray-500 mt-1">Total Tokens</div>
+            </div>`;
+            html += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
+                <div class="text-2xl font-bold text-gray-300">${(+total.count).toLocaleString()}</div>
+                <div class="text-xs text-gray-500 mt-1">API Calls</div>
+            </div>`;
+            html += '</div>';
+
+            // モデル別
+            html += '<div><h3 class="text-sm font-bold text-gray-400 mb-2">Model</h3>';
+            html += '<table class="w-full text-sm"><thead><tr class="text-gray-500 text-xs border-b border-gray-800">';
+            html += '<th class="text-left py-1.5 px-2">Model</th><th class="text-right py-1.5 px-2">Calls</th><th class="text-right py-1.5 px-2">Input</th><th class="text-right py-1.5 px-2">Output</th><th class="text-right py-1.5 px-2">Cost</th>';
+            html += '</tr></thead><tbody>';
+            for (const row of byModel) {
+                const cost = calcCost(row.model, +row.input_tokens, +row.output_tokens);
+                html += `<tr class="border-b border-gray-800/50 text-gray-300">
+                    <td class="py-1.5 px-2 font-mono text-xs">${row.model}</td>
+                    <td class="py-1.5 px-2 text-right">${(+row.call_count).toLocaleString()}</td>
+                    <td class="py-1.5 px-2 text-right text-cyan-400/70">${fmtTokens(+row.input_tokens)}</td>
+                    <td class="py-1.5 px-2 text-right text-orange-400/70">${fmtTokens(+row.output_tokens)}</td>
+                    <td class="py-1.5 px-2 text-right text-emerald-400">${fmtCost(cost)}</td>
+                </tr>`;
+            }
+            html += '</tbody></table></div>';
+
+            // 用途別
+            html += '<div><h3 class="text-sm font-bold text-gray-400 mb-2">Purpose</h3>';
+            html += '<table class="w-full text-sm"><thead><tr class="text-gray-500 text-xs border-b border-gray-800">';
+            html += '<th class="text-left py-1.5 px-2">Purpose</th><th class="text-right py-1.5 px-2">Calls</th><th class="text-right py-1.5 px-2">Input</th><th class="text-right py-1.5 px-2">Output</th><th class="text-right py-1.5 px-2">Cost</th>';
+            html += '</tr></thead><tbody>';
+            for (const row of byPurpose) {
+                let purposeCost = 0;
+                // 用途別のコスト計算: daily データからモデル情報を取得
+                for (const d of daily) {
+                    if (d.purpose === row.purpose) {
+                        purposeCost += calcCost(d.model, +d.input_tokens, +d.output_tokens);
+                    }
+                }
+                html += `<tr class="border-b border-gray-800/50 text-gray-300">
+                    <td class="py-1.5 px-2">${PURPOSE_LABELS[row.purpose] || row.purpose}</td>
+                    <td class="py-1.5 px-2 text-right">${(+row.call_count).toLocaleString()}</td>
+                    <td class="py-1.5 px-2 text-right text-cyan-400/70">${fmtTokens(+row.input_tokens)}</td>
+                    <td class="py-1.5 px-2 text-right text-orange-400/70">${fmtTokens(+row.output_tokens)}</td>
+                    <td class="py-1.5 px-2 text-right text-emerald-400">${fmtCost(purposeCost)}</td>
+                </tr>`;
+            }
+            html += '</tbody></table></div>';
+
+            // 日別
+            html += '<div><h3 class="text-sm font-bold text-gray-400 mb-2">Daily</h3>';
+            html += '<table class="w-full text-sm"><thead><tr class="text-gray-500 text-xs border-b border-gray-800">';
+            html += '<th class="text-left py-1.5 px-2">Date</th><th class="text-left py-1.5 px-2">Model</th><th class="text-left py-1.5 px-2">Purpose</th><th class="text-right py-1.5 px-2">Calls</th><th class="text-right py-1.5 px-2">Input</th><th class="text-right py-1.5 px-2">Output</th><th class="text-right py-1.5 px-2">Cost</th>';
+            html += '</tr></thead><tbody>';
+            let prevDay = '';
+            for (const row of daily) {
+                const cost = calcCost(row.model, +row.input_tokens, +row.output_tokens);
+                const showDay = row.day !== prevDay ? row.day : '';
+                prevDay = row.day;
+                html += `<tr class="border-b border-gray-800/50 text-gray-300${showDay ? ' border-t border-gray-700' : ''}">
+                    <td class="py-1.5 px-2 text-xs${showDay ? ' font-medium' : ' text-transparent'}">${showDay || row.day}</td>
+                    <td class="py-1.5 px-2 font-mono text-xs">${row.model}</td>
+                    <td class="py-1.5 px-2 text-xs">${PURPOSE_LABELS[row.purpose] || row.purpose}</td>
+                    <td class="py-1.5 px-2 text-right">${(+row.call_count).toLocaleString()}</td>
+                    <td class="py-1.5 px-2 text-right text-cyan-400/70">${fmtTokens(+row.input_tokens)}</td>
+                    <td class="py-1.5 px-2 text-right text-orange-400/70">${fmtTokens(+row.output_tokens)}</td>
+                    <td class="py-1.5 px-2 text-right text-emerald-400">${fmtCost(cost)}</td>
+                </tr>`;
+            }
+            html += '</tbody></table></div>';
+
+            html += '</div>';
+            mc.innerHTML = html;
+        } catch (e) {
+            mc.innerHTML = '<div class="space-y-6"><h3 class="text-lg font-bold text-gray-300">API Cost</h3><p class="text-red-400 text-sm">データの取得に失敗しました</p></div>';
         }
     }
 
@@ -1436,6 +1865,56 @@
             await _applyCorrectionRule(ruleId, masterFpsJson);
         });
     }
+    // --- ノイズ語辞書 ---
+    async function fetchNoiseWords() {
+        const area = document.getElementById('noise-words-area');
+        if (!area) return;
+        try {
+            const res = await fetch(API_BASE + '?action=get_noise_words');
+            const data = await res.json();
+            const words = data.words || [];
+            if (words.length === 0) {
+                area.innerHTML = '<p class="text-gray-600">ノイズ語はまだ登録されていません。auto_pilot でGemini OCRを実行すると自動的に蓄積されます。</p>';
+                return;
+            }
+            let html = '<p class="text-xs text-gray-500 mb-2">アンカー比較時にOCRテキストから除去される単語（count≥2で有効）</p>';
+            // 手動追加フォーム
+            html += `<div class="flex gap-2 mb-3">
+                <input id="add-noise-word" type="text" placeholder="単語を追加" class="bg-gray-800 text-gray-200 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none w-40" />
+                <button id="add-noise-word-btn" class="px-3 py-1 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-xs rounded transition-colors">追加</button>
+            </div>`;
+            html += '<div class="flex flex-wrap gap-2">';
+            for (const w of words) {
+                const active = w.count >= 2;
+                const cls = active ? 'bg-cyan-900/40 text-cyan-300 border-cyan-800' : 'bg-gray-800 text-gray-500 border-gray-700';
+                html += `<span class="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border ${cls}">
+                    ${escapeHtml(w.word)} <span class="text-[9px] opacity-60">×${w.count}</span>
+                    <button class="delete-noise-word hover:text-red-400 ml-0.5" data-word="${escapeHtml(w.word)}" title="削除">×</button>
+                </span>`;
+            }
+            html += '</div>';
+            area.innerHTML = html;
+            // 削除ハンドラ
+            area.querySelectorAll('.delete-noise-word').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    await fetch(API_BASE + '?action=delete_noise_word&word=' + encodeURIComponent(btn.dataset.word));
+                    fetchNoiseWords();
+                });
+            });
+            // 追加ハンドラ
+            document.getElementById('add-noise-word-btn')?.addEventListener('click', async () => {
+                const input = document.getElementById('add-noise-word');
+                const word = input.value.trim();
+                if (!word) return;
+                await fetch(API_BASE + '?action=add_noise_word&word=' + encodeURIComponent(word));
+                input.value = '';
+                fetchNoiseWords();
+            });
+        } catch (e) {
+            area.innerHTML = '<p class="text-red-500">読み込みエラー</p>';
+        }
+    }
+
     async function _applyCorrectionRule(ruleId, masterFpsJson) {
         try {
             const params = new URLSearchParams({ rule_id: ruleId, master_fps: masterFpsJson });
@@ -1800,6 +2279,8 @@
             editBtn.style.display = 'none';
         }
         updateModalNav();
+        document.getElementById('modal-anchor-compare').classList.add('hidden');
+        document.getElementById('modal-anchor-compare').classList.remove('flex');
         modal.classList.remove('hidden');
         modal.classList.add('flex');
         // Final タブ: クラスタ兄弟を表示
@@ -1919,6 +2400,8 @@
     function closeModal() {
         modal.classList.add('hidden');
         modal.classList.remove('flex');
+        document.getElementById('modal-anchor-compare').classList.add('hidden');
+        document.getElementById('modal-anchor-compare').classList.remove('flex');
         modalIdx = -1;
         _previewModalIdx = -1;
     }
@@ -2237,8 +2720,41 @@
         }
     });
     // --- バージョン管理 ---
-    let _currentVersionId = null;
-    const versionSelect = document.getElementById('version-select');
+
+    // リネームモーダル
+    (() => {
+        const rm = document.getElementById('rename-modal');
+        const ri = document.getElementById('rename-input');
+        const rv = document.getElementById('rename-vid');
+        const close = () => { rm.classList.add('hidden'); rm.classList.remove('flex'); };
+        const submit = () => {
+            const vid = rv.value, newName = ri.value.trim();
+            if (newName) {
+                fetch(API_BASE + '?action=rename_version&version_id=' + vid + '&name=' + encodeURIComponent(newName))
+                    .then(() => { close(); fetchVersions(); });
+            }
+        };
+        document.getElementById('rename-cancel').addEventListener('click', close);
+        document.getElementById('rename-submit').addEventListener('click', submit);
+        ri.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') close(); });
+        rm.addEventListener('click', e => { if (e.target === rm) close(); });
+    })();
+
+    // 削除モーダル
+    (() => {
+        const dm = document.getElementById('delete-modal');
+        const dv = document.getElementById('delete-vid');
+        const close = () => { dm.classList.add('hidden'); dm.classList.remove('flex'); };
+        const submit = () => {
+            const vid = dv.value;
+            fetch(API_BASE + '?action=delete_version&version_id=' + vid)
+                .then(() => { close(); fetchVersions(); switchTab(currentTab); });
+        };
+        document.getElementById('delete-cancel').addEventListener('click', close);
+        document.getElementById('delete-submit').addEventListener('click', submit);
+        dm.addEventListener('click', e => { if (e.target === dm) close(); });
+        dm.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+    })();
 
     async function fetchVersions() {
         try {
@@ -2249,6 +2765,7 @@
             const activeRes = await fetch(API_BASE + '?action=get_active_version');
             const activeData = await activeRes.json();
             _currentVersionId = activeData.version?.id || 1;
+            _currentVersionName = activeData.version?.name || '';
             renderVersions(versions);
         } catch (e) {}
     }
@@ -2265,9 +2782,9 @@
         // バージョン一覧
         html += '<div class="space-y-2">';
         for (const v of versions) {
-            const isActive = v.is_active == 1;
-            const border = isActive ? 'border-cyan-700 bg-cyan-950/30' : 'border-gray-800';
-            const badge = isActive ? '<span class="px-2 py-0.5 text-[10px] rounded bg-cyan-900/50 text-cyan-300">ACTIVE</span>' : '';
+            const isDefault = v.is_active == 1;
+            const border = isDefault ? 'border-cyan-700 bg-cyan-950/30' : 'border-gray-800';
+            const badge = isDefault ? '<span class="px-2 py-0.5 text-[10px] rounded bg-cyan-900/50 text-cyan-300">Default</span>' : '';
             html += `<div class="bg-gray-900 border ${border} rounded-lg p-3 flex items-center justify-between">
                 <div class="flex items-center gap-3">
                     <span class="text-sm font-mono text-gray-300 version-name" data-version-id="${v.id}">${escapeHtml(v.name)}</span>
@@ -2276,8 +2793,8 @@
                 </div>
                 <div class="flex items-center gap-2">
                     <button class="rename-version-btn px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-400 text-xs rounded transition-colors" data-version-id="${v.id}" data-version-name="${escapeHtml(v.name)}" title="名前変更">✎</button>
-                    ${!isActive ? `<button class="activate-version-btn px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors" data-version-id="${v.id}">有効化</button>` : ''}
-                    ${!isActive ? `<button class="delete-version-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors" data-version-id="${v.id}" data-version-name="${escapeHtml(v.name)}" title="削除">🗑</button>` : ''}
+                    <button class="delete-version-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors" data-version-id="${v.id}" data-version-name="${escapeHtml(v.name)}" title="削除">${TRASH_ICON}</button>
+                    ${!isDefault ? `<button class="activate-version-btn px-3 py-1 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-xs rounded transition-colors" data-version-id="${v.id}">Defaultに設定</button>` : ''}
                 </div>
             </div>`;
         }
@@ -2302,21 +2819,31 @@
             btn.addEventListener('click', () => {
                 const vid = btn.dataset.versionId;
                 const oldName = btn.dataset.versionName;
-                const newName = prompt('新しいバージョン名:', oldName);
-                if (newName && newName !== oldName) {
-                    fetch(API_BASE + '?action=rename_version&version_id=' + vid + '&name=' + encodeURIComponent(newName))
-                        .then(() => fetchVersions());
-                }
+                const rm = document.getElementById('rename-modal');
+                const ri = document.getElementById('rename-input');
+                const rv = document.getElementById('rename-vid');
+                ri.value = oldName;
+                rv.value = vid;
+                rm.classList.remove('hidden');
+                rm.classList.add('flex');
+                ri.focus();
+                ri.select();
             });
         });
         sc.querySelectorAll('.delete-version-btn').forEach(btn => {
             btn.addEventListener('click', () => {
+                if (versions.length <= 1) {
+                    showToast('最後のバージョンは削除できません', 'error');
+                    return;
+                }
                 const vid = btn.dataset.versionId;
                 const name = btn.dataset.versionName;
-                if (confirm(`バージョン "${name}" を削除しますか？\n\n関連するセッションとローカルファイルも削除されます。\nDB上のデータは論理削除されます。`)) {
-                    fetch(API_BASE + '?action=delete_version&version_id=' + vid)
-                        .then(() => fetchVersions());
-                }
+                const dm = document.getElementById('delete-modal');
+                document.getElementById('delete-msg').textContent =
+                    `バージョン "${name}" を削除しますか？\n\n・関連するセッションが Live / Final / Merge から消えます\n・DB上のデータは論理削除されます\n・ローカルの画像ファイルは物理削除されます`;
+                document.getElementById('delete-vid').value = vid;
+                dm.classList.remove('hidden');
+                dm.classList.add('flex');
             });
         });
         // バージョンセレクター更新
@@ -2332,8 +2859,10 @@
 
     versionSelect.addEventListener('change', function() {
         _currentVersionId = parseInt(this.value);
-        // Final タブ再読み込み
+        _currentVersionName = this.options[this.selectedIndex]?.text || '';
         if (currentTab === 'final') fetchFinal();
+        else if (currentTab === 'live') { fetchLiveInitial(); }
+        else if (currentTab === 'merge') fetchMergeTab();
     });
 
     // Final タブ切替時にバージョンセレクターを表示

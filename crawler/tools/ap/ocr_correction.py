@@ -380,7 +380,17 @@ is_artifact=false とすべきもの（残す画面）:
 
 各 result オブジェクトに以下を追加:
 "is_artifact": false,
-"screen_type": "HOME"'''
+"screen_type": "HOME"
+
+## UIノイズ語の抽出
+各画像のテキスト中に、画面の本来のコンテンツ（セリフ、メニュー名、説明文）ではなく、
+UIの装飾・ボタン・ステータス表示として頻出する短い文字列を検出してください。
+例: "AUTO", "SKIP", "WAVE", "Turn", "+", "×", "NEW", "Lv.", "HP", "MP", "MAX"
+これらは画面の同一性判定では無視すべきノイズです。
+
+result オブジェクトに以下を追加:
+"noise_words": ["AUTO", "SKIP"]
+（該当なしなら空配列 []）'''
 
 
 def _init_gemini_client():
@@ -429,6 +439,11 @@ def gemini_correct_single(
                 _GEMINI_PROMPT.format(ocr_text=ocr_text),
             ],
         )
+
+        # API 使用量記録
+        from tools.ap.api_usage import record_api_usage, extract_usage_from_response
+        in_tok, out_tok = extract_usage_from_response(response)
+        record_api_usage(_GEMINI_MODEL, "hq_ocr", in_tok, out_tok)
 
         if response.text is None:
             logger.warning("[GEMINI] 単体応答が空 (safety filter?)")
@@ -507,6 +522,11 @@ def gemini_correct_multi(
             contents=contents,
         )
 
+        # API 使用量記録
+        from tools.ap.api_usage import record_api_usage, extract_usage_from_response
+        in_tok, out_tok = extract_usage_from_response(response)
+        record_api_usage(_GEMINI_MODEL, "hq_ocr", in_tok, out_tok)
+
         if response.text is None:
             logger.warning("[GEMINI] バッチ応答が空 (safety filter?)")
             return None
@@ -577,6 +597,11 @@ def _stage3_gemini_batch(texts: list[dict[int, str]]) -> dict[int, str]:
                     contents=f"以下のOCRテキストの誤読を修正してください。"
                              f"修正後のテキストのみ返してください。\n\n{text}",
                 )
+                # API 使用量記録
+                from tools.ap.api_usage import record_api_usage, extract_usage_from_response
+                in_tok, out_tok = extract_usage_from_response(response)
+                record_api_usage(_GEMINI_MODEL, "hq_ocr", in_tok, out_tok)
+
                 if response.text is None:
                     continue
                 corrected = response.text.strip()

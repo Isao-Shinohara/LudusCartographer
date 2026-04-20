@@ -4,10 +4,12 @@ anchor_matcher.py — 段階的アンカーマッチング
 安全性最優先: 安全性が担保できないなら破棄。
 周回を重ねれば自然にアンカーは増える。
 
+実行順: P1 → P2 → P3 → P4 (無料・高速な方法を先に、Gemini は最後)
+
 Phase 1: tap + テキスト完全/前方一致 (最も確実)
-Phase 2: tap + phash近接 + テキスト類似 + Gemini Flash 判定
-Phase 3: auto + テキストあり (Phase 1+2 を基準に精度向上)
-Phase 4: tap + テキスト空 (Phase 1-3 を基準に候補限定)
+Phase 2: auto + テキストあり (無料・高速)
+Phase 3: tap + テキスト空 + phash (無料・高速)
+Phase 4: tap + phash近接 + テキスト類似 + Gemini 画像判定 (残りを救済)
 auto + テキスト空 → マッチ対象外
 """
 from __future__ import annotations
@@ -33,7 +35,81 @@ def _normalize_text(text: str) -> str:
     t = re.sub(r'\s+', ' ', t).strip()
     t = t.replace("\uff0b", "+").replace("\uff06", "&").replace("\uff01", "!").replace("\uff1f", "?")
     t = re.sub(r'[\u3001\u3002,.!?\u2026\u30fb\-\u2015~\uff5e\s]+$', '', t)
+    # 英字と日本語の境界スペースを除去 (OCR でスペースが入ったり入らなかったりする)
+    t = re.sub(r'(?<=[\u3040-\u9fff\u30a0-\u30ff]) (?=[A-Za-z0-9])', '', t)
+    t = re.sub(r'(?<=[A-Za-z0-9]) (?=[\u3040-\u9fff\u30a0-\u30ff])', '', t)
     return t
+
+
+# ノイズ語辞書キャッシュ (DB から読み込み)
+_noise_words_cache: set[str] | None = None
+
+
+def _load_noise_words(conn: sqlite3.Connection) -> set[str]:
+    """lc_ocr_noise_words テーブルからノイズ語を読み込む。"""
+    global _noise_words_cache
+    if _noise_words_cache is not None:
+        return _noise_words_cache
+    try:
+        rows = conn.execute("SELECT word FROM lc_ocr_noise_words WHERE count >= 2").fetchall()
+        _noise_words_cache = {r["word"] if isinstance(r, sqlite3.Row) else r[0] for r in rows}
+    except Exception:
+        _noise_words_cache = set()
+    # デフォルトノイズ語 (Gemini 辞書が育つまでのフォールバック)
+    _noise_words_cache |= {"AUTO", "SKIP", "NEW", "WAVE", "Turn", "MAX"}
+    return _noise_words_cache
+
+
+def _normalize_for_comparison(text: str, conn: sqlite3.Connection | None = None) -> str:
+    """比較用のノイズ除去付き正規化。元テキストは変えない。"""
+    import re
+    import unicodedata
+    # スペースが残っている段階で数値トークンを先に除去
+    t = unicodedata.normalize("NFKC", text)
+    t = re.sub(r'\s+', ' ', t).strip()
+    _NUM_TOKEN = re.compile(r'^(?:[\d,.:/%×+\-~]+|[A-Za-z]{0,3}\.?\d[\d,.]*%?)$')
+    t = ' '.join(w for w in t.split() if not _NUM_TOKEN.match(w))
+    # その後に通常の正規化
+    t = _normalize_text(t)
+    # ノイズ語を除去 (日本語境界対応: \b の代わりにスペース区切り + 先頭末尾)
+    noise = _load_noise_words(conn) if conn is not None else set()
+    # デフォルトノイズ + DB ノイズ
+    all_noise = noise | {"AUTO", "SKIP", "MANUAL", "NEW", "WAVE", "Turn", "MAX"}
+    # Episode + 数字パターン
+    t = re.sub(r'Episode\d*', '', t, flags=re.IGNORECASE)
+    # 1文字のノイズ (i, !, ※, +, ★ 等) — 単独で出現するもの
+    t = re.sub(r'(?<=\s)[i!※★☆+×]\s', ' ', t)
+    t = re.sub(r'^[i!※★☆+×]\s', '', t)
+    # ノイズ語を除去 (スペース区切りトークン + 日本語にくっついたケース)
+    tokens = t.split()
+    tokens = [w for w in tokens if w not in all_noise]
+    t = ' '.join(tokens)
+    # 英字ノイズ語が日本語にくっついているケース (例: AUTO暁美, キオクSKIP)
+    for nw in sorted(all_noise, key=len, reverse=True):
+        if re.search(r'[A-Z]', nw):  # 英字ノイズ語のみ
+            t = re.sub(re.escape(nw), '', t)
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
+
+
+def _bow_similarity(a: str, b: str) -> float:
+    """Bag-of-words 類似度。単語順を無視して共通単語の割合を返す。"""
+    words_a = set(a.split())
+    words_b = set(b.split())
+    if not words_a and not words_b:
+        return 1.0
+    if not words_a or not words_b:
+        return 0.0
+    intersection = words_a & words_b
+    union = words_a | words_b
+    return len(intersection) / len(union)  # Jaccard 係数
+
+
+def _text_similarity(a: str, b: str) -> float:
+    """SequenceMatcher と bag-of-words の高い方を返す。"""
+    seq_sim = SequenceMatcher(None, a, b).ratio()
+    bow_sim = _bow_similarity(a, b)
+    return max(seq_sim, bow_sim)
 
 
 @dataclass
@@ -54,9 +130,46 @@ class AnchorMatch:
     session_fp: str
     master_fp: str
     master_sort: int
-    method: str          # "phase1_tap_text" / "phase2_gemini" / "phase3_auto_text" / "phase4_tap_phash"
+    method: str          # PHASE_DEFS の key
     score: float
     phase: int
+
+
+# ─── フェーズ定義 (表示順・表示名・色を一元管理) ─────────
+# key: 内部メソッド名 (DB・API で使用、変更しない)
+# order: 実行順 (表示順)
+# label: UI 表示名
+# color_bg / color_text: Tailwind CSS クラス
+PHASE_DEFS: dict[str, dict] = {
+    "phase1_tap_text": {
+        "order": 1,
+        "label": "P1",
+        "description": "tap + テキスト一致",
+        "color_bg": "bg-blue-900/50",
+        "color_text": "text-blue-300",
+    },
+    "phase2_auto_text": {
+        "order": 2,
+        "label": "P2",
+        "description": "auto + テキスト一致",
+        "color_bg": "bg-purple-900/50",
+        "color_text": "text-purple-300",
+    },
+    "phase3_tap_phash": {
+        "order": 3,
+        "label": "P3",
+        "description": "tap + phash (テキスト空)",
+        "color_bg": "bg-yellow-900/50",
+        "color_text": "text-yellow-300",
+    },
+    "phase4_gemini": {
+        "order": 4,
+        "label": "P4",
+        "description": "Gemini 画像判定",
+        "color_bg": "bg-amber-900/50",
+        "color_text": "text-amber-300",
+    },
+}
 
 
 def _text_hash(text: str) -> str:
@@ -65,16 +178,22 @@ def _text_hash(text: str) -> str:
 
 
 def _ensure_judgment_table(conn: sqlite3.Connection) -> None:
-    """Gemini 判定キャッシュテーブルを作成。"""
+    """Gemini 判定キャッシュテーブルを作成 (v3: fp ベース + 画像判定 + テキスト採用)。"""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS lc_anchor_judgments (
-            session_text_hash TEXT NOT NULL,
-            master_text_hash  TEXT NOT NULL,
-            is_same           INTEGER NOT NULL,
-            judged_at         TEXT NOT NULL DEFAULT (datetime('now')),
-            PRIMARY KEY (session_text_hash, master_text_hash)
+            session_fp TEXT NOT NULL,
+            master_fp  TEXT NOT NULL,
+            is_same    INTEGER NOT NULL,
+            prefer     TEXT DEFAULT '',
+            judged_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (session_fp, master_fp)
         )
     """)
+    # prefer カラム追加マイグレーション
+    try:
+        conn.execute("ALTER TABLE lc_anchor_judgments ADD COLUMN prefer TEXT DEFAULT ''")
+    except Exception:
+        pass
     conn.commit()
 
 
@@ -82,14 +201,34 @@ class AnchorMatcher:
     """段階的アンカーマッチング。"""
 
     # Phase 1: テキスト一致 + phash 閾値
-    PHASE1_PHASH_THRESHOLD = 30
+    PHASE1_PHASH_THRESHOLD = 30       # 完全一致/前方一致用
+    PHASE1_FUZZY_PHASH_THRESHOLD = 20  # あいまい一致用
 
-    # Phase 2: phash 近接 + テキスト類似 → Gemini 判定
-    PHASE2_PHASH_THRESHOLD = 5
-    PHASE2_TEXT_SIMILARITY = 0.7
+    # Phase 2: auto + テキスト (P1 と同じあいまい一致を適用)
+    PHASE2_FUZZY_PHASH_THRESHOLD = 20
 
-    # Phase 3: phash のみの閾値 (より厳しく)
+    # Phase 3: tap + テキスト空 + phash のみ
+    PHASE3_PHASH_THRESHOLD = 15
+
+    @staticmethod
+    def _fuzzy_sim_threshold(text_len: int) -> float:
+        """テキスト長に応じたあいまい一致閾値。P4 (Gemini) が最終検証するため攻めの閾値。
+
+        短いテキストはOCR 1文字の揺れで類似度が大きく落ちるため閾値を下げる。
+        長いテキストは小さな揺れが多数積み重なるため同様に閾値を下げる。
+        """
+        if text_len < 20:
+            return 0.5   # 短い: 1文字違いで大きく変動。P4 で画像検証
+        elif text_len < 50:
+            return 0.65  # やや短い
+        elif text_len < 200:
+            return 0.8   # 中間: OCR 揺れが数箇所
+        else:
+            return 0.7   # 長い: 揺れが積み重なる
+
+    # Phase 4: phash 近接 + テキスト類似 → Gemini 判定
     PHASE4_PHASH_THRESHOLD = 15
+    PHASE4_TEXT_SIMILARITY = 0.5
 
     def compute_matches(
         self,
@@ -109,28 +248,30 @@ class AnchorMatcher:
         if not session_nodes or not master_nodes:
             return {}, [n.fp for n in session_nodes]
 
-        # Phase 1: tap + テキスト完全/前方一致
+        # Phase 1: tap + テキスト完全/前方一致 (最も確実)
         anchors = self._phase1_tap_text(session_nodes, master_nodes, master_sort_map)
-        anchors = self._verify_consistency(anchors)
         logger.info("[AnchorMatcher] Phase 1: %d アンカー確定", len(anchors))
 
-        # Phase 2: tap + phash近接 + テキスト類似 + Gemini判定
-        phase2 = self._phase2_gemini(conn, session_nodes, master_nodes, master_sort_map, anchors)
+        # Phase 2: auto + テキストあり (無料・高速)
+        phase2 = self._phase2_auto_text(session_nodes, master_nodes, master_sort_map, anchors)
         anchors.extend(phase2)
-        anchors = self._verify_consistency(anchors)
         logger.info("[AnchorMatcher] Phase 2: +%d → 合計 %d アンカー", len(phase2), len(anchors))
 
-        # Phase 3: auto + テキストあり
-        phase3 = self._phase3_auto_text(session_nodes, master_nodes, master_sort_map, anchors)
+        # Phase 3: tap + テキスト空 + phash (無料・高速)
+        phase3 = self._phase3_tap_phash(session_nodes, master_nodes, master_sort_map, anchors)
         anchors.extend(phase3)
-        anchors = self._verify_consistency(anchors)
         logger.info("[AnchorMatcher] Phase 3: +%d → 合計 %d アンカー", len(phase3), len(anchors))
 
-        # Phase 4: tap + テキスト空
-        phase4 = self._phase4_tap_phash(session_nodes, master_nodes, master_sort_map, anchors)
-        anchors.extend(phase4)
-        anchors = self._verify_consistency(anchors)
-        logger.info("[AnchorMatcher] Phase 4: +%d → 合計 %d アンカー", len(phase4), len(anchors))
+        # Phase 4: Gemini画像判定 (既存アンカー検証 + 未マッチノード発見)
+        phase4_new, phase4_rejected = self._phase4_gemini(
+            conn, session_nodes, master_nodes, master_sort_map, anchors, version_id)
+        # Gemini が棄却した既存アンカーを除去
+        rejected_fps = {a.session_fp for a in phase4_rejected}
+        if rejected_fps:
+            anchors = [a for a in anchors if a.session_fp not in rejected_fps]
+            logger.info("[AnchorMatcher] Phase 4 検証: %d 件棄却", len(rejected_fps))
+        anchors.extend(phase4_new)
+        logger.info("[AnchorMatcher] Phase 4: +%d → 合計 %d アンカー", len(phase4_new), len(anchors))
 
         # 結果を node_mapping 形式に変換
         matched_session_fps = set()
@@ -151,7 +292,14 @@ class AnchorMatcher:
             len(skipped),
         )
 
-        return node_mapping, skipped
+        # Gemini 検証で棄却されたアンカー
+        discarded_mapping: dict[str, tuple[str, str, float, str]] = {}
+        for a in phase4_rejected:
+            discarded_mapping[a.session_fp] = (
+                a.master_fp, a.method, a.score, "Gemini画像判定で別画面と判定"
+            )
+
+        return node_mapping, skipped, discarded_mapping
 
     # ─── データ準備 ───────────────────────────────────
 
@@ -198,7 +346,7 @@ class AnchorMatcher:
         session_nodes: list[NodeInfo] = []
         for rank, r in enumerate(rows):
             fp = r["fingerprint"]
-            text = _normalize_text(r["text"] or "")
+            text = _normalize_for_comparison(r["text"] or "", conn)
             if fp in tap_fps:
                 et = "tap"
             elif fp in auto_fps:
@@ -225,7 +373,7 @@ class AnchorMatcher:
         master_nodes: list[NodeInfo] = []
         master_sort_map: dict[str, int] = {}
         for r in master_rows:
-            text = _normalize_text(r["text"] or "")
+            text = _normalize_for_comparison(r["text"] or "", conn)
             master_nodes.append(NodeInfo(
                 fp=r["master_fp"], text=text, phash=r["phash"] or "",
                 scene=r["scene"] or "", edge_type="",
@@ -243,7 +391,9 @@ class AnchorMatcher:
         master_nodes: list[NodeInfo],
         master_sort_map: dict[str, int],
     ) -> list[AnchorMatch]:
-        """tap + テキストありノードをテキスト一致 + phash でマッチ。"""
+        """tap + テキストありノードをテキスト一致 + phash でマッチ。
+        完全一致/前方一致 → あいまい一致 (sim>=0.9, phash<20, 候補1件) の順。
+        """
         from lc.utils import phash_distance
 
         # マスター側のテキスト → ノード逆引き
@@ -254,14 +404,14 @@ class AnchorMatcher:
 
         targets = [n for n in session_nodes if n.edge_type == "tap" and n.has_text]
         anchors: list[AnchorMatch] = []
+        matched_session_fps: set[str] = set()
         matched_master_fps: set[str] = set()
 
+        # --- Pass 1: 完全一致 / 前方一致 ---
         for s in targets:
-            # 完全一致
             candidates = [m for m in master_by_text.get(s.text, [])
                           if m.fp not in matched_master_fps]
 
-            # 前方一致 (完全一致がなければ)
             if not candidates and len(s.text) >= 5:
                 for text, ms in master_by_text.items():
                     if not text:
@@ -271,47 +421,144 @@ class AnchorMatcher:
                         candidates.extend(m for m in ms if m.fp not in matched_master_fps)
 
             if len(candidates) != 1:
-                continue  # 0 件 or 複数 → 破棄
+                continue
 
             m = candidates[0]
-            # phash 二重確認
             if s.phash and m.phash:
                 dist = phash_distance(s.phash, m.phash)
                 if dist >= self.PHASE1_PHASH_THRESHOLD:
-                    continue  # テキスト一致でも phash が遠い → 破棄
+                    continue
 
             anchors.append(AnchorMatch(
                 session_fp=s.fp, master_fp=m.fp,
                 master_sort=master_sort_map[m.fp],
                 method="phase1_tap_text", score=1.0, phase=1,
             ))
+            matched_session_fps.add(s.fp)
             matched_master_fps.add(m.fp)
+
+        # --- Pass 2: あいまい一致 (sim>=0.9, phash<20, 候補1件) ---
+        fuzzy_targets = [n for n in targets if n.fp not in matched_session_fps]
+        for s in fuzzy_targets:
+            if not s.phash:
+                continue
+            best_m = None
+            best_sim = 0.0
+            candidate_count = 0
+            for m in master_nodes:
+                if m.fp in matched_master_fps or not m.phash or not m.has_text:
+                    continue
+                dist = phash_distance(s.phash, m.phash)
+                if dist >= self.PHASE1_FUZZY_PHASH_THRESHOLD:
+                    continue
+                sim = _text_similarity(s.text, m.text)
+                if sim >= self._fuzzy_sim_threshold(len(s.text)):
+                    candidate_count += 1
+                    if sim > best_sim:
+                        best_m = m
+                        best_sim = sim
+            if candidate_count == 1 and best_m:
+                anchors.append(AnchorMatch(
+                    session_fp=s.fp, master_fp=best_m.fp,
+                    master_sort=master_sort_map[best_m.fp],
+                    method="phase1_tap_text", score=round(best_sim, 3), phase=1,
+                ))
+                matched_session_fps.add(s.fp)
+                matched_master_fps.add(best_m.fp)
 
         return anchors
 
-    # ─── Phase 2: phash近接 + テキスト類似 + Gemini判定 ────
+    # ─── Phase 4: phash近接 + テキスト類似 + Gemini判定 ────
 
-    def _phase2_gemini(
+    def _phase4_gemini(
         self,
         conn: sqlite3.Connection,
         session_nodes: list[NodeInfo],
         master_nodes: list[NodeInfo],
         master_sort_map: dict[str, int],
         existing_anchors: list[AnchorMatch],
-    ) -> list[AnchorMatch]:
-        """Phase 1 でテキスト不一致だったノードを phash + テキスト類似度 + Gemini で判定。"""
+        version_id: int | None = None,
+    ) -> tuple[list[AnchorMatch], list[AnchorMatch]]:
+        """Gemini 画像判定: 既存アンカーの検証 + 未マッチノードの新規発見。
+
+        Returns:
+            (new_anchors, rejected_anchors)
+            new_anchors: 新たにマッチしたアンカー
+            rejected_anchors: 既存アンカーのうち Gemini が棄却したもの
+        """
         from lc.utils import phash_distance
 
         matched_session_fps = {a.session_fp for a in existing_anchors}
         matched_master_fps = {a.master_fp for a in existing_anchors}
 
+        # キャッシュテーブル準備
+        _ensure_judgment_table(conn)
+
+        # 画像パス取得 (セッション側)
+        session_node_map = {n.fp: n for n in session_nodes}
+        master_node_map = {n.fp: n for n in master_nodes}
+
+        # session_id を取得
+        first_fp = session_nodes[0].fp if session_nodes else ""
+        session_id_row = conn.execute(
+            "SELECT session_id FROM lc_screens WHERE fingerprint = ? AND is_representative = 1 LIMIT 1",
+            (first_fp,),
+        ).fetchone()
+        session_id_str = session_id_row["session_id"] if session_id_row else ""
+
+        session_img_map: dict[str, str] = {}
+        for row in conn.execute(
+            "SELECT fingerprint, screenshot_path FROM lc_screens"
+            " WHERE session_id = ? AND is_representative = 1",
+            (session_id_str,),
+        ).fetchall():
+            if row["screenshot_path"]:
+                session_img_map[row["fingerprint"]] = row["screenshot_path"]
+
+        master_img_map: dict[str, str] = {}
+        for row in conn.execute(
+            "SELECT m.master_fp, s.screenshot_path"
+            " FROM lc_master_nodes m"
+            " LEFT JOIN lc_screens s ON s.id = m.representative_screen_id"
+            " WHERE m.version_id = ?",
+            (version_id or 1,),
+        ).fetchall():
+            if row["screenshot_path"]:
+                master_img_map[row["master_fp"]] = row["screenshot_path"]
+
+        # --- Step 1: 既存アンカーの検証 ---
+        verify_pairs: list[tuple[NodeInfo, NodeInfo, float, str, str]] = []
+        verify_cached: dict[tuple[str, str], bool] = {}
+        for a in existing_anchors:
+            s_node = session_node_map.get(a.session_fp)
+            m_node = master_node_map.get(a.master_fp)
+            if not s_node or not m_node:
+                continue
+            # テキスト完全一致 or 前方一致 は Gemini 検証不要
+            if s_node.text and m_node.text:
+                shorter, longer = (s_node.text, m_node.text) if len(s_node.text) <= len(m_node.text) else (m_node.text, s_node.text)
+                if shorter == longer or (len(shorter) >= 10 and longer.startswith(shorter)):
+                    verify_cached[(a.session_fp, a.master_fp)] = True
+                    continue
+            row = conn.execute(
+                "SELECT is_same FROM lc_anchor_judgments WHERE session_fp = ? AND master_fp = ?",
+                (a.session_fp, a.master_fp),
+            ).fetchone()
+            if row is not None:
+                verify_cached[(a.session_fp, a.master_fp)] = bool(row["is_same"])
+            else:
+                s_img = session_img_map.get(a.session_fp, "")
+                m_img = master_img_map.get(a.master_fp, "")
+                if s_img and m_img:
+                    verify_pairs.append((s_node, m_node, a.score, s_img, m_img))
+                else:
+                    # 画像なし → 検証スキップ（既存判定を信頼）
+                    verify_cached[(a.session_fp, a.master_fp)] = True
+
+        # --- Step 2: 未マッチノードの新規発見候補 ---
+        new_candidates: list[tuple[NodeInfo, NodeInfo, float]] = []
         targets = [n for n in session_nodes
                    if n.edge_type == "tap" and n.has_text and n.fp not in matched_session_fps]
-        if not targets:
-            return []
-
-        # 候補ペア抽出: phash < 5 + SequenceMatcher >= 0.7
-        candidates: list[tuple[NodeInfo, NodeInfo, float]] = []  # (session, master, similarity)
         for s in targets:
             if not s.phash:
                 continue
@@ -321,212 +568,265 @@ class AnchorMatcher:
                 if m.fp in matched_master_fps or not m.phash or not m.has_text:
                     continue
                 dist = phash_distance(s.phash, m.phash)
-                if dist >= self.PHASE2_PHASH_THRESHOLD:
+                if dist >= self.PHASE3_PHASH_THRESHOLD:
                     continue
-                sim = SequenceMatcher(None, s.text, m.text).ratio()
-                if sim >= self.PHASE2_TEXT_SIMILARITY and sim > best_sim:
+                sim = _text_similarity(s.text, m.text)
+                if sim >= self.PHASE4_TEXT_SIMILARITY and sim > best_sim:
                     best_m = m
                     best_sim = sim
             if best_m:
-                candidates.append((s, best_m, best_sim))
+                new_candidates.append((s, best_m, best_sim))
 
-        if not candidates:
-            return []
-
-        logger.info("[AnchorMatcher] Phase 2: %d 候補ペアを Gemini に判定依頼", len(candidates))
-
-        # 進捗報告ヘルパー
-        def _report(stage: str, current: int, total: int, elapsed: float):
-            import json as _json
-            eta = (elapsed / current * (total - current)) if current > 0 else 0
-            try:
-                conn.execute(
-                    "INSERT OR REPLACE INTO auto_pilot_state (key, value) VALUES ('merge_progress', ?)",
-                    (_json.dumps({"stage": stage, "current": current, "total": total,
-                                  "elapsed": round(elapsed, 1), "eta": round(eta, 1)}, ensure_ascii=False),),
-                )
-                conn.commit()
-            except Exception:
-                pass
-
-        # キャッシュテーブル準備
-        _ensure_judgment_table(conn)
-
-        # キャッシュ確認 & 未判定ペアを抽出
-        uncached: list[tuple[NodeInfo, NodeInfo, float, str, str]] = []
-        cached_results: dict[tuple[str, str], bool] = {}
-        for s, m, sim in candidates:
-            s_hash = _text_hash(s.text)
-            m_hash = _text_hash(m.text)
+        discover_pairs: list[tuple[NodeInfo, NodeInfo, float, str, str]] = []
+        discover_cached: dict[tuple[str, str], bool] = {}
+        for s, m, sim in new_candidates:
             row = conn.execute(
-                "SELECT is_same FROM lc_anchor_judgments"
-                " WHERE session_text_hash = ? AND master_text_hash = ?",
-                (s_hash, m_hash),
+                "SELECT is_same FROM lc_anchor_judgments WHERE session_fp = ? AND master_fp = ?",
+                (s.fp, m.fp),
             ).fetchone()
             if row is not None:
-                cached_results[(s.fp, m.fp)] = bool(row["is_same"])
+                discover_cached[(s.fp, m.fp)] = bool(row["is_same"])
             else:
-                uncached.append((s, m, sim, s_hash, m_hash))
+                s_img = session_img_map.get(s.fp, "")
+                m_img = master_img_map.get(m.fp, "")
+                discover_pairs.append((s, m, sim, s_img, m_img))
 
-        _report(f"Gemini判定 候補{len(candidates)}件 (キャッシュ{len(candidates)-len(uncached)}件)", 0, max(len(uncached), 1), 0)
+        # --- Gemini に一括送信 ---
+        all_uncached = verify_pairs + discover_pairs
+        total_pairs = len(existing_anchors) + len(new_candidates)
+        cached_count = total_pairs - len(all_uncached)
+        logger.info(
+            "[AnchorMatcher] Phase 4: 検証%d件 + 新規%d件 = %d件 (キャッシュ%d件, Gemini送信%d件)",
+            len(existing_anchors), len(new_candidates), total_pairs, cached_count, len(all_uncached),
+        )
 
-        # Gemini 判定 (バッチ)
-        if uncached:
-            import time as _time
-            _t0 = _time.time()
-            gemini_results = self._gemini_batch_judge(uncached, lambda done, total: _report(
-                f"Gemini判定 {done}/{total}件", done, total, _time.time() - _t0))
-            for (s, m, sim, s_hash, m_hash), is_same in zip(uncached, gemini_results):
-                # キャッシュに保存
+        if not all_uncached and not verify_cached and not discover_cached:
+            return [], []
+
+        if all_uncached:
+            gemini_results = self._gemini_batch_judge(all_uncached)
+            for (s, m, sim, _, _), result in zip(all_uncached, gemini_results):
+                is_same = result["is_same"]
+                prefer = result.get("prefer", "")
                 try:
                     conn.execute(
                         "INSERT OR REPLACE INTO lc_anchor_judgments"
-                        " (session_text_hash, master_text_hash, is_same) VALUES (?, ?, ?)",
-                        (s_hash, m_hash, 1 if is_same else 0),
+                        " (session_fp, master_fp, is_same, prefer) VALUES (?, ?, ?, ?)",
+                        (s.fp, m.fp, 1 if is_same else 0, prefer),
                     )
                 except Exception:
                     pass
-                cached_results[(s.fp, m.fp)] = is_same
+                # verify_pairs か discover_pairs かで振り分け
+                if (s.fp, m.fp) not in verify_cached:
+                    verify_cached[(s.fp, m.fp)] = is_same
+                if (s.fp, m.fp) not in discover_cached:
+                    discover_cached[(s.fp, m.fp)] = is_same
             try:
                 conn.commit()
             except Exception:
                 pass
 
-        # アンカー確定
-        anchors: list[AnchorMatch] = []
-        for s, m, sim in candidates:
-            if cached_results.get((s.fp, m.fp), False):
-                anchors.append(AnchorMatch(
+        # --- 結果集計 ---
+        # 既存アンカーの棄却
+        rejected: list[AnchorMatch] = []
+        for a in existing_anchors:
+            is_same = verify_cached.get((a.session_fp, a.master_fp))
+            if is_same is False:
+                rejected.append(a)
+                logger.info("[AnchorMatcher] Phase 4 検証棄却: %s → %s (%s)",
+                            a.session_fp[:12], a.master_fp[:12], a.method)
+
+        # 新規アンカー
+        new_anchors: list[AnchorMatch] = []
+        for s, m, sim in new_candidates:
+            if discover_cached.get((s.fp, m.fp), False):
+                new_anchors.append(AnchorMatch(
                     session_fp=s.fp, master_fp=m.fp,
                     master_sort=master_sort_map[m.fp],
-                    method="phase2_gemini", score=round(sim, 3), phase=2,
+                    method="phase4_gemini", score=round(sim, 3), phase=4,
                 ))
-                matched_master_fps.add(m.fp)
 
-        return anchors
+        return new_anchors, rejected
 
     @staticmethod
     def _gemini_batch_judge(
         pairs: list[tuple[NodeInfo, NodeInfo, float, str, str]],
-        on_progress=None,
-    ) -> list[bool]:
-        """Gemini Flash にテキストペアの同一画面判定をバッチで問い合わせる。"""
+    ) -> list[dict]:
+        """Gemini Flash に画像ペアの同一画面判定を問い合わせる (1ペアずつ)。
+
+        pairs: [(session_node, master_node, similarity, session_img_path, master_img_path)]
+        Returns: [{"is_same": bool, "prefer": "A"|"B"|""}, ...]
+            prefer: 同一画面の場合、テキストがより正確に読める方 (A=セッション, B=マスター)
+        """
         import json
         import re
         import time
+        from pathlib import Path
 
+        _default = {"is_same": False, "prefer": ""}
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
-            logger.warning("[AnchorMatcher] GEMINI_API_KEY 未設定: Phase 2 スキップ")
-            return [False] * len(pairs)
+            logger.warning("[AnchorMatcher] GEMINI_API_KEY 未設定: Phase 4 スキップ")
+            return [_default.copy() for _ in pairs]
 
         try:
             from google import genai
+            from google.genai import types
             client = genai.Client(api_key=api_key)
         except Exception as e:
             logger.warning("[AnchorMatcher] Gemini 初期化失敗: %s", e)
-            return [False] * len(pairs)
+            return [_default.copy() for _ in pairs]
 
-        BATCH_SIZE = 10
-        results: list[bool] = []
+        CONCURRENCY = 5  # 同時並列リクエスト数
+        results: list[dict] = []
 
-        for i in range(0, len(pairs), BATCH_SIZE):
-            batch = pairs[i:i + BATCH_SIZE]
-            prompt_parts = []
-            for idx, (s, m, sim, _, _) in enumerate(batch):
-                prompt_parts.append(
-                    f"ペア{idx+1}:\n"
-                    f"  テキストA: {s.text[:500]}\n"
-                    f"  テキストB: {m.text[:500]}"
-                )
+        prompt_text = (
+            "以下の2枚のスクリーンショットは同じモバイルゲームの異なるプレイセッションから取得したものです。\n"
+            "これらが「同じ種類の画面」であるかどうかを判定してください。\n\n"
+            "## 「同じ画面」と判定すべきケース:\n"
+            "- 同じUI画面（メニュー、設定、規約画面等）の異なるタイミングでのキャプチャ\n"
+            "- 同じ会話シーンで同じキャラクターが話している\n"
+            "- ボタンの選択状態、スクロール位置、数値（HP、ダメージ等）が異なっても画面の種類が同じ\n"
+            "- テキストが多少異なっていても、画面のレイアウトと目的が同じ\n"
+            "- 画質や明るさが若干異なる同じ画面\n\n"
+            "## 「異なる画面」と判定すべきケース:\n"
+            "- 完全に異なるシーン（バトル vs メニュー等）\n"
+            "- 異なるメニュー画面（ショップ vs ガチャ等）\n"
+            "- 異なるキャラクターが話している会話シーン\n"
+            "- バトル画面でキャラクター編成（下部のアイコン列）が異なる場合\n"
+            "- 画面が見切れている・不完全なキャプチャ（片方が正常で片方が見切れている場合）\n\n"
+            "重要: 迷ったら true (同じ画面) と判定してください。\n"
+            "false の誤りは取り返しがつきませんが、true の誤りは人間が後から修正できます。\n\n"
+            "JSON のみ返してください。説明は不要です。\n"
+            '{"is_same": true, "prefer": "A"}\n\n'
+            "- is_same: 同じ画面なら true、異なる画面なら false\n"
+            "- prefer: 同じ画面の場合、テキストがより正確な方。A=セッション、B=マスター。同等なら A。"
+        )
 
-            prompt = (
-                "以下のテキストペアは、同じゲーム画面のOCR結果です。\n"
-                "OCRの揺れ（スペース、記号、改行の違い）により異なるテキストになっていますが、\n"
-                "同じ画面の同じコンテンツを指しているかどうかを判定してください。\n"
-                "セリフや数値が異なる場合は「異なる画面」と判定してください。\n\n"
-                + "\n\n".join(prompt_parts) + "\n\n"
-                "各ペアについて true (同じ画面) または false (異なる画面) を JSON 配列で返してください。\n"
-                '例: [true, false, true]\n'
-                "JSON 配列のみ返してください。説明は不要です。"
-            )
+        # 画像なしペアを先に処理
+        valid_pairs: list[tuple[int, NodeInfo, NodeInfo, float, str, str]] = []
+        for idx, (s, m, sim, s_img, m_img) in enumerate(pairs):
+            if not s_img or not m_img or not Path(s_img).exists() or not Path(m_img).exists():
+                logger.warning("[AnchorMatcher] 画像なし: s=%s m=%s", s.fp[:12], m.fp[:12])
+                results.append(_default.copy())
+            else:
+                valid_pairs.append((idx, s, m, sim, s_img, m_img))
+                results.append(None)  # placeholder
 
+        if not valid_pairs:
+            return [r or _default.copy() for r in results]
+
+        # スレッド並列リクエスト (1ペア=1リクエスト、同時N件)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _judge_one(orig_idx: int, s: NodeInfo, m: NodeInfo,
+                       s_img: str, m_img: str) -> None:
             try:
+                s_mime = "image/webp" if s_img.endswith(".webp") else "image/png"
+                m_mime = "image/webp" if m_img.endswith(".webp") else "image/png"
+                with open(s_img, "rb") as f:
+                    s_data = f.read()
+                with open(m_img, "rb") as f:
+                    m_data = f.read()
+
                 response = client.models.generate_content(
                     model="gemini-2.5-flash-lite",
-                    contents=[prompt],
+                    contents=[
+                        "画像A (セッション):",
+                        genai.types.Part.from_bytes(data=s_data, mime_type=s_mime),
+                        "画像B (マスター):",
+                        genai.types.Part.from_bytes(data=m_data, mime_type=m_mime),
+                        prompt_text,
+                    ],
                 )
-                text = response.text.strip()
-                # マークダウンコードブロック除去
-                if text.startswith("```"):
-                    text = re.sub(r'^```\w*\n?', '', text)
-                    text = re.sub(r'\n?```$', '', text)
-                judgments = json.loads(text)
-                if isinstance(judgments, list):
-                    for j in judgments:
-                        results.append(bool(j))
-                    # バッチサイズに満たない場合 False で埋める
-                    while len(results) < i + len(batch):
-                        results.append(False)
-                else:
-                    results.extend([False] * len(batch))
+
+                # API 使用量記録
+                try:
+                    from tools.ap.api_usage import record_api_usage, extract_usage_from_response
+                    in_tok, out_tok = extract_usage_from_response(response)
+                    record_api_usage("gemini-2.5-flash-lite", "anchor_judgment", in_tok, out_tok)
+                except Exception:
+                    pass
+
+                raw = (response.text or "").strip()
+                if raw.startswith("```"):
+                    raw = re.sub(r'^```\w*\n?', '', raw)
+                    raw = re.sub(r'\n?```$', '', raw)
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        parsed = parsed[0] if parsed else {}
+                    is_same = bool(parsed.get("is_same", False))
+                    prefer = str(parsed.get("prefer", "")) or ""
+                except (json.JSONDecodeError, AttributeError):
+                    is_same = raw.lower().startswith("true") or '"is_same": true' in raw.lower()
+                    prefer = ""
+
+                results[orig_idx] = {"is_same": is_same, "prefer": prefer}
+                logger.info(
+                    "[AnchorMatcher] Gemini 画像判定: s=%s m=%s → same=%s prefer=%s",
+                    s.fp[:12], m.fp[:12], is_same, prefer,
+                )
             except Exception as e:
-                logger.warning("[AnchorMatcher] Gemini 判定失敗: %s", e)
-                results.extend([False] * len(batch))
+                logger.warning("[AnchorMatcher] Gemini 判定失敗: s=%s: %s", s.fp[:12], e)
+                results[orig_idx] = _default.copy()
 
-            # 進捗報告
-            if on_progress:
-                on_progress(min(i + len(batch), len(pairs)), len(pairs))
+        with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
+            futures = [
+                pool.submit(_judge_one, orig_idx, s, m, s_img, m_img)
+                for orig_idx, s, m, _, s_img, m_img in valid_pairs
+            ]
+            for f in as_completed(futures):
+                f.result()  # 例外があれば再 raise
 
-            # レートリミット
-            if i + BATCH_SIZE < len(pairs):
-                time.sleep(1.5)
+        logger.info("[AnchorMatcher] Gemini 画像判定完了: %d/%d 件",
+                    sum(1 for r in results if r and r.get("is_same")), len(pairs))
 
-        return results
+        return [r or _default.copy() for r in results]
 
-    # ─── Phase 3: auto + テキストあり ─────────────────
+    # ─── Phase 2: auto + テキストあり ─────────────────
 
-    def _phase3_auto_text(
+    def _phase2_auto_text(
         self,
         session_nodes: list[NodeInfo],
         master_nodes: list[NodeInfo],
         master_sort_map: dict[str, int],
         existing_anchors: list[AnchorMatch],
     ) -> list[AnchorMatch]:
-        """auto + テキストありノードを、Phase 1 アンカー範囲制限付きでマッチ。"""
+        """Phase 2: auto + テキストありノードを、アンカー範囲制限付きでマッチ。
+        完全一致/前方一致 → あいまい一致 (sim>=0.9, phash<20, 候補1件) の順。
+        """
         from lc.utils import phash_distance
 
         matched_master_fps = {a.master_fp for a in existing_anchors}
         matched_session_fps = {a.session_fp for a in existing_anchors}
 
-        # アンカーを session time_rank 順にソート
         sorted_anchors = sorted(existing_anchors, key=lambda a: self._session_rank(a, session_nodes))
 
         targets = [n for n in session_nodes
                    if n.edge_type == "auto" and n.has_text and n.fp not in matched_session_fps]
 
-        # マスターテキスト逆引き
         master_by_text: dict[str, list[NodeInfo]] = {}
         for m in master_nodes:
             if m.has_text:
                 master_by_text.setdefault(m.text, []).append(m)
 
         anchors: list[AnchorMatch] = []
+        p3_matched_session: set[str] = set()
+        p3_matched_master: set[str] = set()
 
+        # --- Pass 1: 完全一致 / 前方一致 ---
         for s in targets:
-            # 候補範囲を限定
             sort_min, sort_max = self._get_sort_range(s, session_nodes, sorted_anchors, master_sort_map)
 
-            # テキスト一致候補 (範囲内のみ)
             candidates = []
             for m in master_by_text.get(s.text, []):
-                if m.fp in matched_master_fps:
+                if m.fp in matched_master_fps or m.fp in p3_matched_master:
                     continue
                 m_sort = master_sort_map.get(m.fp, -1)
                 if sort_min <= m_sort <= sort_max:
                     candidates.append(m)
 
-            # 前方一致 (完全一致がなければ)
             if not candidates and len(s.text) >= 5:
                 for text, ms in master_by_text.items():
                     if not text:
@@ -534,7 +834,7 @@ class AnchorMatcher:
                     shorter, longer = (s.text, text) if len(s.text) <= len(text) else (text, s.text)
                     if len(shorter) >= 5 and longer.startswith(shorter):
                         for m in ms:
-                            if m.fp in matched_master_fps:
+                            if m.fp in matched_master_fps or m.fp in p3_matched_master:
                                 continue
                             m_sort = master_sort_map.get(m.fp, -1)
                             if sort_min <= m_sort <= sort_max:
@@ -552,15 +852,55 @@ class AnchorMatcher:
             anchors.append(AnchorMatch(
                 session_fp=s.fp, master_fp=m.fp,
                 master_sort=master_sort_map[m.fp],
-                method="phase3_auto_text", score=1.0, phase=3,
+                method="phase2_auto_text", score=1.0, phase=2,
             ))
-            matched_master_fps.add(m.fp)
+            p3_matched_session.add(s.fp)
+            p3_matched_master.add(m.fp)
+
+        # --- Pass 2: あいまい一致 (sim>=0.9, phash<20, 候補1件) ---
+        all_matched_master = matched_master_fps | p3_matched_master
+        all_matched_session = matched_session_fps | p3_matched_session
+        # あいまい一致用に sorted_anchors を更新
+        updated_anchors = existing_anchors + anchors
+        sorted_anchors_updated = sorted(updated_anchors, key=lambda a: self._session_rank(a, session_nodes))
+
+        fuzzy_targets = [n for n in targets if n.fp not in all_matched_session]
+        for s in fuzzy_targets:
+            if not s.phash:
+                continue
+            sort_min, sort_max = self._get_sort_range(s, session_nodes, sorted_anchors_updated, master_sort_map)
+
+            best_m = None
+            best_sim = 0.0
+            candidate_count = 0
+            for m in master_nodes:
+                if m.fp in all_matched_master or not m.phash or not m.has_text:
+                    continue
+                m_sort = master_sort_map.get(m.fp, -1)
+                if not (sort_min <= m_sort <= sort_max):
+                    continue
+                dist = phash_distance(s.phash, m.phash)
+                if dist >= self.PHASE2_FUZZY_PHASH_THRESHOLD:
+                    continue
+                sim = _text_similarity(s.text, m.text)
+                if sim >= self._fuzzy_sim_threshold(len(s.text)):
+                    candidate_count += 1
+                    if sim > best_sim:
+                        best_m = m
+                        best_sim = sim
+            if candidate_count == 1 and best_m:
+                anchors.append(AnchorMatch(
+                    session_fp=s.fp, master_fp=best_m.fp,
+                    master_sort=master_sort_map[best_m.fp],
+                    method="phase2_auto_text", score=round(best_sim, 3), phase=2,
+                ))
+                all_matched_master.add(best_m.fp)
 
         return anchors
 
-    # ─── Phase 4: tap + テキスト空 ────────────────────
+    # ─── Phase 3: tap + テキスト空 ────────────────────
 
-    def _phase4_tap_phash(
+    def _phase3_tap_phash(
         self,
         session_nodes: list[NodeInfo],
         master_nodes: list[NodeInfo],
@@ -599,7 +939,7 @@ class AnchorMatcher:
                     continue
                 if s.phash and m.phash:
                     dist = phash_distance(s.phash, m.phash)
-                    if dist < self.PHASE4_PHASH_THRESHOLD:
+                    if dist < self.PHASE3_PHASH_THRESHOLD:
                         candidates.append((m, dist))
 
             if len(candidates) != 1:
@@ -610,7 +950,7 @@ class AnchorMatcher:
             anchors.append(AnchorMatch(
                 session_fp=s.fp, master_fp=m.fp,
                 master_sort=master_sort_map[m.fp],
-                method="phase4_tap_phash", score=score, phase=4,
+                method="phase3_tap_phash", score=score, phase=3,
             ))
             matched_master_fps.add(m.fp)
 
@@ -618,23 +958,18 @@ class AnchorMatcher:
 
     # ─── 時系列整合性チェック ──────────────────────────
 
-    def _verify_consistency(self, anchors: list[AnchorMatch]) -> list[AnchorMatch]:
-        """時系列整合性チェック。矛盾するアンカーを LIS で除去。"""
+    def _verify_consistency(
+        self, anchors: list[AnchorMatch], phase_label: str = "",
+    ) -> tuple[list[AnchorMatch], list[tuple[AnchorMatch, str]]]:
+        """時系列整合性チェック。矛盾するアンカーを LIS で除去。
+
+        Returns:
+            (kept, discarded) — discarded は (anchor, reason) のリスト
+        """
         if len(anchors) <= 1:
-            return anchors
+            return anchors, []
 
-        # session time_rank 順にソート
-        sorted_by_rank = sorted(anchors, key=lambda a: a.master_sort)
-        # master_sort の列から LIS (最長増加部分列) を求める
-        # ここでは session 順にソートして master_sort が単調増加か確認
-        sorted_by_session = sorted(anchors, key=lambda a: a.session_fp)
-        # 実際には time_rank でソートすべきだが、session_fp は一意なので
-        # AnchorMatch に time_rank を持たせる必要がある
-
-        # 簡易版: session の順序(追加順 ≈ time_rank 順) で master_sort が単調増加か
         master_sorts = [a.master_sort for a in anchors]
-
-        # LIS (最長増加部分列) を求める
         lis_indices = self._longest_increasing_subsequence(master_sorts)
         lis_set = set(lis_indices)
 
@@ -643,7 +978,10 @@ class AnchorMatcher:
             logger.warning("[AnchorMatcher] 矛盾検出: %d アンカーを破棄 (LIS で %d 保持)",
                            removed, len(lis_indices))
 
-        return [anchors[i] for i in lis_indices]
+        kept = [anchors[i] for i in lis_indices]
+        reason = "他のアンカーと順序が競合（マッチ自体は正しい可能性あり）"
+        discarded = [(anchors[i], reason) for i in range(len(anchors)) if i not in lis_set]
+        return kept, discarded
 
     @staticmethod
     def _longest_increasing_subsequence(seq: list[int]) -> list[int]:

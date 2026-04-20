@@ -15,6 +15,7 @@
 #   -s, --stop-on-home ホーム画面到達で停止
 #   -r, --reinstall    アプリを再インストールして新規アカウントで開始
 #   -c N, --cycles N   N周回実行 (0 = 無限)
+#   -V N, --version N  バージョンID指定 (未指定=Activeバージョン)
 #
 # Ctrl+C で自動操縦も停止します。
 #

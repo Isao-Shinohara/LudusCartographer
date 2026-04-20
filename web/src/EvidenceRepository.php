@@ -115,15 +115,28 @@ class EvidenceRepository
      */
     public function deleteVersion(int $versionId): array
     {
-        // active バージョンは削除不可
+        // 最後の1つは削除不可
+        $count = (int)$this->db->query(
+            "SELECT COUNT(*) FROM lc_versions WHERE is_deleted = 0"
+        )->fetchColumn();
+        if ($count <= 1) {
+            return ['ok' => false, 'error' => '最後のバージョンは削除できません'];
+        }
+
+        // Active バージョンの場合、別のバージョンを Active にする
         $activeId = $this->getActiveVersionId();
         if ($activeId === $versionId) {
-            return ['ok' => false, 'error' => 'active バージョンは削除できません'];
+            $this->db->prepare(
+                "UPDATE lc_versions SET is_active = 0 WHERE id = :vid"
+            )->execute([':vid' => $versionId]);
+            $this->db->exec(
+                "UPDATE lc_versions SET is_active = 1 WHERE is_deleted = 0 AND id != $versionId ORDER BY id DESC LIMIT 1"
+            );
         }
 
         // 論理削除
         $this->db->prepare(
-            "UPDATE lc_versions SET is_deleted = 1 WHERE id = :vid"
+            "UPDATE lc_versions SET is_deleted = 1, is_active = 0 WHERE id = :vid"
         )->execute([':vid' => $versionId]);
 
         // 関連セッションを archived に

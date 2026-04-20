@@ -113,16 +113,28 @@ if ($action === 'delete_version') {
         exit;
     }
     $result = $repository->deleteVersion($versionId);
-    // ローカルファイル削除
+    // ローカル画像ファイル削除
     if (($result['ok'] ?? false) && !empty($result['session_ids'])) {
         $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+        $imageDirs = [
+            $crawlerDir . '/storage/screenshots/',
+            $crawlerDir . '/storage/reinstall/',
+            $crawlerDir . '/storage/evidence/',
+            $crawlerDir . '/evidence/',
+            $crawlerDir . '/screenshots/',
+        ];
+        $deleted = 0;
         foreach ($result['session_ids'] as $sid) {
-            $dir = $crawlerDir . '/storage/screenshots/' . $sid;
-            if (is_dir($dir)) {
-                array_map('unlink', glob("$dir/*"));
-                @rmdir($dir);
+            foreach ($imageDirs as $base) {
+                $dir = $base . $sid;
+                if (is_dir($dir)) {
+                    $files = glob("$dir/*");
+                    if ($files) { array_map('unlink', $files); $deleted += count($files); }
+                    @rmdir($dir);
+                }
             }
         }
+        $result['deleted_files'] = $deleted;
     }
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     exit;
@@ -305,6 +317,51 @@ if ($action === 'toggle_exclude') {
     exit;
 }
 
+// --- get_noise_words アクション ---
+if ($action === 'get_noise_words') {
+    $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+    try {
+        $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
+        $db->setAttribute(PDO::ATTR_TIMEOUT, 2);
+        $rows = $db->query("SELECT word, count, first_seen_at, last_seen_at FROM lc_ocr_noise_words ORDER BY count DESC, word ASC")->fetchAll(PDO::FETCH_ASSOC);
+        echo json_encode(['words' => $rows ?: []], JSON_UNESCAPED_UNICODE);
+    } catch (\Throwable $e) {
+        echo json_encode(['words' => [], 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// --- delete_noise_word アクション ---
+if ($action === 'delete_noise_word') {
+    $word = $_GET['word'] ?? '';
+    if ($word === '') { echo json_encode(['error' => 'word required']); exit; }
+    $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+    try {
+        $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
+        $db->prepare("DELETE FROM lc_ocr_noise_words WHERE word = ?")->execute([$word]);
+        echo json_encode(['ok' => true]);
+    } catch (\Throwable $e) {
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// --- add_noise_word アクション ---
+if ($action === 'add_noise_word') {
+    $word = trim($_GET['word'] ?? '');
+    if ($word === '') { echo json_encode(['error' => 'word required']); exit; }
+    $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+    try {
+        $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
+        $db->exec("CREATE TABLE IF NOT EXISTS lc_ocr_noise_words (word TEXT PRIMARY KEY, count INTEGER DEFAULT 1, first_seen_at TEXT DEFAULT (datetime('now')), last_seen_at TEXT DEFAULT (datetime('now')))");
+        $db->prepare("INSERT OR IGNORE INTO lc_ocr_noise_words (word, count) VALUES (?, 2)")->execute([$word]);
+        echo json_encode(['ok' => true]);
+    } catch (\Throwable $e) {
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit;
+}
+
 // --- get_pending_merges アクション ---
 if ($action === 'get_pending_merges') {
     if ($useDb && $repository instanceof EvidenceRepository) {
@@ -331,26 +388,17 @@ if ($action === 'get_pending_merges') {
     exit;
 }
 
-// --- merge_progress アクション (進捗ポーリング) ---
+// --- merge_progress アクション (結果ファイルの出現で完了判定) ---
 if ($action === 'merge_progress') {
     $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
     $resultFile = $crawlerDir . '/storage/merge_result.json';
-    // 進捗を auto_pilot_state から取得
-    try {
-        $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
-        $db->setAttribute(PDO::ATTR_TIMEOUT, 2);
-        $progress = $db->query("SELECT value FROM auto_pilot_state WHERE key = 'merge_progress'")->fetchColumn();
-        $done = file_exists($resultFile);
-        $result = $done ? json_decode(file_get_contents($resultFile), true) : null;
-        if ($done) @unlink($resultFile);
-        echo json_encode([
-            'progress' => $progress ? json_decode($progress, true) : null,
-            'done' => $done,
-            'result' => $result,
-        ], JSON_UNESCAPED_UNICODE);
-    } catch (\Throwable $e) {
-        echo json_encode(['progress' => null, 'done' => false, 'result' => null]);
-    }
+    $done = file_exists($resultFile);
+    $result = $done ? json_decode(file_get_contents($resultFile), true) : null;
+    if ($done) @unlink($resultFile);
+    echo json_encode([
+        'done' => $done,
+        'result' => $result,
+    ], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -416,7 +464,7 @@ total, g, d = _pending()
 print(json.dumps({"ok": True, "sccs": sccs, "iterations": iters, "remaining_gemini": g, "remaining_dedup": d}, ensure_ascii=False))
 PYTHON;
     $cmd = sprintf(
-        'cd %s && exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- && ./venv/bin/python -W ignore -c %s > %s 2>>storage/process_session_bg.err.log </dev/null &',
+        'cd %s && exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- && ./venv/bin/python -B -W ignore -c %s > %s 2>>storage/process_session_bg.err.log </dev/null &',
         $crawlerDir,
         escapeshellarg($script),
         escapeshellarg($resultFile),
@@ -440,6 +488,7 @@ if ($action === 'build_session_graph') {
     $scriptFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/_build_graph.py';
     file_put_contents($scriptFile, <<<PYTHON
 import json, logging, sys, os
+sys.dont_write_bytecode = True
 sys.path.insert(0, os.getcwd())
 logging.disable(logging.CRITICAL)
 from pathlib import Path
@@ -452,9 +501,9 @@ with open(sys.argv[1], "w") as f:
 PYTHON);
     $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
     $bgCmd = "cd " . escapeshellarg($crawlerDirRaw)
-           . " && ./venv/bin/python -W ignore " . escapeshellarg($scriptFile)
+           . " && ./venv/bin/python -B -W ignore " . escapeshellarg($scriptFile)
            . " " . escapeshellarg($resultFile)
-           . " > /dev/null 2>>storage/preview_merge.err.log &";
+           . " </dev/null > /dev/null 2>storage/preview_merge.err.log &";
     pclose(popen($bgCmd, 'r'));
     header('Content-Type: application/json');
     echo json_encode(['started' => true]);
@@ -471,25 +520,37 @@ if ($action === 'preview_merge') {
     $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
     $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
+    // 二重起動防止はフロント側の withOperationLock で制御
     // スクリプトファイルに書き出してバックグラウンド実行 (クォート問題を回避)
     $scriptFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/_preview_merge.py';
+    $excludeFpsPreview = $_GET['exclude_fps'] ?? '[]';
+    $includeFpsPreview = $_GET['include_fps'] ?? '[]';
     file_put_contents($scriptFile, <<<PYTHON
 import json, logging, sys, os
+sys.dont_write_bytecode = True
 sys.path.insert(0, os.getcwd())
-logging.disable(logging.CRITICAL)
+logging.basicConfig(level=logging.INFO, format='%(message)s', stream=sys.stderr)
+try:
+    from dotenv import load_dotenv
+    _env = os.path.join("config", ".env")
+    if os.path.exists(_env): load_dotenv(_env)
+except ImportError:
+    pass
 from pathlib import Path
 from tools.cross_session_merger import CrossSessionMerger
+exclude_fps = set(json.loads('{$excludeFpsPreview}'))
+include_fps = set(json.loads('{$includeFpsPreview}'))
 m = CrossSessionMerger(Path("storage/ludus.db"))
-r = m.preview_merge("{$sessionId}")
+r = m.preview_merge("{$sessionId}", exclude_fps=exclude_fps or None, include_fps=include_fps or None)
 m.close()
 with open(sys.argv[1], "w") as f:
     json.dump(r, f, ensure_ascii=False)
 PYTHON);
     $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
     $bgCmd = "cd " . escapeshellarg($crawlerDirRaw)
-           . " && ./venv/bin/python -W ignore " . escapeshellarg($scriptFile)
+           . " && ./venv/bin/python -B -W ignore " . escapeshellarg($scriptFile)
            . " " . escapeshellarg($resultFile)
-           . " > /dev/null 2>>storage/preview_merge.err.log &";
+           . " </dev/null > /dev/null 2>storage/preview_merge.err.log &";
     pclose(popen($bgCmd, 'r'));
     header('Content-Type: application/json');
     echo json_encode(['started' => true]);
@@ -508,16 +569,25 @@ if ($action === 'execute_merge') {
     @unlink($resultFile);
     $scriptFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/_execute_merge.py';
     $excludeFps = $_GET['exclude_fps'] ?? '[]';
+    $includeFps = $_GET['include_fps'] ?? '[]';
     file_put_contents($scriptFile, <<<PYTHON
 import json, logging, sys, os
+sys.dont_write_bytecode = True
 sys.path.insert(0, os.getcwd())
 logging.disable(logging.CRITICAL)
+try:
+    from dotenv import load_dotenv
+    _env = os.path.join("config", ".env")
+    if os.path.exists(_env): load_dotenv(_env)
+except ImportError:
+    pass
 from pathlib import Path
 from tools.cross_session_merger import CrossSessionMerger
 import sqlite3
 exclude_fps = set(json.loads('{$excludeFps}'))
+include_fps = set(json.loads('{$includeFps}'))
 m = CrossSessionMerger(Path("storage/ludus.db"))
-n = m.merge_to_master("{$sessionId}", exclude_fps=exclude_fps)
+n = m.merge_to_master("{$sessionId}", exclude_fps=exclude_fps, include_fps=include_fps)
 conn = sqlite3.connect("storage/ludus.db")
 master_nodes = conn.execute("SELECT COUNT(*) FROM lc_master_nodes").fetchone()[0]
 anchors = conn.execute("SELECT COUNT(*) FROM lc_node_mappings WHERE session_id=? AND match_method != 'new'", ("{$sessionId}",)).fetchone()[0]
@@ -528,9 +598,9 @@ with open(sys.argv[1], "w") as f:
 PYTHON);
     $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
     $bgCmd = "cd " . escapeshellarg($crawlerDirRaw)
-           . " && ./venv/bin/python -W ignore " . escapeshellarg($scriptFile)
+           . " && ./venv/bin/python -B -W ignore " . escapeshellarg($scriptFile)
            . " " . escapeshellarg($resultFile)
-           . " > /dev/null 2>>storage/preview_merge.err.log &";
+           . " </dev/null > /dev/null 2>storage/preview_merge.err.log &";
     pclose(popen($bgCmd, 'r'));
     header('Content-Type: application/json');
     echo json_encode(['started' => true]);
@@ -755,6 +825,63 @@ if ($action === 'apply_correction_rule') {
         echo json_encode(['ok' => true, 'applied' => $applied]);
     } catch (\Throwable $e) {
         echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// --- get_api_usage アクション ---
+if ($action === 'get_api_usage') {
+    $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+    try {
+        $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
+        $db->setAttribute(PDO::ATTR_TIMEOUT, 2);
+
+        // テーブル存在チェック
+        $tableExists = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='lc_api_usage'")->fetch();
+        if (!$tableExists) {
+            echo json_encode(['daily' => [], 'by_model' => [], 'by_purpose' => [], 'total' => ['input_tokens' => 0, 'output_tokens' => 0, 'count' => 0]], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // 日別集計
+        $daily = $db->query(
+            "SELECT date(created_at) as day, model, purpose,"
+            . " SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens,"
+            . " COUNT(*) as call_count"
+            . " FROM lc_api_usage"
+            . " GROUP BY day, model, purpose"
+            . " ORDER BY day DESC, model, purpose"
+        )->fetchAll(PDO::FETCH_ASSOC);
+
+        // モデル別集計
+        $byModel = $db->query(
+            "SELECT model, SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens,"
+            . " COUNT(*) as call_count"
+            . " FROM lc_api_usage GROUP BY model ORDER BY model"
+        )->fetchAll(PDO::FETCH_ASSOC);
+
+        // 用途別集計
+        $byPurpose = $db->query(
+            "SELECT purpose, SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens,"
+            . " COUNT(*) as call_count"
+            . " FROM lc_api_usage GROUP BY purpose ORDER BY purpose"
+        )->fetchAll(PDO::FETCH_ASSOC);
+
+        // 全体合計
+        $total = $db->query(
+            "SELECT SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens,"
+            . " COUNT(*) as count"
+            . " FROM lc_api_usage"
+        )->fetch(PDO::FETCH_ASSOC);
+
+        echo json_encode([
+            'daily' => $daily ?: [],
+            'by_model' => $byModel ?: [],
+            'by_purpose' => $byPurpose ?: [],
+            'total' => $total ?: ['input_tokens' => 0, 'output_tokens' => 0, 'count' => 0],
+        ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    } catch (\Throwable $e) {
+        echo json_encode(['daily' => [], 'by_model' => [], 'by_purpose' => [], 'total' => ['input_tokens' => 0, 'output_tokens' => 0, 'count' => 0], 'error' => $e->getMessage()]);
     }
     exit;
 }

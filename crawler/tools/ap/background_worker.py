@@ -180,7 +180,7 @@ class BackgroundWorker:
         last_group = 0.0
         last_graph = 0.0
         last_gemini = 0.0
-        last_merge = 0.0
+        # last_merge 削除: マージは手動実行に変更
 
         # 起動直後は 5 秒待機
         self._stop_event.wait(timeout=5.0)
@@ -231,13 +231,8 @@ class BackgroundWorker:
                     logger.warning("[BG_WORKER] graph 例外: %s", e)
                 last_graph = time.time()
 
-            # クロスセッションマージ (300秒間隔)
-            if now - last_merge >= 300.0:
-                try:
-                    self._run_cross_session_merge()
-                except Exception as e:
-                    logger.warning("[BG_WORKER] merge 例外: %s", e)
-                last_merge = time.time()
+            # クロスセッションマージは手動実行 (ダッシュボードから)
+            # auto_pilot ではマージ待ち状態まで進める
 
             self._stop_event.wait(timeout=0.5)
 
@@ -972,6 +967,29 @@ class BackgroundWorker:
                     if corrected and corrected != item["ocr_text"]:
                         updated += 1
                     total += 1
+
+                # ノイズ語辞書に登録
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS lc_ocr_noise_words (
+                        word TEXT PRIMARY KEY,
+                        count INTEGER DEFAULT 1,
+                        first_seen_at TEXT DEFAULT (datetime('now')),
+                        last_seen_at TEXT DEFAULT (datetime('now'))
+                    )
+                """)
+                for item in items:
+                    sid_item = item["id"]
+                    r = result_map.get(sid_item)
+                    if r:
+                        for nw in r.get("noise_words", []):
+                            nw = nw.strip()
+                            if nw:
+                                conn.execute(
+                                    "INSERT INTO lc_ocr_noise_words (word) VALUES (?)"
+                                    " ON CONFLICT(word) DO UPDATE SET"
+                                    " count = count + 1, last_seen_at = datetime('now')",
+                                    (nw,),
+                                )
 
                 conn.commit()
                 if artifact_count > 0:

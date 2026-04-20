@@ -1596,6 +1596,8 @@ def parse_args():
                         help="scrcpy 起動時に端末の画面をオフにする")
     parser.add_argument("-S", "--screenshot", action="store_true",
                         help="スクリーン記録: ユニーク画面をSQLiteに保存")
+    parser.add_argument("-V", "--version", type=int, default=None,
+                        help="バージョンID (未指定時はActiveバージョンを使用)")
     # parse_known_args: main.py 経由の場合に --android, --package 等の未知引数を無視
     args, _ = parser.parse_known_args()
     return args
@@ -2495,6 +2497,7 @@ def main():
             storage_dir=Path(__file__).parent.parent / "storage" / "screenshots",
             session_id=_rec_session,
             game_title="まどドラ",
+            version_id=args.version,
         )
         state.recorder = recorder
         # バックグラウンドワーカー起動 (間引き + OCR 再処理)
