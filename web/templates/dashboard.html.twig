@@ -1279,16 +1279,24 @@
             // アンカー一覧 (時系列順、採用+棄却混在)
             const activeCount = data.matches.filter(m => !m.discarded).length;
             const discardedCount = data.matches.filter(m => m.discarded).length;
+            // Phase ごとの棄却数を集計
+            const discardedByPhase = {};
+            data.matches.filter(m => m.discarded).forEach(m => {
+                discardedByPhase[m.method] = (discardedByPhase[m.method] || 0) + 1;
+            });
             if (data.matches.length > 0) {
+                const phaseBtns = Object.entries(phaseDefs).sort((a,b) => a[1].order - b[1].order).map(([k,d]) => {
+                    const adopted = sm[k] || 0;
+                    const rejected = discardedByPhase[k] || 0;
+                    const total = adopted + rejected;
+                    const label = rejected > 0 ? `${d.label}: ${adopted}+${rejected}` : `${d.label}: ${adopted}`;
+                    return `<button data-phase-btn="${k}" class="px-2 py-0.5 ${d.color_bg} rounded ${d.color_text} hover:opacity-80 transition-opacity${total === 0 ? ' opacity-40 cursor-default' : ''}">${label}</button>`;
+                }).join('');
                 html += `<div class="flex items-center justify-between mt-4">
                     <div class="flex items-center gap-3">
                         <h4 class="text-sm font-bold text-cyan-400">アンカー一覧 (採用${activeCount}${discardedCount > 0 ? ', 不採用' + discardedCount : ''})</h4>
-                        <select id="anchor-filter-select" class="text-xs bg-gray-800 border border-gray-700 text-gray-300 rounded px-2 py-0.5">
-                            <option value="all">すべて</option>
-                            <option value="adopted">採用</option>
-                        </select>
                     </div>
-                    <div class="flex gap-3 text-xs">${Object.entries(phaseDefs).sort((a,b) => a[1].order - b[1].order).map(([k,d]) => `<span class="px-2 py-0.5 ${d.color_bg} rounded ${d.color_text}">${d.label}: ${sm[k] || 0}</span>`).join('')}</div>
+                    <div class="flex gap-1.5 text-xs">${phaseBtns}</div>
                 </div>`;
                 html += `<div id="anchor-grid" class="${GRID_CLS}">`;
                 for (const m of data.matches) {
@@ -1312,7 +1320,7 @@
                         ocrPreview: scoreInfo ? scoreInfo + '  ' + (item.ocr_text || '').substring(0, 60) : (item.ocr_text || '').substring(0, 80),
                         scene: item.scene, time: item.discovered_at || '',
                         badge: { color, label: badgeLabel },
-                        dataAttr: `data-preview-idx="${previewItems.length}" data-discarded="${m.discarded ? '1' : '0'}"`,
+                        dataAttr: `data-preview-idx="${previewItems.length}" data-discarded="${m.discarded ? '1' : '0'}" data-phase="${m.method}"`,
                         extraClass: extraCls,
                     });
                     previewItems.push(item);
@@ -1321,19 +1329,29 @@
             }
             html += '</div>';
             mc.innerHTML = html;
-            // アンカーフィルター
-            const anchorFilterEl = document.getElementById('anchor-filter-select');
-            if (anchorFilterEl) {
-                anchorFilterEl.addEventListener('change', () => {
-                    const showAll = anchorFilterEl.value === 'all';
-                    mc.querySelectorAll('[data-discarded]').forEach(card => {
-                        if (card.dataset.discarded === '1') {
-                            card.style.display = showAll ? '' : 'none';
+            // Phase ボタンフィルター
+            let _activePhaseFilter = null; // null = 全表示
+            mc.querySelectorAll('[data-phase-btn]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const phase = btn.dataset.phaseBtn;
+                    if (_activePhaseFilter === phase) {
+                        // 同じボタン再クリック → 全表示に戻す
+                        _activePhaseFilter = null;
+                        mc.querySelectorAll('[data-phase-btn]').forEach(b => b.classList.remove('ring-2', 'ring-white/50'));
+                    } else {
+                        _activePhaseFilter = phase;
+                        mc.querySelectorAll('[data-phase-btn]').forEach(b => b.classList.remove('ring-2', 'ring-white/50'));
+                        btn.classList.add('ring-2', 'ring-white/50');
+                    }
+                    mc.querySelectorAll('[data-phase]').forEach(card => {
+                        if (!_activePhaseFilter) {
+                            card.style.display = '';
+                        } else {
+                            card.style.display = card.dataset.phase === _activePhaseFilter ? '' : 'none';
                         }
                     });
                 });
-                // 初期状態: すべて表示
-            }
+            });
             // アンカー除外・復帰管理 (Shift+クリック選択方式)
             const excludedGeminiFps = new Set();    // 手動除外
             const restoredDiscardedFps = new Set(); // 棄却ノードの手動復帰
