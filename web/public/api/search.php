@@ -392,11 +392,21 @@ if ($action === 'get_pending_merges') {
 if ($action === 'merge_progress') {
     $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
     $resultFile = $crawlerDir . '/storage/merge_result.json';
-    $done = file_exists($resultFile);
-    $result = $done ? json_decode(file_get_contents($resultFile), true) : null;
-    if ($done) @unlink($resultFile);
+    if (!file_exists($resultFile)) {
+        echo json_encode(['done' => false, 'result' => null]);
+        exit;
+    }
+    $raw = file_get_contents($resultFile);
+    $result = json_decode($raw, true);
+    if ($result === null && json_last_error() !== JSON_ERROR_NONE) {
+        // JSON パース失敗 → ファイルを残してエラーを返す (書き込み途中の可能性)
+        echo json_encode(['done' => false, 'result' => null, 'error' => 'JSON parse error: ' . json_last_error_msg()]);
+        exit;
+    }
+    // 正常に読めた場合のみ削除
+    @unlink($resultFile);
     echo json_encode([
-        'done' => $done,
+        'done' => true,
         'result' => $result,
     ], JSON_UNESCAPED_UNICODE);
     exit;
@@ -526,7 +536,7 @@ if ($action === 'preview_merge') {
     $excludeFpsPreview = $_GET['exclude_fps'] ?? '[]';
     $includeFpsPreview = $_GET['include_fps'] ?? '[]';
     file_put_contents($scriptFile, <<<PYTHON
-import json, logging, sys, os
+import json, logging, sys, os, traceback
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.getcwd())
 logging.basicConfig(level=logging.INFO, format='%(message)s', stream=sys.stderr)
@@ -536,15 +546,21 @@ try:
     if os.path.exists(_env): load_dotenv(_env)
 except ImportError:
     pass
-from pathlib import Path
-from tools.cross_session_merger import CrossSessionMerger
-exclude_fps = set(json.loads('{$excludeFpsPreview}'))
-include_fps = set(json.loads('{$includeFpsPreview}'))
-m = CrossSessionMerger(Path("storage/ludus.db"))
-r = m.preview_merge("{$sessionId}", exclude_fps=exclude_fps or None, include_fps=include_fps or None)
-m.close()
-with open(sys.argv[1], "w") as f:
-    json.dump(r, f, ensure_ascii=False)
+try:
+    from pathlib import Path
+    from tools.cross_session_merger import CrossSessionMerger
+    exclude_fps = set(json.loads('{$excludeFpsPreview}'))
+    include_fps = set(json.loads('{$includeFpsPreview}'))
+    m = CrossSessionMerger(Path("storage/ludus.db"))
+    r = m.preview_merge("{$sessionId}", exclude_fps=exclude_fps or None, include_fps=include_fps or None)
+    m.close()
+    print("[preview] JSON 書き出し開始...", file=sys.stderr)
+    with open(sys.argv[1], "w") as f:
+        json.dump(r, f, ensure_ascii=False)
+    print(f"[preview] 完了: {os.path.getsize(sys.argv[1])} bytes", file=sys.stderr)
+except Exception:
+    traceback.print_exc(file=sys.stderr)
+    sys.exit(1)
 PYTHON);
     $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
     $bgCmd = "cd " . escapeshellarg($crawlerDirRaw)

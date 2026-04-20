@@ -1197,11 +1197,14 @@
                 try {
                     const r = await fetch(API_BASE + '?action=merge_progress');
                     const d = await r.json();
+                    if (d.error) console.warn('[pollMergeResult] server error:', d.error);
                     if (d.done) {
                         clearInterval(timer);
                         resolve(d.result);
                     }
-                } catch (e) {}
+                } catch (e) {
+                    console.error('[pollMergeResult] fetch/parse error:', e);
+                }
             }, 2000);
         });
     }
