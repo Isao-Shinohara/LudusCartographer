@@ -1290,7 +1290,7 @@
                     const rejected = discardedByPhase[k] || 0;
                     const total = adopted + rejected;
                     const label = rejected > 0 ? `${d.label}: ${adopted}+${rejected}` : `${d.label}: ${adopted}`;
-                    return `<button data-phase-btn="${k}" class="px-2 py-0.5 rounded transition-all ${total === 0 ? 'bg-gray-800/50 text-gray-600 cursor-default' : d.color_bg + ' ' + d.color_text + ' hover:brightness-125'}">${label}</button>`;
+                    return `<button data-phase-btn="${k}" class="px-2 py-0.5 rounded transition-all ${d.color_bg} ${d.color_text} hover:brightness-125">${label}</button>`;
                 }).join('');
                 html += `<div class="flex items-center justify-between mt-4">
                     <div class="flex items-center gap-3">
