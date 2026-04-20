@@ -1652,30 +1652,31 @@
         'gemini-2.5-flash':      { input: 0.15,  output: 0.60 },
         'gemini-2.5-flash-lite': { input: 0.075, output: 0.30 },
     };
-    // USD→JPY 為替レート (リアルタイム取得、フォールバック150円)
-    let _usdJpy = 150;
-    let _usdJpySource = 'default';
-    (async () => {
+    // USD→JPY 為替レート (リアルタイム取得)
+    let _usdJpy = null;
+    let _usdJpySource = '';
+    const _usdJpyReady = (async () => {
         try {
             const r = await fetch('https://open.er-api.com/v6/latest/USD');
             const d = await r.json();
             if (d.rates && d.rates.JPY) {
                 _usdJpy = d.rates.JPY;
-                _usdJpySource = `${d.rates.JPY.toFixed(2)} (${d.time_last_update_utc?.split(' ').slice(0,4).join(' ') || 'live'})`;
+                _usdJpySource = `¥/${d.rates.JPY.toFixed(2)}`;
             }
-        } catch (e) {
-            _usdJpySource = '150.00 (fallback)';
-        }
+        } catch (e) {}
     })();
     function calcCost(model, inputTokens, outputTokens) {
         const p = COST_PRICING[model] || { input: 0.15, output: 0.60 };
         const usd = (inputTokens / 1e6) * p.input + (outputTokens / 1e6) * p.output;
-        return usd * _usdJpy;
+        return _usdJpy ? usd * _usdJpy : usd;
     }
-    function fmtCost(costJpy) {
-        if (costJpy < 0.01) return '< ¥0.01';
-        if (costJpy < 1) return '¥' + costJpy.toFixed(2);
-        return '¥' + costJpy.toFixed(1);
+    function fmtCost(cost) {
+        if (!_usdJpy) {
+            return cost < 0.001 ? '< $0.001' : '$' + cost.toFixed(4);
+        }
+        if (cost < 0.01) return '< ¥0.01';
+        if (cost < 1) return '¥' + cost.toFixed(2);
+        return '¥' + cost.toFixed(1);
     }
     function fmtTokens(n) {
         if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
@@ -1687,6 +1688,7 @@
     async function fetchCostTab() {
         const mc = document.getElementById('merge-container');
         try {
+            await _usdJpyReady;
             const res = await fetch(API_BASE + '?action=get_api_usage');
             const data = await res.json();
 
@@ -1712,7 +1714,7 @@
             html += '<div class="grid grid-cols-3 gap-4">';
             html += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
                 <div class="text-2xl font-bold text-emerald-400">${fmtCost(totalCost)}</div>
-                <div class="text-xs text-gray-500 mt-1">Total Cost <span class="text-gray-600">(¥/${_usdJpySource})</span></div>
+                <div class="text-xs text-gray-500 mt-1">Total Cost${_usdJpySource ? ` <span class="text-gray-600">(${_usdJpySource})</span>` : ''}</div>
             </div>`;
             html += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
                 <div class="text-2xl font-bold text-cyan-400">${fmtTokens(+total.input_tokens + +total.output_tokens)}</div>
