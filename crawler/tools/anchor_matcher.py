@@ -777,15 +777,16 @@ class AnchorMatcher:
             if row["screenshot_path"]:
                 master_img_map[row["master_fp"]] = row["screenshot_path"]
 
-        # --- Step 1: 既存アンカーの検証 (P3/P4 のみ対象) ---
+        # --- Step 1: 既存アンカーの検証 (P3 のみ対象) ---
         # P1/P2 はテキストベースのマッチなので信頼度が高く、画像検証は不要
-        # P3 (テキスト空 + phash) / P4 (テキスト Gemini) のアンカーだけ画像で検証する
+        # P4 はテキスト Gemini で確定済みなので画像再検証は不要
+        # P3 (テキスト空 + phash のみ) のアンカーだけ画像で検証する
         model_name = "gemini-2.5-flash-lite"
         verify_pairs: list[tuple[NodeInfo, NodeInfo, float, str, str]] = []
         verify_cached: dict[tuple[str, str], bool] = {}
-        anchors_to_verify = [a for a in existing_anchors if a.phase >= 3]
+        anchors_to_verify = [a for a in existing_anchors if a.phase == 3]
         for a in existing_anchors:
-            if a.phase < 3:
+            if a.phase != 3:
                 # P1/P2: テキストベースのマッチ → 検証不要
                 verify_cached[(a.session_fp, a.master_fp)] = True
                 continue
@@ -851,7 +852,7 @@ class AnchorMatcher:
         total_pairs = len(existing_anchors) + len(new_candidates)
         cached_count = total_pairs - len(all_uncached)
         logger.info(
-            "[AnchorMatcher] Phase 5: 検証%d件(P3/P4, P1/P2 %d件スキップ) + 新規%d件 = %d件 (キャッシュ%d件, Gemini送信%d件)",
+            "[AnchorMatcher] Phase 5: 検証%d件(P3のみ, P1/P2/P4 %d件スキップ) + 新規%d件 = %d件 (キャッシュ%d件, Gemini送信%d件)",
             len(anchors_to_verify), len(existing_anchors) - len(anchors_to_verify),
             len(new_candidates), total_pairs, cached_count, len(all_uncached),
         )
