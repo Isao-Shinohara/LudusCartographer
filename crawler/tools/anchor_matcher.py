@@ -290,14 +290,16 @@ class AnchorMatcher:
         logger.info("[AnchorMatcher] Phase 3: +%d → 合計 %d アンカー", len(phase3), len(anchors))
 
         # Phase 4: テキスト Gemini (テキストのみ送信、画像なし、安価)
-        phase4 = self._phase4_gemini_text(
+        phase4_new, phase4_rejected = self._phase4_gemini_text(
             conn, session_nodes, master_nodes, master_sort_map, anchors, version_id)
-        anchors.extend(phase4)
-        logger.info("[AnchorMatcher] Phase 4: +%d → 合計 %d アンカー", len(phase4), len(anchors))
+        anchors.extend(phase4_new)
+        logger.info("[AnchorMatcher] Phase 4: +%d (棄却%d → P5へ) → 合計 %d アンカー",
+                    len(phase4_new), len(phase4_rejected), len(anchors))
 
-        # Phase 5: 画像 Gemini Flash-Lite (phash<8, P3/P4 検証 + 未マッチノード発見)
+        # Phase 5: 画像 Gemini Flash-Lite (P3検証 + P4棄却再検証 + 新規候補)
         phase5_new, phase5_rejected = self._phase5_gemini_image(
-            conn, session_nodes, master_nodes, master_sort_map, anchors, version_id)
+            conn, session_nodes, master_nodes, master_sort_map, anchors, version_id,
+            p4_rejected=phase4_rejected)
         p5_rejected_fps = {a.session_fp for a in phase5_rejected}
         if p5_rejected_fps:
             anchors = [a for a in anchors if a.session_fp not in p5_rejected_fps]
@@ -523,14 +525,16 @@ class AnchorMatcher:
         master_sort_map: dict[str, int],
         existing_anchors: list[AnchorMatch],
         version_id: int | None = None,
-    ) -> list[AnchorMatch]:
+    ) -> tuple[list[AnchorMatch], list[tuple]]:
         """Phase 4: テキストのみで Gemini に同一画面判定を問い合わせる。
 
         画像を送信しないため安価。P1-P3 で未マッチのテキストあり候補を対象に、
         OCR テキストペアだけで同一画面か判定する。
 
         Returns:
+            (new_anchors, rejected_candidates)
             new_anchors: 新たにマッチしたアンカー
+            rejected_candidates: 棄却された候補 [(session_node, master_node, sim)] — P5 で画像再検証用
         """
         from lc.utils import phash_distance
 
@@ -563,7 +567,7 @@ class AnchorMatcher:
 
         if not candidates:
             logger.info("[AnchorMatcher] Phase 4: 候補なし")
-            return []
+            return [], []
 
         # キャッシュ確認 (model='gemini-text')
         model_name = "gemini-text"
@@ -608,15 +612,20 @@ class AnchorMatcher:
 
         # 結果集計
         new_anchors: list[AnchorMatch] = []
+        rejected_candidates: list[tuple] = []
         for s, m, sim in candidates:
-            if cached_results.get((s.fp, m.fp), False):
+            result = cached_results.get((s.fp, m.fp))
+            if result is True:
                 new_anchors.append(AnchorMatch(
                     session_fp=s.fp, master_fp=m.fp,
                     master_sort=master_sort_map[m.fp],
                     method="phase4_gemini_text", score=round(sim, 3), phase=4,
                 ))
+            elif result is False:
+                rejected_candidates.append((s, m, sim))
+                # result is None (エラーでキャッシュされなかった) はスキップ
 
-        return new_anchors
+        return new_anchors, rejected_candidates
 
     @staticmethod
     def _gemini_text_judge(
@@ -729,12 +738,17 @@ class AnchorMatcher:
         master_sort_map: dict[str, int],
         existing_anchors: list[AnchorMatch],
         version_id: int | None = None,
+        p4_rejected: list[tuple] | None = None,
     ) -> tuple[list[AnchorMatch], list[AnchorMatch]]:
-        """Phase 5: Gemini Flash-Lite 画像判定 — 既存アンカー検証 + 未マッチノード発見。
+        """Phase 5: Gemini Flash-Lite 画像判定。
+
+        - P3 確定アンカーの検証（phash のみで確定、テキストなし）
+        - P4 棄却の画像再検証（テキストでは判断不可だったペア）
+        - 新規候補の発見（phash < PHASE5_PHASH_THRESHOLD）
 
         Returns:
             (new_anchors, rejected_anchors)
-            new_anchors: 新たにマッチしたアンカー
+            new_anchors: 新たにマッチしたアンカー (P4棄却復活 + 新規)
             rejected_anchors: 既存アンカーのうち Gemini が棄却したもの
         """
         from lc.utils import phash_distance
@@ -832,6 +846,14 @@ class AnchorMatcher:
             if best_m:
                 new_candidates.append((s, best_m, best_sim))
 
+        # --- Step 2.5: P4 棄却の画像再検証 ---
+        p4_retry_count = 0
+        if p4_rejected:
+            for s, m, sim in p4_rejected:
+                if s.fp not in matched_session_fps and m.fp not in matched_master_fps:
+                    new_candidates.append((s, m, sim))
+                    p4_retry_count += 1
+
         discover_pairs: list[tuple[NodeInfo, NodeInfo, float, str, str]] = []
         discover_cached: dict[tuple[str, str], bool] = {}
         for s, m, sim in new_candidates:
@@ -849,12 +871,11 @@ class AnchorMatcher:
 
         # --- Gemini に一括送信 ---
         all_uncached = verify_pairs + discover_pairs
-        total_pairs = len(existing_anchors) + len(new_candidates)
-        cached_count = total_pairs - len(all_uncached)
+        total_new = len(new_candidates) - p4_retry_count
         logger.info(
-            "[AnchorMatcher] Phase 5: 検証%d件(P3のみ, P1/P2/P4 %d件スキップ) + 新規%d件 = %d件 (キャッシュ%d件, Gemini送信%d件)",
-            len(anchors_to_verify), len(existing_anchors) - len(anchors_to_verify),
-            len(new_candidates), total_pairs, cached_count, len(all_uncached),
+            "[AnchorMatcher] Phase 5: 検証%d件(P3) + P4棄却再検証%d件 + 新規%d件 (キャッシュ%d件, Gemini送信%d件)",
+            len(anchors_to_verify), p4_retry_count, total_new,
+            len(new_candidates) + len(anchors_to_verify) - len(all_uncached), len(all_uncached),
         )
 
         if not all_uncached and not verify_cached and not discover_cached:
