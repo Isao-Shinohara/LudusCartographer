@@ -569,7 +569,7 @@ class AnchorMatcher:
             logger.info("[AnchorMatcher] Phase 4: 候補なし")
             return [], []
 
-        # キャッシュ確認 (model='gemini-text')
+        # キャッシュ確認 (gemini-text 優先、他 model で is_same=1 ならスキップ)
         model_name = "gemini-text"
         uncached: list[tuple[NodeInfo, NodeInfo, float]] = []
         cached_results: dict[tuple[str, str], bool] = {}
@@ -582,7 +582,17 @@ class AnchorMatcher:
             if row is not None:
                 cached_results[(s.fp, m.fp)] = bool(row["is_same"])
             else:
-                uncached.append((s, m, sim))
+                # P5/P6 の画像判定で既に確定済みならテキスト再送信は不要
+                row_any = conn.execute(
+                    "SELECT is_same FROM lc_anchor_judgments"
+                    " WHERE session_fp = ? AND master_fp = ? AND is_same = 1"
+                    " LIMIT 1",
+                    (s.fp, m.fp),
+                ).fetchone()
+                if row_any is not None:
+                    cached_results[(s.fp, m.fp)] = True
+                else:
+                    uncached.append((s, m, sim))
 
         logger.info(
             "[AnchorMatcher] Phase 4: %d候補 (キャッシュ%d件, Geminiテキスト送信%d件)",
