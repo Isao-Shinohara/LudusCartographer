@@ -1,57 +1,54 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-04-18
+最終更新: 2026-04-20
 
 ## 現在のブランチ
 - `feature/screen-recorder` (main 未マージ)
 
-## 最終セッション (2026-04-18)
-- 主な作業: AnchorMatcher 統合・正規化修正・旧ロジック削除・デバッグUI改善
-- コミット数: 4
+## 最終セッション (2026-04-20)
+- 主な作業: Gemini画像判定・あいまい一致・バージョン管理・UI大幅改善
+- コミット: 1 (大規模)
 
 ## 完了済み
 
-### AnchorMatcher 統合 (実装計画 Step 1-8 全完了)
-- ✅ AnchorMatcher 実装 (Phase 1/2/3) + 12 ユニットテスト
-- ✅ CrossSessionMerger._compute_matches を AnchorMatcher に委譲
-- ✅ 統合テスト 2 件追加
-- ✅ Gemini OCR 未完了ガード
-- ✅ 正規化不一致修正 (seed 時 raw テキスト保存)
-- ✅ 旧ロジック削除 (find_anchors, k_hop, transition_similarity 等)
-- ✅ デバッグモード Phase ラベル (P1/P2/P3) + フッター統計
-- ✅ 実データ検証: 37/523 マッチ (P1=33, P2=4), 9 挿入
+### Gemini 画像判定 (P4)
+- ✅ flash-lite + ThreadPoolExecutor 5並列 (1ペア1.3秒)
+- ✅ Part.from_bytes インライン送信
+- ✅ P1/P2/P3 アンカーの検証 + 未マッチノードの新規発見
+- ✅ prefer フィールド (テキスト採用判断)
+- ✅ lc_anchor_judgments キャッシュ (fp ベース)
 
-### Gemini OCR
-- ✅ セッション1: 956 代表画像完了 (16件は safety filter で空文字マーク)
-- ✅ セッション2: 523 代表画像完了
-- ✅ response.text None ガード追加 (無限ループ防止)
+### あいまい一致 (P1/P2)
+- ✅ テキスト長に応じた動的閾値
+- ✅ SequenceMatcher + bag-of-words 併用
+- ✅ OCR ノイズ除去 (数値, AUTO/SKIP, Gemini辞書)
+- ✅ 英字-日本語境界スペース除去
 
-### マージ sort_order 戦略
-- ✅ SafeInsertStrategy (100% 順序保証)
-- ✅ seed: first_seen_at 順
+### フェーズ管理
+- ✅ 実行順振り直し: P1→P2→P3→P4
+- ✅ PHASE_DEFS で一元管理
+- ✅ LIS 順序チェック削除 (アンカー全採用)
 
-## 機能状況
+### バージョン管理
+- ✅ 全タブにバージョンセレクター
+- ✅ バージョン削除 (Active含む)
+- ✅ auto_pilot -V オプション
+- ✅ カスタムモーダル (リネーム/削除)
 
-### アンカーマッチング (実データ結果)
-| Phase | マッチ数 | 矛盾破棄 | 説明 |
-|-------|---------|---------|------|
-| P1 (tap+テキスト) | 33 | 6 | テキスト一致 + phash 二重確認 |
-| P2 (auto+テキスト) | 4 | 13 | Phase 1 範囲制限付き |
-| P3 (tap+phash) | 0 | 0 | 前後アンカー両方必須 |
-| SafeInsert 挿入 | 9 | - | 隣接アンカー条件 |
-
-### デバッグモード
-- ✅ P1/P2/P3 ラベルバッジ (cyan)
-- ✅ 挿入ノード緑枠 (lime)
-- ✅ ←→ キーナビゲーション
-- ✅ フッター: P1/P2/P3 別統計
+### ダッシュボード
+- ✅ マージプレビュー: 比較パネル + 採用/不採用 + 再計算
+- ✅ Cost タブ (API使用量)
+- ✅ Rules タブにノイズ語辞書
+- ✅ auto_pilot からマージ除外 (手動実行)
 
 ## 次回の作業候補
-- 周回3以降を実行してアンカー数の増加を確認
-- P3 (tap+テキスト空) の有効性を検証
-- process_session_bg の dotenv 修正 (前回セッションで修正済み・未コミット・未テスト)
+- Gemini 判定精度: バトル画面誤一致・見切れ画面の改善 (プロンプト追加済み、キャッシュクリア後再検証)
+- Gemini モデルを Settings から設定変更可能に
+- prefer フィールドの活用 (マスター OCR テキスト更新)
+- 周回3以降でアンカー数の増加検証
+- Cost タブのデータ蓄積確認
 
 ## 設計ドキュメント
 - `docs/merge_sort_algorithm.md` — SafeInsert 仕様
 - `docs/anchor_matching_design.md` — 段階的 Phase 設計
-- `docs/anchor_matching_implementation_plan.md` — 8 Step 実装計画
+- `docs/history/2026-04-20.md` — 本セッション詳細
