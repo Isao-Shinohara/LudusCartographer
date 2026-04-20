@@ -1452,6 +1452,14 @@
             });
             // プレビュー用モーダル表示
             _previewModalItems = previewItems;
+            // Phase フィルター適用中の表示可能インデックスリスト
+            function _visibleIndices() {
+                if (_hiddenPhases.size === 0) return previewItems.map((_, i) => i);
+                return previewItems.map((item, i) => {
+                    // item.method が hiddenPhases に含まれていなければ表示
+                    return (!item.method || !_hiddenPhases.has(item.method)) ? i : -1;
+                }).filter(i => i >= 0);
+            }
             function showPreviewModal(idx) {
                 if (idx < 0 || idx >= previewItems.length) return;
                 _previewModalIdx = idx;
@@ -1462,7 +1470,9 @@
                 document.getElementById('modal-ocr').textContent = item.ocr_text || '';
                 document.getElementById('modal-fp').textContent = 'fp: ' + (item.fp || '');
                 document.getElementById('modal-time').textContent = item.discovered_at || '';
-                document.getElementById('modal-counter').textContent = (idx + 1) + ' / ' + previewItems.length;
+                const vis = _visibleIndices();
+                const visPos = vis.indexOf(idx);
+                document.getElementById('modal-counter').textContent = (visPos + 1) + ' / ' + vis.length;
                 document.getElementById('modal-ocr-sources').innerHTML = '';
                 document.getElementById('modal-edit-area').classList.add('hidden');
                 document.getElementById('modal-edit-btn').style.display = 'none';
@@ -1543,10 +1553,12 @@
                 }
                 const prevBtn = document.getElementById('modal-prev');
                 const nextBtn = document.getElementById('modal-next');
-                prevBtn.onclick = (e) => { e.stopPropagation(); showPreviewModal(idx - 1); };
-                nextBtn.onclick = (e) => { e.stopPropagation(); showPreviewModal(idx + 1); };
-                prevBtn.classList.toggle('invisible', idx <= 0);
-                nextBtn.classList.toggle('invisible', idx >= previewItems.length - 1);
+                const prevIdx = visPos > 0 ? vis[visPos - 1] : -1;
+                const nextIdx = visPos < vis.length - 1 ? vis[visPos + 1] : -1;
+                prevBtn.onclick = (e) => { e.stopPropagation(); if (prevIdx >= 0) showPreviewModal(prevIdx); };
+                nextBtn.onclick = (e) => { e.stopPropagation(); if (nextIdx >= 0) showPreviewModal(nextIdx); };
+                prevBtn.classList.toggle('invisible', prevIdx < 0);
+                nextBtn.classList.toggle('invisible', nextIdx < 0);
                 modal.classList.remove('hidden');
                 modal.classList.add('flex');
             }
