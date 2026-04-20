@@ -780,6 +780,7 @@ class AnchorMatcher:
         # --- Step 1: 既存アンカーの検証 (P3/P4 のみ対象) ---
         # P1/P2 はテキストベースのマッチなので信頼度が高く、画像検証は不要
         # P3 (テキスト空 + phash) / P4 (テキスト Gemini) のアンカーだけ画像で検証する
+        model_name = "gemini-2.5-flash-lite"
         verify_pairs: list[tuple[NodeInfo, NodeInfo, float, str, str]] = []
         verify_cached: dict[tuple[str, str], bool] = {}
         anchors_to_verify = [a for a in existing_anchors if a.phase >= 3]
@@ -793,8 +794,9 @@ class AnchorMatcher:
             if not s_node or not m_node:
                 continue
             row = conn.execute(
-                "SELECT is_same FROM lc_anchor_judgments WHERE session_fp = ? AND master_fp = ?",
-                (a.session_fp, a.master_fp),
+                "SELECT is_same FROM lc_anchor_judgments"
+                " WHERE session_fp = ? AND master_fp = ? AND model = ?",
+                (a.session_fp, a.master_fp, model_name),
             ).fetchone()
             if row is not None:
                 verify_cached[(a.session_fp, a.master_fp)] = bool(row["is_same"])
@@ -833,8 +835,9 @@ class AnchorMatcher:
         discover_cached: dict[tuple[str, str], bool] = {}
         for s, m, sim in new_candidates:
             row = conn.execute(
-                "SELECT is_same FROM lc_anchor_judgments WHERE session_fp = ? AND master_fp = ?",
-                (s.fp, m.fp),
+                "SELECT is_same FROM lc_anchor_judgments"
+                " WHERE session_fp = ? AND master_fp = ? AND model = ?",
+                (s.fp, m.fp, model_name),
             ).fetchone()
             if row is not None:
                 discover_cached[(s.fp, m.fp)] = bool(row["is_same"])
@@ -856,7 +859,6 @@ class AnchorMatcher:
         if not all_uncached and not verify_cached and not discover_cached:
             return [], []
 
-        model_name = "gemini-2.5-flash-lite"
         if all_uncached:
             gemini_results = self._gemini_batch_judge(all_uncached, model=model_name)
             for (s, m, sim, _, _), result in zip(all_uncached, gemini_results):
