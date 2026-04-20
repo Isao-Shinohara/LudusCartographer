@@ -858,10 +858,13 @@ class AnchorMatcher:
 
         # --- Step 2.5: P4 棄却の画像再検証 ---
         p4_retry_count = 0
+        new_candidate_sfps = {s.fp for s, _, _ in new_candidates}
         if p4_rejected:
             for s, m, sim in p4_rejected:
-                if s.fp not in matched_session_fps and m.fp not in matched_master_fps:
+                if (s.fp not in matched_session_fps and m.fp not in matched_master_fps
+                        and s.fp not in new_candidate_sfps):
                     new_candidates.append((s, m, sim))
+                    new_candidate_sfps.add(s.fp)
                     p4_retry_count += 1
 
         discover_pairs: list[tuple[NodeInfo, NodeInfo, float, str, str]] = []

@@ -1,7 +1,11 @@
 """test_anchor_matcher.py — AnchorMatcher ユニットテスト"""
 import sqlite3
 import pytest
-from tools.anchor_matcher import AnchorMatcher, AnchorMatch, _normalize_text
+from unittest.mock import patch
+from tools.anchor_matcher import (
+    AnchorMatcher, AnchorMatch, NodeInfo, _normalize_text,
+    _ensure_judgment_table,
+)
 
 
 @pytest.fixture
@@ -19,7 +23,8 @@ def db():
             bfs_depth INTEGER, scc_id INTEGER, scc_label TEXT,
             visit_count INTEGER DEFAULT 1,
             user_excluded INTEGER DEFAULT 0,
-            manual_group_id INTEGER, is_group_representative INTEGER DEFAULT 1
+            manual_group_id INTEGER, is_group_representative INTEGER DEFAULT 1,
+            version_id INTEGER DEFAULT 1
         );
         CREATE TABLE lc_screens (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -378,3 +383,302 @@ class TestCrossSessionMergerIntegration:
         assert is_seed is True
         assert len(node_mapping) == 0
         assert len(session_reps) == 1
+
+
+# ─── P4 テキスト Gemini テスト ───────────────────────
+
+def _make_node(fp, text="", phash="aa00aa00aa00aa00", edge_type="tap", rank=0):
+    return NodeInfo(fp=fp, text=text, phash=phash, scene="ADV",
+                    edge_type=edge_type, has_text=bool(text), time_rank=rank)
+
+
+@pytest.fixture
+def judgment_db():
+    """lc_anchor_judgments 付きの in-memory DB。"""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    _ensure_judgment_table(conn)
+    return conn
+
+
+class TestPhase4TextGemini:
+    """P4 テキスト Gemini の棄却受け渡しとキャッシュ。"""
+
+    def test_returns_accepted_and_rejected(self, db):
+        """P4 が (accepted, rejected) タプルを返すこと。"""
+        _add_master(db, "M1", 0, text="こんにちは まどか", phash="aa00aa00aa00aa00")
+        _add_master(db, "M2", 1, text="さようなら ほむら", phash="aa00aa00aa00aa01")
+        _add_session_screen(db, "s1", "S1", 1, text="こんにちは まどか", phash="aa00aa00aa00aa02")
+        _add_session_screen(db, "s1", "S2", 2, text="さようなら ほむら", phash="aa00aa00aa00aa03")
+        _add_tap_edge(db, "s1", "S1", "S2")
+        _ensure_judgment_table(db)
+        db.commit()
+
+        matcher = AnchorMatcher()
+        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+
+        # Gemini モック: S1→同一, S2→別画面
+        mock_results = [
+            {"is_same": True, "error": False},
+            {"is_same": False, "error": False},
+        ]
+        with patch.object(AnchorMatcher, '_gemini_text_judge', return_value=mock_results):
+            accepted, rejected = matcher._phase4_gemini_text(
+                db, session_nodes, master_nodes, master_sort_map, [], version_id=None)
+
+        assert len(accepted) == 1
+        assert accepted[0].session_fp == "S1"
+        assert accepted[0].method == "phase4_gemini_text"
+        assert accepted[0].phase == 4
+        assert len(rejected) == 1
+        assert rejected[0][0].fp == "S2"  # NodeInfo
+
+    def test_cache_not_stored_on_error(self, db):
+        """エラー結果はキャッシュされないこと。"""
+        _add_master(db, "M1", 0, text="テスト画面", phash="aa00aa00aa00aa00")
+        _add_session_screen(db, "s1", "S1", 1, text="テスト画面", phash="aa00aa00aa00aa01")
+        _add_tap_edge(db, "s1", "S1", "x")
+        _ensure_judgment_table(db)
+        db.commit()
+
+        matcher = AnchorMatcher()
+        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+
+        # Gemini モック: エラー
+        mock_results = [{"is_same": False, "error": True}]
+        with patch.object(AnchorMatcher, '_gemini_text_judge', return_value=mock_results):
+            accepted, rejected = matcher._phase4_gemini_text(
+                db, session_nodes, master_nodes, master_sort_map, [], version_id=None)
+
+        assert len(accepted) == 0
+        assert len(rejected) == 0  # エラーは棄却にも入らない
+
+        # DB にキャッシュされていないこと
+        row = db.execute("SELECT COUNT(*) FROM lc_anchor_judgments WHERE model = 'gemini-text'").fetchone()
+        assert row[0] == 0
+
+    def test_cache_hit_skips_api(self, db):
+        """キャッシュがあれば API を呼ばないこと。"""
+        _add_master(db, "M1", 0, text="キャッシュテスト", phash="aa00aa00aa00aa00")
+        _add_session_screen(db, "s1", "S1", 1, text="キャッシュテスト", phash="aa00aa00aa00aa01")
+        _add_tap_edge(db, "s1", "S1", "x")
+        _ensure_judgment_table(db)
+        # キャッシュを事前投入
+        db.execute(
+            "INSERT INTO lc_anchor_judgments (session_fp, master_fp, is_same, model)"
+            " VALUES ('S1', 'M1', 1, 'gemini-text')"
+        )
+        db.commit()
+
+        matcher = AnchorMatcher()
+        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+
+        with patch.object(AnchorMatcher, '_gemini_text_judge') as mock_judge:
+            accepted, rejected = matcher._phase4_gemini_text(
+                db, session_nodes, master_nodes, master_sort_map, [], version_id=None)
+
+        mock_judge.assert_not_called()  # API 呼び出しなし
+        assert len(accepted) == 1
+
+    def test_cross_model_cache_hit(self, db):
+        """P5/P6 で確定済み (is_same=1) なら P4 テキスト送信をスキップすること。"""
+        _add_master(db, "M1", 0, text="クロスモデル", phash="aa00aa00aa00aa00")
+        _add_session_screen(db, "s1", "S1", 1, text="クロスモデル", phash="aa00aa00aa00aa01")
+        _add_tap_edge(db, "s1", "S1", "x")
+        _ensure_judgment_table(db)
+        # P5 (flash-lite) で確定済みのキャッシュ
+        db.execute(
+            "INSERT INTO lc_anchor_judgments (session_fp, master_fp, is_same, model)"
+            " VALUES ('S1', 'M1', 1, 'gemini-2.5-flash-lite')"
+        )
+        db.commit()
+
+        matcher = AnchorMatcher()
+        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+
+        with patch.object(AnchorMatcher, '_gemini_text_judge') as mock_judge:
+            accepted, rejected = matcher._phase4_gemini_text(
+                db, session_nodes, master_nodes, master_sort_map, [], version_id=None)
+
+        mock_judge.assert_not_called()
+        assert len(accepted) == 1  # cross-model cache hit
+
+
+class TestPhase5ImageGemini:
+    """P5 画像 Gemini の P4 棄却受け渡しとキャッシュ。"""
+
+    def test_p4_rejected_passed_to_p5(self, db):
+        """P4 棄却が P5 の再検証候補に含まれること。"""
+        _add_master(db, "M1", 0, text="再検証テスト", phash="aa00aa00aa00aa00")
+        _add_session_screen(db, "s1", "S1", 1, text="再検証テスト", phash="aa00aa00aa00aa01",
+                           scene="ADV")
+        _add_tap_edge(db, "s1", "S1", "x")
+        # screenshot_path が必要
+        db.execute("UPDATE lc_screens SET screenshot_path = '/tmp/s1.png' WHERE fingerprint = 'S1'")
+        db.execute("UPDATE lc_master_nodes SET representative_screen_id = 1 WHERE master_fp = 'M1'")
+        _ensure_judgment_table(db)
+        db.commit()
+
+        matcher = AnchorMatcher()
+        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+
+        # P4 棄却を構築
+        s_node = next(n for n in session_nodes if n.fp == "S1")
+        m_node = next(n for n in master_nodes if n.fp == "M1")
+        p4_rejected = [(s_node, m_node, 0.8)]
+
+        # P5 モック: 同一画面と判定
+        mock_results = [{"is_same": True, "prefer": "A", "error": False}]
+        with patch.object(AnchorMatcher, '_gemini_batch_judge', return_value=mock_results):
+            new_anchors, rejected = matcher._phase5_gemini_image(
+                db, session_nodes, master_nodes, master_sort_map,
+                [], version_id=None, p4_rejected=p4_rejected)
+
+        assert len(new_anchors) == 1
+        assert new_anchors[0].session_fp == "S1"
+        assert new_anchors[0].method == "phase5_gemini_image"
+        assert new_anchors[0].phase == 5
+
+    def test_p3_anchor_verified(self, db):
+        """P3 確定アンカーが P5 で画像検証されること。"""
+        _add_master(db, "M1", 0, text="", phash="aa00aa00aa00aa00")
+        _add_session_screen(db, "s1", "S1", 1, text="", phash="aa00aa00aa00aa01")
+        _add_tap_edge(db, "s1", "S1", "x")
+        db.execute("UPDATE lc_screens SET screenshot_path = '/tmp/s1.png' WHERE fingerprint = 'S1'")
+        sid = db.execute("SELECT id FROM lc_screens WHERE fingerprint = 'S1'").fetchone()[0]
+        db.execute("UPDATE lc_master_nodes SET representative_screen_id = ? WHERE master_fp = 'M1'", (sid,))
+        _ensure_judgment_table(db)
+        db.commit()
+
+        matcher = AnchorMatcher()
+        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+
+        # P3 確定アンカーを模擬
+        p3_anchor = AnchorMatch(session_fp="S1", master_fp="M1", master_sort=0,
+                                method="phase3_tap_phash", score=0.9, phase=3)
+
+        # P5 モック: 棄却
+        mock_results = [{"is_same": False, "prefer": "", "error": False}]
+        with patch.object(AnchorMatcher, '_gemini_batch_judge', return_value=mock_results):
+            new_anchors, rejected = matcher._phase5_gemini_image(
+                db, session_nodes, master_nodes, master_sort_map,
+                [p3_anchor], version_id=None)
+
+        assert len(rejected) == 1
+        assert rejected[0].session_fp == "S1"
+        assert rejected[0].phase == 3  # 元の phase を保持
+
+    def test_p1_p2_skip_verification(self, db):
+        """P1/P2 確定アンカーは P5 で検証されないこと。"""
+        _add_master(db, "M1", 0, text="スキップテスト", phash="aa00aa00aa00aa00")
+        _add_session_screen(db, "s1", "S1", 1, text="スキップテスト", phash="aa00aa00aa00aa01")
+        _add_tap_edge(db, "s1", "S1", "x")
+        _ensure_judgment_table(db)
+        db.commit()
+
+        matcher = AnchorMatcher()
+        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+
+        p1_anchor = AnchorMatch(session_fp="S1", master_fp="M1", master_sort=0,
+                                method="phase1_tap_text", score=1.0, phase=1)
+
+        with patch.object(AnchorMatcher, '_gemini_batch_judge') as mock_judge:
+            new_anchors, rejected = matcher._phase5_gemini_image(
+                db, session_nodes, master_nodes, master_sort_map,
+                [p1_anchor], version_id=None)
+
+        mock_judge.assert_not_called()  # P1 は検証されない
+        assert len(rejected) == 0  # 棄却もなし
+
+    def test_p5_cache_uses_model_filter(self, db):
+        """P5 キャッシュが model='gemini-2.5-flash-lite' で絞っていること。"""
+        _add_master(db, "M1", 0, text="", phash="aa00aa00aa00aa00")
+        _add_session_screen(db, "s1", "S1", 1, text="", phash="aa00aa00aa00aa01")
+        _add_tap_edge(db, "s1", "S1", "x")
+        _ensure_judgment_table(db)
+        # gemini-text (P4) で is_same=0 のキャッシュ
+        db.execute(
+            "INSERT INTO lc_anchor_judgments (session_fp, master_fp, is_same, model)"
+            " VALUES ('S1', 'M1', 0, 'gemini-text')"
+        )
+        db.execute("UPDATE lc_screens SET screenshot_path = '/tmp/s1.png' WHERE fingerprint = 'S1'")
+        sid = db.execute("SELECT id FROM lc_screens WHERE fingerprint = 'S1'").fetchone()[0]
+        db.execute("UPDATE lc_master_nodes SET representative_screen_id = ? WHERE master_fp = 'M1'", (sid,))
+        db.commit()
+
+        matcher = AnchorMatcher()
+        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+
+        p3_anchor = AnchorMatch(session_fp="S1", master_fp="M1", master_sort=0,
+                                method="phase3_tap_phash", score=0.9, phase=3)
+
+        # gemini-text の is_same=0 は P5 にヒットしない → API 呼び出しが必要
+        mock_results = [{"is_same": True, "prefer": "A", "error": False}]
+        with patch.object(AnchorMatcher, '_gemini_batch_judge', return_value=mock_results) as mock_judge:
+            new_anchors, rejected = matcher._phase5_gemini_image(
+                db, session_nodes, master_nodes, master_sort_map,
+                [p3_anchor], version_id=None)
+
+        mock_judge.assert_called_once()  # P4 キャッシュはヒットしない → API 呼び出し
+        assert len(rejected) == 0
+
+    def test_error_not_cached_p5(self, db):
+        """P5 でエラー結果がキャッシュされないこと。"""
+        _add_master(db, "M1", 0, text="", phash="aa00aa00aa00aa00")
+        _add_session_screen(db, "s1", "S1", 1, text="", phash="aa00aa00aa00aa01")
+        _add_tap_edge(db, "s1", "S1", "x")
+        db.execute("UPDATE lc_screens SET screenshot_path = '/tmp/s1.png' WHERE fingerprint = 'S1'")
+        sid = db.execute("SELECT id FROM lc_screens WHERE fingerprint = 'S1'").fetchone()[0]
+        db.execute("UPDATE lc_master_nodes SET representative_screen_id = ? WHERE master_fp = 'M1'", (sid,))
+        _ensure_judgment_table(db)
+        db.commit()
+
+        matcher = AnchorMatcher()
+        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+
+        p3_anchor = AnchorMatch(session_fp="S1", master_fp="M1", master_sort=0,
+                                method="phase3_tap_phash", score=0.9, phase=3)
+
+        mock_results = [{"is_same": False, "prefer": "", "error": True}]
+        with patch.object(AnchorMatcher, '_gemini_batch_judge', return_value=mock_results):
+            new_anchors, rejected = matcher._phase5_gemini_image(
+                db, session_nodes, master_nodes, master_sort_map,
+                [p3_anchor], version_id=None)
+
+        # エラーはキャッシュされない
+        row = db.execute("SELECT COUNT(*) FROM lc_anchor_judgments WHERE model = 'gemini-2.5-flash-lite'").fetchone()
+        assert row[0] == 0
+
+
+class TestPhase6FlashReview:
+    """P6 の P5 棄却再審査。"""
+
+    def test_p5_rejected_retried_in_p6(self, db):
+        """P5 棄却が P6 で再審査されること。"""
+        _add_master(db, "M1", 0, text="再審査テスト", phash="aa00aa00aa00aa10")
+        _add_session_screen(db, "s1", "S1", 1, text="再審査テスト", phash="aa00aa00aa00ab10")
+        _add_tap_edge(db, "s1", "S1", "x")
+        db.execute("UPDATE lc_screens SET screenshot_path = '/tmp/s1.png' WHERE fingerprint = 'S1'")
+        sid = db.execute("SELECT id FROM lc_screens WHERE fingerprint = 'S1'").fetchone()[0]
+        db.execute("UPDATE lc_master_nodes SET representative_screen_id = ? WHERE master_fp = 'M1'", (sid,))
+        _ensure_judgment_table(db)
+        db.commit()
+
+        matcher = AnchorMatcher()
+        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+
+        # P5 棄却アンカー
+        p5_rejected = [AnchorMatch(session_fp="S1", master_fp="M1", master_sort=0,
+                                   method="phase3_tap_phash", score=0.9, phase=3)]
+
+        # P6 モック: 復活
+        mock_results = [{"is_same": True, "prefer": "A", "error": False}]
+        with patch.object(AnchorMatcher, '_gemini_batch_judge', return_value=mock_results):
+            new_anchors, final_rejected = matcher._phase6_gemini_flash(
+                db, session_nodes, master_nodes, master_sort_map,
+                [], p5_rejected, version_id=None)
+
+        assert len(new_anchors) == 1
+        assert new_anchors[0].method == "phase6_gemini_flash"
+        assert new_anchors[0].phase == 6
+        assert len(final_rejected) == 0
