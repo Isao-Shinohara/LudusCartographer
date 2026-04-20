@@ -1290,7 +1290,7 @@
                     const rejected = discardedByPhase[k] || 0;
                     const total = adopted + rejected;
                     const label = rejected > 0 ? `${d.label}: ${adopted}+${rejected}` : `${d.label}: ${adopted}`;
-                    return `<button data-phase-btn="${k}" class="px-2 py-0.5 ${d.color_bg} rounded ${d.color_text} hover:opacity-80 transition-opacity${total === 0 ? ' opacity-40 cursor-default' : ''}">${label}</button>`;
+                    return `<button data-phase-btn="${k}" class="px-2 py-0.5 rounded transition-all ${total === 0 ? 'bg-gray-800/50 text-gray-600 cursor-default' : d.color_bg + ' ' + d.color_text + ' hover:brightness-125'}">${label}</button>`;
                 }).join('');
                 html += `<div class="flex items-center justify-between mt-4">
                     <div class="flex items-center gap-3">
@@ -1329,27 +1329,37 @@
             }
             html += '</div>';
             mc.innerHTML = html;
-            // Phase ボタンフィルター
-            let _activePhaseFilter = null; // null = 全表示
+            // Phase ボタンフィルター (複数トグル、OR 表示)
+            const _activePhases = new Set();
+            function applyPhaseFilter() {
+                const showAll = _activePhases.size === 0;
+                mc.querySelectorAll('[data-phase]').forEach(card => {
+                    card.style.display = showAll || _activePhases.has(card.dataset.phase) ? '' : 'none';
+                });
+                // ボタン見た目の更新
+                mc.querySelectorAll('[data-phase-btn]').forEach(b => {
+                    const phase = b.dataset.phaseBtn;
+                    const active = _activePhases.has(phase);
+                    const hasItems = !b.classList.contains('cursor-default');
+                    if (_activePhases.size === 0 || active) {
+                        b.style.opacity = '';
+                        b.classList.toggle('ring-2', active);
+                        b.classList.toggle('ring-white/50', active);
+                    } else {
+                        b.style.opacity = hasItems ? '0.35' : '';
+                        b.classList.remove('ring-2', 'ring-white/50');
+                    }
+                });
+            }
             mc.querySelectorAll('[data-phase-btn]').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const phase = btn.dataset.phaseBtn;
-                    if (_activePhaseFilter === phase) {
-                        // 同じボタン再クリック → 全表示に戻す
-                        _activePhaseFilter = null;
-                        mc.querySelectorAll('[data-phase-btn]').forEach(b => b.classList.remove('ring-2', 'ring-white/50'));
+                    if (_activePhases.has(phase)) {
+                        _activePhases.delete(phase);
                     } else {
-                        _activePhaseFilter = phase;
-                        mc.querySelectorAll('[data-phase-btn]').forEach(b => b.classList.remove('ring-2', 'ring-white/50'));
-                        btn.classList.add('ring-2', 'ring-white/50');
+                        _activePhases.add(phase);
                     }
-                    mc.querySelectorAll('[data-phase]').forEach(card => {
-                        if (!_activePhaseFilter) {
-                            card.style.display = '';
-                        } else {
-                            card.style.display = card.dataset.phase === _activePhaseFilter ? '' : 'none';
-                        }
-                    });
+                    applyPhaseFilter();
                 });
             });
             // アンカー除外・復帰管理 (Shift+クリック選択方式)
