@@ -1332,26 +1332,29 @@
             }
             html += '</div>';
             mc.innerHTML = html;
-            // Phase ボタンフィルター (初期全ON、タップでOFF/ON切替)
-            const _allPhaseKeys = Object.keys(phaseDefs);
-            const _enabledPhases = new Set(_allPhaseKeys);
+            // Phase ボタンフィルター (初期全ON、タップでそのPhaseをOFF、再タップでON)
+            // _hiddenPhases: OFFにされたPhaseのSet (初期は空 = 全表示)
+            const _hiddenPhases = new Set();
             function applyPhaseFilter() {
-                mc.querySelectorAll('[data-phase]').forEach(card => {
-                    card.style.display = _enabledPhases.has(card.dataset.phase) ? '' : 'none';
+                const anchorGrid = document.getElementById('anchor-grid');
+                if (!anchorGrid) return;
+                anchorGrid.querySelectorAll('[data-phase]').forEach(card => {
+                    const hidden = _hiddenPhases.has(card.dataset.phase);
+                    card.style.display = hidden ? 'none' : '';
                 });
-                mc.querySelectorAll('[data-phase-btn]').forEach(b => {
-                    const on = _enabledPhases.has(b.dataset.phaseBtn);
-                    b.style.opacity = on ? '' : '0.3';
-                    b.style.textDecoration = on ? '' : 'line-through';
+                document.querySelectorAll('[data-phase-btn]').forEach(b => {
+                    const hidden = _hiddenPhases.has(b.dataset.phaseBtn);
+                    b.style.opacity = hidden ? '0.3' : '';
+                    b.style.textDecoration = hidden ? 'line-through' : '';
                 });
             }
-            mc.querySelectorAll('[data-phase-btn]').forEach(btn => {
+            document.querySelectorAll('[data-phase-btn]').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const phase = btn.dataset.phaseBtn;
-                    if (_enabledPhases.has(phase)) {
-                        _enabledPhases.delete(phase);
+                    if (_hiddenPhases.has(phase)) {
+                        _hiddenPhases.delete(phase);
                     } else {
-                        _enabledPhases.add(phase);
+                        _hiddenPhases.add(phase);
                     }
                     applyPhaseFilter();
                 });
