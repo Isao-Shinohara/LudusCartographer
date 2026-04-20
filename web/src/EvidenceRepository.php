@@ -535,6 +535,10 @@ class EvidenceRepository
                     FROM lc_node_mappings nm2
                     WHERE nm2.master_fp = m.master_fp AND nm2.match_method != 'seed' AND nm2.match_method != 'new'
                    ) AS anchor_info,
+                   (SELECT GROUP_CONCAT(nm4.match_method || ':' || nm4.session_id, ',')
+                    FROM lc_node_mappings nm4
+                    WHERE nm4.master_fp = m.master_fp AND nm4.match_method != 'seed'
+                   ) AS all_mapping_info,
                    (SELECT nm3.match_method FROM lc_node_mappings nm3
                     WHERE nm3.master_fp = m.master_fp AND nm3.match_method != 'seed'
                     ORDER BY nm3.rowid DESC LIMIT 1
@@ -589,6 +593,7 @@ class EvidenceRepository
             'manual_group_id' => $raw['manual_group_id'] ?? null,
             'is_artifact'     => (bool)($raw['is_artifact'] ?? false),
             'anchor_info'     => $raw['anchor_info'] ?? null,
+            'all_mapping_info' => $raw['all_mapping_info'] ?? null,
             'last_match_method' => $raw['last_match_method'] ?? null,
         ];
     }
@@ -767,18 +772,49 @@ class EvidenceRepository
     {
         $versionId ??= $this->getActiveVersionId();
         $row = $this->db->prepare(
-            "SELECT user_excluded FROM lc_master_nodes WHERE master_fp = :fp AND version_id = :vid"
+            "SELECT user_excluded, sort_order FROM lc_master_nodes WHERE master_fp = :fp AND version_id = :vid"
         );
         $row->execute([':fp' => $masterFp, ':vid' => $versionId]);
-        $current = $row->fetchColumn();
+        $current = $row->fetch(\PDO::FETCH_ASSOC);
         if ($current === false) {
             return ['error' => 'not found'];
         }
-        $newVal = $current ? 0 : 1;
-        $this->db->prepare(
-            "UPDATE lc_master_nodes SET user_excluded = :val WHERE master_fp = :fp AND version_id = :vid"
-        )->execute([':val' => $newVal, ':fp' => $masterFp, ':vid' => $versionId]);
+        $newVal = $current['user_excluded'] ? 0 : 1;
+
+        if ($newVal) {
+            // 不採用にする: sort_order を NULL にしてリナンバリング
+            $this->db->prepare(
+                "UPDATE lc_master_nodes SET user_excluded = 1, sort_order = NULL WHERE master_fp = :fp AND version_id = :vid"
+            )->execute([':fp' => $masterFp, ':vid' => $versionId]);
+            $this->renumberSortOrders($versionId);
+        } else {
+            // 採用に戻す: sort_order を末尾に追加
+            $maxSort = $this->db->prepare(
+                "SELECT COALESCE(MAX(sort_order), -1) FROM lc_master_nodes WHERE version_id = :vid"
+            );
+            $maxSort->execute([':vid' => $versionId]);
+            $nextSort = (int)$maxSort->fetchColumn() + 1;
+            $this->db->prepare(
+                "UPDATE lc_master_nodes SET user_excluded = 0, sort_order = :sort WHERE master_fp = :fp AND version_id = :vid"
+            )->execute([':sort' => $nextSort, ':fp' => $masterFp, ':vid' => $versionId]);
+        }
+
         return ['master_fp' => $masterFp, 'user_excluded' => (bool)$newVal];
+    }
+
+    private function renumberSortOrders(int $versionId): void
+    {
+        $rows = $this->db->prepare(
+            "SELECT master_fp FROM lc_master_nodes WHERE version_id = :vid AND sort_order IS NOT NULL ORDER BY sort_order ASC"
+        );
+        $rows->execute([':vid' => $versionId]);
+        $fps = $rows->fetchAll(\PDO::FETCH_COLUMN);
+        $update = $this->db->prepare(
+            "UPDATE lc_master_nodes SET sort_order = :sort WHERE master_fp = :fp AND version_id = :vid"
+        );
+        foreach ($fps as $i => $fp) {
+            $update->execute([':sort' => $i, ':fp' => $fp, ':vid' => $versionId]);
+        }
     }
 
     public function getFinalScreensIncludeExcluded(
@@ -809,6 +845,10 @@ class EvidenceRepository
                     FROM lc_node_mappings nm2
                     WHERE nm2.master_fp = m.master_fp AND nm2.match_method != 'seed' AND nm2.match_method != 'new'
                    ) AS anchor_info,
+                   (SELECT GROUP_CONCAT(nm4.match_method || ':' || nm4.session_id, ',')
+                    FROM lc_node_mappings nm4
+                    WHERE nm4.master_fp = m.master_fp AND nm4.match_method != 'seed'
+                   ) AS all_mapping_info,
                    (SELECT nm3.match_method FROM lc_node_mappings nm3
                     WHERE nm3.master_fp = m.master_fp AND nm3.match_method != 'seed'
                     ORDER BY nm3.rowid DESC LIMIT 1
@@ -855,6 +895,60 @@ class EvidenceRepository
             ':cluster_id' => $info['cluster_id'],
             ':session_id' => $info['session_id'],
         ]);
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * マスターノードにマッピングされた全セッションの代表画面を返す (Final タブ用)。
+     * seed 元 + アンカーマッチした画面を同一クラスタとして扱う。
+     */
+    public function getMasterSiblings(string $masterFp): array
+    {
+        // 1. マスターノード自体の representative_screen_id
+        $master = $this->db->prepare(
+            "SELECT representative_screen_id FROM lc_master_nodes WHERE master_fp = ?"
+        );
+        $master->execute([$masterFp]);
+        $repId = $master->fetchColumn();
+
+        // 2. node_mappings から同じ master_fp にマッピングされた session_fp を収集
+        $mappings = $this->db->prepare(
+            "SELECT session_fp, session_id, match_method FROM lc_node_mappings WHERE master_fp = ?"
+        );
+        $mappings->execute([$masterFp]);
+        $rows = $mappings->fetchAll(\PDO::FETCH_ASSOC);
+
+        // 3. 各 session_fp の代表画面を取得
+        $screenIds = [];
+        if ($repId) {
+            $screenIds[$repId] = true;
+        }
+        foreach ($rows as $row) {
+            $stmt = $this->db->prepare(
+                "SELECT id FROM lc_screens WHERE fingerprint = ? AND session_id = ? AND is_representative = 1 LIMIT 1"
+            );
+            $stmt->execute([$row['session_fp'], $row['session_id']]);
+            $sid = $stmt->fetchColumn();
+            if ($sid) {
+                $screenIds[$sid] = true;
+            }
+        }
+
+        if (empty($screenIds)) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($screenIds), '?'));
+        $stmt = $this->db->prepare(<<<SQL
+            SELECT id, fingerprint, title, screenshot_path, thumbnail_path,
+                   ocr_text, ocr_text_hq, discovered_at, scene, session_id,
+                   CASE WHEN id = ? THEN 1 ELSE 0 END AS is_representative
+            FROM lc_screens
+            WHERE id IN ({$placeholders})
+            ORDER BY is_representative DESC, discovered_at ASC
+        SQL);
+        $params = array_merge([$repId], array_keys($screenIds));
+        $stmt->execute($params);
         return $stmt->fetchAll(\PDO::FETCH_ASSOC);
     }
 

@@ -90,7 +90,7 @@ class TestPrepareData:
         db.commit()
 
         m = AnchorMatcher()
-        session_nodes, _, _ = m._prepare_data(db, "s2")
+        session_nodes, _, _, _ = m._prepare_data(db, "s2")
         assert len(session_nodes) == 3
         assert session_nodes[0].edge_type == "tap"  # a: tap edge
         assert session_nodes[0].has_text == True
@@ -106,7 +106,7 @@ class TestPrepareData:
         db.commit()
 
         m = AnchorMatcher()
-        nodes, _, _ = m._prepare_data(db, "s2")
+        nodes, _, _, _ = m._prepare_data(db, "s2")
         # discovered_at 順: y(01), z(02), x(03)
         assert nodes[0].fp == "y"
         assert nodes[0].time_rank == 0
@@ -125,7 +125,7 @@ class TestPhase1TapText:
         db.commit()
 
         m = AnchorMatcher()
-        s_nodes, m_nodes, sort_map = m._prepare_data(db, "s2")
+        s_nodes, m_nodes, sort_map, _ = m._prepare_data(db, "s2")
         anchors = m._phase1_tap_text(s_nodes, m_nodes, sort_map)
         assert len(anchors) == 1
         assert anchors[0].master_fp == "M_A"
@@ -138,7 +138,7 @@ class TestPhase1TapText:
         db.commit()
 
         m = AnchorMatcher()
-        s_nodes, m_nodes, sort_map = m._prepare_data(db, "s2")
+        s_nodes, m_nodes, sort_map, _ = m._prepare_data(db, "s2")
         anchors = m._phase1_tap_text(s_nodes, m_nodes, sort_map)
         assert len(anchors) == 0  # ambiguous → rejected
 
@@ -149,7 +149,7 @@ class TestPhase1TapText:
         db.commit()
 
         m = AnchorMatcher()
-        s_nodes, m_nodes, sort_map = m._prepare_data(db, "s2")
+        s_nodes, m_nodes, sort_map, _ = m._prepare_data(db, "s2")
         anchors = m._phase1_tap_text(s_nodes, m_nodes, sort_map)
         assert len(anchors) == 0  # phash too far
 
@@ -160,7 +160,7 @@ class TestPhase1TapText:
         db.commit()
 
         m = AnchorMatcher()
-        s_nodes, m_nodes, sort_map = m._prepare_data(db, "s2")
+        s_nodes, m_nodes, sort_map, _ = m._prepare_data(db, "s2")
         anchors = m._phase1_tap_text(s_nodes, m_nodes, sort_map)
         assert len(anchors) == 0  # auto → not Phase 1 target
 
@@ -210,7 +210,7 @@ class TestPhase2AutoText:
         db.commit()
 
         m = AnchorMatcher()
-        s_nodes, m_nodes, sort_map = m._prepare_data(db, "s2")
+        s_nodes, m_nodes, sort_map, _ = m._prepare_data(db, "s2")
         p1 = m._phase1_tap_text(s_nodes, m_nodes, sort_map)
         assert len(p1) == 2  # A and B matched
 
@@ -233,7 +233,7 @@ class TestPhase3TapPhash:
         db.commit()
 
         m = AnchorMatcher()
-        s_nodes, m_nodes, sort_map = m._prepare_data(db, "s2")
+        s_nodes, m_nodes, sort_map, _ = m._prepare_data(db, "s2")
         p1 = m._phase1_tap_text(s_nodes, m_nodes, sort_map)
         p3 = m._phase3_tap_phash(s_nodes, m_nodes, sort_map, p1)
         assert len(p3) == 1
@@ -249,7 +249,7 @@ class TestPhase3TapPhash:
         db.commit()
 
         m = AnchorMatcher()
-        s_nodes, m_nodes, sort_map = m._prepare_data(db, "s2")
+        s_nodes, m_nodes, sort_map, _ = m._prepare_data(db, "s2")
         p1 = m._phase1_tap_text(s_nodes, m_nodes, sort_map)
         p3 = m._phase3_tap_phash(s_nodes, m_nodes, sort_map, p1)
         assert len(p3) == 0  # no prev anchor → skip
@@ -354,7 +354,7 @@ class TestCrossSessionMergerIntegration:
             merger._anchor_matcher = AnchorMatcher()
             merger._version_id = 1
 
-            node_mapping, session_reps, is_seed, _discarded = merger._compute_matches("s2")
+            node_mapping, session_reps, is_seed, _discarded, _excluded = merger._compute_matches("s2")
 
         assert is_seed is False
         # AnchorMatcher で Phase 1 マッチが見つかるはず
@@ -378,7 +378,7 @@ class TestCrossSessionMergerIntegration:
             merger._anchor_matcher = AnchorMatcher()
             merger._version_id = 1
 
-            node_mapping, session_reps, is_seed, _discarded = merger._compute_matches("s1")
+            node_mapping, session_reps, is_seed, _discarded, _excluded = merger._compute_matches("s1")
 
         assert is_seed is True
         assert len(node_mapping) == 0
@@ -415,7 +415,7 @@ class TestPhase4TextGemini:
         db.commit()
 
         matcher = AnchorMatcher()
-        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+        session_nodes, master_nodes, master_sort_map, _ = matcher._prepare_data(db, "s1")
 
         # Gemini モック: S1→同一, S2→別画面
         mock_results = [
@@ -442,7 +442,7 @@ class TestPhase4TextGemini:
         db.commit()
 
         matcher = AnchorMatcher()
-        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+        session_nodes, master_nodes, master_sort_map, _ = matcher._prepare_data(db, "s1")
 
         # Gemini モック: エラー
         mock_results = [{"is_same": False, "error": True}]
@@ -471,7 +471,7 @@ class TestPhase4TextGemini:
         db.commit()
 
         matcher = AnchorMatcher()
-        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+        session_nodes, master_nodes, master_sort_map, _ = matcher._prepare_data(db, "s1")
 
         with patch.object(AnchorMatcher, '_gemini_text_judge') as mock_judge:
             accepted, rejected = matcher._phase4_gemini_text(
@@ -494,7 +494,7 @@ class TestPhase4TextGemini:
         db.commit()
 
         matcher = AnchorMatcher()
-        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+        session_nodes, master_nodes, master_sort_map, _ = matcher._prepare_data(db, "s1")
 
         with patch.object(AnchorMatcher, '_gemini_text_judge') as mock_judge:
             accepted, rejected = matcher._phase4_gemini_text(
@@ -520,7 +520,7 @@ class TestPhase5ImageGemini:
         db.commit()
 
         matcher = AnchorMatcher()
-        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+        session_nodes, master_nodes, master_sort_map, _ = matcher._prepare_data(db, "s1")
 
         # P4 棄却を構築
         s_node = next(n for n in session_nodes if n.fp == "S1")
@@ -551,7 +551,7 @@ class TestPhase5ImageGemini:
         db.commit()
 
         matcher = AnchorMatcher()
-        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+        session_nodes, master_nodes, master_sort_map, _ = matcher._prepare_data(db, "s1")
 
         # P3 確定アンカーを模擬
         p3_anchor = AnchorMatch(session_fp="S1", master_fp="M1", master_sort=0,
@@ -580,7 +580,7 @@ class TestPhase5ImageGemini:
         db.commit()
 
         matcher = AnchorMatcher()
-        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+        session_nodes, master_nodes, master_sort_map, _ = matcher._prepare_data(db, "s1")
 
         p3_anchor = AnchorMatch(session_fp="S1", master_fp="M1", master_sort=0,
                                 method="phase3_tap_phash", score=0.9, phase=3)
@@ -606,7 +606,7 @@ class TestPhase5ImageGemini:
         db.commit()
 
         matcher = AnchorMatcher()
-        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+        session_nodes, master_nodes, master_sort_map, _ = matcher._prepare_data(db, "s1")
 
         p1_anchor = AnchorMatch(session_fp="S1", master_fp="M1", master_sort=0,
                                 method="phase1_tap_text", score=1.0, phase=1)
@@ -636,7 +636,7 @@ class TestPhase5ImageGemini:
         db.commit()
 
         matcher = AnchorMatcher()
-        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+        session_nodes, master_nodes, master_sort_map, _ = matcher._prepare_data(db, "s1")
 
         p3_anchor = AnchorMatch(session_fp="S1", master_fp="M1", master_sort=0,
                                 method="phase3_tap_phash", score=0.9, phase=3)
@@ -663,7 +663,7 @@ class TestPhase5ImageGemini:
         db.commit()
 
         matcher = AnchorMatcher()
-        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+        session_nodes, master_nodes, master_sort_map, _ = matcher._prepare_data(db, "s1")
 
         p3_anchor = AnchorMatch(session_fp="S1", master_fp="M1", master_sort=0,
                                 method="phase3_tap_phash", score=0.9, phase=3)
@@ -694,7 +694,7 @@ class TestPhase6FlashReview:
         db.commit()
 
         matcher = AnchorMatcher()
-        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+        session_nodes, master_nodes, master_sort_map, _ = matcher._prepare_data(db, "s1")
 
         # P5 棄却アンカー
         p5_rejected = [AnchorMatch(session_fp="S1", master_fp="M1", master_sort=0,

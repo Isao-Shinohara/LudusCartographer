@@ -257,6 +257,21 @@ class AnchorMatcher:
     PHASE6_PHASH_MAX = 20    # この未満まで
     PHASE6_TEXT_SIMILARITY = 0.3
 
+    @staticmethod
+    def _write_progress(conn: sqlite3.Connection, phase: str,
+                        total_anchors: int, total_nodes: int) -> None:
+        """Phase 進捗を auto_pilot_state に書き込む (ポーリング用)。"""
+        import json as _json
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO auto_pilot_state (key, value) VALUES ('merge_phase', ?)",
+                (_json.dumps({"phase": phase, "anchors": total_anchors,
+                              "total": total_nodes}, ensure_ascii=False),),
+            )
+            conn.commit()
+        except Exception:
+            pass
+
     def compute_matches(
         self,
         conn: sqlite3.Connection,
@@ -266,37 +281,48 @@ class AnchorMatcher:
         """全 Phase を実行し、マッチ結果を返す。
 
         Returns:
-            (node_mapping, skipped_fps)
+            (node_mapping, skipped_fps, discarded_mapping, excluded_mapping)
             node_mapping: session_fp → (master_fp, method, score)
             skipped_fps: マッチしなかった session_fp のリスト
+            discarded_mapping: Gemini 棄却
+            excluded_mapping: 不採用ノード一致 session_fp → (master_fp, method, score)
         """
-        session_nodes, master_nodes, master_sort_map = self._prepare_data(conn, session_id, version_id)
+        session_nodes, master_nodes, master_sort_map, excluded_master_fps = self._prepare_data(conn, session_id, version_id)
 
         if not session_nodes or not master_nodes:
             return {}, [n.fp for n in session_nodes]
 
+        total = len(session_nodes)
+
         # Phase 1: tap + テキスト完全/前方一致 (最も確実)
+        self._write_progress(conn, "P1 実行中...", 0, total)
         anchors = self._phase1_tap_text(session_nodes, master_nodes, master_sort_map)
         logger.info("[AnchorMatcher] Phase 1: %d アンカー確定", len(anchors))
+        self._write_progress(conn, "P1 完了", len(anchors), total)
 
         # Phase 2: auto + テキストあり (無料・高速)
         phase2 = self._phase2_auto_text(session_nodes, master_nodes, master_sort_map, anchors)
         anchors.extend(phase2)
         logger.info("[AnchorMatcher] Phase 2: +%d → 合計 %d アンカー", len(phase2), len(anchors))
+        self._write_progress(conn, "P2 完了", len(anchors), total)
 
         # Phase 3: tap + テキスト空 + phash (無料・高速)
         phase3 = self._phase3_tap_phash(session_nodes, master_nodes, master_sort_map, anchors)
         anchors.extend(phase3)
         logger.info("[AnchorMatcher] Phase 3: +%d → 合計 %d アンカー", len(phase3), len(anchors))
+        self._write_progress(conn, "P3 完了", len(anchors), total)
 
         # Phase 4: テキスト Gemini (テキストのみ送信、画像なし、安価)
+        self._write_progress(conn, "P4 Gemini テキスト判定中...", len(anchors), total)
         phase4_new, phase4_rejected = self._phase4_gemini_text(
             conn, session_nodes, master_nodes, master_sort_map, anchors, version_id)
         anchors.extend(phase4_new)
         logger.info("[AnchorMatcher] Phase 4: +%d (棄却%d → P5へ) → 合計 %d アンカー",
                     len(phase4_new), len(phase4_rejected), len(anchors))
+        self._write_progress(conn, "P4 完了", len(anchors), total)
 
         # Phase 5: 画像 Gemini Flash-Lite (P3検証 + P4棄却再検証 + 新規候補)
+        self._write_progress(conn, "P5 Gemini 画像判定中...", len(anchors), total)
         phase5_new, phase5_rejected = self._phase5_gemini_image(
             conn, session_nodes, master_nodes, master_sort_map, anchors, version_id,
             p4_rejected=phase4_rejected)
@@ -306,8 +332,10 @@ class AnchorMatcher:
             logger.info("[AnchorMatcher] Phase 5 検証: %d 件棄却 → Phase 6 へ", len(p5_rejected_fps))
         anchors.extend(phase5_new)
         logger.info("[AnchorMatcher] Phase 5: +%d → 合計 %d アンカー", len(phase5_new), len(anchors))
+        self._write_progress(conn, "P5 完了", len(anchors), total)
 
         # Phase 6: 画像 Gemini Flash (phash 8-20 + P5 棄却再審査)
+        self._write_progress(conn, "P6 Gemini Flash 判定中...", len(anchors), total)
         phase6_new, phase6_final_rejected = self._phase6_gemini_flash(
             conn, session_nodes, master_nodes, master_sort_map, anchors,
             phase5_rejected, version_id)
@@ -317,25 +345,33 @@ class AnchorMatcher:
                     sum(1 for a in phase6_new if a.session_fp in p5_rejected_fps),
                     sum(1 for a in phase6_new if a.session_fp not in p5_rejected_fps),
                     len(anchors))
+        self._write_progress(conn, "完了", len(anchors), total)
 
-        # 結果を node_mapping 形式に変換
+        # 結果を node_mapping 形式に変換 (不採用ノード一致を分離)
         matched_session_fps = set()
         node_mapping: dict[str, tuple[str, str, float]] = {}
+        excluded_mapping: dict[str, tuple[str, str, float]] = {}
         for a in anchors:
-            node_mapping[a.session_fp] = (a.master_fp, a.method, a.score)
+            if a.master_fp in excluded_master_fps:
+                excluded_mapping[a.session_fp] = (a.master_fp, a.method, a.score)
+            else:
+                node_mapping[a.session_fp] = (a.master_fp, a.method, a.score)
             matched_session_fps.add(a.session_fp)
 
         skipped = [n.fp for n in session_nodes if n.fp not in matched_session_fps]
 
+        excluded_count = len(excluded_mapping)
+        active_count = len(node_mapping)
         logger.info(
-            "[AnchorMatcher] session=%s: matched=%d (P1=%d, P2=%d, P3=%d, P4=%d, P5=%d, P6=%d), skipped=%d",
-            session_id, len(node_mapping),
-            sum(1 for a in anchors if a.phase == 1),
-            sum(1 for a in anchors if a.phase == 2),
-            sum(1 for a in anchors if a.phase == 3),
-            sum(1 for a in anchors if a.phase == 4),
-            sum(1 for a in anchors if a.phase == 5),
-            sum(1 for a in anchors if a.phase == 6),
+            "[AnchorMatcher] session=%s: anchor=%d, excluded_match=%d"
+            " (P1=%d, P2=%d, P3=%d, P4=%d, P5=%d, P6=%d), skipped=%d",
+            session_id, active_count, excluded_count,
+            sum(1 for a in anchors if a.phase == 1 and a.master_fp not in excluded_master_fps),
+            sum(1 for a in anchors if a.phase == 2 and a.master_fp not in excluded_master_fps),
+            sum(1 for a in anchors if a.phase == 3 and a.master_fp not in excluded_master_fps),
+            sum(1 for a in anchors if a.phase == 4 and a.master_fp not in excluded_master_fps),
+            sum(1 for a in anchors if a.phase == 5 and a.master_fp not in excluded_master_fps),
+            sum(1 for a in anchors if a.phase == 6 and a.master_fp not in excluded_master_fps),
             len(skipped),
         )
 
@@ -346,7 +382,7 @@ class AnchorMatcher:
                 a.master_fp, a.method, a.score, "Gemini Flash 再審査でも別画面と判定"
             )
 
-        return node_mapping, skipped, discarded_mapping
+        return node_mapping, skipped, discarded_mapping, excluded_mapping
 
     # ─── データ準備 ───────────────────────────────────
 
@@ -355,8 +391,13 @@ class AnchorMatcher:
         conn: sqlite3.Connection,
         session_id: str,
         version_id: int | None = None,
-    ) -> tuple[list[NodeInfo], list[NodeInfo], dict[str, int]]:
-        """DB からデータ取得し、ノード分類する。"""
+    ) -> tuple[list[NodeInfo], list[NodeInfo], dict[str, int], set[str]]:
+        """DB からデータ取得し、ノード分類する。
+
+        Returns:
+            (session_nodes, master_nodes, master_sort_map, excluded_master_fps)
+            excluded_master_fps: user_excluded=1 のマスターノード fp セット
+        """
         from lc.utils import phash_distance  # noqa: F401 (import test)
 
         # セッション側: 代表画面を時系列順に取得
@@ -411,7 +452,8 @@ class AnchorMatcher:
         _v_params = (version_id,) if version_id else ()
         master_rows = conn.execute(
             "SELECT master_fp, phash, scene, sort_order,"
-            " COALESCE(ocr_text_manual, ocr_text, '') AS text"
+            " COALESCE(ocr_text_manual, ocr_text, '') AS text,"
+            " COALESCE(user_excluded, 0) AS user_excluded"
             " FROM lc_master_nodes" + _v_filter
             + " ORDER BY sort_order ASC",
             _v_params,
@@ -419,16 +461,20 @@ class AnchorMatcher:
 
         master_nodes: list[NodeInfo] = []
         master_sort_map: dict[str, int] = {}
+        excluded_master_fps: set[str] = set()
         for r in master_rows:
             text = _normalize_for_comparison(r["text"] or "", conn)
+            sort_order = r["sort_order"] if r["sort_order"] is not None else -1
             master_nodes.append(NodeInfo(
                 fp=r["master_fp"], text=text, phash=r["phash"] or "",
                 scene=r["scene"] or "", edge_type="",
-                has_text=len(text) > 0, time_rank=r["sort_order"],
+                has_text=len(text) > 0, time_rank=sort_order,
             ))
-            master_sort_map[r["master_fp"]] = r["sort_order"]
+            master_sort_map[r["master_fp"]] = sort_order
+            if r["user_excluded"]:
+                excluded_master_fps.add(r["master_fp"])
 
-        return session_nodes, master_nodes, master_sort_map
+        return session_nodes, master_nodes, master_sort_map, excluded_master_fps
 
     # ─── Phase 1: tap + テキストあり ──────────────────
 

@@ -53,21 +53,22 @@
     </select>
     <select id="debug-session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none hidden">
     </select>
-    <!-- Final 採用/不採用アクション (右詰) -->
+    <!-- ステータス (右詰) -->
     <div class="ml-auto flex items-center gap-2">
         <div id="status" class="flex items-center gap-2 cursor-pointer select-none" onclick="toggleAutoRefresh()" title="クリックで自動更新を切り替え">
             <span id="status-dot" class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
             <span id="status-text" class="text-xs text-gray-500">自動更新中</span>
         </div>
-    </div>
-    <div id="final-actions" class="hidden ml-auto flex items-center gap-2">
-        <span id="final-select-hint" class="text-xs text-gray-500">Shift+クリックで選択</span>
-        <button id="final-merge-group-btn" class="px-3 py-1 bg-violet-900/60 hover:bg-violet-800/70 text-violet-200 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>⊕ 統合</button>
-        <button id="final-adopt-btn" class="px-3 py-1 bg-emerald-900/70 hover:bg-emerald-800/80 text-emerald-200 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✓ 採用</button>
-        <button id="final-exclude-btn" class="px-3 py-1 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✕ 不採用</button>
-        <button id="final-reset-btn" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>リセット</button>
         <button id="debug-toggle" class="px-2 py-1 text-[10px] rounded transition-colors" onclick="toggleDebug()">Debug</button>
     </div>
+</div>
+<!-- Final 採用/不採用アクションバー (2段目) -->
+<div id="final-actions" class="hidden flex items-center justify-end gap-2 pb-2">
+    <span id="final-select-hint" class="text-xs text-gray-500">Shift+クリックで選択</span>
+    <button id="final-merge-group-btn" class="px-3 py-1 bg-violet-900/60 hover:bg-violet-800/70 text-violet-200 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>⊕ 統合</button>
+    <button id="final-adopt-btn" class="px-3 py-1 bg-emerald-900/70 hover:bg-emerald-800/80 text-emerald-200 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✓ 採用</button>
+    <button id="final-exclude-btn" class="px-3 py-1 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✕ 不採用</button>
+    <button id="final-reset-btn" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>リセット</button>
 </div>
 </div>
 
@@ -167,7 +168,7 @@
                 </div>
                 <button id="modal-close-btn" class="text-gray-500 hover:text-white text-2xl flex-shrink-0 ml-4">&times;</button>
             </div>
-            <!-- ボディ (詳細 + 同クラスタ横並び) -->
+            <!-- ボディ (詳細 + 同一クラスタ横並び) -->
             <div class="flex flex-1 min-h-0 overflow-hidden">
                 <!-- メインコンテンツ -->
                 <div class="flex-1 min-w-0 p-4 overflow-hidden">
@@ -221,10 +222,10 @@
                         </div>
                     </div>
                 </div>
-                <!-- 同クラスタ (右サイド) -->
+                <!-- 同一クラスタ (右サイド) -->
                 <div id="modal-cluster" class="hidden w-64 flex-shrink-0 border-l border-gray-800 flex flex-col">
                     <div class="flex items-center justify-between p-3 border-b border-gray-800 flex-shrink-0">
-                        <h4 class="text-xs font-bold text-gray-400">同クラスタ</h4>
+                        <h4 class="text-xs font-bold text-gray-400">同一クラスタ</h4>
                         <button id="cluster-promote-btn" class="px-2 py-0.5 bg-green-700 hover:bg-green-600 text-white text-[10px] font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed hidden" disabled>変更</button>
                     </div>
                     <div id="modal-cluster-grid" class="flex flex-col gap-2 p-2 overflow-y-auto flex-1 min-h-0"></div>
@@ -263,7 +264,7 @@
     let _previewModalShow = null;  // プレビュー用モーダル表示関数
     let geminiEnabled = false;  // GEMINI_API_KEY が設定されているか (API レスポンスで更新)
     let autoRefreshPaused = false;  // 自動更新一時停止フラグ
-    let _debugMode = localStorage.getItem('lc_debug') === '1';  // デバッグモード
+    let _debugMode = localStorage.getItem('lc_debug') !== '0';  // デバッグモード (デフォルト有効)
     const TRASH_ICON = '<svg class="w-3.5 h-3.5 inline" viewBox="0 0 16 16" fill="currentColor"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM4.496 6.675a.75.75 0 10-1.492.15l.66 6.6A1.75 1.75 0 005.405 15h5.19a1.75 1.75 0 001.741-1.575l.66-6.6a.75.75 0 00-1.492-.15l-.66 6.6a.25.25 0 01-.249.225h-5.19a.25.25 0 01-.249-.225l-.66-6.6z"/></svg>';
     const filterSelect = document.getElementById('filter-select');
     const sessionSelect = document.getElementById('session-select');
@@ -345,6 +346,7 @@
         const dimClass = opts.dimClass || '';
         const extraClass = opts.extraClass || '';
         const dataAttr = opts.dataAttr || '';
+        const extraHtml = opts.extraHtml || '';
         return `<div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer relative hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${extraClass}" ${dataAttr}>
             <div>
                 ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800 flex items-center justify-center text-3xl">📱</div>'}
@@ -357,6 +359,7 @@
                     <span class="text-[10px] text-gray-600">${escapeHtml(time)}</span>
                 </div>
             </div>
+            ${extraHtml}
         </div>`;
     }
 
@@ -380,7 +383,7 @@
         const pendingMark = hasPending ? ' ring-2 ring-yellow-500/50' : '';
         const isGroupSelected = currentTab === 'final' && s.master_fp && selectedForGroup.has(s.master_fp);
         const groupSelectMark = isGroupSelected ? ' ring-2 ring-blue-500' : '';
-        const anchorMark = _debugMode
+        const anchorMark = (_debugMode && _debugFilterSession)
             ? (_debugAnchorMatchesSession(s.anchor_info, _debugFilterSession) ? ' ring-2 ring-cyan-400'
                : s.last_match_method === 'new' ? ' ring-2 ring-lime-400' : '')
             : '';
@@ -402,6 +405,14 @@
                 filtered = allScreens.filter(s => s.user_excluded);
             } else if (filter === 'adopted') {
                 filtered = allScreens.filter(s => !s.user_excluded);
+            } else if (filter === 'session') {
+                // デバッグセッションで追加されたアンカー+新規のみ
+                const fs = _debugFilterSession;
+                if (fs) {
+                    filtered = allScreens.filter(s =>
+                        s.all_mapping_info && s.all_mapping_info.includes(fs)
+                    );
+                }
             }
             // 'all' はそのまま全件
         } else if (filter === 'reps') {
@@ -889,7 +900,7 @@
             statusDot.classList.add('hidden');
             statusText.textContent = '';
             filterSelect.classList.remove('hidden');
-            filterSelect.innerHTML = '<option value="adopted">採用</option><option value="excluded">不採用</option><option value="all">すべて</option>';
+            filterSelect.innerHTML = '<option value="adopted">採用</option><option value="excluded">不採用</option><option value="all">すべて</option><option value="session">マージ済み</option>';
             filterSelect.value = restoreFromUrl ? getUrlParam('filter', 'adopted') : 'adopted';
             filterSelect.onchange = function() { showExcluded = this.value === 'all' || this.value === 'excluded'; renderAll(); syncUrlParams(); updateFinalActionBar(); };
             sessionSelect.classList.add('hidden');
@@ -1191,13 +1202,17 @@
     }
 
 
-    async function pollMergeResult(mc, label) {
+    async function pollMergeResult(mc, label, toastHandle) {
         return new Promise((resolve) => {
             const timer = setInterval(async () => {
                 try {
                     const r = await fetch(API_BASE + '?action=merge_progress');
                     const d = await r.json();
                     if (d.error) console.warn('[pollMergeResult] server error:', d.error);
+                    if (d.progress && toastHandle) {
+                        const p = d.progress;
+                        toastHandle.update(`${p.phase} (${p.anchors} / ${p.total})`);
+                    }
                     if (d.done) {
                         clearInterval(timer);
                         resolve(d.result);
@@ -1219,7 +1234,7 @@
         const toastHandle = showToast('プレビュー計算中...', 'info', { sticky: true });
         try {
             await fetch(API_BASE + '?action=preview_merge&session_id=' + encodeURIComponent(sessionId));
-            const data = await pollMergeResult(mc, 'プレビュー計算中');
+            const data = await pollMergeResult(mc, 'プレビュー計算中', toastHandle);
             if (toastHandle) toastHandle.remove();
             if (!data || data.error) { mc.innerHTML = `<div class="text-red-500 py-12">${escapeHtml(data?.error || 'プレビュー失敗')}</div>`; return; }
             // フェーズ定義 (バックエンドから取得、フォールバック付き)
@@ -1240,7 +1255,7 @@
             html += `<div class="flex items-center justify-between">
                 <div>
                     <h3 class="text-lg font-bold text-brand-light">マージプレビュー: ${escapeHtml(sessionId)}</h3>
-                    <p class="text-sm text-gray-400 mt-1">新規追加ノード: ${(data.new_nodes || []).filter(n => n.insertable).length} / アンカー: ${data.matches.length} / セッション画面: ${data.session_screens} / マスター現状: ${data.master_nodes_before} ノード</p>
+                    <p class="text-sm text-gray-400 mt-1">新規追加ノード: ${(data.new_nodes || []).filter(n => n.insertable).length} / アンカー: ${data.matches.filter(m => !m.excluded_match).length}${data.summary.excluded_match ? ' / 不採用一致: ' + data.summary.excluded_match : ''} / セッション画面: ${data.session_screens} / マスター現状: ${data.master_nodes_before} ノード</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <span id="preview-select-hint" class="text-xs text-gray-500">Shift+クリックで選択</span>
@@ -1259,7 +1274,7 @@
 
             // 新規追加ノード (SafeInsert 判定済み)
             const insertableNodes = (data.new_nodes || []).filter(n => n.insertable);
-            html += `<h4 class="text-sm font-bold text-lime-400 mt-4">新規追加ノード (${insertableNodes.length}/${data.session_screens})</h4>`;
+            html += `<h4 class="text-sm font-bold text-lime-400 mt-4">新規追加ノード (${insertableNodes.length} / ${data.session_screens})</h4>`;
             if (insertableNodes.length > 0) {
                 html += `<div class="${GRID_CLS}">`;
                 for (const n of insertableNodes) {
@@ -1279,8 +1294,32 @@
                 html += '<p class="text-gray-600 text-sm">新規追加ノードはありません</p>';
             }
 
-            // アンカー一覧 (時系列順、採用+棄却混在)
-            const activeCount = data.matches.filter(m => !m.discarded).length;
+            // 不採用ノード一致セクション
+            const excludedMatches = data.matches.filter(m => m.excluded_match);
+            if (excludedMatches.length > 0) {
+                html += `<h4 class="text-sm font-bold text-orange-400 mt-4">不採用ノード一致 (${excludedMatches.length})</h4>`;
+                html += '<p class="text-xs text-gray-500 mb-2">不採用マスターノードに一致した画面 (重複防止用、アンカーには含まれない)</p>';
+                html += `<div class="${GRID_CLS}">`;
+                for (const m of excludedMatches) {
+                    const item = { thumb: m.session_thumb, title: m.session_title, scene: m.session_scene,
+                                   discovered_at: m.session_discovered_at, ocr_text: m.session_ocr_text,
+                                   screenshot: m.session_screenshot, fp: m.session_fp,
+                                   master_fp: m.master_fp, method: m.method, score: m.score,
+                                   master_title: m.master_title, master_thumb: m.master_thumb,
+                                   excluded_match: true };
+                    previewItems.push(item);
+                    const idx = previewItems.length - 1;
+                    const thumb = m.session_thumb ? imgUrl(m.session_thumb) : '';
+                    html += `<div class="preview-card border border-orange-900/50 rounded-lg overflow-hidden bg-gray-900/50 cursor-pointer hover:border-orange-700/70 transition-colors" data-preview-idx="${idx}" data-fp="${m.session_fp}">
+                        ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
+                        <div class="p-1.5"><p class="text-[10px] text-orange-300 truncate">${escapeHtml(m.session_title || '')}</p>
+                        <span class="text-[9px] bg-orange-900/50 text-orange-300 px-1 rounded">${phaseLabel(m.method)}</span></div></div>`;
+                }
+                html += '</div>';
+            }
+
+            // アンカー一覧 (時系列順、採用+棄却混在、不採用ノード一致は除外)
+            const activeCount = data.matches.filter(m => !m.discarded && !m.excluded_match).length;
             const discardedCount = data.matches.filter(m => m.discarded).length;
             // Phase ごとの棄却数を集計
             const discardedByPhase = {};
@@ -1297,7 +1336,7 @@
                 }).join('');
                 html += `<div class="flex items-center justify-between mt-4">
                     <div class="flex items-center gap-3">
-                        <h4 class="text-sm font-bold text-cyan-400">アンカー一覧 (採用${activeCount}/${data.session_screens}${discardedCount > 0 ? ', 不採用' + discardedCount : ''})</h4>
+                        <h4 class="text-sm font-bold text-cyan-400">アンカー一覧 (採用 ${activeCount} / ${data.session_screens}${discardedCount > 0 ? ', 不採用 ' + discardedCount : ''})</h4>
                     </div>
                     <div class="flex gap-1.5 text-xs items-center">${phaseBtns}<button id="phase-info-btn" class="ml-1 w-5 h-5 rounded-full bg-gray-700 hover:bg-gray-600 text-gray-400 hover:text-gray-200 text-xs font-bold italic transition-colors" title="Phase 説明">i</button></div>
                 </div>`;
@@ -1326,7 +1365,7 @@
                     </div>
                 </div>`;
                 html += `<div id="anchor-grid" class="${GRID_CLS}">`;
-                for (const m of data.matches) {
+                for (const m of data.matches.filter(m => !m.excluded_match)) {
                     const color = phaseColor(m.method);
                     let badgeLabel;
                     if (m.discarded) {
@@ -1341,14 +1380,15 @@
                                    method: m.method, master_fp: m.master_fp,
                                    discarded: !!m.discarded, discard_reason: m.discard_reason || '' };
                     const scoreInfo = (m.phash_dist >= 0 ? `phash:${m.phash_dist}` : '') + (m.text_sim >= 0 ? ` sim:${m.text_sim}` : '');
-                    const extraCls = m.discarded ? ' opacity-40' : '';
+                    const discardOverlay = m.discarded ? '<div class="excluded-overlay absolute inset-0 bg-black/40 flex items-start justify-end pointer-events-none p-1.5"><span class="text-red-400/80 font-bold text-xs bg-black/60 px-1.5 py-0.5 rounded">不採用</span></div>' : '';
                     html += buildCard({
                         thumb: item.thumb ? imgUrl(item.thumb) : '', title: item.title,
                         ocrPreview: scoreInfo ? scoreInfo + '  ' + (item.ocr_text || '').substring(0, 60) : (item.ocr_text || '').substring(0, 80),
                         scene: item.scene, time: item.discovered_at || '',
                         badge: { color, label: badgeLabel },
                         dataAttr: `data-preview-idx="${previewItems.length}" data-discarded="${m.discarded ? '1' : '0'}" data-phase="${m.method}"`,
-                        extraClass: extraCls,
+                        extraClass: m.discarded ? ' relative' : '',
+                        extraHtml: discardOverlay,
                     });
                     previewItems.push(item);
                 }
@@ -1356,6 +1396,7 @@
             }
             html += '</div>';
             mc.innerHTML = html;
+            mc.scrollIntoView({ behavior: 'smooth', block: 'start' });
             // Phase 説明パネルのトグル
             const infoBtn = document.getElementById('phase-info-btn');
             const infoPanel = document.getElementById('phase-info-panel');
@@ -1409,11 +1450,16 @@
                     const isExcluded = excludedGeminiFps.has(item.fp);
                     card.classList.toggle('ring-2', isSelected);
                     card.classList.toggle('ring-cyan-400', isSelected);
-                    card.classList.toggle('opacity-30', isExcluded);
-                    // バッジの取消線
-                    const badgeEl = card.querySelector('.font-bold');
-                    if (badgeEl) {
-                        badgeEl.innerHTML = isExcluded ? `<s>${badgeEl.textContent}</s>` : badgeEl.textContent;
+                    // 不採用オーバーレイ
+                    let overlay = card.querySelector('.excluded-overlay');
+                    if (isExcluded && !overlay) {
+                        overlay = document.createElement('div');
+                        overlay.className = 'excluded-overlay absolute inset-0 bg-black/40 flex items-start justify-end pointer-events-none p-1.5';
+                        overlay.innerHTML = '<span class="text-red-400/80 font-bold text-xs bg-black/60 px-1.5 py-0.5 rounded">不採用</span>';
+                        card.style.position = 'relative';
+                        card.appendChild(overlay);
+                    } else if (!isExcluded && overlay) {
+                        overlay.remove();
                     }
                 });
             }
@@ -1544,7 +1590,8 @@
                                     updatePreviewActionBar();
                                     document.getElementById('confirm-popup').classList.add('hidden');
                                     document.getElementById('confirm-popup').classList.remove('flex');
-                                    showPreviewModal(_previewModalIdx);
+                                    closeModal();
+                                    if (typeof showRecalcIfNeeded === 'function') showRecalcIfNeeded();
                                 }, { okLabel: '採用' }
                             );
                         };
@@ -1561,7 +1608,8 @@
                                     updatePreviewActionBar();
                                     document.getElementById('confirm-popup').classList.add('hidden');
                                     document.getElementById('confirm-popup').classList.remove('flex');
-                                    showPreviewModal(_previewModalIdx);
+                                    closeModal();
+                                    if (typeof showRecalcIfNeeded === 'function') showRecalcIfNeeded();
                                 }, { okLabel: '不採用', danger: true }
                             );
                         };
@@ -1742,9 +1790,8 @@
         if (!_usdJpy) {
             return cost < 0.001 ? '< $0.001' : '$' + cost.toFixed(4);
         }
-        if (cost < 0.01) return '< ¥0.01';
-        if (cost < 1) return '¥' + cost.toFixed(2);
-        return '¥' + cost.toFixed(1);
+        if (cost < 1) return '< ¥1';
+        return '¥' + Math.ceil(cost);
     }
     function fmtTokens(n) {
         if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
@@ -2203,7 +2250,7 @@
         showConfirmDialog(html, async function() {
             hideConfirmDialog();
             await executeUnmerge(sessionId);
-        });
+        }, { okLabel: '実行' });
     }
 
     async function executeUnmerge(sessionId) {
@@ -2399,7 +2446,11 @@
         promoteBtn.disabled = true;
         promoteBtn.classList.add('hidden');
         try {
-            const res = await fetch(API_BASE + '?action=get_cluster_siblings&screen_id=' + screenId);
+            let url = API_BASE + '?action=get_cluster_siblings&screen_id=' + screenId;
+            if (currentTab === 'final' && masterFp) {
+                url += '&master_fp=' + encodeURIComponent(masterFp);
+            }
+            const res = await fetch(url);
             const data = await res.json();
             _clusterSiblings = data.siblings || [];
             if (_clusterSiblings.length <= 1) {
@@ -2472,7 +2523,7 @@
                     if (modalIdx >= 0 && modalIdx < filteredScreens.length) showModal(modalIdx);
                 }
             } catch (e) {}
-        });
+        }, { okLabel: '変更' });
     });
 
     // ソート方向に応じた「新しい方向」「古い方向」のインデックス移動
@@ -2540,7 +2591,7 @@
         okBtn._currentHandler = onOk;
         okBtn.addEventListener('click', onOk);
         // OK ラベル + 色のカスタマイズ
-        okBtn.textContent = opts.okLabel || '更新';
+        okBtn.textContent = opts.okLabel || '実行';
         // ボタン色をリセットして再適用
         okBtn.classList.remove('bg-green-700', 'hover:bg-green-600',
                                'bg-red-700', 'hover:bg-red-600');
@@ -2606,6 +2657,7 @@
         if (selectedForGroup.size === 0) return;
         const fps = [...selectedForGroup];
         const label = action === 'adopt' ? '採用' : '不採用';
+        const isDanger = action !== 'adopt';
         let html = `<p class="text-sm text-gray-300 mb-2">${fps.length} 件を${label}にします</p>`;
         html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto p-1 confirm-img-area">';
         for (const fp of fps) html += _confirmCard(fp);
@@ -2628,7 +2680,7 @@
             renderAll();
             updateGroupSelectUI();
             updateFinalActionBar();
-        });
+        }, { okLabel: label, danger: isDanger });
         document.querySelectorAll('.confirm-preview-card').forEach(card => {
             card.addEventListener('click', function(e) {
                 e.stopPropagation();
@@ -2674,7 +2726,7 @@
         }
         html += '</div>';
         html += '<p class="text-xs text-gray-500 mt-3">クリックで代表を選択</p>';
-        showConfirmDialog(html, function() {});  // OK は代表選択後に動的設定
+        showConfirmDialog(html, function() {}, { okLabel: '統合' });  // OK は代表選択後に動的設定
         // 代表選択のクリックハンドラ
         document.querySelectorAll('.group-rep-card').forEach(card => {
             card.addEventListener('click', function(e) {
@@ -2778,7 +2830,7 @@
                 if (e.key === 'ArrowLeft' && canGoOlder()) showModal(olderIdx());
                 if (e.key === 'ArrowRight' && canGoNewer()) showModal(newerIdx());
             }
-            // ↑↓ で同クラスタ画像を選択
+            // ↑↓ で同一クラスタ画像を選択
             if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && _clusterSiblings.length > 1) {
                 e.preventDefault();
                 const currentId = _clusterSelectedId || _clusterOriginalRepId;

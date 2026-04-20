@@ -57,15 +57,17 @@ class CrossSessionMerger:
     def _compute_matches(
         self, session_id: str,
     ) -> tuple[dict[str, tuple[str, str, float]], list[sqlite3.Row], bool,
-               dict[str, tuple[str, str, float, str]]]:
+               dict[str, tuple[str, str, float, str]],
+               dict[str, tuple[str, str, float]]]:
         """マッチ計算のみ (副作用なし)。AnchorMatcher に委譲。
 
         Returns:
-            (node_mapping, session_reps, is_seed, discarded_mapping)
+            (node_mapping, session_reps, is_seed, discarded_mapping, excluded_mapping)
             node_mapping: session_fp → (master_fp, method, score)
             session_reps: セッションの代表画面一覧
             is_seed: 初回セッション (マスター空) の場合 True
             discarded_mapping: session_fp → (master_fp, method, score, reason)
+            excluded_mapping: 不採用ノード一致 session_fp → (master_fp, method, score)
         """
         import time as _time
         t0 = _time.time()
@@ -82,16 +84,15 @@ class CrossSessionMerger:
         ).fetchall()
 
         if master_count == 0:
-            return {}, session_reps, True, {}
+            return {}, session_reps, True, {}, {}
 
         # AnchorMatcher に委譲
-        node_mapping, skipped, discarded_mapping = self._anchor_matcher.compute_matches(
-            self._conn, session_id
-        )
+        node_mapping, skipped, discarded_mapping, excluded_mapping = \
+            self._anchor_matcher.compute_matches(self._conn, session_id)
 
         elapsed = _time.time() - t0
-        logger.info("[Merger] AnchorMatcher 完了: %d/%d ノード (%.1f秒)",
-                    len(node_mapping), len(session_reps), elapsed)
+        logger.info("[Merger] AnchorMatcher 完了: anchor=%d, excluded_match=%d / %d ノード (%.1f秒)",
+                    len(node_mapping), len(excluded_mapping), len(session_reps), elapsed)
 
         # 所要時間を記録
         try:
@@ -109,7 +110,7 @@ class CrossSessionMerger:
         except Exception:
             pass
 
-        return node_mapping, session_reps, False, discarded_mapping
+        return node_mapping, session_reps, False, discarded_mapping, excluded_mapping
 
     def preview_merge(self, session_id: str,
                       exclude_fps: set[str] | None = None,
@@ -130,21 +131,27 @@ class CrossSessionMerger:
             (self._version_id,),
         ).fetchone()[0]
 
-        node_mapping, session_reps, is_seed, discarded_mapping = self._compute_matches(session_id)
+        node_mapping, session_reps, is_seed, discarded_mapping, excluded_mapping = \
+            self._compute_matches(session_id)
 
         # サマリー集計
         summary: dict[str, int] = {}
         for _, (_, method, _) in node_mapping.items():
             summary[method] = summary.get(method, 0) + 1
         new_fps = [r["fingerprint"] for r in session_reps
-                   if r["fingerprint"] not in node_mapping]
+                   if r["fingerprint"] not in node_mapping
+                   and r["fingerprint"] not in excluded_mapping]
         summary["new"] = len(new_fps)
+        summary["excluded_match"] = len(excluded_mapping)
 
         # セッション・マスターの neighbors を一括取得
-        all_session_fps = list(node_mapping.keys()) + new_fps + list(discarded_mapping.keys())
+        all_session_fps = (list(node_mapping.keys()) + new_fps
+                           + list(discarded_mapping.keys())
+                           + list(excluded_mapping.keys()))
         session_neighbors_map = self._get_neighbors_batch(all_session_fps, session_id)
         master_fps_list = [m_fp for (m_fp, _, _) in node_mapping.values()]
         master_fps_list += [m_fp for (m_fp, _, _, _) in discarded_mapping.values()]
+        master_fps_list += [m_fp for (m_fp, _, _) in excluded_mapping.values()]
         master_neighbors_map = self._get_master_neighbors_batch(master_fps_list)
 
         # マッチ詳細
@@ -170,15 +177,18 @@ class CrossSessionMerger:
             _master_phash[r["master_fp"]] = r["phash"] or ""
             _master_text[r["master_fp"]] = r["text"] or ""
 
-        # 採用 + 棄却を統合して構築
-        all_anchor_entries: list[tuple[str, str, str, float, bool, str]] = []
+        # 採用 + 棄却 + 不採用ノード一致を統合して構築
+        # status: "" = 採用, "discarded" = 棄却, "excluded_match" = 不採用ノード一致
+        all_anchor_entries: list[tuple[str, str, str, float, str, str]] = []
         for s_fp, (m_fp, method, score) in node_mapping.items():
-            all_anchor_entries.append((s_fp, m_fp, method, score, False, ""))
+            all_anchor_entries.append((s_fp, m_fp, method, score, "", ""))
         for s_fp, (m_fp, method, score, reason) in discarded_mapping.items():
-            all_anchor_entries.append((s_fp, m_fp, method, score, True, reason))
+            all_anchor_entries.append((s_fp, m_fp, method, score, "discarded", reason))
+        for s_fp, (m_fp, method, score) in excluded_mapping.items():
+            all_anchor_entries.append((s_fp, m_fp, method, score, "excluded_match", ""))
 
         matches = []
-        for s_fp, m_fp, method, score, is_discarded, reason in all_anchor_entries:
+        for s_fp, m_fp, method, score, status, reason in all_anchor_entries:
             s_info = self._get_screen_info(s_fp, session_id)
             m_info = self._get_master_screen_info(m_fp)
             s_ph = _screen_phash.get(s_fp, "")
@@ -207,9 +217,11 @@ class CrossSessionMerger:
                 "session_neighbors": session_neighbors_map.get(s_fp, []),
                 "master_neighbors": master_neighbors_map.get(m_fp, []),
             }
-            if is_discarded:
+            if status == "discarded":
                 entry["discarded"] = True
                 entry["discard_reason"] = reason
+            elif status == "excluded_match":
+                entry["excluded_match"] = True
             matches.append(entry)
         # 時系列順にソート
         matches.sort(key=lambda x: x.get("session_discovered_at", ""))
@@ -229,7 +241,8 @@ class CrossSessionMerger:
         # adjusted_mapping に基づく新規ノード再計算
         adjusted_new_fps = [r["fingerprint"] for r in session_reps
                             if r["fingerprint"] not in adjusted_mapping
-                            and r["fingerprint"] not in discarded_mapping]
+                            and r["fingerprint"] not in discarded_mapping
+                            and r["fingerprint"] not in excluded_mapping]
 
         # SafeInsert 判定: 実際に挿入されるノードを特定
         insertable_fps, skipped_fps = self._sort_strategy.preview_insertable(
@@ -293,7 +306,8 @@ class CrossSessionMerger:
         Raises: RuntimeError — Gemini OCR 補正が未完了の場合
         """
         self._check_ocr_complete(session_id)
-        node_mapping, session_reps, is_seed, discarded = self._compute_matches(session_id)
+        node_mapping, session_reps, is_seed, discarded, excluded_mapping = \
+            self._compute_matches(session_id)
 
         # ユーザーが復帰指定した棄却ノードを node_mapping に追加
         if include_fps and discarded:
@@ -341,6 +355,20 @@ class CrossSessionMerger:
         now = datetime.now().isoformat()
         new_count = 0
 
+        # 不採用ノード一致: node_mappings に記録 (重複防止) だが新規ノード作成しない
+        for s_fp, (m_fp, method, score) in excluded_mapping.items():
+            self._conn.execute(
+                "UPDATE lc_master_nodes SET visit_count = visit_count + 1,"
+                " last_seen_at = ? WHERE master_fp = ? AND version_id = ?",
+                (now, m_fp, self._version_id),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO lc_node_mappings"
+                " (session_id, session_fp, master_fp, match_method, match_score, version_id)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (session_id, s_fp, m_fp, "excluded_match", score, self._version_id),
+            )
+
         for row in session_reps:
             s_fp = row["fingerprint"]
             if s_fp in node_mapping:
@@ -356,6 +384,8 @@ class CrossSessionMerger:
                     " VALUES (?, ?, ?, ?, ?, ?)",
                     (session_id, s_fp, m_fp, method, score, self._version_id),
                 )
+            elif s_fp in excluded_mapping:
+                continue  # 不採用ノード一致は既に処理済み
             else:
                 s_info = self._get_node_info(s_fp, session_id)
                 if not s_info:

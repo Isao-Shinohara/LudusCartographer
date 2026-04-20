@@ -265,11 +265,19 @@ if ($action === 'get_final_screens') {
 // --- get_cluster_siblings アクション ---
 if ($action === 'get_cluster_siblings') {
     $screenId = (int)($_GET['screen_id'] ?? 0);
-    if ($screenId <= 0 || !($useDb && $repository instanceof EvidenceRepository)) {
+    $masterFp = $_GET['master_fp'] ?? '';
+    if (!($useDb && $repository instanceof EvidenceRepository)) {
         echo json_encode(['siblings' => []]);
         exit;
     }
-    $siblings = $repository->getClusterSiblings($screenId);
+    // master_fp 指定時: マッピングベースの兄弟 (Final タブ用)
+    if ($masterFp !== '') {
+        $siblings = $repository->getMasterSiblings($masterFp);
+    } elseif ($screenId > 0) {
+        $siblings = $repository->getClusterSiblings($screenId);
+    } else {
+        $siblings = [];
+    }
     echo json_encode(
         ['siblings' => $siblings],
         JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
@@ -393,7 +401,16 @@ if ($action === 'merge_progress') {
     $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
     $resultFile = $crawlerDir . '/storage/merge_result.json';
     if (!file_exists($resultFile)) {
-        echo json_encode(['done' => false, 'result' => null]);
+        // Phase 進捗を返す
+        $dbPath = $crawlerDir . '/storage/ludus.db';
+        $progress = null;
+        try {
+            $db = new PDO('sqlite:' . $dbPath);
+            $stmt = $db->query("SELECT value FROM auto_pilot_state WHERE key = 'merge_phase'");
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($row) $progress = json_decode($row['value'], true);
+        } catch (Exception $e) {}
+        echo json_encode(['done' => false, 'result' => null, 'progress' => $progress]);
         exit;
     }
     $raw = file_get_contents($resultFile);
