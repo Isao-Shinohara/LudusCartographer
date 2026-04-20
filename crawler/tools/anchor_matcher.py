@@ -920,14 +920,22 @@ class AnchorMatcher:
                 pass
 
         # --- 結果集計 ---
-        # 既存アンカーの棄却
+        # 既存アンカーの検証結果
         rejected: list[AnchorMatch] = []
+        verified_fps: set[str] = set()
         for a in existing_anchors:
             is_same = verify_cached.get((a.session_fp, a.master_fp))
             if is_same is False:
                 rejected.append(a)
                 logger.info("[AnchorMatcher] Phase 5 検証棄却: %s → %s (%s)",
                             a.session_fp[:12], a.master_fp[:12], a.method)
+            elif is_same is True and a.phase == 3:
+                # P3 アンカーが P5 で検証通過 → method を P5 に更新
+                a.method = "phase5_gemini_image"
+                a.phase = 5
+                verified_fps.add(a.session_fp)
+        if verified_fps:
+            logger.info("[AnchorMatcher] Phase 5 検証通過 (P3→P5): %d件", len(verified_fps))
 
         # 新規アンカー
         new_anchors: list[AnchorMatch] = []

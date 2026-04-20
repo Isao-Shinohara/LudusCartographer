@@ -568,6 +568,35 @@ class TestPhase5ImageGemini:
         assert rejected[0].session_fp == "S1"
         assert rejected[0].phase == 3  # 元の phase を保持
 
+    def test_p3_verified_becomes_p5(self, db):
+        """P3 確定アンカーが P5 検証通過すると method が P5 に更新されること。"""
+        _add_master(db, "M1", 0, text="", phash="aa00aa00aa00aa00")
+        _add_session_screen(db, "s1", "S1", 1, text="", phash="aa00aa00aa00aa01")
+        _add_tap_edge(db, "s1", "S1", "x")
+        db.execute("UPDATE lc_screens SET screenshot_path = '/tmp/s1.png' WHERE fingerprint = 'S1'")
+        sid = db.execute("SELECT id FROM lc_screens WHERE fingerprint = 'S1'").fetchone()[0]
+        db.execute("UPDATE lc_master_nodes SET representative_screen_id = ? WHERE master_fp = 'M1'", (sid,))
+        _ensure_judgment_table(db)
+        db.commit()
+
+        matcher = AnchorMatcher()
+        session_nodes, master_nodes, master_sort_map = matcher._prepare_data(db, "s1")
+
+        p3_anchor = AnchorMatch(session_fp="S1", master_fp="M1", master_sort=0,
+                                method="phase3_tap_phash", score=0.9, phase=3)
+
+        # P5 モック: 検証通過
+        mock_results = [{"is_same": True, "prefer": "A", "error": False}]
+        with patch.object(AnchorMatcher, '_gemini_batch_judge', return_value=mock_results):
+            new_anchors, rejected = matcher._phase5_gemini_image(
+                db, session_nodes, master_nodes, master_sort_map,
+                [p3_anchor], version_id=None)
+
+        assert len(rejected) == 0
+        # P3 アンカーの method が P5 に更新されていること
+        assert p3_anchor.method == "phase5_gemini_image"
+        assert p3_anchor.phase == 5
+
     def test_p1_p2_skip_verification(self, db):
         """P1/P2 確定アンカーは P5 で検証されないこと。"""
         _add_master(db, "M1", 0, text="スキップテスト", phash="aa00aa00aa00aa00")
