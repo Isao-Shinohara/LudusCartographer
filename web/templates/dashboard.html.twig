@@ -1299,7 +1299,31 @@
                     <div class="flex items-center gap-3">
                         <h4 class="text-sm font-bold text-cyan-400">アンカー一覧 (採用${activeCount}/${data.session_screens}${discardedCount > 0 ? ', 不採用' + discardedCount : ''})</h4>
                     </div>
-                    <div class="flex gap-1.5 text-xs">${phaseBtns}</div>
+                    <div class="flex gap-1.5 text-xs items-center">${phaseBtns}<button id="phase-info-btn" class="ml-1 w-5 h-5 rounded-full bg-gray-700 hover:bg-gray-600 text-gray-400 hover:text-gray-200 text-xs font-bold transition-colors" title="Phase 説明">?</button></div>
+                </div>`;
+                // Phase 説明パネル
+                html += `<div id="phase-info-panel" class="hidden mt-2 bg-gray-900 border border-gray-700 rounded-lg p-4 text-xs text-gray-300 space-y-2">
+                    <div class="flex justify-between items-start">
+                        <h5 class="text-sm font-bold text-gray-200 mb-2">アンカーマッチング Phase 説明</h5>
+                        <button id="phase-info-close" class="text-gray-500 hover:text-gray-300">&times;</button>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div class="space-y-2">
+                            <div><span class="${phaseDefs.phase1_tap_text?.color_bg} ${phaseDefs.phase1_tap_text?.color_text} px-1.5 py-0.5 rounded font-bold">P1</span> <b>tap + テキスト一致</b><br/>タップ遷移のテキストあり画面を完全一致・前方一致・あいまい一致で比較。最も信頼度が高い。</div>
+                            <div><span class="${phaseDefs.phase2_auto_text?.color_bg} ${phaseDefs.phase2_auto_text?.color_text} px-1.5 py-0.5 rounded font-bold">P2</span> <b>auto + テキスト一致</b><br/>自動遷移の画面をP1と同じ手法で比較。P1アンカーとの相対位置で範囲を制限。</div>
+                            <div><span class="${phaseDefs.phase3_tap_phash?.color_bg} ${phaseDefs.phase3_tap_phash?.color_text} px-1.5 py-0.5 rounded font-bold">P3</span> <b>tap + phash (テキスト空)</b><br/>テキストがない画面をphash（画像ハッシュ）のみで比較。前後にアンカーが必要。</div>
+                        </div>
+                        <div class="space-y-2">
+                            <div><span class="${phaseDefs.phase4_gemini_text?.color_bg} ${phaseDefs.phase4_gemini_text?.color_text} px-1.5 py-0.5 rounded font-bold">P4</span> <b>Gemini テキスト判定</b><br/>P1〜P3で未マッチの画面のOCRテキストをGeminiに送信し同一画面か判定。画像なしのため安価。</div>
+                            <div><span class="${phaseDefs.phase5_gemini_image?.color_bg} ${phaseDefs.phase5_gemini_image?.color_text} px-1.5 py-0.5 rounded font-bold">P5</span> <b>Gemini Flash-Lite 画像判定</b><br/>P3の検証 + P4棄却の再検証 + 新規候補の画像ペアをGemini Flash-Liteで判定。</div>
+                            <div><span class="${phaseDefs.phase6_gemini_flash?.color_bg} ${phaseDefs.phase6_gemini_flash?.color_text} px-1.5 py-0.5 rounded font-bold">P6</span> <b>Gemini Flash 画像判定</b><br/>P5棄却の再審査（セカンドオピニオン）+ より広い範囲の新規候補をFlashで判定。P6棄却が最終棄却。</div>
+                        </div>
+                    </div>
+                    <div class="mt-3 pt-2 border-t border-gray-800 text-gray-400 space-y-1">
+                        <p><b>棄却の流れ:</b> P4棄却 → P5で画像再検証 → P5棄却 → P6で再審査 → P6棄却 = 最終棄却</p>
+                        <p><b>キャッシュ:</b> 各Phaseの判定結果はDBにキャッシュされ、2回目以降はAPI呼び出し不要</p>
+                        <p><b>ボタン操作:</b> 各Phaseボタンをクリックするとそのフェーズの結果を非表示にできます</p>
+                    </div>
                 </div>`;
                 html += `<div id="anchor-grid" class="${GRID_CLS}">`;
                 for (const m of data.matches) {
@@ -1332,6 +1356,14 @@
             }
             html += '</div>';
             mc.innerHTML = html;
+            // Phase 説明パネルのトグル
+            const infoBtn = document.getElementById('phase-info-btn');
+            const infoPanel = document.getElementById('phase-info-panel');
+            const infoClose = document.getElementById('phase-info-close');
+            if (infoBtn && infoPanel) {
+                infoBtn.addEventListener('click', () => infoPanel.classList.toggle('hidden'));
+                if (infoClose) infoClose.addEventListener('click', () => infoPanel.classList.add('hidden'));
+            }
             // Phase ボタンフィルター (初期全ON、タップでそのPhaseをOFF、再タップでON)
             // _hiddenPhases: OFFにされたPhaseのSet (初期は空 = 全表示)
             const _hiddenPhases = new Set();
