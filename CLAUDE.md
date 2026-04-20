@@ -564,3 +564,106 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 - **誤マッチは致命的**: 1つの誤アンカーが多数のノードを間違った位置に挿入する。誤マッチ防止を最優先
 - **挿入は隣接アンカー条件を満たす場合のみ**: 条件を満たさないノードは挿入しない（次の周回に委ねる）
 - 詳細は `docs/merge_sort_algorithm.md` 参照
+
+---
+
+## 17. アンカーマッチング設計ルール
+
+### Phase 定義（6段階、順序固定）
+
+| Phase | key | 対象 | マッチ条件 | モデル |
+|-------|-----|------|-----------|--------|
+| **P1** | `phase1_tap_text` | tap + テキストあり | 完全/前方/あいまい一致 + phash | - |
+| **P2** | `phase2_auto_text` | auto + テキストあり | P1 と同手法 + P1 アンカーとの相対位置 | - |
+| **P3** | `phase3_tap_phash` | tap + テキスト空 | phash < 15 + 前後アンカー必須 | - |
+| **P4** | `phase4_gemini_text` | テキスト Gemini | phash < 20 + sim ≥ 0.4 → テキストのみ判定 | flash-lite (テキスト) |
+| **P5** | `phase5_gemini_image` | 画像 Gemini (高確信) | phash < 8 + sim ≥ 0.4 → 画像ペア判定 | flash-lite (画像) |
+| **P6** | `phase6_gemini_flash` | 画像 Gemini (低確信) + P5棄却再審査 | phash 8-20 + sim ≥ 0.3 → 画像ペア判定 | flash (画像) |
+
+- **PHASE_DEFS** (`anchor_matcher.py`) で表示名・色・順序を一元管理。key は DB・API で使用するため変更禁止
+- P4 はテキストのみ送信（画像なし）で安価。P4 で確定すれば P5/P6 の画像送信が不要
+- P1/P2 は信頼度が高いため P5 の画像検証対象外。P3/P4 のアンカーのみ P5 で画像検証
+- P5 棄却 → P6 で flash による再審査（セカンドオピニオン）。P6 棄却が最終棄却
+- LIS 順序チェックは廃止済み
+
+### テキスト類似度計算
+
+- **SequenceMatcher + Bag-of-Words (Jaccard係数)** の高い方を採用
+- **動的閾値** (テキスト長に応じて変動):
+  - < 20字: 0.5（1文字違いで大きく変動するため緩め）
+  - < 50字: 0.65
+  - < 200字: 0.8
+  - 200字+: 0.7（揺れが積み重なるため少し緩め）
+
+### ノイズ除去 (`_normalize_for_comparison`)
+
+比較時のみ適用（元テキストは変更しない）:
+1. 数値トークン除去（ダメージ値、Lv 等）
+2. ノイズ語辞書除去（`lc_ocr_noise_words` テーブル + デフォルト: AUTO, SKIP, MANUAL, NEW, WAVE, Turn, MAX）
+3. Episode + 数字パターン除去
+4. 1文字ノイズ除去（i, !, ※, +, ★ 等）
+5. 英字-日本語境界スペース除去
+
+### Gemini 判定の実装制約（厳格）
+
+- **P4 テキスト判定**: `gemini-2.5-flash-lite` — テキストのみ送信（画像なし、安価）。phash < 20 + sim ≥ 0.4
+- **P5 画像判定**: `gemini-2.5-flash-lite` — phash < 8 の高確信ペア（画像ペア送信）
+- **P6 画像判定**: `gemini-2.5-flash` — phash 8-20 の低確信ペア + P5 棄却の再審査
+- **送信方式**: `Part.from_bytes` インライン（`files.upload` は 5秒/画像で遅すぎる）
+- **並列化**: ThreadPoolExecutor 5並列で 1ペアずつ送信（asyncio はサブプロセスでデッドロック）
+- **レスポンス**: `{"is_same": bool, "prefer": "A"|"B"|""}`（A=セッション, B=マスター）
+- **キャッシュ**: `lc_anchor_judgments` テーブルで `(session_fp, master_fp)` + `model` カラムで永続化。P4(gemini-text)/P5(flash-lite)/P6(flash) は model で区別
+- **判定ルール**: 迷ったら true（false の誤りは取り返しがつかないが、true は人間が後から修正できる）
+- **別画面判定**: キャラ編成（下部アイコン列）が異なるバトル画面、見切れ/不完全キャプチャ
+- **PHP→Python サブプロセス**: `-B` フラグ + dotenv 読み込み必須（pyc キャッシュ問題対策）
+
+---
+
+## 18. バージョン管理ルール
+
+### スキーマ (`lc_versions`)
+
+```sql
+CREATE TABLE IF NOT EXISTS lc_versions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    UNIQUE NOT NULL,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    is_active  INTEGER DEFAULT 0,
+    is_deleted INTEGER DEFAULT 0
+);
+```
+
+### version_id 必須テーブル（5テーブル）
+
+`lc_sessions`, `lc_master_nodes`, `lc_master_edges`, `lc_node_mappings`, `lc_session_graphs`
+
+### 運用ルール
+
+- **Active バージョン**: `is_active = 1` のバージョンがデフォルト対象
+- **`-V` フラグ**: auto_pilot に `-V <version_name>` で指定。未存在なら自動作成
+- **バージョン切替時**: 前 Active の running セッションを自動完了
+- **論理削除**: `is_deleted = 1`（物理削除なし、復旧可能）
+- **Active 削除時**: 残存バージョンの最新に自動切替
+
+---
+
+## 19. SafeInsert 安全挿入方式
+
+### 原則
+
+1. 挿入されたノードの `sort_order` は **100% 正しい**
+2. 不確実な位置には **挿入しない**
+3. 一度配置されたノードの `sort_order` は **変更しない**
+4. 周回を重ねてアンカーが密になれば挿入可能位置が増える
+
+### 挿入可能条件（隣接アンカー）
+
+| 条件 | 挿入位置 |
+|------|---------|
+| 後のアンカーがマスター先頭 (sort=0) | 先頭に挿入 |
+| 前のアンカーがマスター末尾 (sort=max) | 末尾に追加 |
+| 前後のアンカーが sort_order で隣同士 (差=1) | 間に挿入 |
+| 上記いずれにも該当しない | **挿入しない（破棄）** |
+
+- 挿入しなかったノードは `lc_node_mappings` にも記録しない
+- 詳細は `docs/merge_sort_algorithm.md` 参照

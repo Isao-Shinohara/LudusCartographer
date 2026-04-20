@@ -4,12 +4,14 @@ anchor_matcher.py — 段階的アンカーマッチング
 安全性最優先: 安全性が担保できないなら破棄。
 周回を重ねれば自然にアンカーは増える。
 
-実行順: P1 → P2 → P3 → P4 (無料・高速な方法を先に、Gemini は最後)
+実行順: P1 → P2 → P3 → P4 → P5 → P6
 
 Phase 1: tap + テキスト完全/前方一致 (最も確実)
 Phase 2: auto + テキストあり (無料・高速)
 Phase 3: tap + テキスト空 + phash (無料・高速)
-Phase 4: tap + phash近接 + テキスト類似 + Gemini 画像判定 (残りを救済)
+Phase 4: テキスト Gemini 判定 (テキストのみ送信、画像なし、安価)
+Phase 5: 画像 Gemini Flash-Lite (phash<8, 高確信ペア)
+Phase 6: 画像 Gemini Flash (phash 8-20 + P5 棄却再審査)
 auto + テキスト空 → マッチ対象外
 """
 from __future__ import annotations
@@ -162,12 +164,26 @@ PHASE_DEFS: dict[str, dict] = {
         "color_bg": "bg-yellow-900/50",
         "color_text": "text-yellow-300",
     },
-    "phase4_gemini": {
+    "phase4_gemini_text": {
         "order": 4,
         "label": "P4",
-        "description": "Gemini 画像判定",
+        "description": "Gemini テキスト判定",
+        "color_bg": "bg-teal-900/50",
+        "color_text": "text-teal-300",
+    },
+    "phase5_gemini_image": {
+        "order": 5,
+        "label": "P5",
+        "description": "Gemini Flash-Lite 画像判定",
         "color_bg": "bg-amber-900/50",
         "color_text": "text-amber-300",
+    },
+    "phase6_gemini_flash": {
+        "order": 6,
+        "label": "P6",
+        "description": "Gemini Flash 画像判定",
+        "color_bg": "bg-red-900/50",
+        "color_text": "text-red-300",
     },
 }
 
@@ -178,22 +194,24 @@ def _text_hash(text: str) -> str:
 
 
 def _ensure_judgment_table(conn: sqlite3.Connection) -> None:
-    """Gemini 判定キャッシュテーブルを作成 (v3: fp ベース + 画像判定 + テキスト採用)。"""
+    """Gemini 判定キャッシュテーブルを作成 (v4: model カラム追加)。"""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS lc_anchor_judgments (
             session_fp TEXT NOT NULL,
             master_fp  TEXT NOT NULL,
             is_same    INTEGER NOT NULL,
             prefer     TEXT DEFAULT '',
+            model      TEXT DEFAULT '',
             judged_at  TEXT NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (session_fp, master_fp)
         )
     """)
-    # prefer カラム追加マイグレーション
-    try:
-        conn.execute("ALTER TABLE lc_anchor_judgments ADD COLUMN prefer TEXT DEFAULT ''")
-    except Exception:
-        pass
+    # マイグレーション
+    for col, default in [("prefer", "''"), ("model", "''")]:
+        try:
+            conn.execute(f"ALTER TABLE lc_anchor_judgments ADD COLUMN {col} TEXT DEFAULT {default}")
+        except Exception:
+            pass
     conn.commit()
 
 
@@ -226,9 +244,18 @@ class AnchorMatcher:
         else:
             return 0.7   # 長い: 揺れが積み重なる
 
-    # Phase 4: phash 近接 + テキスト類似 → Gemini 判定
-    PHASE4_PHASH_THRESHOLD = 15
-    PHASE4_TEXT_SIMILARITY = 0.5
+    # Phase 4: テキスト Gemini (テキストのみ、画像なし)
+    PHASE4_TEXT_SIMILARITY = 0.4   # テキスト類似度の下限
+    PHASE4_PHASH_THRESHOLD = 20    # phash 距離の上限
+
+    # Phase 5: 画像 Gemini Flash-Lite (phash<8, 高確信ペア)
+    PHASE5_PHASH_THRESHOLD = 8
+    PHASE5_TEXT_SIMILARITY = 0.4
+
+    # Phase 6: 画像 Gemini Flash (phash 8-20 + P5 棄却再審査)
+    PHASE6_PHASH_MIN = 8     # P5 の上限から
+    PHASE6_PHASH_MAX = 20    # この未満まで
+    PHASE6_TEXT_SIMILARITY = 0.3
 
     def compute_matches(
         self,
@@ -262,16 +289,32 @@ class AnchorMatcher:
         anchors.extend(phase3)
         logger.info("[AnchorMatcher] Phase 3: +%d → 合計 %d アンカー", len(phase3), len(anchors))
 
-        # Phase 4: Gemini画像判定 (既存アンカー検証 + 未マッチノード発見)
-        phase4_new, phase4_rejected = self._phase4_gemini(
+        # Phase 4: テキスト Gemini (テキストのみ送信、画像なし、安価)
+        phase4 = self._phase4_gemini_text(
             conn, session_nodes, master_nodes, master_sort_map, anchors, version_id)
-        # Gemini が棄却した既存アンカーを除去
-        rejected_fps = {a.session_fp for a in phase4_rejected}
-        if rejected_fps:
-            anchors = [a for a in anchors if a.session_fp not in rejected_fps]
-            logger.info("[AnchorMatcher] Phase 4 検証: %d 件棄却", len(rejected_fps))
-        anchors.extend(phase4_new)
-        logger.info("[AnchorMatcher] Phase 4: +%d → 合計 %d アンカー", len(phase4_new), len(anchors))
+        anchors.extend(phase4)
+        logger.info("[AnchorMatcher] Phase 4: +%d → 合計 %d アンカー", len(phase4), len(anchors))
+
+        # Phase 5: 画像 Gemini Flash-Lite (phash<8, P3/P4 検証 + 未マッチノード発見)
+        phase5_new, phase5_rejected = self._phase5_gemini_image(
+            conn, session_nodes, master_nodes, master_sort_map, anchors, version_id)
+        p5_rejected_fps = {a.session_fp for a in phase5_rejected}
+        if p5_rejected_fps:
+            anchors = [a for a in anchors if a.session_fp not in p5_rejected_fps]
+            logger.info("[AnchorMatcher] Phase 5 検証: %d 件棄却 → Phase 6 へ", len(p5_rejected_fps))
+        anchors.extend(phase5_new)
+        logger.info("[AnchorMatcher] Phase 5: +%d → 合計 %d アンカー", len(phase5_new), len(anchors))
+
+        # Phase 6: 画像 Gemini Flash (phash 8-20 + P5 棄却再審査)
+        phase6_new, phase6_final_rejected = self._phase6_gemini_flash(
+            conn, session_nodes, master_nodes, master_sort_map, anchors,
+            phase5_rejected, version_id)
+        anchors.extend(phase6_new)
+        logger.info("[AnchorMatcher] Phase 6: +%d (復活%d + 新規%d) → 合計 %d アンカー",
+                    len(phase6_new),
+                    sum(1 for a in phase6_new if a.session_fp in p5_rejected_fps),
+                    sum(1 for a in phase6_new if a.session_fp not in p5_rejected_fps),
+                    len(anchors))
 
         # 結果を node_mapping 形式に変換
         matched_session_fps = set()
@@ -283,20 +326,22 @@ class AnchorMatcher:
         skipped = [n.fp for n in session_nodes if n.fp not in matched_session_fps]
 
         logger.info(
-            "[AnchorMatcher] session=%s: matched=%d (P1=%d, P2=%d, P3=%d, P4=%d), skipped=%d",
+            "[AnchorMatcher] session=%s: matched=%d (P1=%d, P2=%d, P3=%d, P4=%d, P5=%d, P6=%d), skipped=%d",
             session_id, len(node_mapping),
             sum(1 for a in anchors if a.phase == 1),
             sum(1 for a in anchors if a.phase == 2),
             sum(1 for a in anchors if a.phase == 3),
             sum(1 for a in anchors if a.phase == 4),
+            sum(1 for a in anchors if a.phase == 5),
+            sum(1 for a in anchors if a.phase == 6),
             len(skipped),
         )
 
-        # Gemini 検証で棄却されたアンカー
+        # Gemini 検証で最終棄却されたアンカー (P6 でも棄却)
         discarded_mapping: dict[str, tuple[str, str, float, str]] = {}
-        for a in phase4_rejected:
+        for a in phase6_final_rejected:
             discarded_mapping[a.session_fp] = (
-                a.master_fp, a.method, a.score, "Gemini画像判定で別画面と判定"
+                a.master_fp, a.method, a.score, "Gemini Flash 再審査でも別画面と判定"
             )
 
         return node_mapping, skipped, discarded_mapping
@@ -468,9 +513,210 @@ class AnchorMatcher:
 
         return anchors
 
-    # ─── Phase 4: phash近接 + テキスト類似 + Gemini判定 ────
+    # ─── Phase 4: テキスト Gemini 判定 (画像なし、安価) ────
 
-    def _phase4_gemini(
+    def _phase4_gemini_text(
+        self,
+        conn: sqlite3.Connection,
+        session_nodes: list[NodeInfo],
+        master_nodes: list[NodeInfo],
+        master_sort_map: dict[str, int],
+        existing_anchors: list[AnchorMatch],
+        version_id: int | None = None,
+    ) -> list[AnchorMatch]:
+        """Phase 4: テキストのみで Gemini に同一画面判定を問い合わせる。
+
+        画像を送信しないため安価。P1-P3 で未マッチのテキストあり候補を対象に、
+        OCR テキストペアだけで同一画面か判定する。
+
+        Returns:
+            new_anchors: 新たにマッチしたアンカー
+        """
+        from lc.utils import phash_distance
+
+        matched_session_fps = {a.session_fp for a in existing_anchors}
+        matched_master_fps = {a.master_fp for a in existing_anchors}
+
+        _ensure_judgment_table(conn)
+
+        # 候補探索: 未マッチ + テキストあり + phash < PHASE4_PHASH_THRESHOLD + sim >= PHASE4_TEXT_SIMILARITY
+        candidates: list[tuple[NodeInfo, NodeInfo, float]] = []
+        targets = [n for n in session_nodes
+                   if n.edge_type == "tap" and n.has_text and n.fp not in matched_session_fps]
+        for s in targets:
+            if not s.phash:
+                continue
+            best_m = None
+            best_sim = 0.0
+            for m in master_nodes:
+                if m.fp in matched_master_fps or not m.phash or not m.has_text:
+                    continue
+                dist = phash_distance(s.phash, m.phash)
+                if dist >= self.PHASE4_PHASH_THRESHOLD:
+                    continue
+                sim = _text_similarity(s.text, m.text)
+                if sim >= self.PHASE4_TEXT_SIMILARITY and sim > best_sim:
+                    best_m = m
+                    best_sim = sim
+            if best_m:
+                candidates.append((s, best_m, best_sim))
+
+        if not candidates:
+            logger.info("[AnchorMatcher] Phase 4: 候補なし")
+            return []
+
+        # キャッシュ確認 (model='gemini-text')
+        model_name = "gemini-text"
+        uncached: list[tuple[NodeInfo, NodeInfo, float]] = []
+        cached_results: dict[tuple[str, str], bool] = {}
+        for s, m, sim in candidates:
+            row = conn.execute(
+                "SELECT is_same FROM lc_anchor_judgments"
+                " WHERE session_fp = ? AND master_fp = ? AND model = ?",
+                (s.fp, m.fp, model_name),
+            ).fetchone()
+            if row is not None:
+                cached_results[(s.fp, m.fp)] = bool(row["is_same"])
+            else:
+                uncached.append((s, m, sim))
+
+        logger.info(
+            "[AnchorMatcher] Phase 4: %d候補 (キャッシュ%d件, Geminiテキスト送信%d件)",
+            len(candidates), len(cached_results), len(uncached),
+        )
+
+        # Gemini テキスト判定
+        if uncached:
+            results = self._gemini_text_judge(uncached)
+            for (s, m, sim), result in zip(uncached, results):
+                is_same = result["is_same"]
+                try:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO lc_anchor_judgments"
+                        " (session_fp, master_fp, is_same, prefer, model) VALUES (?, ?, ?, ?, ?)",
+                        (s.fp, m.fp, 1 if is_same else 0, "", model_name),
+                    )
+                except Exception:
+                    pass
+                cached_results[(s.fp, m.fp)] = is_same
+            try:
+                conn.commit()
+            except Exception:
+                pass
+
+        # 結果集計
+        new_anchors: list[AnchorMatch] = []
+        for s, m, sim in candidates:
+            if cached_results.get((s.fp, m.fp), False):
+                new_anchors.append(AnchorMatch(
+                    session_fp=s.fp, master_fp=m.fp,
+                    master_sort=master_sort_map[m.fp],
+                    method="phase4_gemini_text", score=round(sim, 3), phase=4,
+                ))
+
+        return new_anchors
+
+    @staticmethod
+    def _gemini_text_judge(
+        candidates: list[tuple[NodeInfo, NodeInfo, float]],
+    ) -> list[dict]:
+        """Gemini にテキストペアの同一画面判定を問い合わせる (画像なし、安価)。
+
+        candidates: [(session_node, master_node, similarity)]
+        Returns: [{"is_same": bool}, ...]
+        """
+        import json
+        import re
+
+        _default = {"is_same": False}
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+        if not api_key:
+            logger.warning("[AnchorMatcher] GEMINI_API_KEY 未設定: Phase 4 スキップ")
+            return [_default.copy() for _ in candidates]
+
+        try:
+            from google import genai
+            client = genai.Client(api_key=api_key)
+        except Exception as e:
+            logger.warning("[AnchorMatcher] Gemini 初期化失敗: %s", e)
+            return [_default.copy() for _ in candidates]
+
+        model_name = "gemini-2.5-flash-lite"
+        CONCURRENCY = 5
+        results: list[dict] = [None] * len(candidates)  # type: ignore
+
+        prompt_template = (
+            "以下の2つのテキストは、同じモバイルゲームの異なるプレイセッションで、"
+            "画面の OCR (文字認識) から抽出されたものです。\n"
+            "これらが「同じ画面」から取得されたテキストかどうかを判定してください。\n\n"
+            "## 判定基準:\n"
+            "- OCR の読み取り誤差（1-2文字の違い、記号の有無）は同じ画面\n"
+            "- 同じキャラクターの同じセリフなら同じ画面\n"
+            "- 同じ UI 画面で数値（HP、ダメージ、Lv等）だけ異なるのは同じ画面\n"
+            "- 異なるキャラクターのセリフは別画面\n"
+            "- 同じ UI テンプレートでも内容（クエスト名、アイテム名等）が異なれば別画面\n"
+            "- バトル画面で敵や味方の構成が異なれば別画面\n\n"
+            "重要: 迷ったら true (同じ画面) と判定してください。\n\n"
+            "JSON のみ返してください。\n"
+            '{"is_same": true}\n\n'
+            "テキストA (セッション):\n{text_a}\n\n"
+            "テキストB (マスター):\n{text_b}"
+        )
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _judge_one(idx: int, s: NodeInfo, m: NodeInfo) -> None:
+            try:
+                prompt = prompt_template.format(text_a=s.text[:500], text_b=m.text[:500])
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[prompt],
+                )
+
+                try:
+                    from tools.ap.api_usage import record_api_usage, extract_usage_from_response
+                    in_tok, out_tok = extract_usage_from_response(response)
+                    record_api_usage(model_name, "anchor_text_judgment", in_tok, out_tok)
+                except Exception:
+                    pass
+
+                raw = (response.text or "").strip()
+                if raw.startswith("```"):
+                    raw = re.sub(r'^```\w*\n?', '', raw)
+                    raw = re.sub(r'\n?```$', '', raw)
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        parsed = parsed[0] if parsed else {}
+                    is_same = bool(parsed.get("is_same", False))
+                except (json.JSONDecodeError, AttributeError):
+                    is_same = '"is_same": true' in raw.lower()
+
+                results[idx] = {"is_same": is_same}
+                logger.info(
+                    "[AnchorMatcher] Gemini テキスト判定: s=%s m=%s → same=%s",
+                    s.fp[:12], m.fp[:12], is_same,
+                )
+            except Exception as e:
+                logger.warning("[AnchorMatcher] Gemini テキスト判定失敗: s=%s: %s", s.fp[:12], e)
+                results[idx] = _default.copy()
+
+        with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
+            futures = [
+                pool.submit(_judge_one, idx, s, m)
+                for idx, (s, m, _) in enumerate(candidates)
+            ]
+            for f in as_completed(futures):
+                f.result()
+
+        logger.info("[AnchorMatcher] Gemini テキスト判定完了: %d/%d 件",
+                    sum(1 for r in results if r and r.get("is_same")), len(candidates))
+
+        return [r or _default.copy() for r in results]
+
+    # ─── Phase 5: phash近接 + 画像 Gemini Flash-Lite 判定 ────
+
+    def _phase5_gemini_image(
         self,
         conn: sqlite3.Connection,
         session_nodes: list[NodeInfo],
@@ -479,7 +725,7 @@ class AnchorMatcher:
         existing_anchors: list[AnchorMatch],
         version_id: int | None = None,
     ) -> tuple[list[AnchorMatch], list[AnchorMatch]]:
-        """Gemini 画像判定: 既存アンカーの検証 + 未マッチノードの新規発見。
+        """Phase 5: Gemini Flash-Lite 画像判定 — 既存アンカー検証 + 未マッチノード発見。
 
         Returns:
             (new_anchors, rejected_anchors)
@@ -526,20 +772,21 @@ class AnchorMatcher:
             if row["screenshot_path"]:
                 master_img_map[row["master_fp"]] = row["screenshot_path"]
 
-        # --- Step 1: 既存アンカーの検証 ---
+        # --- Step 1: 既存アンカーの検証 (P3/P4 のみ対象) ---
+        # P1/P2 はテキストベースのマッチなので信頼度が高く、画像検証は不要
+        # P3 (テキスト空 + phash) / P4 (テキスト Gemini) のアンカーだけ画像で検証する
         verify_pairs: list[tuple[NodeInfo, NodeInfo, float, str, str]] = []
         verify_cached: dict[tuple[str, str], bool] = {}
+        anchors_to_verify = [a for a in existing_anchors if a.phase >= 3]
         for a in existing_anchors:
+            if a.phase < 3:
+                # P1/P2: テキストベースのマッチ → 検証不要
+                verify_cached[(a.session_fp, a.master_fp)] = True
+                continue
             s_node = session_node_map.get(a.session_fp)
             m_node = master_node_map.get(a.master_fp)
             if not s_node or not m_node:
                 continue
-            # テキスト完全一致 or 前方一致 は Gemini 検証不要
-            if s_node.text and m_node.text:
-                shorter, longer = (s_node.text, m_node.text) if len(s_node.text) <= len(m_node.text) else (m_node.text, s_node.text)
-                if shorter == longer or (len(shorter) >= 10 and longer.startswith(shorter)):
-                    verify_cached[(a.session_fp, a.master_fp)] = True
-                    continue
             row = conn.execute(
                 "SELECT is_same FROM lc_anchor_judgments WHERE session_fp = ? AND master_fp = ?",
                 (a.session_fp, a.master_fp),
@@ -555,7 +802,7 @@ class AnchorMatcher:
                     # 画像なし → 検証スキップ（既存判定を信頼）
                     verify_cached[(a.session_fp, a.master_fp)] = True
 
-        # --- Step 2: 未マッチノードの新規発見候補 ---
+        # --- Step 2: 未マッチノードの新規発見候補 (phash < PHASE5_PHASH_THRESHOLD) ---
         new_candidates: list[tuple[NodeInfo, NodeInfo, float]] = []
         targets = [n for n in session_nodes
                    if n.edge_type == "tap" and n.has_text and n.fp not in matched_session_fps]
@@ -568,10 +815,10 @@ class AnchorMatcher:
                 if m.fp in matched_master_fps or not m.phash or not m.has_text:
                     continue
                 dist = phash_distance(s.phash, m.phash)
-                if dist >= self.PHASE3_PHASH_THRESHOLD:
+                if dist >= self.PHASE5_PHASH_THRESHOLD:
                     continue
                 sim = _text_similarity(s.text, m.text)
-                if sim >= self.PHASE4_TEXT_SIMILARITY and sim > best_sim:
+                if sim >= self.PHASE5_TEXT_SIMILARITY and sim > best_sim:
                     best_m = m
                     best_sim = sim
             if best_m:
@@ -596,23 +843,25 @@ class AnchorMatcher:
         total_pairs = len(existing_anchors) + len(new_candidates)
         cached_count = total_pairs - len(all_uncached)
         logger.info(
-            "[AnchorMatcher] Phase 4: 検証%d件 + 新規%d件 = %d件 (キャッシュ%d件, Gemini送信%d件)",
-            len(existing_anchors), len(new_candidates), total_pairs, cached_count, len(all_uncached),
+            "[AnchorMatcher] Phase 5: 検証%d件(P3/P4, P1/P2 %d件スキップ) + 新規%d件 = %d件 (キャッシュ%d件, Gemini送信%d件)",
+            len(anchors_to_verify), len(existing_anchors) - len(anchors_to_verify),
+            len(new_candidates), total_pairs, cached_count, len(all_uncached),
         )
 
         if not all_uncached and not verify_cached and not discover_cached:
             return [], []
 
+        model_name = "gemini-2.5-flash-lite"
         if all_uncached:
-            gemini_results = self._gemini_batch_judge(all_uncached)
+            gemini_results = self._gemini_batch_judge(all_uncached, model=model_name)
             for (s, m, sim, _, _), result in zip(all_uncached, gemini_results):
                 is_same = result["is_same"]
                 prefer = result.get("prefer", "")
                 try:
                     conn.execute(
                         "INSERT OR REPLACE INTO lc_anchor_judgments"
-                        " (session_fp, master_fp, is_same, prefer) VALUES (?, ?, ?, ?)",
-                        (s.fp, m.fp, 1 if is_same else 0, prefer),
+                        " (session_fp, master_fp, is_same, prefer, model) VALUES (?, ?, ?, ?, ?)",
+                        (s.fp, m.fp, 1 if is_same else 0, prefer, model_name),
                     )
                 except Exception:
                     pass
@@ -633,7 +882,7 @@ class AnchorMatcher:
             is_same = verify_cached.get((a.session_fp, a.master_fp))
             if is_same is False:
                 rejected.append(a)
-                logger.info("[AnchorMatcher] Phase 4 検証棄却: %s → %s (%s)",
+                logger.info("[AnchorMatcher] Phase 5 検証棄却: %s → %s (%s)",
                             a.session_fp[:12], a.master_fp[:12], a.method)
 
         # 新規アンカー
@@ -643,7 +892,7 @@ class AnchorMatcher:
                 new_anchors.append(AnchorMatch(
                     session_fp=s.fp, master_fp=m.fp,
                     master_sort=master_sort_map[m.fp],
-                    method="phase4_gemini", score=round(sim, 3), phase=4,
+                    method="phase5_gemini_image", score=round(sim, 3), phase=5,
                 ))
 
         return new_anchors, rejected
@@ -651,12 +900,13 @@ class AnchorMatcher:
     @staticmethod
     def _gemini_batch_judge(
         pairs: list[tuple[NodeInfo, NodeInfo, float, str, str]],
+        model: str = "gemini-2.5-flash-lite",
     ) -> list[dict]:
-        """Gemini Flash に画像ペアの同一画面判定を問い合わせる (1ペアずつ)。
+        """Gemini に画像ペアの同一画面判定を問い合わせる (1ペアずつ並列)。
 
         pairs: [(session_node, master_node, similarity, session_img_path, master_img_path)]
+        model: 使用する Gemini モデル名
         Returns: [{"is_same": bool, "prefer": "A"|"B"|""}, ...]
-            prefer: 同一画面の場合、テキストがより正確に読める方 (A=セッション, B=マスター)
         """
         import json
         import re
@@ -666,7 +916,7 @@ class AnchorMatcher:
         _default = {"is_same": False, "prefer": ""}
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
-            logger.warning("[AnchorMatcher] GEMINI_API_KEY 未設定: Phase 4 スキップ")
+            logger.warning("[AnchorMatcher] GEMINI_API_KEY 未設定: スキップ")
             return [_default.copy() for _ in pairs]
 
         try:
@@ -688,7 +938,8 @@ class AnchorMatcher:
             "- 同じ会話シーンで同じキャラクターが話している\n"
             "- ボタンの選択状態、スクロール位置、数値（HP、ダメージ等）が異なっても画面の種類が同じ\n"
             "- テキストが多少異なっていても、画面のレイアウトと目的が同じ\n"
-            "- 画質や明るさが若干異なる同じ画面\n\n"
+            "- 画質や明るさが若干異なる同じ画面\n"
+            "- OCR テキストに揺れがあるだけの同じ画面（例: 「きっぱり」→「っぱり」）\n\n"
             "## 「異なる画面」と判定すべきケース:\n"
             "- 完全に異なるシーン（バトル vs メニュー等）\n"
             "- 異なるメニュー画面（ショップ vs ガチャ等）\n"
@@ -730,7 +981,7 @@ class AnchorMatcher:
                     m_data = f.read()
 
                 response = client.models.generate_content(
-                    model="gemini-2.5-flash-lite",
+                    model=model,
                     contents=[
                         "画像A (セッション):",
                         genai.types.Part.from_bytes(data=s_data, mime_type=s_mime),
@@ -744,7 +995,7 @@ class AnchorMatcher:
                 try:
                     from tools.ap.api_usage import record_api_usage, extract_usage_from_response
                     in_tok, out_tok = extract_usage_from_response(response)
-                    record_api_usage("gemini-2.5-flash-lite", "anchor_judgment", in_tok, out_tok)
+                    record_api_usage(model, "anchor_judgment", in_tok, out_tok)
                 except Exception:
                     pass
 
@@ -764,11 +1015,11 @@ class AnchorMatcher:
 
                 results[orig_idx] = {"is_same": is_same, "prefer": prefer}
                 logger.info(
-                    "[AnchorMatcher] Gemini 画像判定: s=%s m=%s → same=%s prefer=%s",
-                    s.fp[:12], m.fp[:12], is_same, prefer,
+                    "[AnchorMatcher] Gemini [%s]: s=%s m=%s → same=%s prefer=%s",
+                    model, s.fp[:12], m.fp[:12], is_same, prefer,
                 )
             except Exception as e:
-                logger.warning("[AnchorMatcher] Gemini 判定失敗: s=%s: %s", s.fp[:12], e)
+                logger.warning("[AnchorMatcher] Gemini [%s] 判定失敗: s=%s: %s", model, s.fp[:12], e)
                 results[orig_idx] = _default.copy()
 
         with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
@@ -779,10 +1030,196 @@ class AnchorMatcher:
             for f in as_completed(futures):
                 f.result()  # 例外があれば再 raise
 
-        logger.info("[AnchorMatcher] Gemini 画像判定完了: %d/%d 件",
-                    sum(1 for r in results if r and r.get("is_same")), len(pairs))
+        logger.info("[AnchorMatcher] Gemini [%s] 判定完了: %d/%d 件",
+                    model, sum(1 for r in results if r and r.get("is_same")), len(pairs))
 
         return [r or _default.copy() for r in results]
+
+    # ─── Phase 6: Gemini Flash (phash 8-20 + P5 棄却再審査) ────
+
+    def _phase6_gemini_flash(
+        self,
+        conn: sqlite3.Connection,
+        session_nodes: list[NodeInfo],
+        master_nodes: list[NodeInfo],
+        master_sort_map: dict[str, int],
+        existing_anchors: list[AnchorMatch],
+        p5_rejected: list[AnchorMatch],
+        version_id: int | None = None,
+    ) -> tuple[list[AnchorMatch], list[AnchorMatch]]:
+        """Phase 6: Gemini Flash で P5 より広い範囲の候補を判定 + P5 棄却の再審査。
+
+        Returns:
+            (new_anchors, final_rejected)
+            new_anchors: 新たにマッチしたアンカー (P6 新規 + P5 棄却復活)
+            final_rejected: P5 でも棄却されたもの (最終棄却)
+        """
+        from lc.utils import phash_distance
+
+        matched_session_fps = {a.session_fp for a in existing_anchors}
+        matched_master_fps = {a.master_fp for a in existing_anchors}
+
+        _ensure_judgment_table(conn)
+
+        session_node_map = {n.fp: n for n in session_nodes}
+        master_node_map = {n.fp: n for n in master_nodes}
+
+        # session_id を取得
+        first_fp = session_nodes[0].fp if session_nodes else ""
+        session_id_row = conn.execute(
+            "SELECT session_id FROM lc_screens WHERE fingerprint = ? AND is_representative = 1 LIMIT 1",
+            (first_fp,),
+        ).fetchone()
+        session_id_str = session_id_row["session_id"] if session_id_row else ""
+
+        session_img_map: dict[str, str] = {}
+        for row in conn.execute(
+            "SELECT fingerprint, screenshot_path FROM lc_screens"
+            " WHERE session_id = ? AND is_representative = 1",
+            (session_id_str,),
+        ).fetchall():
+            if row["screenshot_path"]:
+                session_img_map[row["fingerprint"]] = row["screenshot_path"]
+
+        master_img_map: dict[str, str] = {}
+        for row in conn.execute(
+            "SELECT m.master_fp, s.screenshot_path"
+            " FROM lc_master_nodes m"
+            " LEFT JOIN lc_screens s ON s.id = m.representative_screen_id"
+            " WHERE m.version_id = ?",
+            (version_id or 1,),
+        ).fetchall():
+            if row["screenshot_path"]:
+                master_img_map[row["master_fp"]] = row["screenshot_path"]
+
+        model_name = "gemini-2.5-flash"
+
+        # --- Step 1: P4 棄却の再審査 ---
+        retry_pairs: list[tuple[NodeInfo, NodeInfo, float, str, str]] = []
+        retry_cached: dict[tuple[str, str], bool] = {}
+        for a in p5_rejected:
+            s_node = session_node_map.get(a.session_fp)
+            m_node = master_node_map.get(a.master_fp)
+            if not s_node or not m_node:
+                continue
+            # flash モデルでのキャッシュを確認 (model='gemini-2.5-flash' のみ)
+            row = conn.execute(
+                "SELECT is_same FROM lc_anchor_judgments"
+                " WHERE session_fp = ? AND master_fp = ? AND model = ?",
+                (a.session_fp, a.master_fp, model_name),
+            ).fetchone()
+            if row is not None:
+                retry_cached[(a.session_fp, a.master_fp)] = bool(row["is_same"])
+            else:
+                s_img = session_img_map.get(a.session_fp, "")
+                m_img = master_img_map.get(a.master_fp, "")
+                if s_img and m_img:
+                    retry_pairs.append((s_node, m_node, a.score, s_img, m_img))
+                else:
+                    retry_cached[(a.session_fp, a.master_fp)] = False
+
+        # --- Step 2: 未マッチノードの新規候補 (phash 8-20) ---
+        new_candidates: list[tuple[NodeInfo, NodeInfo, float]] = []
+        targets = [n for n in session_nodes
+                   if n.edge_type == "tap" and n.has_text and n.fp not in matched_session_fps]
+        for s in targets:
+            if not s.phash:
+                continue
+            best_m = None
+            best_sim = 0.0
+            for m in master_nodes:
+                if m.fp in matched_master_fps or not m.phash or not m.has_text:
+                    continue
+                dist = phash_distance(s.phash, m.phash)
+                if dist < self.PHASE6_PHASH_MIN or dist >= self.PHASE6_PHASH_MAX:
+                    continue
+                sim = _text_similarity(s.text, m.text)
+                if sim >= self.PHASE6_TEXT_SIMILARITY and sim > best_sim:
+                    best_m = m
+                    best_sim = sim
+            if best_m:
+                new_candidates.append((s, best_m, best_sim))
+
+        discover_pairs: list[tuple[NodeInfo, NodeInfo, float, str, str]] = []
+        discover_cached: dict[tuple[str, str], bool] = {}
+        for s, m, sim in new_candidates:
+            row = conn.execute(
+                "SELECT is_same FROM lc_anchor_judgments"
+                " WHERE session_fp = ? AND master_fp = ? AND model = ?",
+                (s.fp, m.fp, model_name),
+            ).fetchone()
+            if row is not None:
+                discover_cached[(s.fp, m.fp)] = bool(row["is_same"])
+            else:
+                s_img = session_img_map.get(s.fp, "")
+                m_img = master_img_map.get(m.fp, "")
+                discover_pairs.append((s, m, sim, s_img, m_img))
+
+        # --- Gemini Flash に送信 ---
+        all_uncached = retry_pairs + discover_pairs
+        total_pairs = len(p5_rejected) + len(new_candidates)
+        cached_count = total_pairs - len(all_uncached)
+        logger.info(
+            "[AnchorMatcher] Phase 6: 再審査%d件 + 新規%d件 = %d件 (キャッシュ%d件, Gemini送信%d件)",
+            len(p5_rejected), len(new_candidates), total_pairs, cached_count, len(all_uncached),
+        )
+
+        if not all_uncached and not retry_cached and not discover_cached:
+            return [], list(p5_rejected)
+
+        if all_uncached:
+            gemini_results = self._gemini_batch_judge(all_uncached, model=model_name)
+            for (s, m, sim, _, _), result in zip(all_uncached, gemini_results):
+                is_same = result["is_same"]
+                prefer = result.get("prefer", "")
+                try:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO lc_anchor_judgments"
+                        " (session_fp, master_fp, is_same, prefer, model) VALUES (?, ?, ?, ?, ?)",
+                        (s.fp, m.fp, 1 if is_same else 0, prefer, model_name),
+                    )
+                except Exception:
+                    pass
+                if (s.fp, m.fp) not in retry_cached:
+                    retry_cached[(s.fp, m.fp)] = is_same
+                if (s.fp, m.fp) not in discover_cached:
+                    discover_cached[(s.fp, m.fp)] = is_same
+            try:
+                conn.commit()
+            except Exception:
+                pass
+
+        # --- 結果集計 ---
+        new_anchors: list[AnchorMatch] = []
+        final_rejected: list[AnchorMatch] = []
+
+        # P4 棄却の再審査結果
+        for a in p5_rejected:
+            is_same = retry_cached.get((a.session_fp, a.master_fp))
+            if is_same:
+                # flash が同一画面と判定 → 復活 (元の phase を維持、method は P5 に)
+                new_anchors.append(AnchorMatch(
+                    session_fp=a.session_fp, master_fp=a.master_fp,
+                    master_sort=a.master_sort,
+                    method="phase6_gemini_flash", score=a.score, phase=6,
+                ))
+                logger.info("[AnchorMatcher] Phase 6 復活: %s → %s (元 %s)",
+                            a.session_fp[:12], a.master_fp[:12], a.method)
+            else:
+                final_rejected.append(a)
+                logger.info("[AnchorMatcher] Phase 6 最終棄却: %s → %s",
+                            a.session_fp[:12], a.master_fp[:12])
+
+        # 新規候補
+        for s, m, sim in new_candidates:
+            if discover_cached.get((s.fp, m.fp), False):
+                new_anchors.append(AnchorMatch(
+                    session_fp=s.fp, master_fp=m.fp,
+                    master_sort=master_sort_map[m.fp],
+                    method="phase6_gemini_flash", score=round(sim, 3), phase=6,
+                ))
+
+        return new_anchors, final_rejected
 
     # ─── Phase 2: auto + テキストあり ─────────────────
 

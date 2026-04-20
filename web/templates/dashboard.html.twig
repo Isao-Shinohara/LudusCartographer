@@ -450,11 +450,13 @@
             const p2 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase2')).length;
             const p3 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase3')).length;
             const p4 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase4')).length;
+            const p5 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase5')).length;
+            const p6 = anchors.filter(s => s.anchor_info && s.anchor_info.includes('phase6')).length;
             // セッション情報
             const sessionLabel = fs
                 ? `${fs} (${_debugSessionIdx + 1}/${_debugSessionList.length})`
                 : (_debugSessionList.length > 0 ? `↑↓でセッション切替 (${_debugSessionList.length}件)` : '');
-            debugStats.textContent = `${sessionLabel}  P1:${p1} P2:${p2} P3:${p3} P4:${p4} 挿入:${inserted.length}`;
+            debugStats.textContent = `${sessionLabel}  P1:${p1} P2:${p2} P3:${p3} P4:${p4} P5:${p5} P6:${p6} 挿入:${inserted.length}`;
             debugStats.classList.remove('hidden');
             // フッターにセッション情報表示
             const dsi = document.getElementById('debug-session-info');
@@ -1293,8 +1295,8 @@
                     const color = phaseColor(m.method);
                     let badgeLabel;
                     if (m.discarded) {
-                        // 元フェーズ + P4取消線
-                        badgeLabel = `${phaseLabel(m.method)} <span class="${phaseColor('phase4_gemini')} px-1 py-0.5 rounded"><s>${phaseLabel('phase4_gemini')}</s></span>`;
+                        // 元フェーズ + P6取消線 (最終棄却は P6)
+                        badgeLabel = `${phaseLabel(m.method)} <span class="${phaseColor('phase6_gemini_flash')} px-1 py-0.5 rounded"><s>${phaseLabel('phase6_gemini_flash')}</s></span>`;
                     } else {
                         badgeLabel = phaseLabel(m.method);
                     }
