@@ -1227,6 +1227,12 @@ class BackgroundWorker:
                         )
                         for _aid in _affected_ids:
                             logger.debug("[REP_TRACE] id=%d rep=0 (remerge統合, other_cid=%d→cid=%d)", _aid, other_cid, cid)
+                        # 統合先クラスタも含め全画面の代表をリセットしてから1枚だけ選出
+                        conn.execute(
+                            "UPDATE lc_screens SET is_representative = 0"
+                            " WHERE cluster_id = ?",
+                            (cid,),
+                        )
                         # テキストが長い方を代表に
                         rep = conn.execute(
                             "SELECT id FROM lc_screens WHERE cluster_id = ?"
