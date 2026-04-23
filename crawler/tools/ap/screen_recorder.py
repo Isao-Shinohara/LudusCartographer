@@ -38,12 +38,19 @@ _BRIGHT_RATIO = 0.999  # この割合以上のピクセルが _BRIGHT_MIN 以上
 def _is_too_dark_or_bright(gray: "np.ndarray") -> bool:
     """全ピクセル暗い/明るいかを判定。
     暗画面: max <= _DARK_MAX
-    白画面: 99.9% 以上のピクセルが _BRIGHT_MIN 以上 (scrcpy 角丸ノイズを無視)
+    白画面: 以下のいずれかに該当
+      1. 全ピクセルの99.9%以上が _BRIGHT_MIN 以上（従来ロジック）
+      2. 黒ピクセル(<15)を除外した残りの最小値が _BRIGHT_MIN 以上（黒帯対応）
     """
     if int(np.max(gray)) <= _DARK_MAX:
         return True
+    # 白画面判定1: 全体の割合ベース
     bright_ratio = np.count_nonzero(gray >= _BRIGHT_MIN) / gray.size
     if bright_ratio >= _BRIGHT_RATIO:
+        return True
+    # 白画面判定2: 黒ピクセル除外後の最小値ベース（黒帯があっても検出可能）
+    non_black = gray[gray >= 15]
+    if len(non_black) > 0 and int(np.min(non_black)) >= _BRIGHT_MIN:
         return True
     return False
 
