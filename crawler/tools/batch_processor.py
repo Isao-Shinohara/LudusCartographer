@@ -802,7 +802,7 @@ class BatchProcessor:
         if session_id:
             _trans_where += " AND session_id = ?"
         edges_raw = self._conn.execute(
-            "SELECT from_fp, to_fp, action_name FROM lc_transitions" + _trans_where,
+            "SELECT from_fp, to_fp, action_name, edge_type FROM lc_transitions" + _trans_where,
             _bg_sid_params,
         ).fetchall()
 
@@ -812,6 +812,8 @@ class BatchProcessor:
 
         # 集約 (代表 fp にリダイレクト)
         edge_counts: dict[tuple[str, str], dict] = {}
+        _tap_edges: set[tuple[str, str]] = set()
+        _auto_edges: set[tuple[str, str]] = set()
         for row in edges_raw:
             src = canon(row["from_fp"])
             tgt = canon(row["to_fp"])
@@ -825,6 +827,12 @@ class BatchProcessor:
                 edge_counts[key] = {"count": 0, "actions": set()}
             edge_counts[key]["count"] += 1
             edge_counts[key]["actions"].add(row["action_name"] or "")
+            # tap/auto 別カウント（ユニークエッジ）
+            _etype = row["edge_type"] or "tap"
+            if _etype == "tap":
+                _tap_edges.add(key)
+            else:
+                _auto_edges.add(key)
 
         G = nx.DiGraph()
         for (src, tgt), info in edge_counts.items():
@@ -942,11 +950,24 @@ class BatchProcessor:
         # セッション別グラフ構築結果を保存
         if session_id:
             from datetime import datetime
+            # tap_edge_count / auto_edge_count カラムを追加（既存DBとの互換性）
+            try:
+                self._conn.execute(
+                    "ALTER TABLE lc_session_graphs ADD COLUMN tap_edge_count INTEGER DEFAULT 0")
+            except Exception:
+                pass  # already exists
+            try:
+                self._conn.execute(
+                    "ALTER TABLE lc_session_graphs ADD COLUMN auto_edge_count INTEGER DEFAULT 0")
+            except Exception:
+                pass  # already exists
             self._conn.execute(
                 "INSERT OR REPLACE INTO lc_session_graphs"
-                " (session_id, node_count, edge_count, scc_count, home_fp, built_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                " (session_id, node_count, edge_count, tap_edge_count, auto_edge_count,"
+                "  scc_count, home_fp, built_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (session_id, G.number_of_nodes(), G.number_of_edges(),
+                 len(_tap_edges), len(_auto_edges),
                  len(sccs), home_fp, datetime.now().isoformat()),
             )
 

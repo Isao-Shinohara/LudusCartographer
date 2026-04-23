@@ -604,7 +604,10 @@ class EvidenceRepository
     {
         $versionId ??= $this->getActiveVersionId();
         $sql = <<<SQL
-            SELECT sg.session_id, sg.node_count, sg.edge_count, sg.built_at,
+            SELECT sg.session_id, sg.node_count, sg.edge_count,
+                   COALESCE(sg.tap_edge_count, sg.edge_count) AS tap_edge_count,
+                   COALESCE(sg.auto_edge_count, 0) AS auto_edge_count,
+                   sg.built_at,
                    s.screens_found, s.started_at, s.status, s.completion_type,
                    COALESCE(s.game_title, 'Unknown Game') AS game_title
             FROM lc_session_graphs sg
@@ -633,7 +636,10 @@ class EvidenceRepository
     {
         $versionId ??= $this->getActiveVersionId();
         $sql = <<<SQL
-            SELECT sg.session_id, sg.node_count, sg.edge_count, sg.built_at,
+            SELECT sg.session_id, sg.node_count, sg.edge_count,
+                   COALESCE(sg.tap_edge_count, sg.edge_count) AS tap_edge_count,
+                   COALESCE(sg.auto_edge_count, 0) AS auto_edge_count,
+                   sg.built_at,
                    s.screens_found, s.started_at, s.completion_type,
                    COALESCE(s.game_title, 'Unknown Game') AS game_title,
                    COUNT(nm.id) AS mapped_nodes,

@@ -1172,7 +1172,7 @@
                 html += _renderMergeSection('pending', pending, (s) => `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 flex items-center justify-between">
                         <div>
                             <a href="#" class="text-sm font-mono text-gray-300 hover:text-blue-300 transition-colors cursor-pointer" onclick="navigateToLiveSession('${escapeHtml(s.session_id)}');return false;">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</a>
-                            <span class="text-xs text-gray-400 ml-3">${s.node_count} ノード / ${s.edge_count} エッジ</span>
+                            <span class="text-xs text-gray-400 ml-3">${s.node_count} ノード / ${s.tap_edge_count} tap / ${s.auto_edge_count} auto</span>
                             ${completionBadge(s.completion_type)}
                         </div>
                         <div class="flex items-center gap-3">
