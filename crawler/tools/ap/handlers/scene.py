@@ -50,7 +50,7 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
 
     # ─── Result画面ハンドラ (OCR mode) ───
     if not _is_battle_ctx and analysis_path is not None:
-        _result_ocr = handle_result_screen(state, analysis_path, ocr, state.last_phash_dist, mode="OCR")
+        _result_ocr = handle_result_screen(state, analysis_path, ocr, state.cycle.last_phash_dist, mode="OCR")
         if _result_ocr:
             return _result_ocr
 
@@ -88,7 +88,7 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
                 )
             return "MAP_ARROW_TAP", 1.0
         else:
-            _ma_x, _ma_y = roi_to_device(int(W * 0.5), int(H * 0.29), state.game_roi)
+            _ma_x, _ma_y = roi_to_device(int(W * 0.5), int(H * 0.29), state.cycle.game_roi)
             logger.info(">>> 【3D矢印】 自動検出失敗 → デフォルト (%d,%d) タップ", _ma_x, _ma_y)
             tap_device(_ma_x, _ma_y, state, "MAP_ARROW_FALLBACK")
             return "MAP_ARROW_TAP", 1.0
@@ -106,7 +106,7 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
             _ok_btn = has_any(ocr, ["OK"])
             if not _ok_btn:
                 # OCR が OK を ●K 等に誤読するケースに対応 → 右側のボタン位置を固定推定
-                _ok_x, _ok_y = roi_to_device(int(W * 0.69), int(H * 0.82), state.game_roi)
+                _ok_x, _ok_y = roi_to_device(int(W * 0.69), int(H * 0.82), state.cycle.game_roi)
                 logger.info(">>> [DOWNLOAD_CONFIRM] ダウンロード確認 → OK 固定位置 (%d,%d) タップ", _ok_x, _ok_y)
                 tap_device(_ok_x, _ok_y, state, "DOWNLOAD_CONFIRM_OK")
             else:
@@ -115,7 +115,7 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
                 tap_device(_ok_btn["center"][0], _ok_btn["center"][1], state, "DOWNLOAD_CONFIRM_OK")
             return "DOWNLOAD_CONFIRM_OK", 2.0
         logger.info(">>> [DOWNLOAD_STRICT_JP] %s + 進捗あり — 待機", _dl_jp["text"])
-        state.download_active = True
+        state.cycle.download_active = True
         return "DOWNLOAD_WAIT", DOWNLOAD_WAIT
 
     # ─── MAIN STORY 選択画面 ───
@@ -138,10 +138,10 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
     # 「挑戦」がヘッダー位置(y<H*0.5)でのみ検出された場合:
     # 装飾フォントのボタンテキストをOCRが読めていない → 固定位置タップ
     if not sentu_btn and has_text(ocr, "挑戦") and stage_num:
-        _chal_fx, _chal_fy = roi_to_device(int(W * 0.82), int(H * 0.91), state.game_roi)
+        _chal_fx, _chal_fy = roi_to_device(int(W * 0.82), int(H * 0.91), state.cycle.game_roi)
         logger.info(">>> クエストマップ — 「挑戦」ボタン固定位置 (%d,%d)", _chal_fx, _chal_fy)
         tap_device(_chal_fx, _chal_fy, state, "QUEST_START_CHALLENGE_FIXED")
-        state.battle_wait_count = 0
+        state.cycle.battle_wait_count = 0
         return "QUEST_START", 2.0
     if not sentu_btn:
         expl = has_text(ocr, "探索")
@@ -150,12 +150,12 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
     if stage_num and sentu_btn:
         cx, cy = sentu_btn["center"]
         # ROI クランプ: ゲーム領域外 (黒帯) をタップしない
-        if state.game_roi:
-            _roi_max_y = state.game_roi[1] + state.game_roi[3] - 5
+        if state.cycle.game_roi:
+            _roi_max_y = state.cycle.game_roi[1] + state.cycle.game_roi[3] - 5
             cy = min(cy, _roi_max_y)
         logger.info("[QuestStart] '%s'(%d,%d) タップ", sentu_btn["text"], cx, cy)
         tap_device(cx, cy, state, f"QUEST_START {sentu_btn['text']}")
-        state.battle_wait_count = 0
+        state.cycle.battle_wait_count = 0
         return "QUEST_START", 2.0
 
     # ─── バトル画面 ───
@@ -165,12 +165,12 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
                        "BREAK", "Turn", "WAVE"]
     battle = has_any(ocr, battle_keywords)
     if battle:
-        state.battle_wait_count += 1
+        state.cycle.battle_wait_count += 1
 
         # バトルチュートリアル: バフ効果
         buff_tut = has_any(ocr, ["バフ効果を発生", "支援するバフ", "CRTアップ", "バフ効果"])
         if buff_tut and has_text(ocr, "ことができます"):
-            bx, by = roi_to_device(int(W * 0.888), int(H * 0.667), state.game_roi)
+            bx, by = roi_to_device(int(W * 0.888), int(H * 0.667), state.cycle.game_roi)
             logger.info(">>> バフチュートリアル (%d,%d)", bx, by)
             tap_device(bx, by, state, "BUFF_TUTORIAL")
             return "BATTLE_TUTORIAL", 0.5
@@ -180,7 +180,7 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
                                    "戦闘スキルを使", "戦闘スキを使",
                                    "スキルを使用してみ", "使ってみましょう"])
         if skill_tut:
-            sx, sy = roi_to_device(int(W * 0.947), int(H * 0.722), state.game_roi)
+            sx, sy = roi_to_device(int(W * 0.947), int(H * 0.722), state.cycle.game_roi)
             logger.info(">>> スキルチュートリアル (%d,%d)", sx, sy)
             tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL", rapid=True)
             tap_device(sx, sy, state, "SKILL_CARD_TUTORIAL confirm")
@@ -189,7 +189,7 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
         # バトルチュートリアル: 必殺技
         hissatsu_tut = has_any(ocr, ["CTDアップ", "必殺技", "巫殺技"])
         if hissatsu_tut:
-            hx, hy = roi_to_device(int(W * 0.862), int(H * 0.778), state.game_roi)
+            hx, hy = roi_to_device(int(W * 0.862), int(H * 0.778), state.cycle.game_roi)
             logger.info(">>> 必殺技チュートリアル (%d,%d)", hx, hy)
             tap_device(hx, hy, state, "HISSATSU_TUTORIAL", rapid=True)
             tap_device(hx, hy, state, "HISSATSU_TUTORIAL confirm")
@@ -197,7 +197,7 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
 
         # バトルチュートリアル: 攻撃対象変更
         if has_any(ocr, ["攻撃対象を変更", "対象を変更"]):
-            ex, ey = roi_to_device(int(W * 0.651), int(H * 0.361), state.game_roi)
+            ex, ey = roi_to_device(int(W * 0.651), int(H * 0.361), state.cycle.game_roi)
             logger.info(">>> 攻撃対象チュートリアル (%d,%d)", ex, ey)
             tap_device(ex, ey, state, "ATTACK_TARGET_TUTORIAL")
             return "BATTLE_TUTORIAL", 0.5
@@ -218,7 +218,7 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
         # バトル速度ツールチップは速度ボタン本体 (1409,19) をタップして消す
         speed_tip = has_any(ocr, ["このボタンでバトル", "進行速度を変更"])
         if speed_tip:
-            _sp_x, _sp_y = roi_to_device(int(W * 0.927), int(H * 0.026), state.game_roi)
+            _sp_x, _sp_y = roi_to_device(int(W * 0.927), int(H * 0.026), state.cycle.game_roi)
             logger.info(">>> 速度ツールチップ → 速度ボタン (%d,%d) タップ", _sp_x, _sp_y)
             tap_device(_sp_x, _sp_y, state, "SPEED_BUTTON_TAP")
             return "BATTLE_TUTORIAL", 0.5
@@ -236,58 +236,58 @@ def handle_scene_specific(ctx: DetectContext, state: PilotState) -> Optional[tup
                 tap_device(_bx, _by, state, "BATTLE_TUTORIAL_POPUP")
                 return "BATTLE_TUTORIAL", 0.5
             # フォールバック: ▷ 矢印 → × ボタンのシーケンス
-            state.pre_popup_tap_count += 1
-            _arr_b = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)
-            _cls_b = roi_to_device(int(W * 0.98), int(H * 0.056), state.game_roi)
+            state.cycle.pre_popup_tap_count += 1
+            _arr_b = roi_to_device(int(W * 0.91), int(H * 0.49), state.cycle.game_roi)
+            _cls_b = roi_to_device(int(W * 0.98), int(H * 0.056), state.cycle.game_roi)
             _btl_candidates = [_arr_b, _arr_b, _arr_b, _arr_b, _cls_b, _cls_b]
-            _bidx = min(state.pre_popup_tap_count - 1, len(_btl_candidates) - 1)
+            _bidx = min(state.cycle.pre_popup_tap_count - 1, len(_btl_candidates) - 1)
             cx, cy = _btl_candidates[_bidx]
             _blabel = "×" if (cx, cy) == _cls_b else "▷"
             logger.info(">>> バトルチュートリアル popup '%s' %s→(%d,%d) (試行%d回目)",
-                        tutorial_popup["text"][:10], _blabel, cx, cy, state.pre_popup_tap_count)
+                        tutorial_popup["text"][:10], _blabel, cx, cy, state.cycle.pre_popup_tap_count)
             tap_device(cx, cy, state, "BATTLE_TUTORIAL_POPUP")
             return "BATTLE_TUTORIAL", 0.5
 
         # バトル停滞時: ハイライト候補を順番にタップ試行
-        if state.battle_wait_count > 8:
-            stall_phase = (state.battle_wait_count - 8) % 12
+        if state.cycle.battle_wait_count > 8:
+            stall_phase = (state.cycle.battle_wait_count - 8) % 12
             if stall_phase == 0:
-                sx, sy = roi_to_device(int(W * 0.947), int(H * 0.722), state.game_roi)
+                sx, sy = roi_to_device(int(W * 0.947), int(H * 0.722), state.cycle.game_roi)
                 logger.info(">>> バトル停滞 — スキルタップ (%d,%d)", sx, sy)
                 tap_device(sx, sy, state, "STALL_SKILL", rapid=True)
                 tap_device(sx, sy, state, "STALL_SKILL confirm")
                 return "BATTLE_STALL", 0.0
             elif stall_phase == 4:
-                hx, hy = roi_to_device(int(W * 0.862), int(H * 0.778), state.game_roi)
+                hx, hy = roi_to_device(int(W * 0.862), int(H * 0.778), state.cycle.game_roi)
                 logger.info(">>> バトル停滞 — 必殺技タップ (%d,%d)", hx, hy)
                 tap_device(hx, hy, state, "STALL_HISSATSU", rapid=True)
                 tap_device(hx, hy, state, "STALL_HISSATSU confirm")
                 return "BATTLE_STALL", 0.0
             elif stall_phase == 8:
                 # 探索バトル: 左パネルのキャラカードを再タップ (char_just_selected リセット)
-                state.char_just_selected = False
-                lx, ly = roi_to_device(int(W * 0.141), int(H * 0.875), state.game_roi)
+                state.cycle.char_just_selected = False
+                lx, ly = roi_to_device(int(W * 0.141), int(H * 0.875), state.cycle.game_roi)
                 logger.info(">>> バトル停滞 — 左カード再タップ (%d,%d)", lx, ly)
                 tap_device(lx, ly, state, "STALL_LEFT_CARD")
                 return "BATTLE_STALL", 1.0
 
         # 高回数停滞: auto_activated リセットで再検出
-        if state.battle_wait_count > 30:
+        if state.cycle.battle_wait_count > 30:
             logger.warning(">>> バトル長期停滞 (count=%d) — auto_activated/char_justSelected リセット",
-                           state.battle_wait_count)
-            state.auto_activated = False
-            state.char_just_selected = False
-            state.battle_wait_count = 0
+                           state.cycle.battle_wait_count)
+            state.cycle.auto_activated = False
+            state.cycle.char_just_selected = False
+            state.cycle.battle_wait_count = 0
 
         logger.info(">>> バトル中 — 待機 (count=%d, auto=%s)",
-                    state.battle_wait_count, state.auto_activated)
+                    state.cycle.battle_wait_count, state.cycle.auto_activated)
         return "BATTLE_WAIT", BATTLE_WAIT
 
     # バトル終了検出
-    if state.battle_wait_count > 0:
-        logger.info(">>> バトル終了検出 (wait_count was %d)", state.battle_wait_count)
-        state.battle_wait_count = 0
-        state.auto_activated = False
+    if state.cycle.battle_wait_count > 0:
+        logger.info(">>> バトル終了検出 (wait_count was %d)", state.cycle.battle_wait_count)
+        state.cycle.battle_wait_count = 0
+        state.cycle.auto_activated = False
 
     # ─── バトル結果/リザルト ───
     result_match = has_any(ocr, ["リザルト", "Result", "RESULT", "勝利", "Victory",

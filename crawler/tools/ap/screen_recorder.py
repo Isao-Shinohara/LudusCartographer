@@ -244,6 +244,23 @@ class ScreenRecorder:
 
     # ─── public API ───────────────────────────────────
 
+    def check_discarded(self) -> bool:
+        """セッションが外部から discarded にされたか確認する。"""
+        try:
+            row = self._conn.execute(
+                "SELECT status FROM lc_sessions WHERE session_id = ?",
+                (self._session_id,),
+            ).fetchone()
+            if row and row[0] == "discarded":
+                logger.info(
+                    "[ScreenRecorder] セッション %s が discarded — 新セッション作成が必要",
+                    self._session_id,
+                )
+                return True
+        except Exception as e:
+            logger.warning("[ScreenRecorder] discarded チェックエラー: %s", e)
+        return False
+
     def record_startup(
         self,
         img_path: Optional[Path],
@@ -264,9 +281,8 @@ class ScreenRecorder:
 
         _brightness = float(np.mean(cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY)))
 
-        # 全ピクセル暗め / 全ピクセル明るめ → スキップ
-        if _is_too_dark_or_bright(cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY)):
-            return False
+        # startup_phase では暗画面スキップを無効化（ロゴ等の暗い画面を残すため）
+        # maybe_record 側の暗画面スキップはそのまま残す
 
         # 変化判定: phash または brightness がわずかでも変わったら保存
         _changed = False
@@ -529,13 +545,18 @@ class ScreenRecorder:
             if self._pending_transition is not None:
                 self._insert_transition(self._pending_transition)
                 self._pending_transition = None
-            # start_new_session は周回完了時の切替なので goal_reached
-            self._conn.execute(
-                "UPDATE lc_sessions SET status = 'completed',"
-                " completion_type = 'goal_reached',"
-                " screens_found = ? WHERE session_id = ?",
-                (self._recorded_count, self._session_id),
-            )
+            # discarded は外部操作なので上書きしない
+            cur_status = self._conn.execute(
+                "SELECT status FROM lc_sessions WHERE session_id = ?",
+                (self._session_id,),
+            ).fetchone()
+            if cur_status and cur_status[0] != "discarded":
+                self._conn.execute(
+                    "UPDATE lc_sessions SET status = 'completed',"
+                    " completion_type = 'goal_reached',"
+                    " screens_found = ? WHERE session_id = ?",
+                    (self._recorded_count, self._session_id),
+                )
             self._conn.commit()
         except Exception as e:
             logger.warning("[ScreenRecorder] 前セッション完了エラー: %s", e)
@@ -565,6 +586,7 @@ class ScreenRecorder:
         self._last_tap_time = 0.0
         self._startup_last_phash = ""
         self._startup_last_brightness = 0.0
+        self._seen_fps = set()  # 周回で同じセリフを記録するためリセット必須
 
         logger.info(
             "[ScreenRecorder] 新セッション開始: %s → %s (storage=%s)",

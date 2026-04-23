@@ -98,6 +98,15 @@ class BackgroundWorker:
         self.group_count = 0
         self.graph_sccs = 0
 
+    @property
+    def session_id(self) -> Optional[str]:
+        return self._session_id
+
+    @session_id.setter
+    def session_id(self, value: str) -> None:
+        logger.info("[BG_WORKER] セッション切替: %s → %s", self._session_id, value)
+        self._session_id = value
+
     def start(self) -> None:
         """デーモンスレッドを起動。"""
         self._thread = threading.Thread(target=self._run_loop_safe, daemon=True, name="bg_worker")
@@ -509,12 +518,14 @@ class BackgroundWorker:
                             "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
                             (old_rep_id,),
                         )
+                        logger.debug("[REP_TRACE] id=%d rep=0 (text_match代表交代, 新代表=%d, cid=%d)", old_rep_id, sid, text_match_cid)
                         rep_map[text_match_cid] = (ph, title, norm_text)
                     else:
                         conn.execute(
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
                             (text_match_cid, sid),
                         )
+                        logger.debug("[REP_TRACE] id=%d rep=0 (text_match非代表統合, cid=%d)", sid, text_match_cid)
                     _prev_cid = text_match_cid
                 elif _is_meaningful:
                     # 2a) 直前テキスト空 + phash 近い → 統合 (テキストあり側が代表に)
@@ -540,6 +551,7 @@ class BackgroundWorker:
                                     "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
                                     (old_rep_id,),
                                 )
+                                logger.debug("[REP_TRACE] id=%d rep=0 (prev_merge空テキスト代表交代, 新代表=%d, cid=%d)", old_rep_id, sid, _prev_cid)
                             rep_map[_prev_cid] = (ph, title, norm_text)
                         elif _rep_norm and d < 5 and _text_similarity(norm_text, _rep_norm) >= 0.5:
                             # テキスト類似 + phash 近い → OCR 揺れ (テキスト長い方を代表に)
@@ -562,12 +574,14 @@ class BackgroundWorker:
                                     "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
                                     (old_rep_id,),
                                 )
+                                logger.debug("[REP_TRACE] id=%d rep=0 (prev_mergeテキスト類似代表交代, 新代表=%d, cid=%d)", old_rep_id, sid, _prev_cid)
                                 rep_map[_prev_cid] = (ph, title, norm_text)
                             else:
                                 conn.execute(
                                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
                                     (_prev_cid, sid),
                                 )
+                                logger.debug("[REP_TRACE] id=%d rep=0 (prev_mergeテキスト類似非代表, cid=%d)", sid, _prev_cid)
                     if not _merge_to_prev:
                         conn.execute(
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
@@ -578,11 +592,13 @@ class BackgroundWorker:
                         next_cid += 1
                 else:
                     # 3) テキスト空 → 直前クラスタ代表の phash と比較 (ドリフト防止)
+                    #    テキスト空同士は動画フレームの連続が多いため閾値を緩める (30)
+                    _EMPTY_PHASH_THRESHOLD = 30
                     _matched = False
                     if _prev_cid is not None and _prev_cid in rep_map:
                         _rep_ph, _rep_title, _rep_norm = rep_map[_prev_cid]
                         d = phash_distance(_rep_ph, ph) if _rep_ph else 999
-                        if d < 20:
+                        if d < _EMPTY_PHASH_THRESHOLD:
                             # 代表交代判定: テキストあり > テキスト空 > 顔面積
                             old_rep_id = self._get_rep_id(conn, _prev_cid)
                             _should_promote = False
@@ -611,12 +627,14 @@ class BackgroundWorker:
                                     "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
                                     (old_rep_id,),
                                 )
+                                logger.debug("[REP_TRACE] id=%d rep=0 (空テキストphash代表交代, 新代表=%d, cid=%d)", old_rep_id, sid, _prev_cid)
                                 rep_map[_prev_cid] = (ph, title, norm_text)
                             else:
                                 conn.execute(
                                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
                                     (_prev_cid, sid),
                                 )
+                                logger.debug("[REP_TRACE] id=%d rep=0 (空テキストphash非代表, cid=%d)", sid, _prev_cid)
                             _matched = True
                     if not _matched:
                         conn.execute(
@@ -634,8 +652,81 @@ class BackgroundWorker:
                 self.dedup_count += processed
                 logger.info("[BG_WORKER] dedup: %d 枚処理 (合計 %d)", processed, self.dedup_count)
 
+            # クラスタ内バリデーション: テキスト空メンバーが代表から離れすぎていたら分離
+            self._validate_clusters(conn, next_cid, _sid_filter, _sid_params)
+
         finally:
             conn.close()
+
+    def _validate_clusters(
+        self,
+        conn: sqlite3.Connection,
+        next_cid: int,
+        sid_filter: str,
+        sid_params: tuple,
+    ) -> None:
+        """クラスタ内バリデーション: 代表と phash が離れたテキスト空メンバーを分離する。
+
+        テキスト一致で統合されたメンバーは正当なので対象外。
+        テキスト空のメンバーのみ代表との phash 距離を検証し、
+        閾値を超えていれば新規クラスタとして分離する。
+        """
+        from lc.utils import phash_distance
+
+        # 2メンバー以上のクラスタを取得
+        clusters = conn.execute(
+            "SELECT cluster_id, COUNT(*) as cnt FROM lc_screens"
+            " WHERE cluster_id IS NOT NULL" + sid_filter +
+            " GROUP BY cluster_id HAVING cnt > 1",
+            sid_params,
+        ).fetchall()
+
+        if not clusters:
+            return
+
+        _VALIDATE_THRESHOLD = 12  # 代表との phash 距離がこれ以上なら分離
+
+        split_count = 0
+        for cluster in clusters:
+            cid = cluster["cluster_id"]
+
+            # 代表の phash を取得
+            rep = conn.execute(
+                "SELECT id, phash, COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') as text"
+                " FROM lc_screens WHERE cluster_id = ? AND is_representative = 1 LIMIT 1",
+                (cid,),
+            ).fetchone()
+            if not rep or not rep["phash"]:
+                continue
+            rep_phash = rep["phash"]
+
+            # テキスト空の非代表メンバーを取得
+            members = conn.execute(
+                "SELECT id, phash FROM lc_screens"
+                " WHERE cluster_id = ? AND is_representative = 0"
+                "   AND phash IS NOT NULL AND phash != ''"
+                "   AND COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') = ''",
+                (cid,),
+            ).fetchall()
+
+            for member in members:
+                d = phash_distance(rep_phash, member["phash"])
+                if d >= _VALIDATE_THRESHOLD:
+                    # 新規クラスタとして分離
+                    conn.execute(
+                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                        (next_cid, member["id"]),
+                    )
+                    logger.debug(
+                        "[BG_WORKER] cluster_validate: id=%d をクラスタ %d から分離 → 新クラスタ %d (phash距離=%d)",
+                        member["id"], cid, next_cid, d,
+                    )
+                    next_cid += 1
+                    split_count += 1
+
+        if split_count > 0:
+            conn.commit()
+            logger.debug("[BG_WORKER] cluster_validate: %d 件分離", split_count)
 
     @staticmethod
     def _get_brightness(conn: sqlite3.Connection, screen_id: int) -> float:
@@ -860,6 +951,7 @@ class BackgroundWorker:
             for batch_start in range(0, len(rows), _GEMINI_BATCH_SIZE):
                 batch = rows[batch_start:batch_start + _GEMINI_BATCH_SIZE]
                 items = []
+                _BLACK_PIXEL_THRESHOLD = 0.50  # 黒ピクセル50%以上 → 見切れ/不完全キャプチャ
                 for row in batch:
                     sid = row["id"]
                     path = row["screenshot_path"]
@@ -870,6 +962,23 @@ class BackgroundWorker:
                             (sid,),
                         )
                         continue
+                    # 黒ピクセル比率チェック: 見切れ/不完全キャプチャを自動artifact
+                    try:
+                        import cv2
+                        _img = cv2.imread(str(path))
+                        if _img is not None:
+                            _gray = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY)
+                            _black_ratio = (_gray < 15).sum() / _gray.size
+                            if _black_ratio >= _BLACK_PIXEL_THRESHOLD:
+                                conn.execute(
+                                    "UPDATE lc_screens SET ocr_text_gemini = '', is_artifact = 1"
+                                    " WHERE id = ?", (sid,),
+                                )
+                                logger.info("[BG_WORKER] 見切れ検出: id=%d black=%.0f%% → artifact",
+                                            sid, _black_ratio * 100)
+                                continue
+                    except Exception:
+                        pass
                     items.append({
                         "id": sid,
                         "screenshot_path": path,
@@ -928,13 +1037,34 @@ class BackgroundWorker:
                             ).rowcount
                             if updated_nodes > 0:
                                 artifact_count += 1
-                            # マスター未登録の場合は screen の is_representative を 0 にして
-                            # 今後マージ対象外に (元の代表は別の画面が再選出される)
+                            # マスター未登録の場合は代表を降格し、同クラスタから新代表を選出
                             else:
+                                # 現在のクラスタ情報を取得
+                                _art_screen = conn.execute(
+                                    "SELECT cluster_id, session_id FROM lc_screens WHERE id = ?",
+                                    (sid,),
+                                ).fetchone()
                                 conn.execute(
                                     "UPDATE lc_screens SET is_representative = 0"
                                     " WHERE id = ?", (sid,),
                                 )
+                                logger.debug("[REP_TRACE] id=%d rep=0 (artifact判定, マスター未登録)", sid)
+                                # 同クラスタの非 artifact メンバーから新代表を選出
+                                if _art_screen and _art_screen["cluster_id"] is not None:
+                                    _new_rep = conn.execute(
+                                        "SELECT id FROM lc_screens"
+                                        " WHERE cluster_id = ? AND session_id = ?"
+                                        "   AND id != ? AND is_artifact = 0"
+                                        " ORDER BY discovered_at LIMIT 1",
+                                        (_art_screen["cluster_id"], _art_screen["session_id"], sid),
+                                    ).fetchone()
+                                    if _new_rep:
+                                        conn.execute(
+                                            "UPDATE lc_screens SET is_representative = 1 WHERE id = ?",
+                                            (_new_rep["id"],),
+                                        )
+                                        logger.debug("[REP_TRACE] id=%d rep=1 (artifact代替代表, cid=%d)",
+                                                    _new_rep["id"], _art_screen["cluster_id"])
                     # Gemini がテキストなしと判断 → タイトルもクリア
                     if not corrected and item["ocr_text"]:
                         conn.execute(
@@ -982,7 +1112,7 @@ class BackgroundWorker:
                     r = result_map.get(sid_item)
                     if r:
                         for nw in r.get("noise_words", []):
-                            nw = nw.strip()
+                            nw = (nw or "").strip()
                             if nw:
                                 conn.execute(
                                     "INSERT INTO lc_ocr_noise_words (word) VALUES (?)"
@@ -1041,10 +1171,16 @@ class BackgroundWorker:
             if len(reps) < 2:
                 return
 
+            # anchor_matcher のノイズ除去 + 類似度計算を流用
+            from tools.anchor_matcher import (
+                _normalize_for_comparison, _text_similarity,
+            )
+
             # cluster_id → (phash, normalized_gemini_text) マップ
             cluster_info: dict[int, tuple[str, str]] = {}
             for r in reps:
-                norm = _normalize_text(r["gemini_text"])
+                norm = _normalize_for_comparison(
+                    _normalize_text(r["gemini_text"]), conn)
                 cluster_info[r["cluster_id"]] = (r["phash"], norm)
 
             merged = 0
@@ -1054,7 +1190,8 @@ class BackgroundWorker:
                 cid = r["cluster_id"]
                 if cid in merged_clusters:
                     continue
-                norm = _normalize_text(r["gemini_text"])
+                norm = _normalize_for_comparison(
+                    _normalize_text(r["gemini_text"]), conn)
                 ph = r["phash"]
 
                 for other_cid, (other_ph, other_norm) in cluster_info.items():
@@ -1064,11 +1201,12 @@ class BackgroundWorker:
                     should_merge = False
 
                     if norm and other_norm:
-                        # テキスト完全一致
-                        if norm == other_norm:
+                        # 類似度判定 (SequenceMatcher + Jaccard の高い方)
+                        sim = _text_similarity(norm, other_norm)
+                        if sim >= 0.85:
                             should_merge = True
-                        # 前方一致 (5文字以上)
-                        else:
+                        # 前方一致 (5文字以上) もフォールバック
+                        elif not should_merge:
                             shorter, longer = (norm, other_norm) if len(norm) <= len(other_norm) else (other_norm, norm)
                             if len(shorter) >= 5 and longer.startswith(shorter):
                                 should_merge = True
@@ -1079,12 +1217,16 @@ class BackgroundWorker:
                             should_merge = True
 
                     if should_merge:
-                        # other_cid を cid に統合
+                        # other_cid を cid に統合 (1件ごとにcommitでロック時間を最小化)
+                        _affected_ids = [r["id"] for r in conn.execute(
+                            "SELECT id FROM lc_screens WHERE cluster_id = ?", (other_cid,)).fetchall()]
                         conn.execute(
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 0"
                             " WHERE cluster_id = ?",
                             (cid, other_cid),
                         )
+                        for _aid in _affected_ids:
+                            logger.debug("[REP_TRACE] id=%d rep=0 (remerge統合, other_cid=%d→cid=%d)", _aid, other_cid, cid)
                         # テキストが長い方を代表に
                         rep = conn.execute(
                             "SELECT id FROM lc_screens WHERE cluster_id = ?"
@@ -1097,11 +1239,11 @@ class BackgroundWorker:
                                 "UPDATE lc_screens SET is_representative = 1 WHERE id = ?",
                                 (rep["id"],),
                             )
+                        conn.commit()
                         merged_clusters.add(other_cid)
                         merged += 1
 
             if merged > 0:
-                conn.commit()
                 logger.info("[BG_WORKER] gemini remerge: %d クラスタ統合", merged)
         except Exception as e:
             logger.warning("[BG_WORKER] gemini remerge 例外: %s", e)
@@ -1286,11 +1428,10 @@ class BackgroundWorker:
                 # プレビューでマッチ内訳をログ出力
                 preview = merger.preview_merge(sid)
                 sm = preview["summary"]
+                _sm_parts = ", ".join(f"{k}={v}" for k, v in sm.items())
                 logger.info(
-                    "[BG_WORKER] merge preview: session=%s, screens=%d, "
-                    "anchor=%d, k_hop=%d, transition=%d, new=%d",
-                    sid, preview["session_screens"],
-                    sm["anchor"], sm["k_hop"], sm["transition"], sm["new"],
+                    "[BG_WORKER] merge preview: session=%s, screens=%d, %s",
+                    sid, preview["session_screens"], _sm_parts,
                 )
                 # マージ実行
                 new_nodes = merger.merge_to_master(sid)

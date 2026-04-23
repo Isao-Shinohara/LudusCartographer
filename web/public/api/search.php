@@ -289,7 +289,7 @@ if ($action === 'get_cluster_siblings') {
 if ($action === 'promote_representative') {
     $masterFp = $_GET['master_fp'] ?? '';
     $newScreenId = (int)($_GET['screen_id'] ?? 0);
-    if ($masterFp === '' || $newScreenId <= 0 || !($useDb && $repository instanceof EvidenceRepository)) {
+    if ($newScreenId <= 0 || !($useDb && $repository instanceof EvidenceRepository)) {
         echo json_encode(['error' => 'invalid request']);
         exit;
     }
@@ -321,6 +321,214 @@ if ($action === 'toggle_exclude') {
         exit;
     }
     $result = $repository->toggleExclude($masterFp, $versionParam);
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
+// --- adopt_and_rebuild アクション (Live タブ: 採用 + unmerge + 再マージ) ---
+if ($action === 'adopt_and_rebuild') {
+    $screenId = (int)($_GET['screen_id'] ?? 0);
+    if ($screenId <= 0 || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'invalid request']);
+        exit;
+    }
+    // 1. 採用に戻す (is_artifact = 0, マスターノード復帰)
+    $toggleResult = $repository->toggleScreenArtifact($screenId);
+    if (isset($toggleResult['error'])) {
+        echo json_encode($toggleResult);
+        exit;
+    }
+    $sessionId = $toggleResult['session_id'] ?? '';
+    $isSeed = $toggleResult['is_seed'] ?? false;
+
+    // 2. バックグラウンドで unmerge → 再マージ
+    $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
+    $resultFile = $crawlerDirRaw . '/storage/merge_result.json';
+    @unlink($resultFile);
+    $scriptFile = $crawlerDirRaw . '/storage/_adopt_rebuild.py';
+    $sidEsc = addslashes($sessionId);
+
+    if ($isSeed) {
+        // Seed: 全セッション再構築 (unmerge all → re-seed → re-merge all)
+        file_put_contents($scriptFile, <<<PYTHON
+import json, logging, sys, os, sqlite3
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.getcwd())
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("adopt_rebuild")
+try:
+    from dotenv import load_dotenv
+    _env = os.path.join("config", ".env")
+    if os.path.exists(_env): load_dotenv(_env)
+except ImportError:
+    pass
+from pathlib import Path
+from tools.cross_session_merger import CrossSessionMerger
+
+def _write_progress(msg):
+    conn = sqlite3.connect("storage/ludus.db")
+    conn.execute("INSERT OR REPLACE INTO auto_pilot_state (key, value) VALUES ('merge_phase', ?)",
+                 (json.dumps({"phase": msg, "anchors": 0, "total": 0}, ensure_ascii=False),))
+    conn.commit()
+    conn.close()
+
+try:
+    db = Path("storage/ludus.db")
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+
+    # マージ済みセッション一覧 (seed 以外, built_at 順)
+    merged = conn.execute(
+        "SELECT sg.session_id FROM lc_session_graphs sg"
+        " WHERE sg.built_at IS NOT NULL AND sg.version_id = 1"
+        " ORDER BY sg.built_at ASC"
+    ).fetchall()
+    seed_sid = None
+    other_sids = []
+    for r in merged:
+        nm = conn.execute(
+            "SELECT match_method FROM lc_node_mappings WHERE session_id = ? ORDER BY rowid ASC LIMIT 1",
+            (r["session_id"],)
+        ).fetchone()
+        if nm and nm["match_method"] == "seed":
+            seed_sid = r["session_id"]
+        else:
+            other_sids.append(r["session_id"])
+    conn.close()
+
+    if not seed_sid:
+        raise RuntimeError("Seed session not found")
+
+    # 1. 全セッション unmerge (逆順)
+    _write_progress("Unmerge 実行中...")
+    m = CrossSessionMerger(db)
+    for sid in reversed(other_sids):
+        check = m.can_unmerge(sid)
+        if check["ok"]:
+            logger.info("Unmerge: %s", sid)
+            m.unmerge_session(sid)
+    m.close()
+
+    # 2. Re-seed
+    _write_progress("Seed 再構築中...")
+    m = CrossSessionMerger(db)
+    # seed の session_graph をリセット
+    conn2 = sqlite3.connect(str(db))
+    conn2.execute("DELETE FROM lc_master_nodes WHERE version_id = 1")
+    conn2.execute("DELETE FROM lc_master_edges WHERE version_id = 1")
+    conn2.execute("DELETE FROM lc_node_mappings WHERE version_id = 1")
+    conn2.execute("UPDATE lc_session_graphs SET built_at = NULL WHERE session_id = ? AND version_id = 1", (seed_sid,))
+    conn2.commit()
+    conn2.close()
+    n = m.merge_to_master(seed_sid)
+    logger.info("Re-seed: %s → %d nodes", seed_sid, n)
+    m.close()
+
+    # 3. 再マージ (元の順序で)
+    total = len(other_sids)
+    for i, sid in enumerate(other_sids):
+        _write_progress(f"再マージ中: {sid} ({i+1}/{total})")
+        m = CrossSessionMerger(db)
+        n = m.merge_to_master(sid)
+        logger.info("Re-merge: %s → +%d nodes", sid, n)
+        m.close()
+
+    _write_progress("完了")
+    conn3 = sqlite3.connect(str(db))
+    master_nodes = conn3.execute("SELECT COUNT(*) FROM lc_master_nodes WHERE version_id = 1").fetchone()[0]
+    conn3.close()
+    with open(sys.argv[1], "w") as f:
+        json.dump({"ok": True, "master_nodes": master_nodes, "sessions_rebuilt": total + 1}, f, ensure_ascii=False)
+except Exception as e:
+    import traceback
+    with open(sys.argv[1], "w") as f:
+        json.dump({"ok": False, "error": str(e), "trace": traceback.format_exc()}, f, ensure_ascii=False)
+PYTHON);
+    } else {
+        // 非 Seed: 該当セッションのみ unmerge → 再マージ
+        file_put_contents($scriptFile, <<<PYTHON
+import json, logging, sys, os, sqlite3
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.getcwd())
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("adopt_rebuild")
+try:
+    from dotenv import load_dotenv
+    _env = os.path.join("config", ".env")
+    if os.path.exists(_env): load_dotenv(_env)
+except ImportError:
+    pass
+from pathlib import Path
+from tools.cross_session_merger import CrossSessionMerger
+
+def _write_progress(msg):
+    conn = sqlite3.connect("storage/ludus.db")
+    conn.execute("INSERT OR REPLACE INTO auto_pilot_state (key, value) VALUES ('merge_phase', ?)",
+                 (json.dumps({"phase": msg, "anchors": 0, "total": 0}, ensure_ascii=False),))
+    conn.commit()
+    conn.close()
+
+try:
+    db = Path("storage/ludus.db")
+    sid = "{$sidEsc}"
+
+    _write_progress(f"Unmerge 実行中: {sid}")
+    m = CrossSessionMerger(db)
+    check = m.can_unmerge(sid)
+    if check["ok"]:
+        m.unmerge_session(sid)
+        logger.info("Unmerge: %s", sid)
+    m.close()
+
+    _write_progress(f"再マージ中: {sid}")
+    m = CrossSessionMerger(db)
+    n = m.merge_to_master(sid)
+    logger.info("Re-merge: %s → +%d nodes", sid, n)
+    m.close()
+
+    conn = sqlite3.connect(str(db))
+    master_nodes = conn.execute("SELECT COUNT(*) FROM lc_master_nodes WHERE version_id = 1").fetchone()[0]
+    conn.close()
+    _write_progress("完了")
+    with open(sys.argv[1], "w") as f:
+        json.dump({"ok": True, "master_nodes": master_nodes, "new_nodes": n}, f, ensure_ascii=False)
+except Exception as e:
+    import traceback
+    with open(sys.argv[1], "w") as f:
+        json.dump({"ok": False, "error": str(e), "trace": traceback.format_exc()}, f, ensure_ascii=False)
+PYTHON);
+    }
+
+    $bgCmd = "cd " . escapeshellarg($crawlerDirRaw)
+           . " && ./venv/bin/python -B -W ignore " . escapeshellarg($scriptFile)
+           . " " . escapeshellarg($resultFile)
+           . " </dev/null > storage/adopt_rebuild.log 2>&1 &";
+    pclose(popen($bgCmd, 'r'));
+    header('Content-Type: application/json');
+    echo json_encode(['started' => true, 'is_seed' => $isSeed, 'session_id' => $sessionId]);
+    exit;
+}
+
+// --- check_screen_master アクション (Live タブ: 採用時の確認用) ---
+if ($action === 'check_screen_master') {
+    $screenId = (int)($_GET['screen_id'] ?? 0);
+    if ($screenId <= 0 || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'invalid request']);
+        exit;
+    }
+    $result = $repository->checkScreenMaster($screenId);
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
+// --- toggle_screen_artifact アクション (Live タブ用 不採用/採用) ---
+if ($action === 'toggle_screen_artifact') {
+    $screenId = (int)($_GET['screen_id'] ?? 0);
+    if ($screenId <= 0 || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'invalid request']);
+        exit;
+    }
+    $result = $repository->toggleScreenArtifact($screenId);
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     exit;
 }
@@ -617,17 +825,21 @@ except ImportError:
 from pathlib import Path
 from tools.cross_session_merger import CrossSessionMerger
 import sqlite3
-exclude_fps = set(json.loads('{$excludeFps}'))
-include_fps = set(json.loads('{$includeFps}'))
-m = CrossSessionMerger(Path("storage/ludus.db"))
-n = m.merge_to_master("{$sessionId}", exclude_fps=exclude_fps, include_fps=include_fps)
-conn = sqlite3.connect("storage/ludus.db")
-master_nodes = conn.execute("SELECT COUNT(*) FROM lc_master_nodes").fetchone()[0]
-anchors = conn.execute("SELECT COUNT(*) FROM lc_node_mappings WHERE session_id=? AND match_method != 'new'", ("{$sessionId}",)).fetchone()[0]
-conn.close()
-m.close()
-with open(sys.argv[1], "w") as f:
-    json.dump({"ok": True, "new_nodes": n, "anchors": anchors, "master_nodes": master_nodes}, f, ensure_ascii=False)
+try:
+    exclude_fps = set(json.loads('{$excludeFps}'))
+    include_fps = set(json.loads('{$includeFps}'))
+    m = CrossSessionMerger(Path("storage/ludus.db"))
+    n = m.merge_to_master("{$sessionId}", exclude_fps=exclude_fps, include_fps=include_fps)
+    conn = sqlite3.connect("storage/ludus.db")
+    master_nodes = conn.execute("SELECT COUNT(*) FROM lc_master_nodes").fetchone()[0]
+    anchors = conn.execute("SELECT COUNT(*) FROM lc_node_mappings WHERE session_id=? AND match_method != 'new'", ("{$sessionId}",)).fetchone()[0]
+    conn.close()
+    m.close()
+    with open(sys.argv[1], "w") as f:
+        json.dump({"ok": True, "new_nodes": n, "anchors": anchors, "master_nodes": master_nodes}, f, ensure_ascii=False)
+except Exception as e:
+    with open(sys.argv[1], "w") as f:
+        json.dump({"ok": False, "error": str(e)}, f, ensure_ascii=False)
 PYTHON);
     $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
     $bgCmd = "cd " . escapeshellarg($crawlerDirRaw)
@@ -900,6 +1112,16 @@ if ($action === 'get_api_usage') {
             . " FROM lc_api_usage GROUP BY purpose ORDER BY purpose"
         )->fetchAll(PDO::FETCH_ASSOC);
 
+        // 月別集計
+        $monthly = $db->query(
+            "SELECT strftime('%Y-%m', created_at) as month, model, purpose,"
+            . " SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens,"
+            . " COUNT(*) as call_count"
+            . " FROM lc_api_usage"
+            . " GROUP BY month, model, purpose"
+            . " ORDER BY month DESC, model, purpose"
+        )->fetchAll(PDO::FETCH_ASSOC);
+
         // 全体合計
         $total = $db->query(
             "SELECT SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens,"
@@ -909,6 +1131,7 @@ if ($action === 'get_api_usage') {
 
         echo json_encode([
             'daily' => $daily ?: [],
+            'monthly' => $monthly ?: [],
             'by_model' => $byModel ?: [],
             'by_purpose' => $byPurpose ?: [],
             'total' => $total ?: ['input_tokens' => 0, 'output_tokens' => 0, 'count' => 0],
@@ -927,6 +1150,25 @@ if ($action === 'delete_session') {
         exit;
     }
     $result = $repository->deleteSession($sessionId);
+    // セッションディレクトリが空なら削除
+    if ($result['ok'] ?? false) {
+        $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+        $imageDirs = [
+            $crawlerDir . '/storage/screenshots/',
+            $crawlerDir . '/storage/evidence/',
+            $crawlerDir . '/evidence/',
+        ];
+        foreach ($imageDirs as $base) {
+            $dir = $base . $sessionId;
+            if (is_dir($dir)) {
+                // ファイルが残っていなければディレクトリ削除
+                $remaining = glob("$dir/*");
+                if (empty($remaining)) {
+                    @rmdir($dir);
+                }
+            }
+        }
+    }
     echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     exit;
 }

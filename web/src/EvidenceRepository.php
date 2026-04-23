@@ -591,7 +591,7 @@ class EvidenceRepository
             'user_excluded'   => (bool)($raw['user_excluded'] ?? false),
             'master_fp'       => $raw['master_fp'] ?? null,
             'manual_group_id' => $raw['manual_group_id'] ?? null,
-            'is_artifact'     => (bool)($raw['is_artifact'] ?? false),
+            'is_artifact'     => (int)($raw['is_artifact'] ?? 0),
             'anchor_info'     => $raw['anchor_info'] ?? null,
             'all_mapping_info' => $raw['all_mapping_info'] ?? null,
             'last_match_method' => $raw['last_match_method'] ?? null,
@@ -614,6 +614,12 @@ class EvidenceRepository
               AND NOT EXISTS (
                 SELECT 1 FROM lc_node_mappings nm
                 WHERE nm.session_id = sg.session_id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM lc_screens
+                WHERE session_id = sg.session_id
+                  AND is_representative = 1
+                  AND ocr_text_gemini IS NULL
               )
             ORDER BY s.started_at ASC
         SQL;
@@ -817,6 +823,179 @@ class EvidenceRepository
         }
     }
 
+    /**
+     * Live タブ用: スクリーンの is_artifact をトグル (不採用/採用)
+     */
+    public function toggleScreenArtifact(int $screenId): array
+    {
+        $row = $this->db->prepare(
+            "SELECT s.id, COALESCE(s.is_artifact, 0) AS is_artifact,"
+            . " s.fingerprint, s.session_id"
+            . " FROM lc_screens s WHERE s.id = :id"
+        );
+        $row->execute([':id' => $screenId]);
+        $current = $row->fetch(\PDO::FETCH_ASSOC);
+        if ($current === false) {
+            return ['error' => 'not found'];
+        }
+        // is_artifact: 0=通常, 1=Gemini不採用, 2=ユーザー不採用
+        $newVal = $current['is_artifact'] ? 0 : 2;
+        $this->db->prepare(
+            "UPDATE lc_screens SET is_artifact = :val WHERE id = :id"
+        )->execute([':val' => $newVal, ':id' => $screenId]);
+
+        $result = [
+            'screen_id' => $screenId,
+            'is_artifact' => (int)$newVal,
+            'session_id' => $current['session_id'],
+        ];
+
+        // マスターノードとの関連を確認
+        $fp = $current['fingerprint'];
+        $master = $this->db->prepare(
+            "SELECT m.master_fp, m.sort_order, m.user_excluded,"
+            . " (SELECT nm.match_method FROM lc_node_mappings nm"
+            . "  WHERE nm.master_fp = m.master_fp ORDER BY nm.rowid ASC LIMIT 1) AS seed_method"
+            . " FROM lc_master_nodes m WHERE m.master_fp = :fp"
+        );
+        $master->execute([':fp' => $fp]);
+        $masterRow = $master->fetch(\PDO::FETCH_ASSOC);
+
+        if ($masterRow) {
+            $isSeed = ($masterRow['seed_method'] === 'seed');
+            $result['has_master'] = true;
+            $result['is_seed'] = $isSeed;
+
+            if ($newVal) {
+                // 不採用: 他セッションのマッピングがなければマスターノードも除外
+                $otherMappings = $this->db->prepare(
+                    "SELECT COUNT(*) FROM lc_node_mappings"
+                    . " WHERE master_fp = :fp AND session_id != :sid"
+                );
+                $otherMappings->execute([':fp' => $fp, ':sid' => $current['session_id']]);
+                if ((int)$otherMappings->fetchColumn() === 0) {
+                    $this->db->prepare(
+                        "UPDATE lc_master_nodes SET user_excluded = 1, sort_order = NULL WHERE master_fp = :fp"
+                    )->execute([':fp' => $fp]);
+                    $this->renumberSortOrders($this->getActiveVersionId());
+                    $result['master_excluded'] = true;
+                } else {
+                    // 他セッションあり: 代表画像が不採用スクリーンなら切り替え
+                    $repCheck = $this->db->prepare(
+                        "SELECT representative_screen_id FROM lc_master_nodes WHERE master_fp = :fp"
+                    );
+                    $repCheck->execute([':fp' => $fp]);
+                    $currentRepId = (int)$repCheck->fetchColumn();
+                    if ($currentRepId === $screenId) {
+                        $altId = $this->selectBestRepresentative($fp, $current['session_id']);
+                        if ($altId) {
+                            $this->db->prepare(
+                                "UPDATE lc_master_nodes SET representative_screen_id = :rid WHERE master_fp = :fp"
+                            )->execute([':rid' => $altId, ':fp' => $fp]);
+                            $result['representative_changed'] = true;
+                        }
+                    }
+                    $result['master_excluded'] = false;
+                }
+            } else {
+                // 採用: マスターノードが除外中なら末尾に復帰
+                if ($masterRow['user_excluded']) {
+                    $maxSort = (int)$this->db->query(
+                        "SELECT COALESCE(MAX(sort_order), -1) FROM lc_master_nodes"
+                    )->fetchColumn();
+                    $this->db->prepare(
+                        "UPDATE lc_master_nodes SET user_excluded = 0, sort_order = :sort WHERE master_fp = :fp"
+                    )->execute([':sort' => $maxSort + 1, ':fp' => $fp]);
+                    $result['master_restored'] = true;
+                }
+            }
+        } else {
+            $result['has_master'] = false;
+        }
+
+        return $result;
+    }
+
+    /**
+     * マスターノードの代表スクリーンを選出する。
+     * 同一テキストのノード数が多いグループから、最新の discovered_at を持つものを選ぶ。
+     */
+    private function selectBestRepresentative(string $masterFp, string $excludeSessionId): ?int
+    {
+        // マスターノードにマッピングされた他セッションのスクリーンを取得
+        $stmt = $this->db->prepare(
+            "SELECT s.id, COALESCE(s.ocr_text_gemini, s.ocr_text_hq, s.ocr_text, '') AS ocr_text,"
+            . " s.discovered_at"
+            . " FROM lc_screens s"
+            . " JOIN lc_node_mappings nm ON nm.session_fp = s.fingerprint AND nm.master_fp = :fp"
+            . " WHERE s.session_id != :sid AND s.is_representative = 1"
+            . " AND COALESCE(s.is_artifact, 0) = 0"
+        );
+        $stmt->execute([':fp' => $masterFp, ':sid' => $excludeSessionId]);
+        $candidates = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+
+        if (empty($candidates)) {
+            return null;
+        }
+        if (count($candidates) === 1) {
+            return (int)$candidates[0]['id'];
+        }
+
+        // テキストごとにグループ化し、最多グループから選出
+        $groups = [];
+        foreach ($candidates as $c) {
+            $text = trim($c['ocr_text']);
+            $groups[$text][] = $c;
+        }
+
+        // 最多ノード数のグループを選択
+        usort($groups, fn($a, $b) => count($b) - count($a));
+        $bestGroup = reset($groups);
+
+        // グループ内で最新の discovered_at を持つものを選出
+        usort($bestGroup, fn($a, $b) => strcmp($b['discovered_at'], $a['discovered_at']));
+
+        return (int)$bestGroup[0]['id'];
+    }
+
+    /**
+     * Live タブ: スクリーンに対応するマスターノードの状態を確認 (採用確認ダイアログ用)
+     */
+    public function checkScreenMaster(int $screenId): array
+    {
+        $row = $this->db->prepare(
+            "SELECT s.fingerprint, s.session_id FROM lc_screens s WHERE s.id = :id"
+        );
+        $row->execute([':id' => $screenId]);
+        $screen = $row->fetch(\PDO::FETCH_ASSOC);
+        if (!$screen) {
+            return ['has_master' => false];
+        }
+
+        $master = $this->db->prepare(
+            "SELECT m.master_fp, COALESCE(m.user_excluded, 0) AS user_excluded"
+            . " FROM lc_master_nodes m WHERE m.master_fp = :fp"
+        );
+        $master->execute([':fp' => $screen['fingerprint']]);
+        $masterRow = $master->fetch(\PDO::FETCH_ASSOC);
+        if (!$masterRow) {
+            return ['has_master' => false];
+        }
+
+        $seedCheck = $this->db->prepare(
+            "SELECT match_method FROM lc_node_mappings WHERE master_fp = :fp ORDER BY rowid ASC LIMIT 1"
+        );
+        $seedCheck->execute([':fp' => $screen['fingerprint']]);
+        $seedRow = $seedCheck->fetch(\PDO::FETCH_ASSOC);
+
+        return [
+            'has_master' => true,
+            'master_excluded' => (bool)$masterRow['user_excluded'],
+            'is_seed' => $seedRow && $seedRow['match_method'] === 'seed',
+            'session_id' => $screen['session_id'],
+        ];
+    }
+
     public function getFinalScreensIncludeExcluded(
         int    $limit     = 10000,
         string $gameTitle = '',
@@ -975,10 +1154,12 @@ class EvidenceRepository
             "UPDATE lc_screens SET is_representative = 1 WHERE id = ?"
         )->execute([$newScreenId]);
 
-        // マスターノードの representative_screen_id を更新
-        $this->db->prepare(
-            "UPDATE lc_master_nodes SET representative_screen_id = ? WHERE master_fp = ?"
-        )->execute([$newScreenId, $masterFp]);
+        // マスターノードの representative_screen_id を更新 (master_fp がある場合のみ)
+        if ($masterFp !== '') {
+            $this->db->prepare(
+                "UPDATE lc_master_nodes SET representative_screen_id = ? WHERE master_fp = ?"
+            )->execute([$newScreenId, $masterFp]);
+        }
 
         return ['ok' => true, 'master_fp' => $masterFp, 'new_screen_id' => $newScreenId];
     }
@@ -987,21 +1168,45 @@ class EvidenceRepository
 
     public function deleteSession(string $sessionId): array
     {
-        // 代表画像のIDを保持 (master_nodes が参照)
-        $repIds = $this->db->prepare(
-            "SELECT id FROM lc_screens WHERE session_id = ? AND is_representative = 1"
+        // セッション状態を取得
+        $sess = $this->db->prepare(
+            "SELECT status FROM lc_sessions WHERE session_id = ?"
         );
-        $repIds->execute([$sessionId]);
-        $keepIds = array_column($repIds->fetchAll(\PDO::FETCH_ASSOC), 'id');
+        $sess->execute([$sessionId]);
+        $sessRow = $sess->fetch(\PDO::FETCH_ASSOC);
+        if (!$sessRow) {
+            return ['error' => 'session not found'];
+        }
+        $status = $sessRow['status'];
 
-        // 1. 不採用スクリーンのファイルパスを取得して削除
+        // マージ済みか判定 (node_mappings が存在する)
+        $stmt = $this->db->prepare("SELECT COUNT(*) FROM lc_node_mappings WHERE session_id = ?");
+        $stmt->execute([$sessionId]);
+        $hasMappings = (int)$stmt->fetchColumn() > 0;
+
+        // running → discarded に変更
+        if ($status === 'running') {
+            $this->db->prepare(
+                "UPDATE lc_sessions SET status = 'discarded' WHERE session_id = ?"
+            )->execute([$sessionId]);
+        }
+
+        // 削除対象を決定
+        // マージ済み: 非代表のみ削除（代表はマスターノードが参照）
+        // 未マージ/running: 全画面削除
+        $deleteAll = !$hasMappings;
+
+        // 1. 画像ファイル物理削除
+        $fileCondition = $deleteAll ? "" : " AND is_representative = 0";
         $stmt = $this->db->prepare(
-            "SELECT screenshot_path, thumbnail_path FROM lc_screens"
-            . " WHERE session_id = ? AND is_representative = 0"
+            "SELECT id, screenshot_path, thumbnail_path FROM lc_screens"
+            . " WHERE session_id = ?" . $fileCondition
         );
         $stmt->execute([$sessionId]);
         $deletedFiles = 0;
+        $deleteScreenIds = [];
         foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+            $deleteScreenIds[] = $row['id'];
             foreach (['screenshot_path', 'thumbnail_path'] as $col) {
                 if (!empty($row[$col]) && file_exists($row[$col])) {
                     @unlink($row[$col]);
@@ -1010,25 +1215,29 @@ class EvidenceRepository
             }
         }
 
-        // 2. 不採用 lc_tappable_items 削除
-        if ($keepIds) {
-            $placeholders = implode(',', array_fill(0, count($keepIds), '?'));
-            $this->db->prepare(
-                "DELETE FROM lc_tappable_items WHERE screen_id IN ("
-                . "SELECT id FROM lc_screens WHERE session_id = ? AND id NOT IN ($placeholders))"
-            )->execute(array_merge([$sessionId], $keepIds));
-        } else {
-            $this->db->prepare(
-                "DELETE FROM lc_tappable_items WHERE screen_id IN ("
-                . "SELECT id FROM lc_screens WHERE session_id = ?)"
-            )->execute([$sessionId]);
+        // 2. lc_tappable_items 削除
+        if (!empty($deleteScreenIds)) {
+            $chunks = array_chunk($deleteScreenIds, 500);
+            foreach ($chunks as $chunk) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+                $this->db->prepare(
+                    "DELETE FROM lc_tappable_items WHERE screen_id IN ($placeholders)"
+                )->execute($chunk);
+            }
         }
 
-        // 3. 不採用 lc_screens 削除
-        $this->db->prepare(
-            "DELETE FROM lc_screens WHERE session_id = ? AND is_representative = 0"
-        )->execute([$sessionId]);
-        $deletedScreens = $this->db->prepare("SELECT changes()")->fetchColumn();
+        // 3. lc_screens 削除
+        $deletedScreens = 0;
+        if (!empty($deleteScreenIds)) {
+            $chunks = array_chunk($deleteScreenIds, 500);
+            foreach ($chunks as $chunk) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+                $this->db->prepare(
+                    "DELETE FROM lc_screens WHERE id IN ($placeholders)"
+                )->execute($chunk);
+                $deletedScreens += (int)$this->db->prepare("SELECT changes()")->fetchColumn();
+            }
+        }
 
         // 4. lc_transitions 削除
         $this->db->prepare(
@@ -1045,17 +1254,30 @@ class EvidenceRepository
             "DELETE FROM lc_session_graphs WHERE session_id = ?"
         )->execute([$sessionId]);
 
-        // 7. セッションを archived に更新
-        $this->db->prepare(
-            "UPDATE lc_sessions SET status = 'archived' WHERE session_id = ?"
-        )->execute([$sessionId]);
+        // 7. セッション status 更新 (running以外は archived に)
+        if ($status !== 'running') {
+            $this->db->prepare(
+                "UPDATE lc_sessions SET status = 'archived' WHERE session_id = ?"
+            )->execute([$sessionId]);
+        }
+        // running は既に discarded に更新済み
+
+        // 代表で残った画面数
+        $keptStmt = $this->db->prepare(
+            "SELECT COUNT(*) FROM lc_screens WHERE session_id = ?"
+        );
+        $keptStmt->execute([$sessionId]);
+        $keptScreens = (int)$keptStmt->fetchColumn();
 
         return [
             'ok' => true,
             'session_id' => $sessionId,
-            'deleted_screens' => (int)$deletedScreens,
+            'original_status' => $status,
+            'new_status' => $status === 'running' ? 'discarded' : 'archived',
+            'delete_mode' => $deleteAll ? 'all' : 'non_representative',
+            'deleted_screens' => $deletedScreens,
             'deleted_files' => $deletedFiles,
-            'kept_screens' => count($keepIds),
+            'kept_screens' => $keptScreens,
         ];
     }
 

@@ -232,7 +232,7 @@ def _stage2_dictionary(text: str, dictionary: list[str] = _GAME_DICTIONARY) -> s
 
 _GEMINI_MODEL = "gemini-2.5-flash-lite"
 _GEMINI_RATE_LIMIT = 1.5  # 40 RPM (有料枠) → 1.5秒間隔で安全
-_GEMINI_BATCH_SIZE = 8    # 1リクエストあたりの画像枚数（観察しながら調整）
+_GEMINI_BATCH_SIZE = 4    # 1リクエストあたりの画像枚数（8枚で出力途切れ頻発のため4に縮小）
 
 # Gemini が誤って返す「テキストなし」系の説明文パターン (空文字に変換)
 _NO_TEXT_PATTERNS = [
@@ -272,7 +272,7 @@ _GEMINI_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedr
 {{
   "corrected_text": "画面上の全テキスト（主要テキストをスペース区切りで）",
   "corrections": [
-    {{"before": "初期OCRの誤読", "after": "正しいテキスト", "reason": "理由"}}
+    {{"before": "初期OCRの誤読", "after": "正しいテキスト"}}
   ],
   "is_artifact": false,
   "screen_type": "ADV"
@@ -292,19 +292,40 @@ _GEMINI_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedr
 - 修正対象は OCR 由来の **誤認識のみ** (例: 「明美」→「暁美」、「fu.」→「Lv.」)
 
 ## is_artifact 判定ルール
-以下のいずれかに該当する場合 true:
-1. 演出・エフェクト中（派手な光、スキル演出が大部分を占める）
-2. 非情報フレーム（暗転、真っ白、テキストも操作UIもない）
-3. 獲得・リザルトポップアップ（「OK」のみの単純な通知）
-4. 不完全なキャプチャ（半分切れ、ノイズ）
+以下の【判定ステップ】に沿って、上から順に評価し、最初に該当した条件で判定を確定してください。
 
-## screen_type: "HOME" / "ADV" / "BATTLE_UI" / "ARTIFACT"'''
+**ステップ1: 残す画面か？（該当 → is_artifact=false で確定）**
+テキストの有無に関わらず、以下に該当すれば直ちに false:
+- 人物（キャラクター）の本体が少しでも描かれている画面（全身や顔だけでなく、手元・目元・口元などの「身体の一部のクローズアップ」や「後ろ姿」もすべて含む。テキストが一切ないアニメ風のカットも必ず false）
+  ※注意: 画面下部の「小さなキャラの顔アイコン」だけが見えている状態は、キャラクターが描かれているとは見なさない
+- メニュー、ホーム、編成、バトルコマンド選択（画面がエフェクトで覆われていない安定した状態に限る）、ダイアログ、リザルト画面
+
+**ステップ2: 除外する画面か？（該当 → is_artifact=true）**
+ステップ1に該当せず、以下のいずれかに当てはまる場合のみ true:
+- 画面の大部分（70%以上）がエフェクト（光、爆発、ビーム、魔法陣）で覆われている。SKIPボタンや下部のキャラ顔アイコンが見えていても、キャラクター本体がエフェクトで隠れていれば必ず true
+- 暗転、白転、ロード画面
+- 不完全なキャプチャ（半分切れ、ノイズ）
+
+**判定の原則**: 人物の本体やその身体の一部が少しでも描かれているなら false。迷ったら false。
+
+※テキスト抽出に関する警告:
+corrected_text が空であることと is_artifact=true は全く無関係です。テキストが空でもキャラクター本体が視認できれば必ず false。
+
+## screen_type 判定ルール
+先に決定した is_artifact の値に基づいて判定してください。
+- is_artifact=true の場合: 必ず "ARTIFACT"
+- is_artifact=false の場合: 以下の優先順位で分類
+  1. テキストボックスとキャラクター名がある → "ADV"
+  2. バトルのUI（HPバー、コマンド）がある → "BATTLE_UI"
+  3. 上記以外（メニュー、ホーム、カットシーン等） → "HOME"'''
 
 
 _GEMINI_BATCH_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedra」のUI仕様と世界観に精通したデバッグエンジニアです。
 
 複数のゲーム画面のスクリーンショットから、各画面のテキストを正確に読み取ってください。
 画像は順番に「画像1, 画像2, ...」として渡されます。
+
+**重要: 各画像は互いに無関係です。他の画像と比較せず、1枚ずつ独立に判定してください。**
 
 ## マスターリスト（参考）
 - キャラ名: 鹿目まどか、暁美ほむら、美樹さやか、巴マミ、佐倉杏子、由比鶴乃、七海やちよ、環いろは、秋野かえで、深月フェリシア、二葉さな、水波レナ、御園かりん、梓みふゆ、十咎ももこ、志筑仁美、キュゥべえ、早乙女和子
@@ -319,7 +340,7 @@ _GEMINI_BATCH_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia
     {{
       "index": 1,
       "corrected_text": "画像1のテキスト",
-      "corrections": [{{"before": "誤読", "after": "正", "reason": "..."}}],
+      "corrections": [{{"before": "誤読", "after": "正"}}],
       "is_artifact": false,
       "screen_type": "ADV"
     }},
@@ -351,36 +372,36 @@ _GEMINI_BATCH_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia
   - 文字種そのものが画面と一致しているなら触らない
 
 ## is_artifact 判定ルール (boolean)
-以下のいずれかに該当する場合、true（記録不要）と判定してください。
+以下の【判定ステップ】に沿って、上から順に評価し、最初に該当した条件で判定を確定してください。
 
-1. **演出・エフェクト中**:
-   - 派手な光、攻撃エフェクト、スキル演出が画面の大部分を占めている。
-   - キャラクターのカットインのみで、操作UI（コマンドボタン等）がない。
-2. **非情報フレーム**:
-   - 暗転、真っ白、または著しくボケている画面。
-   - 動画再生中などで、テキストや操作UIが一切存在しない。
-3. **獲得・リザルトポップアップ**:
-   - アイテム獲得、報酬表示などの一時的な通知（「OK」ボタンのみの単純なもの）。
-   - 地図としての情報（場所、メニュー、会話）が含まれていない。
-4. **不完全なキャプチャ**:
-   - 画面が半分切れている、または読み取り不能なノイズ。
-
-is_artifact=false とすべきもの（残す画面）:
+**ステップ1: 残す画面か？（該当 → is_artifact=false で確定）**
+テキストの有無に関わらず、以下に該当すれば直ちに false としてください:
+- 人物（キャラクター）の本体が少しでも描かれている画面（全身や顔だけでなく、手元・目元・口元などの「身体の一部のクローズアップ」や「後ろ姿」もすべて含む。テキストが一切ないアニメ風のカットも必ず false）
+  ※注意: 画面下部の「小さなキャラの顔アイコン」だけが見えている状態は、キャラクターが描かれているとは見なさない
 - メニュー画面、ホーム画面、編成画面
 - セリフ付きの会話シーン（ADV）
-- バトルのコマンド選択画面（演出中ではないUI状態）
+- バトルのコマンド選択画面（画面がエフェクトで覆われていない安定した状態に限る）
 - ダイアログ・ポップアップ（操作を伴うもの）
+- 獲得・リザルト画面
+
+**ステップ2: 除外する画面か？（該当 → is_artifact=true）**
+ステップ1に該当せず、以下のいずれかに当てはまる場合のみ true としてください:
+1. **演出エフェクト**: 画面の大部分（70%以上）がエフェクト（光、爆発、ビーム、魔法陣）で覆われている。SKIPボタンや下部のキャラ顔アイコンが見えていても、キャラクター本体がエフェクトで隠れていれば必ず true
+2. **非情報フレーム**: 暗転、白転、またはロード中を示すアイコンしかない画面
+3. **不完全なキャプチャ**: 画面が半分切れている、または著しいノイズで状況が不明
+
+**判定の原則**: 人物の本体やその身体の一部が少しでも描かれているなら false。迷ったら false。
+
+※テキスト抽出に関する警告:
+corrected_text や noise_words が空であることと is_artifact=true は全く無関係です。テキストが空でもキャラクター本体が視認できれば必ず false。
 
 ## screen_type 判定ルール (string)
-判定の根拠として、以下のいずれかを割り当ててください。
-- "HOME": ホーム、メニュー、編成画面
-- "ADV": セリフや名前が表示されている会話シーン
-- "BATTLE_UI": コマンド選択可能なバトル画面
-- "ARTIFACT": 上記の除外対象（演出、暗転、ポップアップ等）
-
-各 result オブジェクトに以下を追加:
-"is_artifact": false,
-"screen_type": "HOME"
+先に決定した is_artifact の値に基づいて判定してください。
+- is_artifact=true の場合: 必ず "ARTIFACT"
+- is_artifact=false の場合: 以下の優先順位で分類
+  1. テキストボックスとキャラクター名がある → "ADV"
+  2. バトルのUI（HPバー、コマンド）がある → "BATTLE_UI"
+  3. 上記以外（メニュー、ホーム、カットシーン等） → "HOME"
 
 ## UIノイズ語の抽出
 各画像のテキスト中に、画面の本来のコンテンツ（セリフ、メニュー名、説明文）ではなく、
@@ -438,6 +459,11 @@ def gemini_correct_single(
                 _genai.types.Part.from_bytes(data=img_data, mime_type=mime),
                 _GEMINI_PROMPT.format(ocr_text=ocr_text),
             ],
+            config=_genai.types.GenerateContentConfig(
+                response_mime_type="application/json",
+                max_output_tokens=8192,
+                temperature=0.1,
+            ),
         )
 
         # API 使用量記録
@@ -520,6 +546,11 @@ def gemini_correct_multi(
         response = client.models.generate_content(
             model=_GEMINI_MODEL,
             contents=contents,
+            config=_genai.types.GenerateContentConfig(
+                response_mime_type="application/json",
+                max_output_tokens=8192,
+                temperature=0.1,
+            ),
         )
 
         # API 使用量記録
@@ -535,11 +566,11 @@ def gemini_correct_multi(
             text = re.sub(r'^```\w*\n?', '', text)
             text = re.sub(r'\n?```$', '', text)
 
-        # Gemini が不正な制御文字を含むことがあるため strict=False + 制御文字除去
+        # response_mime_type="application/json" により構造化出力が保証されるが、
+        # フォールバックとして制御文字除去も残す
         try:
             result = json.loads(text, strict=False)
         except json.JSONDecodeError:
-            # 制御文字 (0x00-0x1F, タブ/改行/CR 以外) を除去してリトライ
             cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
             result = json.loads(cleaned, strict=False)
         results = result.get("results", [])
@@ -560,6 +591,7 @@ def gemini_correct_multi(
                 "corrections": r.get("corrections", []),
                 "is_artifact": r.get("is_artifact", False),
                 "screen_type": r.get("screen_type", ""),
+                "noise_words": r.get("noise_words", []),
             })
             # パターン学習
             orig = index_to_orig[idx]

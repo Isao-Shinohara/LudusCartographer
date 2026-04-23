@@ -1,5 +1,5 @@
 """
-ap/state.py — PilotState / StallCounter
+ap/state.py — PilotState / CycleState / StallCounter
 """
 from __future__ import annotations
 
@@ -58,8 +58,12 @@ class StallCounter:
 
 
 @dataclass
-class PilotState:
-    """操縦状態"""
+class CycleState:
+    """周回ごとに破棄・再作成される状態。
+
+    新しいフィールドを追加する際は、周回をまたいで引き継ぐ必要がなければ
+    ここに追加する（PilotState ではなく）。
+    """
     iteration: int = 0
     last_phash: str = ""
     stall_start: float = 0.0
@@ -69,152 +73,95 @@ class PilotState:
     battle_wait_count: int = 0
     auto_activated: bool = False
     home_reached: bool = False
-    game_foreground: bool = False  # ゲームアプリが前面に来たら True（スクショ記録ガード）
-    tutorial_cleared: bool = False  # True: ホームチュートリアル完了確認済み (指/金枠検出スキップ)
+    game_foreground: bool = False
+    tutorial_cleared: bool = False
     total_taps: int = 0
-    ineffective_tap_count: int = 0  # タップしたのに画面変化なしの連続回数 (メニュースタック救済用)
-    _prev_taps_snapshot: int = 0    # 前回イテレーション開始時の total_taps (変化検出用)
-    _prev_ocr_texts: list = field(default_factory=list)  # 前回の OCR テキスト (変化検出用)
+    ineffective_tap_count: int = 0
+    _prev_taps_snapshot: int = 0
+    _prev_ocr_texts: list = field(default_factory=list)
     total_ocr_calls: int = 0
     total_ocr_skipped: int = 0
     total_blackout_skipped: int = 0
     consecutive_blackouts: int = 0
-    # 暗背景(p90=6〜20) + OCR 0件の連続回数 (OCRスキップ判定用)
     dark_ocr_empty_count: int = 0
     screenshots_saved: int = 0
-    device_w: int = 0
-    device_h: int = 0
-    # 強制解析カウンタ (phash 変化なしの連続回数)
     same_phash_count: int = 0
-    # 完全凍結フレームカウンタ (phash_dist=0 の連続回数) — 階層型Watchdog用
     consecutive_frozen_frames: int = 0
-    # 最後に強制解析を実行した時刻
     last_forced_ocr_at: float = 0.0
-    # 同一位置の指差しブロブ連続検出カウンタ (誤検出抑制)
     last_blob_xy: tuple = (0, 0)
     blob_same_count: int = 0
-    # フリーバトル: 左キャラ選択済みフラグ (True なら次は右スキルを優先)
     char_just_selected: bool = False
-    # 発光SMバトル: キャラ選択済みフラグ (GLOW State Machine 用)
     character_selected: bool = False
-    # チュートリアルポップアップ連続タップ回数 (高くなると異なる座標を試す)
     pre_popup_tap_count: int = 0
-    # 現在のシーン分類 (BATTLE / ADV / LOADING / MENU / UNKNOWN)
     current_scene: str = "UNKNOWN"
-    # MOVIE→UNKNOWN 遷移直後: 検知は行うがタップを抑制するフラグ
     tap_suppressed: bool = False
-    # ホーム画面からクエスト等への遷移試行回数 (遷移中の誤停止を防ぐ)
     home_nav_count: int = 0
-    # ─── Watchdog ───
-    # 最後に画面変化(phash変化)を検出した時刻
     last_screen_change_time: float = field(default_factory=time.time)
-    # Watchdog による復旧試行回数
     watchdog_recovery_count: int = 0
-    # ─── ダウンロード進捗ログ ───
-    # 最後にダウンロード進捗をログ出力した時刻
     last_download_progress_log: float = 0.0
-    # ─── スクリーンショット破損リトライ統計 ───
-    screenshot_retry_count: int = 0  # SIGSEGV防止リトライ発生回数
-    # gold_swipe StallCounter は廃止 — スワイプ後のシーン判定で停止判断に変更
-    # ─── デバッグ: 最新スクリーンショット (numpy ndarray) ───
-    last_screen: object = None  # cv2.imread 結果を格納 (型ヒント省略でdataclass互換)
-    # ─── ROI: ゲーム描画領域 (レターボックス除外) ───
-    # detect_game_roi() で更新: (roi_x, roi_y, roi_w, roi_h)
+    screenshot_retry_count: int = 0
+    last_screen: object = None
     game_roi: tuple = (0, 0, ANALYSIS_W, ANALYSIS_H)
-    # ─── アナリティクス: 主要検知カウンタ ───
-    dialog_detections: int = 0   # ダイアログ検知成功 (DIALOG_CLOSE/NEXT)
-    finger_detections: int = 0   # 指アイコン検知成功 (MOYA_TAP)
-    gold_detections: int = 0     # 金枠ボタン検知成功 (FINGER+GOLD_FRAME)
-    total_loop_ms: float = 0.0   # 全ループ経過時間合計 [ms] (平均算出用)
-    # ─── 指アイコン静止画面カウンタ (スワイプシーン検出用) ───
+    dialog_detections: int = 0
+    finger_detections: int = 0
+    gold_detections: int = 0
+    total_loop_ms: float = 0.0
     finger_tap_static: StallCounter = field(
         default_factory=lambda: StallCounter("finger_tap_static", threshold=3))
-    # dialog_close_total は廃止 — pre_popup_tap_count に一本化 (エスカレーション: 4=OK, 8=BACK, 12=OCR再確認)
-    # ─── Result画面ハンドラ状態 ───
-    result_rapid_count: int = 0       # RESULT_RAPID ループ反復 [0..15]
-    result_total_taps: int = 0        # Result画面での累積タップ [0..30]
-    result_subtype: str = ""          # "GACHA" | "BATTLE" | ""
-    # ─── 隠れ動的属性の昇格 ───
+    result_rapid_count: int = 0
+    result_total_taps: int = 0
+    result_subtype: str = ""
     gacha_total: StallCounter = field(
         default_factory=lambda: StallCounter("gacha_total", threshold=15))
-    # dialog_nav_stall は廃止 — ▷は×ボタン出現まで無条件タップに変更
-    unity_restart_count: int = 0      # Unity force-restart 試行回数 [0..3]
-    wifi_fail_streak: int = 0         # Wi-Fi破損連続失敗カウンタ [0..5]
-    portrait_back_streak: int = 0     # PORTRAIT BACK連続送信カウンタ (3回超で HOME に切替)
-    last_phash_dist: int = 999        # 直近の phash 距離 (detect_and_act 内で参照)
-    home_tutorial_tap_count: int = 0  # EARLY HOME検出でのHOME_TUTORIAL_TAP連続回数 (脱出閾値=10)
-    action_repeat_count: int = 0     # 同一アクション連続回数 (シーン再評価トリガー)
-    scene_reeval_mode: bool = False  # True: ガード緩和して再判定中
-    # ─── 周回モード ───
-    grind_mode: bool = False          # True: ホーム到達後もクエストへ自動ナビゲート
-    grind_max_cycles: int = 0         # 0=無制限, N>0=N周で停止
-    grind_cycles_completed: int = 0   # 周回完了回数
+    unity_restart_count: int = 0
+    wifi_fail_streak: int = 0
+    portrait_back_streak: int = 0
+    last_phash_dist: int = 999
+    home_tutorial_tap_count: int = 0
+    action_repeat_count: int = 0
+    scene_reeval_mode: bool = False
     normatk_fallback: StallCounter = field(
         default_factory=lambda: StallCounter("normatk_fallback", threshold=1))
     battle_rapid_consecutive: StallCounter = field(
         default_factory=lambda: StallCounter("battle_rapid_consecutive", threshold=50))
-    # ─── MOVIE_WAIT 脱出カウンタ ───
     movie_wait_consecutive: int = 0
-    # ─── MOVIE 一時停止検知 (phash 静止カウンタ) ───
     movie_static_count: int = 0
-    # ─── スクリーン記録 (tap_device から参照) ───
-    recorder: object = None              # ScreenRecorder インスタンス (None=無効)
-    last_analysis_path: object = None    # 直近の解析画像パス (Path or str)
-    last_ocr_results: list = field(default_factory=list)  # 直近の OCR 結果
-    # ─── phash 連続変化カウンタ (動画検出用) ───
-    # phash_dist >= 閾値 が連続した回数。動画フレームは常に変化するため高くなる
+    recorder: object = None
+    last_analysis_path: object = None
+    last_ocr_results: list = field(default_factory=list)
     phash_moving_count: int = 0
-    # ─── ADV 連続検出カウンタ (phash 動的拡大用) ───
     adv_confirmed_count: int = 0
-    # ─── ADV_EARLY 連続ハンドル回数 (スタック脱出用) ───
     adv_early_consecutive: int = 0
-    # ─── ダウンロード中フラグ (誤タップ保護) ───
     download_active: bool = False
-    # ─── テレメトリ (DEBUG レベル) ───
-    last_action_time: float = 0.0          # 直近アクションの実行時刻
-    last_capture_time: float = 0.0         # 直近スクショ取得時刻
-    transition_times: list = field(default_factory=list)  # 遷移時間ヒストリ (最大100件)
-    # ─── タップ候補リスト (OCR再解析省略) ───
-    pending_candidates: list = field(default_factory=list)   # list[TapCandidate]
+    last_action_time: float = 0.0
+    last_capture_time: float = 0.0
+    transition_times: list = field(default_factory=list)
+    pending_candidates: list = field(default_factory=list)
     pending_candidate_idx: int = 0
-    # ─── 計測: 起動時刻 & 新規/途中再開判定 ───
-    launch_time: float = field(default_factory=time.time)    # auto_pilot 起動時刻
-    is_fresh_start: bool = False     # True: --fresh-install 新規開始, False: 途中再開
-    milestone_logged: dict = field(default_factory=dict)  # {milestone_name: logged_time}
+    is_fresh_start: bool = False
+    startup_phase: bool = False
+    milestone_logged: dict = field(default_factory=dict)
+
+
+@dataclass
+class PilotState:
+    """操縦状態。周回をまたいで引き継ぐフィールドのみ保持する。
+
+    周回ごとにリセットされるフィールドは CycleState に定義する。
+    CycleState へのアクセスは state.cycle.xxx で行う。
+    """
+    # ── 周回をまたいで引き継ぐフィールド ──
+    grind_mode: bool = False
+    grind_max_cycles: int = 0
+    grind_cycles_completed: int = 0
+    device_w: int = 0
+    device_h: int = 0
+    launch_time: float = field(default_factory=time.time)
+
+    # ── CycleState（周回ごとに破棄・再作成） ──
+    cycle: CycleState = field(default_factory=CycleState)
 
     def reset_for_new_cycle(self) -> None:
-        """周回間で状態をリセットする。
-
-        引き継ぐフィールド:
-          - grind_mode, grind_max_cycles, grind_cycles_completed (周回管理)
-          - device_w, device_h (デバイス解像度は変わらない)
-          - launch_time (起動時刻)
-        それ以外は全てデフォルト値に戻す。
-        """
-        # 引き継ぐ値を退避
-        _grind_mode = self.grind_mode
-        _grind_max = self.grind_max_cycles
-        _grind_done = self.grind_cycles_completed
-        _dev_w = self.device_w
-        _dev_h = self.device_h
-        _launch = self.launch_time
-
-        # 全フィールドをデフォルトに戻す
-        fresh = PilotState()
-        for f in self.__dataclass_fields__:
-            setattr(self, f, getattr(fresh, f))
-
-        # 動的属性を全削除
-        _dynamic = [k for k in self.__dict__ if k.startswith("_")
-                     and k not in self.__dataclass_fields__]
-        for k in _dynamic:
-            delattr(self, k)
-
-        # 引き継ぐ値を復元
-        self.grind_mode = _grind_mode
-        self.grind_max_cycles = _grind_max
-        self.grind_cycles_completed = _grind_done
-        self.device_w = _dev_w
-        self.device_h = _dev_h
-        self.launch_time = time.time()  # 周回ごとの計測開始時刻をリセット
-        self.is_fresh_start = True
+        """周回間で状態をリセットする。CycleState を再作成するだけ。"""
+        self.cycle = CycleState()
+        self.launch_time = time.time()

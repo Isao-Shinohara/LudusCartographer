@@ -41,7 +41,7 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     # Phase 2: 指アイコン+金枠 最優先 (CLAUDE.md §0 優先度1)
     r = handle_finger_priority(ctx, state)
     if r is not None:
-        state._home_last_evidence_iter = state.iteration
+        state.cycle._home_last_evidence_iter = state.cycle.iteration
         return r
 
     # Phase 3: ダイアログハンドラ
@@ -55,21 +55,21 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
         logger.info(
             "[MINI_CONV] 吹き出し(%s) → タップ (%d,%d)", _mc_side, _mc_cx, _mc_cy)
         tap_device(_mc_cx, _mc_cy, state, "MINI_CONV_TAP")
-        state.last_action = "MINI_CONV_TAP"
+        state.cycle.last_action = "MINI_CONV_TAP"
         # 吹き出し遷移アニメーションで MOVIE 誤昇格しないようリセット
-        state.phash_moving_count = 0
+        state.cycle.phash_moving_count = 0
         return "MINI_CONV_TAP", 0.3
 
     # Phase 3.5: 金枠ハイライト即タップ (CLAUDE.md §0 優先度1)
     # 指アイコンなしでも金枠が検出されたら即タップ
     # 3回連続画面変化なし → 偽陽性 (カード額縁等) と判断しスキップ (後続ハンドラに委譲)
     # リセットは金枠が検出されなくなった時 (=画面遷移) のみ
-    _gold_stall = getattr(state, "_gold_frame_stall_count", 0)
-    _since_big_change = state.iteration - getattr(state, "_last_big_change_iter", -999)
-    _same = getattr(state, "same_phash_count", 0)
+    _gold_stall = getattr(state.cycle, "_gold_frame_stall_count", 0)
+    _since_big_change = state.cycle.iteration - getattr(state.cycle, "_last_big_change_iter", -999)
+    _same = getattr(state.cycle, "same_phash_count", 0)
     # テンプレマッチ: ガードなしで常時実行 (高精度のため誤検出リスク低い)
     # HSV: same>=2 + 遷移後5フレーム待機 (偽陽性対策)
-    if ctx.analysis_path is not None and not state.download_active and not ctx.has_dialog_corners:
+    if ctx.analysis_path is not None and not state.cycle.download_active and not ctx.has_dialog_corners:
         _hsv_only = _same < 2 or _since_big_change < 5
         _gold = find_gold_button(ctx.analysis_path)
         if _gold:
@@ -81,14 +81,14 @@ def dispatch(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
                 logger.info("[GOLD_FRAME:%s] 金枠検出 → 即タップ (%d,%d) (stall=%d)",
                             _method, _gx, _gy, _gold_stall)
                 tap_device(_gx, _gy, state, "GOLD_FRAME_TAP")
-                state._gold_frame_stall_count = _gold_stall + 1
-                state._home_last_evidence_iter = state.iteration
+                state.cycle._gold_frame_stall_count = _gold_stall + 1
+                state.cycle._home_last_evidence_iter = state.cycle.iteration
                 return "GOLD_FRAME_TAP", 0.5
             else:
                 logger.info("[GOLD_FRAME:%s] 3回連続変化なし → スキップ (後続ハンドラに委譲)",
                             _method)
         else:
-            state._gold_frame_stall_count = 0
+            state.cycle._gold_frame_stall_count = 0
 
     # Phase 4: チュートリアル (名前入力, 指+金枠, スワイプ, アセットマッチ, ポップアップ)
     r = handle_tutorial(ctx, state)

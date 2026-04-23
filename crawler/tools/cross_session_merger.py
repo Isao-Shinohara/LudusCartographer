@@ -123,7 +123,7 @@ class CrossSessionMerger:
                          'session_title', 'session_thumb', 'master_title', 'master_thumb',
                          'session_neighbors', 'master_neighbors'}],
             'new_nodes': [{'fp', 'title', 'thumb', 'neighbors'}],
-            'summary': {'anchor', 'k_hop', 'transition', 'new'}
+            'summary': {<method>: count, ..., 'new': count}
         }
         """
         master_count = self._conn.execute(
@@ -701,12 +701,13 @@ class CrossSessionMerger:
         self._check_ocr_complete(session_id)
         now = datetime.now().isoformat()
 
-        # 代表画像をマスターノードにコピー (Gemini OCR 優先)
+        # 代表画像をマスターノードにコピー (Gemini OCR 優先, is_artifact 除外)
         reps = self._conn.execute(
             "SELECT id, fingerprint, title, scene, phash,"
             "  COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS ocr, discovered_at"
             " FROM lc_screens"
-            " WHERE session_id = ? AND is_representative = 1",
+            " WHERE session_id = ? AND is_representative = 1"
+            " AND COALESCE(is_artifact, 0) = 0",
             (session_id,),
         ).fetchall()
 

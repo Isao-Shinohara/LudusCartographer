@@ -63,7 +63,7 @@ def handle_popup_home(
     """
     if analysis_path is None:
         return None
-    if state.current_scene == "BATTLE":
+    if state.cycle.current_scene == "BATTLE":
         return None
     if ocr_count < 1:
         return None
@@ -106,7 +106,7 @@ def handle_popup_home(
         tap_device(_fx, _fy, state, "POPUP_HOME_CLOSE_BTN")
         logger.info("[POPUP_HOME] close_btn(%.2f) → (%d,%d) で閉じる", _close_btn_m[2], _fx, _fy)
     else:
-        _fx, _fy = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
+        _fx, _fy = roi_to_device(int(W * 0.975), int(H * 0.055), state.cycle.game_roi)
         tap_device(_fx, _fy, state, "POPUP_HOME_CLOSE_FALLBACK")
         logger.info("[POPUP_HOME] × 未検出 → 右上固定座標 (%d,%d) で閉じる", _fx, _fy)
     return "POPUP_HOME_CLOSE", CLOSE_ACTION_WAIT
@@ -146,7 +146,7 @@ def handle_dialog_screen(
     W, H = ANALYSIS_W, ANALYSIS_H
 
     _dlg = detect_dialog_frame_and_nav(
-        analysis_path, W, H, ocr_texts=texts, roi=state.game_roi
+        analysis_path, W, H, ocr_texts=texts, roi=state.cycle.game_roi
     )
 
     # ── お知らせポップアップ: ダイアログ枠未検出でも処理続行 ──
@@ -158,7 +158,7 @@ def handle_dialog_screen(
             logger.info("[NOTICE_POPUP] ダイアログ枠未検出だが ▷/× を直接検出 → 続行")
         else:
             # ▷/× も見つからない → 右上固定座標で × を狙う
-            _fx, _fy = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
+            _fx, _fy = roi_to_device(int(W * 0.975), int(H * 0.055), state.cycle.game_roi)
             logger.info("[NOTICE_POPUP] ▷/× 未検出 → 右上 × 固定座標 (%d,%d) で閉じる", _fx, _fy)
             tap_device(_fx, _fy, state, "NOTICE_POPUP_CLOSE_DIRECT")
             return "NOTICE_POPUP_CLOSE", CLOSE_ACTION_WAIT
@@ -178,7 +178,7 @@ def handle_dialog_screen(
             logger.info("[Dialog#0] NOTICE_POPUP だが OK '%s'(%d,%d) 検出 → 通常ダイアログとして処理",
                         _ok_btn_early["text"], _ok_x, _ok_y)
             tap_device(_ok_x, _ok_y, state, f"DIALOG_OK_DIRECT '{_ok_btn_early['text']}'")
-            state.pre_popup_tap_count = 0
+            state.cycle.pre_popup_tap_count = 0
             return "DIALOG_OK_DIRECT", CLOSE_ACTION_WAIT
 
     # ── お知らせポップアップ: ドット数分 ▷ タップ → × 閉じ ──
@@ -192,7 +192,7 @@ def handle_dialog_screen(
 
         # ▷ を確定回数分タップ（途中の再検出は不要）
         if _remaining > 0 and _dlg_type in ("next", "bottom"):
-            _recorder = getattr(state, "recorder", None)
+            _recorder = getattr(state.cycle, "recorder", None)
             for _np in range(_remaining):
                 tap_device(_dlg_x, _dlg_y, state, "NOTICE_PAGING_NEXT")
                 logger.info("[NOTICE_POPUP] ▷タップ (%d/%d)", _np + 1, _remaining)
@@ -214,11 +214,11 @@ def handle_dialog_screen(
 
         # 最終ページ → × で閉じる（右上固定座標）
         time.sleep(0.3)
-        _fx, _fy = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
+        _fx, _fy = roi_to_device(int(W * 0.975), int(H * 0.055), state.cycle.game_roi)
         tap_device(_fx, _fy, state, "NOTICE_POPUP_CLOSE")
         logger.info("[NOTICE_POPUP] ×閉じ完了 (total=%d pages)", _total_pages)
 
-        state.pre_popup_tap_count = 0
+        state.cycle.pre_popup_tap_count = 0
         return "NOTICE_POPUP_CLOSE", CLOSE_ACTION_WAIT
 
     # ── [SPATIAL GATE 撤廃] ──────────────────────────────────
@@ -247,36 +247,36 @@ def handle_dialog_screen(
     if _dlg is None:
         return None
 
-    state.pre_popup_tap_count += 1
-    state.dialog_detections += 1
+    state.cycle.pre_popup_tap_count += 1
+    state.cycle.dialog_detections += 1
 
     # ── エスカレーション (pre_popup_tap_count 一本化) ──
     # 8-11: BACK キー送信
-    if state.pre_popup_tap_count >= 8:
+    if state.cycle.pre_popup_tap_count >= 8:
         logger.warning(
             ">>> 【ダイアログ#0-DIALOG】累計%d回失敗 → BACK キー押下",
-            state.pre_popup_tap_count,
+            state.cycle.pre_popup_tap_count,
         )
         try:
             adb("shell input keyevent KEYCODE_BACK")
         except Exception as _e:
             logger.debug("[DIALOG] BACK キー送信例外: %s", _e)
         # 12回以上: OCR再実行してダイアログ存在確認
-        if state.pre_popup_tap_count >= 12:
+        if state.cycle.pre_popup_tap_count >= 12:
             _recheck_path, _recheck_w, _recheck_h, _ = take_screenshot()
             _recheck_analysis = prepare_analysis_image(_recheck_path, _recheck_w, _recheck_h) if _recheck_path else None
             _recheck_ocr = run_ocr(_recheck_analysis) if _recheck_analysis else []
             _recheck_texts = [e.get("text", "") for e in _recheck_ocr]
             _recheck_dlg = detect_dialog_frame_and_nav(
                 _recheck_analysis, W, H, ocr_texts=_recheck_texts,
-                roi=state.game_roi) if _recheck_analysis else None
+                roi=state.cycle.game_roi) if _recheck_analysis else None
             if _recheck_dlg is None:
                 logger.info(">>> 【ダイアログ#0-DIALOG】OCR再確認: ダイアログ消失 → スキップ")
-                state.pre_popup_tap_count = 0
+                state.cycle.pre_popup_tap_count = 0
                 return None
             logger.warning(">>> 【ダイアログ#0-DIALOG】OCR再確認: ダイアログ存続 → 座標更新してリトライ")
             _dlg_type, _dlg_x, _dlg_y = _recheck_dlg
-            state.pre_popup_tap_count = 8  # BACK エスカレーションに留まる
+            state.cycle.pre_popup_tap_count = 8  # BACK エスカレーションに留まる
         return "DIALOG_BACK_ESCALATION", 2.0
 
     if _dlg_type in ("next", "bottom"):
@@ -291,7 +291,7 @@ def handle_dialog_screen(
             logger.info("[Dialog#0] OK のみダイアログ検出 → OK '%s'(%d,%d) タップ (PAGING 回避)",
                         _ok_btn["text"], _ok_x, _ok_y)
             tap_device(_ok_x, _ok_y, state, f"DIALOG_OK_DIRECT '{_ok_btn['text']}'")
-            state.pre_popup_tap_count = 0
+            state.cycle.pre_popup_tap_count = 0
             return "DIALOG_OK_DIRECT", CLOSE_ACTION_WAIT
         # ── ダイアログ再確認ガード ──
         # 1. 四隅テンプレ優先。失敗時はページドット+背景ぼかしでフォールバック
@@ -307,7 +307,7 @@ def handle_dialog_screen(
                 logger.debug("[DIALOG_FRAME_GUARD] 四隅テンプレなし (dots=%d, blur=%s) → PAGING スキップ (dlg_type=%s)",
                             _fb_dots, _fb_blur is not None, _dlg_type)
                 # ガードでスキップ → 未処理なのでカウンタを戻す
-                state.pre_popup_tap_count = max(0, state.pre_popup_tap_count - 1)
+                state.cycle.pre_popup_tap_count = max(0, state.cycle.pre_popup_tap_count - 1)
                 return None
         # 2. "next" でページドット=0 は誤検出 (▷がある=ページ複数=ドット≥1)
         if _dlg_type == "next":
@@ -351,7 +351,7 @@ def handle_dialog_screen(
         # ページング式ダイアログ: ▷ → … → × を一括処理
         logger.info(
             ">>> 【ダイアログ#0-DIALOG-PAGING】%s(%d,%d) (試行%d回) → process_paging_dialog",
-            _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
+            _dlg_type, _dlg_x, _dlg_y, state.cycle.pre_popup_tap_count,
         )
         _pg_result = process_paging_dialog(
             analysis_path, W, H, state,
@@ -361,7 +361,7 @@ def handle_dialog_screen(
         if _pg_result == "DIALOG_PAGING_TIMEOUT":
             # PAGING TIMEOUT → 右上隅の×固定位置タップでクローズ試行
             # ダイアログの×は常に右上(~97%, ~5%)にあるが、テンプレ不一致で検出失敗する場合がある
-            _close_x, _close_y = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
+            _close_x, _close_y = roi_to_device(int(W * 0.975), int(H * 0.055), state.cycle.game_roi)
             logger.warning(
                 "[PAGING_TIMEOUT_FALLBACK] ×未検出 → 右上固定タップ(%d,%d)でクローズ試行",
                 _close_x, _close_y)
@@ -379,43 +379,43 @@ def handle_dialog_screen(
                 _dlg_pos["text"], _dp_x, _dp_y,
             )
             tap_device(_dp_x, _dp_y, state, f"DIALOG_CONFIRM_OK '{_dlg_pos['text']}'")
-            state.pre_popup_tap_count = 0
+            state.cycle.pre_popup_tap_count = 0
             return "DIALOG_CONFIRM_OK", CLOSE_ACTION_WAIT
         # ── OK のみダイアログ (キャンセルなし) → 2回で OK 直タップ ──
-        if state.pre_popup_tap_count >= 2 and _dlg_pos and not _dlg_neg:
+        if state.cycle.pre_popup_tap_count >= 2 and _dlg_pos and not _dlg_neg:
             _dp_x, _dp_y = _dlg_pos["center"]
             _dp_y_adj = max(0, _dp_y - 6)
             logger.info(
                 "[Dialog#0] OK のみダイアログ (× 失敗%d回) → OK直タップ '%s'(%d,%d)",
-                state.pre_popup_tap_count, _dlg_pos["text"], _dp_x, _dp_y_adj,
+                state.cycle.pre_popup_tap_count, _dlg_pos["text"], _dp_x, _dp_y_adj,
             )
             tap_device(_dp_x, _dp_y_adj, state, f"DIALOG_OK_ONLY '{_dlg_pos['text']}'")
-            state.pre_popup_tap_count = 0
+            state.cycle.pre_popup_tap_count = 0
             return "DIALOG_OK_ONLY", CLOSE_ACTION_WAIT
         # ── 4回連続失敗 → OK/確認ボタンを探してフォールバック ──
-        if state.pre_popup_tap_count >= 4:
+        if state.cycle.pre_popup_tap_count >= 4:
             _ok_ocr = has_any(ocr, ["OK", "確認", "決定", "おまかせ"])
             if _ok_ocr:
                 _ok_cx, _ok_cy = _ok_ocr["center"]
                 logger.info(
                     ">>> 【ダイアログ#0-DIALOG】close失敗%d回 → OKフォールバック '%s'(%d,%d)",
-                    state.pre_popup_tap_count, _ok_ocr["text"], _ok_cx, _ok_cy,
+                    state.cycle.pre_popup_tap_count, _ok_ocr["text"], _ok_cx, _ok_cy,
                 )
                 tap_device(_ok_cx, _ok_cy, state, "DIALOG_OK_FALLBACK")
-                state.pre_popup_tap_count = 0
+                state.cycle.pre_popup_tap_count = 0
                 return "DIALOG_OK_FALLBACK", CLOSE_ACTION_WAIT
             # OCR で OK 未検出 → ダイアログ下部中央をタップ
-            _ok_fb_x, _ok_fb_y = roi_to_device(int(W * 0.7), int(H * 0.92), state.game_roi)
+            _ok_fb_x, _ok_fb_y = roi_to_device(int(W * 0.7), int(H * 0.92), state.cycle.game_roi)
             logger.info(
                 ">>> 【ダイアログ#0-DIALOG】close失敗%d回 → 下部中央フォールバック(%d,%d)",
-                state.pre_popup_tap_count, _ok_fb_x, _ok_fb_y,
+                state.cycle.pre_popup_tap_count, _ok_fb_x, _ok_fb_y,
             )
             tap_device(_ok_fb_x, _ok_fb_y, state, "DIALOG_BOTTOM_FALLBACK")
-            state.pre_popup_tap_count = 0
+            state.cycle.pre_popup_tap_count = 0
             return "DIALOG_BOTTOM_FALLBACK", CLOSE_ACTION_WAIT
         logger.info(
             ">>> 【ダイアログ#0-DIALOG】%s(%d,%d) (試行%d回)",
-            _dlg_type, _dlg_x, _dlg_y, state.pre_popup_tap_count,
+            _dlg_type, _dlg_x, _dlg_y, state.cycle.pre_popup_tap_count,
         )
         tap_device(_dlg_x, _dlg_y, state, "DIALOG_CLOSE")
         return "DIALOG_CLOSE", CLOSE_ACTION_WAIT
@@ -465,8 +465,8 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     # OK/キャンセル等の操作ボタンがある通常ダイアログは LOGIN_BONUS ではない
     _has_action_btn = any(has_text(ocr, kw, min_conf=0.5)
                          for kw in ("OK", "キャンセル", "はい", "いいえ", "決定"))
-    _is_movie_ctx = state.current_scene == "MOVIE"
-    _is_stable = state.same_phash_count >= 2  # phash安定後のみ (誤検出防止)
+    _is_movie_ctx = state.cycle.current_scene == "MOVIE"
+    _is_stable = state.cycle.same_phash_count >= 2  # phash安定後のみ (誤検出防止)
     if (analysis_path is not None and not _is_battle_ctx and not _has_action_btn
             and not _is_movie_ctx and _is_stable):
         _lbp = detect_login_bonus_popup(analysis_path)
@@ -488,7 +488,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
             logger.info(">>> 【お知らせ一覧】 ×テンプレート(%d,%d score=%.2f) で閉じる",
                         _close_m[0], _close_m[1], _close_m[2])
             return "NOTICE_LIST_CLOSE", 1.0
-        _nx, _ny = roi_to_device(int(W * 0.975), int(H * 0.055), state.game_roi)
+        _nx, _ny = roi_to_device(int(W * 0.975), int(H * 0.055), state.cycle.game_roi)
         tap_device(_nx, _ny, state, "NOTICE_LIST_CLOSE_FB")
         logger.info(">>> 【お知らせ一覧】 × 固定座標(%d,%d) で閉じる", _nx, _ny)
         return "NOTICE_LIST_CLOSE", 1.0
@@ -597,7 +597,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
                     logger.info("[DL_COMPLETE] 変化なし (dist=%d) #%d [%s] → 次座標",
                                 _cd_dist, _tv_i + 1, _tv_label)
                     _base_ph_cd = _new_ph_cd
-            state.download_active = False
+            state.cycle.download_active = False
             from tools.ap.helpers import log_milestone as _lm
             _lm(state, "DL_END")
             return "DL_COMPLETE_OK", 1.0
@@ -623,7 +623,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
             _ocr_cx, _ocr_cy = _ok_bottom["center"]
         else:
             _ocr_cx, _ocr_cy = roi_to_device(
-                int(W * 0.70), int(H * 0.88), state.game_roi)
+                int(W * 0.70), int(H * 0.88), state.cycle.game_roi)
         _cx, _cy = smart_tap_button(analysis_path, _ocr_cx, _ocr_cy, ocr_items=ocr)
         logger.info(">>> 【確認ダイアログ】 SmartTap OK (%d,%d)", _cx, _cy)
         tap_device(_cx, _cy, state, "CONFIRM_DIALOG_OK")
@@ -640,7 +640,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
     # ── 【チュートリアルポップアップ】形状ベース検出 ──
     # ダイアログ四隅 + ページドット ≥ 1 + 背景ぼかし + ▷/× ボタン
     # BATTLE シーンでは誤検出防止のためスキップ
-    _in_battle_popup = state.current_scene == "BATTLE" or getattr(state, "_from_battle", False)
+    _in_battle_popup = state.cycle.current_scene == "BATTLE" or getattr(state.cycle, "_from_battle", False)
     if not _in_battle_popup and analysis_path is not None:
         _tp_corners = ctx.has_dialog_corners if ctx.has_dialog_corners is not None else (
             detect_dialog_corners(analysis_path))
@@ -662,7 +662,7 @@ def handle_dialog_phase(ctx: DetectContext, state: PilotState) -> Optional[tuple
                 if _nav_type == "close" and _tp_dots >= 2:
                     logger.info(">>> 【チュートリアルポップアップ→PAGING】 dots=%d, ×検出→先にページ走査",
                                 _tp_dots)
-                    _arr_x, _arr_y = roi_to_device(int(W * 0.91), int(H * 0.49), state.game_roi)
+                    _arr_x, _arr_y = roi_to_device(int(W * 0.91), int(H * 0.49), state.cycle.game_roi)
                     _pg_result = process_paging_dialog(
                         analysis_path, W, H, state,
                         initial_dlg=("next", _arr_x, _arr_y),

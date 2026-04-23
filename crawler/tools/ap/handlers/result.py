@@ -98,11 +98,11 @@ def handle_result_screen(
     # ── RAPID モード ──
     if mode == "RAPID":
         _rapid_ok = (
-            state.last_action in ("RESULT_TAP", "RESULT_NEXT", "RESULT_RAPID",
+            state.cycle.last_action in ("RESULT_TAP", "RESULT_NEXT", "RESULT_RAPID",
                                   "GACHA_OK")
             and analysis_path is not None
             and dist <= 30
-            and state.result_rapid_count < 8
+            and state.cycle.result_rapid_count < 8
         )
         if not _rapid_ok:
             return None
@@ -124,16 +124,16 @@ def handle_result_screen(
             logger.info("[RESULT_RAPID] no right glow → OCR フォールスルー")
             return None
 
-        state.result_rapid_count += 1
-        state.result_total_taps += 1
+        state.cycle.result_rapid_count += 1
+        state.cycle.result_total_taps += 1
 
         # 累積 30 タップで Unity 入力フリーズ復旧
-        if state.result_total_taps >= 30:
+        if state.cycle.result_total_taps >= 30:
             logger.warning(
                 "[RESULT_FREEZE] RESULT_RAPID %d回 — Unity入力フリーズ → force-stop",
-                state.result_total_taps)
-            state.result_total_taps = 0
-            state.result_rapid_count = 0
+                state.cycle.result_total_taps)
+            state.cycle.result_total_taps = 0
+            state.cycle.result_rapid_count = 0
             watchdog_recover(state)
             return "RESULT_FREEZE", 0.0
 
@@ -145,13 +145,13 @@ def handle_result_screen(
     if not is_result:
         return None
 
-    state.result_subtype = subtype
+    state.cycle.result_subtype = subtype
     btn = _find_next_button(ocr, W, H, subtype)
 
     if subtype == "GACHA":
         logger.info("  ガチャ結果画面検出 (subtype=%s) → ハンドラ処理", subtype)
-        state._gacha_total_wait = 0
-        state._gacha_static_count = 0
+        state.cycle._gacha_total_wait = 0
+        state.cycle._gacha_static_count = 0
         if btn:
             cx, cy = btn["center"]
             logger.info(">>> 【ガチャ結果】 OK (%d,%d) → ダブルタップ", cx, cy)
@@ -159,13 +159,13 @@ def handle_result_screen(
             tap_device(cx, cy, state, "GACHA_RESULT_OK_2")
         else:
             _gc_x, _gc_y = roi_to_device(
-                int(W * 0.5), int(H * 0.5), state.game_roi)
+                int(W * 0.5), int(H * 0.5), state.cycle.game_roi)
             logger.info(">>> 【ガチャ結果初期】 OK未検出 → 画面中央ダブルタップ (%d,%d)",
                         _gc_x, _gc_y)
             tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_1",
                        rapid=True)
             tap_device(_gc_x, _gc_y, state, "GACHA_RESULT_CENTER_2")
-        state.result_total_taps += 1
+        state.cycle.result_total_taps += 1
         return "GACHA_OK", 1.0
 
     # BATTLE subtype
@@ -176,9 +176,9 @@ def handle_result_screen(
     else:
         _nx, _ny = roi_to_device(
             int(W * _RESULT_NEXT_X_RATIO),
-            int(H * _RESULT_NEXT_Y_RATIO), state.game_roi)
+            int(H * _RESULT_NEXT_Y_RATIO), state.cycle.game_roi)
         logger.info(">>> 【バトルResult】 次へ未検出 → 想定位置 (%d,%d) タップ",
                     _nx, _ny)
         tap_device(_nx, _ny, state, "RESULT_NEXT")
-    state.result_total_taps += 1
+    state.cycle.result_total_taps += 1
     return "RESULT_TAP", 1.0

@@ -70,6 +70,13 @@
     <button id="final-exclude-btn" class="px-3 py-1 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✕ 不採用</button>
     <button id="final-reset-btn" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>リセット</button>
 </div>
+<!-- Live 採用/不採用アクションバー (2段目) -->
+<div id="live-actions" class="hidden flex items-center justify-end gap-2 pb-2">
+    <span class="text-xs text-gray-500">Shift+クリックで選択</span>
+    <button id="live-adopt-btn" class="px-3 py-1 bg-emerald-900/70 hover:bg-emerald-800/80 text-emerald-200 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✓ 採用</button>
+    <button id="live-exclude-btn" class="px-3 py-1 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✕ 不採用</button>
+    <button id="live-reset-btn" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>リセット</button>
+</div>
 </div>
 
 <!-- 確認ポップアップ -->
@@ -190,8 +197,10 @@
                         </div>
                         <textarea id="modal-edit-text" class="w-full bg-gray-900 text-gray-200 text-sm rounded p-2 border border-gray-700 focus:border-brand outline-none" rows="3"></textarea>
                     </div>
-                    <div class="mt-2 flex items-center gap-2">
+                    <div class="mt-2 flex items-center gap-2 justify-end">
                         <button id="modal-edit-btn" class="px-2 py-0.5 text-xs bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 rounded transition-colors">✎ 編集</button>
+                        <button id="modal-adopt-btn" class="hidden px-2 py-0.5 text-xs bg-emerald-900/70 hover:bg-emerald-800 text-emerald-200 rounded transition-colors">✓ 採用する</button>
+                        <button id="modal-exclude-btn" class="hidden px-2 py-0.5 text-xs bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 rounded transition-colors">✕ 不採用にする</button>
                     </div>
                     <div class="mt-3 flex gap-4 text-xs text-gray-600">
                         <span id="modal-scene"></span>
@@ -259,6 +268,7 @@
     let knownSessions = [];
     let pendingChanges = {};  // Final タブ: master_fp → target user_excluded
     let selectedForGroup = new Set();  // Final タブ: 統合選択中の master_fp
+    let selectedLiveScreens = new Set();  // Live タブ: 選択中の screen id
     let _previewModalIdx = -1;  // プレビュー用モーダルインデックス
     let _previewModalItems = [];  // プレビュー用アイテムリスト
     let _previewModalShow = null;  // プレビュー用モーダル表示関数
@@ -367,8 +377,9 @@
         const thumb = s.thumbnail_path ? imgUrl(s.thumbnail_path) : (s.screenshot_path ? imgUrl(s.screenshot_path) : '');
         const isThinned = s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative;
         const dots = [];
-        if (s.is_artifact) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-red-500" title="Gemini除外"></span>');
-        if (isThinned && !s.is_artifact) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-gray-500" title="不採用"></span>');
+        if (s.is_artifact === 1) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-red-500" title="Gemini不採用"></span>');
+        if (s.is_artifact === 2) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-orange-500" title="ユーザー不採用"></span>');
+        if (isThinned && !s.is_artifact) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-gray-500" title="非代表"></span>');
         if (s.has_hq_ocr) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-sky-500" title="HQ OCR済"></span>');
         if (s.is_representative) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-emerald-500" title="採用"></span>');
         if (s.has_gemini) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-amber-500" title="Gemini OCR済"></span>');
@@ -377,16 +388,18 @@
             const phaseLabel = _debugGetPhaseForSession(s.anchor_info, _debugFilterSession) || 'A';
             dots.push('<span class="px-1 rounded text-[9px] font-bold bg-cyan-400/80 text-black" title="アンカー: ' + escapeHtml(s.anchor_info) + '">' + phaseLabel + '</span>');
         }
-        const isExcluded = currentTab === 'final' && s.user_excluded;
-        const dimClass = ((isThinned && filterSelect.value === 'all') || isExcluded) ? ' opacity-40' : '';
+        const isExcluded = (currentTab === 'final' && s.user_excluded) || (currentTab === 'live' && s.is_artifact > 0);
+        const dimClass = (filterSelect.value === 'all' && (isThinned || isExcluded)) ? ' opacity-40' : '';
         const hasPending = s.master_fp && (s.master_fp in pendingChanges);
         const pendingMark = hasPending ? ' ring-2 ring-yellow-500/50' : '';
-        const isGroupSelected = currentTab === 'final' && s.master_fp && selectedForGroup.has(s.master_fp);
+        const isGroupSelected = (currentTab === 'final' && s.master_fp && selectedForGroup.has(s.master_fp))
+            || (currentTab === 'live' && s.id && selectedLiveScreens.has(s.id));
         const groupSelectMark = isGroupSelected ? ' ring-2 ring-blue-500' : '';
-        const anchorMark = (_debugMode && _debugFilterSession)
+        // グループ選択中はアンカー枠を非表示（青枠を優先）
+        const anchorMark = isGroupSelected ? '' : ((_debugMode && _debugFilterSession)
             ? (_debugAnchorMatchesSession(s.anchor_info, _debugFilterSession) ? ' ring-2 ring-cyan-400'
-               : s.last_match_method === 'new' ? ' ring-2 ring-lime-400' : '')
-            : '';
+               : (s.all_mapping_info && s.all_mapping_info.includes('new:' + _debugFilterSession)) ? ' ring-2 ring-lime-400' : '')
+            : '');
         return buildCard({
             thumb, title: s.name && s.name !== '(UNKNOWN)' ? s.name : '',
             ocrPreview: (s.ocr_text || '').substring(0, 80),
@@ -416,11 +429,13 @@
             }
             // 'all' はそのまま全件
         } else if (filter === 'reps') {
-            filtered = allScreens.filter(s => s.is_representative || s.cluster_id === null || s.cluster_id === undefined);
+            filtered = allScreens.filter(s => (s.is_representative || s.cluster_id === null || s.cluster_id === undefined) && !s.is_artifact);
+        } else if (filter === 'excluded') {
+            filtered = allScreens.filter(s => s.is_artifact > 0);
         } else if (filter === 'thinned') {
             filtered = allScreens.filter(s => s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative);
         } else if (filter === 'pending') {
-            filtered = allScreens.filter(s => (s.cluster_id === null || s.cluster_id === undefined) || (s.is_representative && !s.has_hq_ocr));
+            filtered = allScreens.filter(s => (s.cluster_id === null || s.cluster_id === undefined) || (s.is_representative && !s.has_hq_ocr && !s.has_gemini));
         }
         // ソート: Live は API が降順(新しい順)、Final は API が昇順(古い順)
         const wantDesc = sortToggle.dataset.sort === 'desc';
@@ -434,9 +449,25 @@
         // Live + desc → そのまま (API が降順)
         filteredScreens = filtered;
         if (filtered.length === 0) {
-            const msg = currentTab === 'live'
-                ? 'まだスクリーンが記録されていません。<br><code class="text-brand-light">auto_pilot.py -S</code> で起動してください。'
-                : 'まだ決定版がありません。<br>バッチプロセッサを実行してください。';
+            let msg;
+            if (currentTab === 'live') {
+                const f = filterSelect.value;
+                if (allScreens.length === 0) {
+                    msg = 'まだスクリーンが記録されていません。<br><code class="text-brand-light">auto_pilot.py -S</code> で起動してください。';
+                } else if (f === 'reps') {
+                    msg = '採用画面はありません。';
+                } else if (f === 'excluded') {
+                    msg = '不採用画面はありません。';
+                } else if (f === 'thinned') {
+                    msg = '非代表画面はありません。';
+                } else if (f === 'pending') {
+                    msg = '未処理の画面はありません。';
+                } else {
+                    msg = '該当する画面はありません。';
+                }
+            } else {
+                msg = 'セッションをマージ後表示されます。';
+            }
             grid.innerHTML = `<div class="col-span-full text-center text-gray-600 py-12">${msg}</div>`;
             return;
         }
@@ -836,6 +867,30 @@
     let _currentVersionName = '';
     const versionSelect = document.getElementById('version-select');
 
+    // --- セッションナビゲーション ---
+    window.navigateToLiveSession = function(sessionId) {
+        currentSessionId = sessionId;
+        sessionSelect.value = sessionId;
+        switchTab('live');
+        syncUrlParams();
+    };
+    window.navigateToFinalSession = async function(sessionId) {
+        _debugFilterSession = sessionId;
+        switchTab('final');
+        // fetchFinal() が switchTab 内で呼ばれ allScreens が設定される。
+        // switchTab は非同期ではないが fetchFinal を内部で呼ぶので少し待つ。
+        await fetchFinal();
+        filterSelect.value = 'session';
+        showExcluded = false;
+        _debugBuildSessionList();
+        _debugFilterSession = sessionId;
+        _debugSessionIdx = _debugSessionList.indexOf(sessionId);
+        _updateDebugSessionSelect();
+        if (_debugSessionSelect) _debugSessionSelect.value = sessionId;
+        renderAll();
+        syncUrlParams();
+    };
+
     // --- タブ切り替え ---
     window.switchTab = function(tab, restoreFromUrl) {
         currentTab = tab;
@@ -868,20 +923,29 @@
 
         const mergeContainer = document.getElementById('merge-container');
         const finalActions = document.getElementById('final-actions');
+        const liveActions = document.getElementById('live-actions');
         pendingChanges = {};
         selectedForGroup.clear();
+        selectedLiveScreens.clear();
         updateFinalActionBar();
+        updateLiveActionBar();
         if (tab === 'live') {
             autoRefreshPaused = false;
             finalActions.classList.add('hidden');
+            liveActions.classList.remove('hidden');
             statusDot.classList.remove('hidden');
             statusDot.classList.remove('bg-gray-500');
             statusDot.classList.add('bg-green-500', 'animate-pulse');
             statusText.textContent = '自動更新中';
             filterSelect.classList.remove('hidden');
-            filterSelect.innerHTML = '<option value="reps">採用</option><option value="thinned">不採用</option><option value="pending">未処理</option><option value="all">すべて</option>';
+            filterSelect.innerHTML = '<option value="reps">採用</option><option value="excluded">不採用</option><option value="thinned">非代表</option><option value="pending">未処理</option><option value="all">すべて</option>';
             filterSelect.value = restoreFromUrl ? getUrlParam('filter', 'reps') : 'reps';
-            filterSelect.onchange = function() { renderAll(); syncUrlParams(); };
+            filterSelect.onchange = function() {
+                selectedLiveScreens.clear();
+                updateLiveActionBar();
+                renderAll();
+                syncUrlParams();
+            };
             sessionSelect.classList.remove('hidden');
             sortToggle.classList.remove('hidden');
             grid.classList.remove('hidden');
@@ -897,6 +961,7 @@
             pollTimer = setInterval(pollLive, POLL_INTERVAL);
         } else if (tab === 'final') {
             finalActions.classList.remove('hidden');
+            liveActions.classList.add('hidden');
             statusDot.classList.add('hidden');
             statusText.textContent = '';
             filterSelect.classList.remove('hidden');
@@ -919,6 +984,7 @@
             fetchFinal();
         } else if (tab === 'merge') {
             finalActions.classList.add('hidden');
+            liveActions.classList.add('hidden');
             statusDot.classList.add('hidden');
             statusText.textContent = '';
             stats.textContent = '';
@@ -936,6 +1002,7 @@
             fetchMergeTab();
         } else if (tab === 'rules') {
             finalActions.classList.add('hidden');
+            liveActions.classList.add('hidden');
             statusDot.classList.add('hidden');
             statusText.textContent = '';
             stats.textContent = '';
@@ -952,6 +1019,7 @@
             fetchNoiseWords();
         } else if (tab === 'cleanup') {
             finalActions.classList.add('hidden');
+            liveActions.classList.add('hidden');
             statusDot.classList.add('hidden');
             statusText.textContent = '';
             stats.textContent = '';
@@ -966,6 +1034,7 @@
             checkCleanableInMerge();
         } else if (tab === 'cost') {
             finalActions.classList.add('hidden');
+            liveActions.classList.add('hidden');
             statusDot.classList.add('hidden');
             statusText.textContent = '';
             stats.textContent = '';
@@ -981,6 +1050,7 @@
             fetchCostTab();
         } else if (tab === 'settings') {
             finalActions.classList.add('hidden');
+            liveActions.classList.add('hidden');
             statusDot.classList.add('hidden');
             statusText.textContent = '';
             stats.textContent = '';
@@ -998,6 +1068,36 @@
 
     // --- Merge タブ ---
     window.fetchMergeTab = fetchMergeTab;
+    const _MERGE_PAGE_SIZE = 5;
+    const _mergePages = {};
+    function _renderMergeSection(id, items, renderFn) {
+        const page = _mergePages[id] || 0;
+        const total = items.length;
+        const totalPages = Math.ceil(total / _MERGE_PAGE_SIZE);
+        const start = page * _MERGE_PAGE_SIZE;
+        const pageItems = items.slice(start, start + _MERGE_PAGE_SIZE);
+        // ページングが発生する場合のみ高さ固定 (カード約48px + gap 8px = 56px/件)
+        const _minH = totalPages > 1 ? ` style="min-height:${_MERGE_PAGE_SIZE * 56}px"` : '';
+        let h = `<div id="merge-section-${id}" class="space-y-2"${_minH}>`;
+        for (const s of pageItems) h += renderFn(s);
+        h += '</div>';
+        if (totalPages > 1) {
+            h += `<div class="flex items-center mt-2 text-xs">`;
+            h += `<div class="flex-1"></div><div class="flex items-center gap-1.5">`;
+            h += `<a href="#" class="merge-page-btn px-1.5 py-0.5 rounded ${page > 0 ? 'text-gray-300 hover:text-cyan-300' : 'text-gray-700 pointer-events-none'}" data-section="${id}" data-page="${page - 1}">prev</a>`;
+            for (let p = 0; p < totalPages; p++) {
+                if (totalPages > 7 && p > 2 && p < totalPages - 2 && Math.abs(p - page) > 1) {
+                    if (p === 3 || p === totalPages - 3) h += '<span class="text-gray-600">..</span>';
+                    continue;
+                }
+                h += `<a href="#" class="merge-page-btn px-1.5 py-0.5 rounded ${p === page ? 'bg-cyan-900/50 text-cyan-300' : 'text-gray-400 hover:text-cyan-300'}" data-section="${id}" data-page="${p}">${p + 1}</a>`;
+            }
+            h += `<a href="#" class="merge-page-btn px-1.5 py-0.5 rounded ${page < totalPages - 1 ? 'text-gray-300 hover:text-cyan-300' : 'text-gray-700 pointer-events-none'}" data-section="${id}" data-page="${page + 1}">next</a>`;
+            h += `</div><div class="flex-1 text-right text-gray-600">${total} 件</div>`;
+            h += '</div>';
+        }
+        return h;
+    }
     async function fetchMergeTab() {
         const mc = document.getElementById('merge-container');
         mc.innerHTML = '<div class="text-center text-gray-600 py-12">読み込み中...</div>';
@@ -1034,11 +1134,9 @@
             if (merged.length === 0) {
                 html += '<p class="text-gray-600 text-sm">まだマージされたセッションはありません</p>';
             } else {
-                html += '<div class="space-y-2">';
-                for (const s of merged) {
-                    html += `<div class="bg-gray-900/50 border border-gray-800/50 rounded-lg p-3 flex items-center justify-between">
+                html += _renderMergeSection('merged', merged, (s) => `<div class="bg-gray-900/50 border border-gray-800/50 rounded-lg p-3 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-gray-500">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</span>
+                            <a href="#" class="text-sm font-mono text-gray-500 hover:text-emerald-300 transition-colors cursor-pointer" onclick="navigateToFinalSession('${escapeHtml(s.session_id)}');return false;">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</a>
                             <span class="text-xs text-gray-400 ml-3">新規 ${s.new_nodes || 0} / アンカー ${s.anchor_nodes || 0}</span>
                             ${completionBadge(s.completion_type)}
                         </div>
@@ -1049,21 +1147,31 @@
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.mapped_nodes}">${TRASH_ICON}</button>
                         </div>
-                    </div>`;
-                }
-                html += '</div>';
+                    </div>`);
             }
             html += '</div>';
             // 2. マージ待ち
-            html += '<div><h3 class="text-lg font-bold text-blue-400 mb-3">マージ待ち</h3>';
+            // マージ待ちより古いセッションが前工程にあるか検出
+            const pendingOldest = pending.length > 0 ? pending[0].started_at : null;
+            const olderIncomplete = [];
+            if (pendingOldest) {
+                for (const s of [...bgPending, ...running, ...noTransition]) {
+                    if (s.started_at && s.started_at < pendingOldest) {
+                        olderIncomplete.push(s.session_id);
+                    }
+                }
+            }
+            html += '<div><div class="flex items-center gap-3 mb-3"><h3 class="text-lg font-bold text-blue-400">マージ待ち</h3>';
+            if (olderIncomplete.length > 0) {
+                html += `<span class="text-xs text-amber-400">⚠ 古いセッションが未完了: ${olderIncomplete.map(s => escapeHtml(s)).join(', ')}</span>`;
+            }
+            html += '</div>';
             if (pending.length === 0) {
                 html += '<p class="text-gray-500 text-sm">マージ待ちのセッションはありません</p>';
             } else {
-                html += '<div class="space-y-2">';
-                for (const s of pending) {
-                    html += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 flex items-center justify-between">
+                html += _renderMergeSection('pending', pending, (s) => `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-gray-300">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</span>
+                            <a href="#" class="text-sm font-mono text-gray-300 hover:text-blue-300 transition-colors cursor-pointer" onclick="navigateToLiveSession('${escapeHtml(s.session_id)}');return false;">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</a>
                             <span class="text-xs text-gray-400 ml-3">${s.node_count} ノード / ${s.edge_count} エッジ</span>
                             ${completionBadge(s.completion_type)}
                         </div>
@@ -1072,11 +1180,9 @@
                             <button class="merge-preview-btn px-3 py-1.5 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" title="マージプレビュー → 実行">マージ</button>
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="${s.node_count}">${TRASH_ICON}</button>
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">${TRASH_ICON}</button>
                         </div>
-                    </div>`;
-                }
-                html += '</div>';
+                    </div>`);
             }
             html += '</div>';
             // 3. バックグラウンド未完了 (古いセッションの後処理待ち)
@@ -1085,16 +1191,15 @@
                 html += '<p class="text-gray-600 text-sm">バックグラウンド処理が未完了のセッションはありません</p>';
             } else {
                 html += '<p class="text-xs text-gray-500 mb-2">中断された後処理 (Gemini OCR / 間引き / グラフ構築) を「再開」で完了させる。画面なしは削除のみ可能。</p>';
-                html += '<div class="space-y-2">';
-                for (const s of bgPending) {
+                html += _renderMergeSection('bgPending', bgPending, (s) => {
                     const hasScreens = s.actual_screens > 0;
                     const hasTransitions = (s.transitions || 0) > 0;
                     const canResume = hasScreens && hasTransitions;
                     const noGraphBadge = (s.has_graph || 0) === 0
                         ? '<span class="text-xs text-amber-500 ml-2">グラフ未構築</span>' : '';
-                    html += `<div class="bg-gray-900/50 border border-slate-700/40 rounded-lg p-3 flex items-center justify-between">
+                    return `<div class="bg-gray-900/50 border border-slate-700/40 rounded-lg p-3 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-slate-300">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</span>
+                            <a href="#" class="text-sm font-mono text-slate-300 hover:text-blue-300 transition-colors cursor-pointer" onclick="navigateToLiveSession('${escapeHtml(s.session_id)}');return false;">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</a>
                             ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
                             ${s.pending_gemini > 0 ? `<span class="text-xs text-amber-500 ml-2">OCR ${s.pending_gemini} 件</span>` : ''}
@@ -1108,8 +1213,7 @@
                                     data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">${TRASH_ICON}</button>
                         </div>
                     </div>`;
-                }
-                html += '</div>';
+                });
             }
             html += '</div>';
             // 4. 進行中セッション
@@ -1118,20 +1222,18 @@
                 html += '<p class="text-gray-600 text-sm">実行中のセッションはありません</p>';
             } else {
                 html += '<p class="text-xs text-gray-500 mb-2">auto_pilot 実行中のセッション。完了するとマージ待ちに移動。</p>';
-                html += '<div class="space-y-2">';
-                for (const s of running) {
-                    html += `<div class="bg-gray-900/50 border border-violet-900/30 rounded-lg p-3 flex items-center justify-between">
+                html += _renderMergeSection('running', running, (s) => `<div class="bg-gray-900/50 border border-violet-900/30 rounded-lg p-3 flex items-center justify-between">
                         <div>
-                            <span class="text-sm font-mono text-violet-300">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</span>
+                            <a href="#" class="text-sm font-mono text-violet-300 hover:text-blue-300 transition-colors cursor-pointer" onclick="navigateToLiveSession('${escapeHtml(s.session_id)}');return false;">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</a>
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
                             <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.started_at || '')}</span>
                         </div>
                         <div class="flex items-center gap-2">
                             <span class="inline-block w-2 h-2 rounded-full bg-violet-400 animate-pulse" title="実行中"></span>
+                            <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="0" data-status="running">${TRASH_ICON}</button>
                         </div>
-                    </div>`;
-                }
-                html += '</div>';
+                    </div>`);
             }
             html += '</div>';
             // 5. 遷移データなし
@@ -1140,9 +1242,7 @@
                 html += '<p class="text-gray-600 text-sm">遷移データなしのセッションはありません</p>';
             } else {
                 html += '<p class="text-xs text-gray-500 mb-2">画面記録はあるがタップ遷移が記録されていないため、グラフ構築・マージ不可。削除のみ可能。</p>';
-                html += '<div class="space-y-2">';
-                for (const s of noTransition) {
-                    html += `<div class="bg-gray-900/50 border border-gray-800/50 rounded-lg p-3 flex items-center justify-between">
+                html += _renderMergeSection('noTransition', noTransition, (s) => `<div class="bg-gray-900/50 border border-gray-800/50 rounded-lg p-3 flex items-center justify-between">
                         <div>
                             <span class="text-sm font-mono text-gray-400">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</span>
                             ${completionBadge(s.completion_type)}
@@ -1153,9 +1253,7 @@
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">${TRASH_ICON}</button>
                         </div>
-                    </div>`;
-                }
-                html += '</div>';
+                    </div>`);
             }
             html += '</div>';
             html += '</div>';
@@ -1166,7 +1264,7 @@
             });
             // 削除ボタン
             mc.querySelectorAll('.delete-session-btn').forEach(btn => {
-                btn.addEventListener('click', () => confirmDeleteSession(btn.dataset.sessionId, btn.dataset.nodeCount));
+                btn.addEventListener('click', () => confirmDeleteSession(btn.dataset.sessionId, btn.dataset.nodeCount, btn.dataset.status || ''));
             });
             // グラフ構築ボタン
             mc.querySelectorAll('.build-graph-btn').forEach(btn => {
@@ -1175,6 +1273,15 @@
             // 後処理実行ボタン (バックグラウンド未完了)
             mc.querySelectorAll('.bg-process-btn').forEach(btn => {
                 btn.addEventListener('click', () => processSessionBg(btn.dataset.sessionId));
+            });
+            // ページ切り替えリンク
+            mc.querySelectorAll('.merge-page-btn').forEach(btn => {
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    if (this.classList.contains('pointer-events-none')) return;
+                    _mergePages[this.dataset.section] = parseInt(this.dataset.page);
+                    fetchMergeTab();
+                });
             });
             // 未マージボタン: can_unmerge チェック → disabled 制御
             mc.querySelectorAll('.unmerge-btn').forEach(btn => {
@@ -1729,14 +1836,30 @@
         }
     }
 
-    function confirmDeleteSession(sessionId, nodeCount) {
-        const html = `
-            <p class="text-sm text-gray-300 mb-2">セッション <code class="text-brand-light">${escapeHtml(sessionId)}</code> を削除しますか？</p>
-            <ul class="text-xs text-gray-400 space-y-1 ml-4 list-disc">
+    function confirmDeleteSession(sessionId, nodeCount, status) {
+        const isRunning = status === 'running';
+        const isMerged = parseInt(nodeCount) > 0;
+        let details;
+        if (isRunning) {
+            details = `<ul class="text-xs text-gray-400 space-y-1 ml-4 list-disc">
+                <li>セッションを破棄（discarded）し、全画面を物理削除</li>
+                <li>auto_pilot 実行中の場合、次の記録から新セッションが自動作成されます</li>
+            </ul>`;
+        } else if (isMerged) {
+            details = `<ul class="text-xs text-gray-400 space-y-1 ml-4 list-disc">
                 <li>不採用の画像・スクリーンショットファイルを物理削除</li>
                 <li>遷移データ・グループ情報を削除</li>
                 <li>採用済み画像（マスターノード参照）は保持</li>
-            </ul>
+            </ul>`;
+        } else {
+            details = `<ul class="text-xs text-gray-400 space-y-1 ml-4 list-disc">
+                <li>全画面・スクリーンショットファイルを物理削除</li>
+                <li>遷移データ・グループ情報を削除</li>
+            </ul>`;
+        }
+        const html = `
+            <p class="text-sm text-gray-300 mb-2">セッション <code class="text-brand-light">${escapeHtml(sessionId)}</code> を削除しますか？</p>
+            ${details}
             <p class="text-xs text-red-400 mt-3">この操作は取り消せません。</p>`;
         showConfirmDialog(html, async function() {
             hideConfirmDialog();
@@ -1751,8 +1874,10 @@
             const res = await fetch(API_BASE + '?action=delete_session&session_id=' + encodeURIComponent(sessionId));
             const data = await res.json();
             if (data.ok) {
+                const modeLabel = data.delete_mode === 'all' ? '全画面削除' : '非代表のみ削除';
+                const statusLabel = data.new_status === 'discarded' ? '(セッション破棄)' : '';
                 mc.innerHTML = `<div class="text-center text-green-500 py-12">
-                    削除完了: ${data.deleted_screens} 画面削除, ${data.deleted_files} ファイル削除, ${data.kept_screens} 画面保持
+                    削除完了 ${statusLabel}: ${data.deleted_screens} 画面削除, ${data.deleted_files} ファイル削除${data.kept_screens > 0 ? `, ${data.kept_screens} 画面保持` : ''}
                 </div>`;
                 setTimeout(() => fetchMergeTab(), 2000);
             } else {
@@ -1799,6 +1924,30 @@
         return String(n);
     }
     const PURPOSE_LABELS = { 'hq_ocr': 'HQ OCR', 'anchor_judgment': 'Anchor Judgment', 'anchor_text_judgment': 'Anchor Text Judgment' };
+    function _buildCostTable(rows, periodKey) {
+        let h = '<table class="w-full text-sm"><thead><tr class="text-gray-500 text-xs border-b border-gray-800">';
+        const label = periodKey === 'month' ? 'Month' : 'Date';
+        h += `<th class="text-left py-1.5 px-2">${label}</th><th class="text-left py-1.5 px-2">Model</th><th class="text-left py-1.5 px-2">Purpose</th><th class="text-right py-1.5 px-2">Calls</th><th class="text-right py-1.5 px-2">Input</th><th class="text-right py-1.5 px-2">Output</th><th class="text-right py-1.5 px-2">Cost</th>`;
+        h += '</tr></thead><tbody>';
+        let prev = '';
+        for (const row of rows) {
+            const cost = calcCost(row.model, +row.input_tokens, +row.output_tokens);
+            const period = row[periodKey];
+            const show = period !== prev ? period : '';
+            prev = period;
+            h += `<tr class="border-b border-gray-800/50 text-gray-300${show ? ' border-t border-gray-700' : ''}">
+                <td class="py-1.5 px-2 text-xs${show ? ' font-medium' : ' text-transparent'}">${show || period}</td>
+                <td class="py-1.5 px-2 font-mono text-xs">${row.model}</td>
+                <td class="py-1.5 px-2 text-xs">${PURPOSE_LABELS[row.purpose] || row.purpose}</td>
+                <td class="py-1.5 px-2 text-right">${(+row.call_count).toLocaleString()}</td>
+                <td class="py-1.5 px-2 text-right text-cyan-400/70">${fmtTokens(+row.input_tokens)}</td>
+                <td class="py-1.5 px-2 text-right text-orange-400/70">${fmtTokens(+row.output_tokens)}</td>
+                <td class="py-1.5 px-2 text-right text-emerald-400">${fmtCost(cost)}</td>
+            </tr>`;
+        }
+        h += '</tbody></table>';
+        return h;
+    }
 
     async function fetchCostTab() {
         const mc = document.getElementById('merge-container');
@@ -1808,6 +1957,7 @@
             const data = await res.json();
 
             const daily = data.daily || [];
+            const monthly = data.monthly || [];
             const byModel = data.by_model || [];
             const byPurpose = data.by_purpose || [];
             const total = data.total || {};
@@ -1881,30 +2031,36 @@
             }
             html += '</tbody></table></div>';
 
-            // 日別
-            html += '<div><h3 class="text-sm font-bold text-gray-400 mb-2">Daily</h3>';
-            html += '<table class="w-full text-sm"><thead><tr class="text-gray-500 text-xs border-b border-gray-800">';
-            html += '<th class="text-left py-1.5 px-2">Date</th><th class="text-left py-1.5 px-2">Model</th><th class="text-left py-1.5 px-2">Purpose</th><th class="text-right py-1.5 px-2">Calls</th><th class="text-right py-1.5 px-2">Input</th><th class="text-right py-1.5 px-2">Output</th><th class="text-right py-1.5 px-2">Cost</th>';
-            html += '</tr></thead><tbody>';
-            let prevDay = '';
-            for (const row of daily) {
-                const cost = calcCost(row.model, +row.input_tokens, +row.output_tokens);
-                const showDay = row.day !== prevDay ? row.day : '';
-                prevDay = row.day;
-                html += `<tr class="border-b border-gray-800/50 text-gray-300${showDay ? ' border-t border-gray-700' : ''}">
-                    <td class="py-1.5 px-2 text-xs${showDay ? ' font-medium' : ' text-transparent'}">${showDay || row.day}</td>
-                    <td class="py-1.5 px-2 font-mono text-xs">${row.model}</td>
-                    <td class="py-1.5 px-2 text-xs">${PURPOSE_LABELS[row.purpose] || row.purpose}</td>
-                    <td class="py-1.5 px-2 text-right">${(+row.call_count).toLocaleString()}</td>
-                    <td class="py-1.5 px-2 text-right text-cyan-400/70">${fmtTokens(+row.input_tokens)}</td>
-                    <td class="py-1.5 px-2 text-right text-orange-400/70">${fmtTokens(+row.output_tokens)}</td>
-                    <td class="py-1.5 px-2 text-right text-emerald-400">${fmtCost(cost)}</td>
-                </tr>`;
-            }
-            html += '</tbody></table></div>';
+            // 日別/月別
+            html += '<div><div class="flex items-center gap-2 mb-2"><h3 class="text-sm font-bold text-gray-400">Breakdown</h3>';
+            html += '<button id="cost-daily-btn" class="px-2 py-0.5 text-xs rounded bg-cyan-900/50 text-cyan-300">Daily</button>';
+            html += '<button id="cost-monthly-btn" class="px-2 py-0.5 text-xs rounded bg-gray-800 text-gray-500">Monthly</button></div>';
+            html += '<div id="cost-daily-table">';
+            html += _buildCostTable(daily, 'day');
+            html += '</div>';
+            html += '<div id="cost-monthly-table" class="hidden">';
+            html += _buildCostTable(monthly, 'month');
+            html += '</div></div>';
 
             html += '</div>';
             mc.innerHTML = html;
+            // Daily/Monthly 切り替え
+            const _cdBtn = document.getElementById('cost-daily-btn');
+            const _cmBtn = document.getElementById('cost-monthly-btn');
+            if (_cdBtn && _cmBtn) {
+                _cdBtn.addEventListener('click', function() {
+                    document.getElementById('cost-daily-table').classList.remove('hidden');
+                    document.getElementById('cost-monthly-table').classList.add('hidden');
+                    _cdBtn.className = 'px-2 py-0.5 text-xs rounded bg-cyan-900/50 text-cyan-300';
+                    _cmBtn.className = 'px-2 py-0.5 text-xs rounded bg-gray-800 text-gray-500';
+                });
+                _cmBtn.addEventListener('click', function() {
+                    document.getElementById('cost-daily-table').classList.add('hidden');
+                    document.getElementById('cost-monthly-table').classList.remove('hidden');
+                    _cmBtn.className = 'px-2 py-0.5 text-xs rounded bg-cyan-900/50 text-cyan-300';
+                    _cdBtn.className = 'px-2 py-0.5 text-xs rounded bg-gray-800 text-gray-500';
+                });
+            }
         } catch (e) {
             mc.innerHTML = '<div class="space-y-6"><h3 class="text-lg font-bold text-gray-300">API Cost</h3><p class="text-red-400 text-sm">データの取得に失敗しました</p></div>';
         }
@@ -2389,7 +2545,10 @@
         const s = filteredScreens[idx];
         const chronoPos = idx + 1;
         const isThinned = s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative;
-        const titlePrefix = isThinned ? '[不採用] ' : '';
+        const isExcluded = s.is_artifact > 0;
+        const isGeminiExcluded = s.is_artifact === 1;
+        const isUserExcluded = s.is_artifact === 2;
+        const titlePrefix = isGeminiExcluded ? '[Gemini不採用] ' : isUserExcluded ? '[不採用] ' : isThinned ? '[非代表] ' : '';
         const scene = s.category || 'UNKNOWN';
         const badge = document.getElementById('modal-scene-badge');
         badge.textContent = scene;
@@ -2408,12 +2567,42 @@
         document.getElementById('modal-edit-area').classList.add('hidden');
         // 編集ボタンは Final タブの代表のみ
         const editBtn = document.getElementById('modal-edit-btn');
+        const modalAdoptBtn = document.getElementById('modal-adopt-btn');
+        const modalExcludeBtn = document.getElementById('modal-exclude-btn');
         if (currentTab === 'final' && s.master_fp) {
             editBtn.style.display = 'inline-block';
             editBtn._currentMasterFp = s.master_fp;
             editBtn._currentText = s.ocr_text || '';
+            // 採用/不採用ボタン: 現在の状態に応じて片方だけ表示
+            if (s.user_excluded) {
+                modalAdoptBtn.classList.remove('hidden');
+                modalExcludeBtn.classList.add('hidden');
+            } else {
+                modalAdoptBtn.classList.add('hidden');
+                modalExcludeBtn.classList.remove('hidden');
+            }
+            modalAdoptBtn._masterFp = s.master_fp;
+            modalAdoptBtn._screenId = null;
+            modalExcludeBtn._masterFp = s.master_fp;
+            modalExcludeBtn._screenId = null;
+        } else if (currentTab === 'live' && s.id && s.is_representative) {
+            editBtn.style.display = 'none';
+            // Live タブ: 代表画像のみ is_artifact で採用/不採用
+            if (s.is_artifact > 0) {
+                modalAdoptBtn.classList.remove('hidden');
+                modalExcludeBtn.classList.add('hidden');
+            } else {
+                modalAdoptBtn.classList.add('hidden');
+                modalExcludeBtn.classList.remove('hidden');
+            }
+            modalAdoptBtn._masterFp = null;
+            modalAdoptBtn._screenId = s.id;
+            modalExcludeBtn._masterFp = null;
+            modalExcludeBtn._screenId = s.id;
         } else {
             editBtn.style.display = 'none';
+            modalAdoptBtn.classList.add('hidden');
+            modalExcludeBtn.classList.add('hidden');
         }
         updateModalNav();
         document.getElementById('modal-anchor-compare').classList.add('hidden');
@@ -2423,7 +2612,8 @@
         // Final タブ: クラスタ兄弟を表示
         const clusterDiv = document.getElementById('modal-cluster');
         const clusterGrid = document.getElementById('modal-cluster-grid');
-        if (currentTab === 'final' && s.id) {
+        if ((currentTab === 'final' || currentTab === 'live') && s.id) {
+            _clusterCurrentScreenId = s.id;
             clusterDiv.classList.remove('hidden');
             clusterGrid.innerHTML = '<span class="text-xs text-gray-600">読み込み中...</span>';
             fetchClusterSiblings(s.id, s.master_fp);
@@ -2437,12 +2627,13 @@
     let _clusterSelectedId = null;
     let _clusterOriginalRepId = null;
     let _clusterMasterFp = null;
+    let _clusterCurrentScreenId = null;  // モーダルで表示中の画面ID
 
     async function fetchClusterSiblings(screenId, masterFp) {
         const clusterGrid = document.getElementById('modal-cluster-grid');
         const promoteBtn = document.getElementById('cluster-promote-btn');
         _clusterMasterFp = masterFp;
-        _clusterSelectedId = null;
+        _clusterSelectedId = screenId;  // 開いた画像を初期選択
         promoteBtn.disabled = true;
         promoteBtn.classList.add('hidden');
         try {
@@ -2459,6 +2650,11 @@
             }
             _clusterOriginalRepId = (_clusterSiblings.find(s => s.is_representative == 1) || {}).id || null;
             renderClusterGrid();
+            // 選択中の画像が見えるようにスクロール
+            requestAnimationFrame(() => {
+                const selected = clusterGrid.querySelector('.cluster-sib.border-emerald-500, .cluster-sib.border-amber-700');
+                if (selected) selected.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+            });
         } catch (e) {
             clusterGrid.innerHTML = '<span class="text-xs text-red-500">取得エラー</span>';
         }
@@ -2470,10 +2666,14 @@
         const selectedId = _clusterSelectedId || _clusterOriginalRepId;
         clusterGrid.innerHTML = _clusterSiblings.map(sib => {
             const thumb = sib.thumbnail_path ? imgUrl(sib.thumbnail_path) : (sib.screenshot_path ? imgUrl(sib.screenshot_path) : '');
-            const isSelected = sib.id == selectedId;
-            const border = isSelected ? 'border-2 border-emerald-500' : 'border border-gray-700 hover:border-brand/50 cursor-pointer';
-            return `<div class="cluster-sib ${border} rounded overflow-hidden bg-gray-900 flex-shrink-0" data-sib-id="${sib.id}">
+            const isCurrent = sib.id == _clusterCurrentScreenId;
+            const isRep = sib.is_representative == 1;
+            const isSelected = _clusterSelectedId && sib.id == _clusterSelectedId;
+            const border = isSelected ? 'border-2 border-emerald-500' : isCurrent ? 'border-2 border-amber-700' : 'border border-gray-700 hover:border-brand/50 cursor-pointer';
+            const repBadge = isRep ? '<span class="absolute top-1 right-1 w-5 h-5 rounded-full bg-emerald-600/90 text-white text-[10px] font-bold flex items-center justify-center shadow" title="代表">★</span>' : '';
+            return `<div class="cluster-sib relative ${border} rounded overflow-hidden bg-gray-900 flex-shrink-0" data-sib-id="${sib.id}">
                 ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
+                ${repBadge}
             </div>`;
         }).join('');
         // 選択が代表と異なればボタン有効化
@@ -2498,7 +2698,9 @@
     }
 
     document.getElementById('cluster-promote-btn').addEventListener('click', function() {
-        if (!_clusterSelectedId || !_clusterMasterFp) return;
+        if (!_clusterSelectedId) return;
+        // Live タブでは master_fp なし、Final タブでは master_fp あり
+        if (currentTab === 'final' && !_clusterMasterFp) return;
         const sib = _clusterSiblings.find(s => s.id == _clusterSelectedId);
         const origSib = _clusterSiblings.find(s => s.id == _clusterOriginalRepId);
         const html = `
@@ -2516,14 +2718,126 @@
         showConfirmDialog(html, async function() {
             hideConfirmDialog();
             try {
-                const res = await fetch(API_BASE + '?action=promote_representative&master_fp=' + encodeURIComponent(_clusterMasterFp) + '&screen_id=' + _clusterSelectedId);
+                let promoteUrl = API_BASE + '?action=promote_representative&screen_id=' + _clusterSelectedId;
+                if (_clusterMasterFp) {
+                    promoteUrl += '&master_fp=' + encodeURIComponent(_clusterMasterFp);
+                }
+                const res = await fetch(promoteUrl);
                 const result = await res.json();
                 if (result.ok) {
-                    await fetchFinal();
+                    if (currentTab === 'final') {
+                        await fetchFinal();
+                    } else {
+                        await fetchLive();
+                    }
                     if (modalIdx >= 0 && modalIdx < filteredScreens.length) showModal(modalIdx);
                 }
             } catch (e) {}
         }, { okLabel: '変更' });
+    });
+
+    // モーダル内 採用/不採用ボタン (Final: toggle_exclude / Live: toggle_screen_artifact)
+    document.getElementById('modal-adopt-btn').addEventListener('click', async function() {
+        try {
+            if (this._masterFp) {
+                // Final タブ
+                const url = API_BASE + '?action=toggle_exclude&master_fp=' + encodeURIComponent(this._masterFp) + (_currentVersionId ? '&version=' + _currentVersionId : '');
+                await fetch(url);
+                const item = allScreens.find(s => s.master_fp === this._masterFp);
+                if (item) item.user_excluded = false;
+                renderAll();
+                if (modalIdx >= 0 && modalIdx < filteredScreens.length) showModal(modalIdx);
+                else closeModal();
+            } else if (this._screenId) {
+                // Live タブ: まず情報を取得してから確認ダイアログ
+                const screenId = this._screenId;
+                const item = allScreens.find(s => s.id === screenId);
+                // マスターノードに含まれるか事前チェック
+                const checkUrl = API_BASE + '?action=check_screen_master&screen_id=' + screenId;
+                const checkRes = await fetch(checkUrl);
+                const checkData = await checkRes.json();
+
+                if (checkData.has_master && checkData.master_excluded) {
+                    // マスターノードが除外中 → 確認ダイアログ + 再マージ
+                    let msg = '<p class="text-sm text-gray-200 mb-2">採用するとマスターノードの再構築（unmerge + 再マージ）が実行されます。</p>';
+                    if (checkData.is_seed) {
+                        msg += '<p class="text-xs text-amber-400 mb-1">Seed セッションのため、全セッションの再構築が走ります。</p>';
+                        msg += '<p class="text-xs text-amber-400">セッション数に応じて相当な時間がかかる場合があります。</p>';
+                    } else {
+                        msg += '<p class="text-xs text-gray-400">該当セッション (' + escapeHtml(checkData.session_id || '') + ') の unmerge + 再マージが実行されます。</p>';
+                    }
+                    showConfirmDialog(msg, async function() {
+                        hideConfirmDialog();
+                        closeModal();
+                        // adopt_and_rebuild API: 採用 + バックグラウンド再マージ
+                        const toastHandle = showToast('再構築を開始しています...', 'info', { sticky: true });
+                        try {
+                            const res = await fetch(API_BASE + '?action=adopt_and_rebuild&screen_id=' + screenId);
+                            const data = await res.json();
+                            if (!data.started) {
+                                toastHandle.update('再構築の開始に失敗しました');
+                                setTimeout(() => toastHandle.remove(), 3000);
+                                return;
+                            }
+                            if (item) item.is_artifact = 0;
+                            renderAll();
+                            // merge_progress ポーリングで進捗表示 (merge_result.json 完了判定込み)
+                            const pollTimer = setInterval(async () => {
+                                try {
+                                    const pr = await fetch(API_BASE + '?action=merge_progress');
+                                    const pd = await pr.json();
+                                    if (pd.done) {
+                                        clearInterval(pollTimer);
+                                        if (pd.result && pd.result.ok) {
+                                            toastHandle.update('再構築完了');
+                                        } else {
+                                            toastHandle.update('再構築エラー: ' + (pd.result?.error || '不明'));
+                                        }
+                                        setTimeout(() => toastHandle.remove(), 4000);
+                                        await fetchFinal();
+                                    } else if (pd.progress) {
+                                        toastHandle.update(pd.progress.phase || '処理中...');
+                                    }
+                                } catch (e) {}
+                            }, 2000);
+                        } catch (e) {
+                            toastHandle.update('エラーが発生しました');
+                            setTimeout(() => toastHandle.remove(), 3000);
+                        }
+                    }, { okLabel: '採用して再構築' });
+                } else {
+                    // マスターノードなし or 除外されていない → そのまま実行
+                    const url = API_BASE + '?action=toggle_screen_artifact&screen_id=' + screenId;
+                    const _res = await fetch(url);
+                    const _data = await _res.json();
+                    if (item) item.is_artifact = _data.is_artifact ?? 0;
+                    renderAll();
+                    if (modalIdx >= 0 && modalIdx < filteredScreens.length) showModal(modalIdx);
+                    else closeModal();
+                }
+            }
+        } catch (e) {}
+    });
+    document.getElementById('modal-exclude-btn').addEventListener('click', async function() {
+        try {
+            if (this._masterFp) {
+                // Final タブ
+                const url = API_BASE + '?action=toggle_exclude&master_fp=' + encodeURIComponent(this._masterFp) + (_currentVersionId ? '&version=' + _currentVersionId : '');
+                await fetch(url);
+                const item = allScreens.find(s => s.master_fp === this._masterFp);
+                if (item) item.user_excluded = true;
+            } else if (this._screenId) {
+                // Live タブ
+                const url = API_BASE + '?action=toggle_screen_artifact&screen_id=' + this._screenId;
+                const _exRes = await fetch(url);
+                const _exData = await _exRes.json();
+                const item = allScreens.find(s => s.id === this._screenId);
+                if (item) item.is_artifact = _exData.is_artifact ?? 2;
+            }
+            renderAll();
+            if (modalIdx >= 0 && modalIdx < filteredScreens.length) showModal(modalIdx);
+            else closeModal();
+        } catch (e) {}
     });
 
     // ソート方向に応じた「新しい方向」「古い方向」のインデックス移動
@@ -2700,6 +3014,83 @@
     });
     document.getElementById('final-merge-group-btn').addEventListener('click', showMergeGroupDialog);
 
+    // --- Live タブ: 複数選択 採用/不採用 ---
+    function updateLiveActionBar() {
+        const liveActions = document.getElementById('live-actions');
+        const filter = filterSelect.value;
+        const isRepsFilter = filter === 'reps';
+        const isExcludedFilter = filter === 'excluded';
+        // 採用 or 不採用フィルタ時のみアクションバー表示
+        if (currentTab === 'live' && (isRepsFilter || isExcludedFilter)) {
+            liveActions.classList.remove('hidden');
+        } else {
+            liveActions.classList.add('hidden');
+        }
+        const adoptBtn = document.getElementById('live-adopt-btn');
+        const excludeBtn = document.getElementById('live-exclude-btn');
+        const resetBtn = document.getElementById('live-reset-btn');
+        const hasSelection = selectedLiveScreens.size > 0;
+        if (isRepsFilter) {
+            adoptBtn.classList.add('hidden');
+            excludeBtn.classList.remove('hidden');
+        } else if (isExcludedFilter) {
+            adoptBtn.classList.remove('hidden');
+            excludeBtn.classList.add('hidden');
+        }
+        adoptBtn.disabled = !hasSelection;
+        excludeBtn.disabled = !hasSelection;
+        resetBtn.disabled = !hasSelection;
+        // フッターに選択数表示
+        const countEl = document.getElementById('final-select-count');
+        if (currentTab === 'live') {
+            countEl.textContent = hasSelection ? `${selectedLiveScreens.size} 件選択中` : '';
+        }
+    }
+
+    function _liveConfirmCard(screenId) {
+        const item = allScreens.find(s => s.id === screenId);
+        const thumb = item && item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
+        return _thumbCard(thumb, item ? (item.name || '') : '', { clickable: false });
+    }
+
+    function showLiveBulkConfirm(action) {
+        if (selectedLiveScreens.size === 0) return;
+        const ids = [...selectedLiveScreens];
+        const label = action === 'adopt' ? '採用' : '不採用';
+        const isDanger = action !== 'adopt';
+        let html = `<p class="text-sm text-gray-300 mb-2">${ids.length} 件を${label}にします</p>`;
+        html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto p-1 confirm-img-area">';
+        for (const id of ids) html += _liveConfirmCard(id);
+        html += '</div>';
+        showConfirmDialog(html, async function() {
+            hideConfirmDialog();
+            for (const id of ids) {
+                const item = allScreens.find(s => s.id === id);
+                if (!item) continue;
+                const wantExclude = action === 'exclude';
+                const isCurrentlyExcluded = item.is_artifact > 0;
+                if (isCurrentlyExcluded !== wantExclude) {
+                    try {
+                        const res = await fetch(API_BASE + '?action=toggle_screen_artifact&screen_id=' + id);
+                        const data = await res.json();
+                        item.is_artifact = data.is_artifact ?? (wantExclude ? 2 : 0);
+                    } catch (e) {}
+                }
+            }
+            selectedLiveScreens.clear();
+            renderAll();
+            updateLiveActionBar();
+        }, { okLabel: label, danger: isDanger });
+    }
+
+    document.getElementById('live-adopt-btn').addEventListener('click', () => showLiveBulkConfirm('adopt'));
+    document.getElementById('live-exclude-btn').addEventListener('click', () => showLiveBulkConfirm('exclude'));
+    document.getElementById('live-reset-btn').addEventListener('click', function() {
+        selectedLiveScreens.clear();
+        renderAll();
+        updateLiveActionBar();
+    });
+
     function updateGroupSelectUI() {
         const countEl = document.getElementById('final-select-count');
         const mergeBtn = document.getElementById('final-merge-group-btn');
@@ -2715,11 +3106,11 @@
         if (selectedForGroup.size < 2) return;
         const fps = [...selectedForGroup];
         let html = `<p class="text-sm text-gray-300 mb-3">${fps.length} 件を統合します。代表を選択してください。</p>`;
-        html += '<div class="flex flex-wrap justify-center gap-3 max-h-[22rem] overflow-y-auto p-1">';
+        html += '<div class="flex flex-wrap justify-center gap-3 max-h-[30rem] overflow-y-auto p-1">';
         for (const fp of fps) {
             const item = allScreens.find(s => s.master_fp === fp);
             const thumb = item && item.thumbnail_path ? imgUrl(item.thumbnail_path) : '';
-            html += `<div class="bg-gray-800 rounded overflow-hidden w-40 flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-emerald-500 transition-all group-rep-card" data-master-fp="${escapeHtml(fp)}">
+            html += `<div class="bg-gray-800 rounded overflow-hidden w-56 flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-emerald-500 transition-all group-rep-card" data-master-fp="${escapeHtml(fp)}">
                 ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" />` : '<div class="w-full aspect-video bg-gray-700"></div>'}
                 <p class="text-[10px] text-gray-500 p-1.5 truncate">${escapeHtml(item ? (item.name || '') : '')}</p>
             </div>`;
@@ -2768,19 +3159,26 @@
 
     // グリッドカード外クリックで選択リセット
     document.addEventListener('click', function(e) {
-        if (currentTab !== 'final' || selectedForGroup.size === 0) return;
-        if (e.target.closest('[data-idx]') || e.target.closest('#final-actions') || e.target.closest('#confirm-popup') || e.target.closest('#modal') || e.target.closest('#preview-overlay')) return;
-        selectedForGroup.clear();
-        pendingChanges = {};
-        renderAll();
-        updateGroupSelectUI();
-        updateFinalActionBar();
+        if (currentTab === 'final' && selectedForGroup.size > 0) {
+            if (e.target.closest('[data-idx]') || e.target.closest('#final-actions') || e.target.closest('#confirm-popup') || e.target.closest('#modal') || e.target.closest('#preview-overlay')) return;
+            selectedForGroup.clear();
+            pendingChanges = {};
+            renderAll();
+            updateGroupSelectUI();
+            updateFinalActionBar();
+        }
+        if (currentTab === 'live' && selectedLiveScreens.size > 0) {
+            if (e.target.closest('[data-idx]') || e.target.closest('#live-actions') || e.target.closest('#confirm-popup') || e.target.closest('#modal') || e.target.closest('#preview-overlay')) return;
+            selectedLiveScreens.clear();
+            renderAll();
+            updateLiveActionBar();
+        }
     });
 
     grid.addEventListener('click', function(e) {
         const card = e.target.closest('[data-idx]');
         if (!card) return;
-        // Shift+クリック: 統合選択モード (Final タブのみ)
+        // Shift+クリック: 複数選択モード (Final / Live タブ)
         if (e.shiftKey && currentTab === 'final') {
             const idx = parseInt(card.dataset.idx, 10);
             const s = filteredScreens[idx];
@@ -2793,6 +3191,20 @@
                 renderAll();
                 updateGroupSelectUI();
                 updateFinalActionBar();
+            }
+            return;
+        }
+        if (e.shiftKey && currentTab === 'live' && (filterSelect.value === 'reps' || filterSelect.value === 'excluded')) {
+            const idx = parseInt(card.dataset.idx, 10);
+            const s = filteredScreens[idx];
+            if (s && s.id) {
+                if (selectedLiveScreens.has(s.id)) {
+                    selectedLiveScreens.delete(s.id);
+                } else {
+                    selectedLiveScreens.add(s.id);
+                }
+                renderAll();
+                updateLiveActionBar();
             }
             return;
         }
@@ -2851,6 +3263,21 @@
                 if (selectedEl) selectedEl.scrollIntoView({ block: 'nearest' });
             }
             return;
+        }
+        // Live タブ: ↑↓ でセッション切替 (↑=新しい, ↓=古い)
+        if (currentTab === 'live') {
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                e.preventDefault();
+                const opts = sessionSelect.options;
+                const curIdx = sessionSelect.selectedIndex;
+                const nextIdx = e.key === 'ArrowUp'
+                    ? Math.max(0, curIdx - 1)
+                    : Math.min(opts.length - 1, curIdx + 1);
+                if (nextIdx !== curIdx) {
+                    sessionSelect.selectedIndex = nextIdx;
+                    sessionSelect.dispatchEvent(new Event('change'));
+                }
+            }
         }
         // デバッグモード: ←→ でアンカーナビゲーション、↑↓ でセッション切替
         if (_debugMode && currentTab === 'final') {
@@ -2994,6 +3421,14 @@
 
     function updateVersionSelect(versions) {
         if (!versions) return;
+        // _currentVersionId 未設定時は Default(is_active)を自動選択
+        if (!_currentVersionId) {
+            const active = versions.find(v => v.is_active == 1);
+            if (active) {
+                _currentVersionId = active.id;
+                _currentVersionName = active.name;
+            }
+        }
         versionSelect.innerHTML = versions.map(v =>
             `<option value="${v.id}"${v.id == _currentVersionId ? ' selected' : ''}>${escapeHtml(v.name)}</option>`
         ).join('');

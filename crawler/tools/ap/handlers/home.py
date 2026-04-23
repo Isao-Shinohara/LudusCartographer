@@ -37,22 +37,22 @@ def _handle_grind_nav(ctx: DetectContext, state: PilotState) -> tuple[str, float
     if 0 < state.grind_max_cycles <= state.grind_cycles_completed:
         logger.info("[GRIND] 目標周回数 %d に到達 → 終了", state.grind_max_cycles)
         return "GOAL_GRIND_COMPLETE", 0
-    state.battle_wait_count = 0
-    state.auto_activated = False
-    state.result_rapid_count = 0
-    state.result_total_taps = 0
-    state.result_subtype = ""
-    state.home_nav_count = 0
-    state.home_tutorial_tap_count = 0
-    state.char_just_selected = False
-    state.character_selected = False
+    state.cycle.battle_wait_count = 0
+    state.cycle.auto_activated = False
+    state.cycle.result_rapid_count = 0
+    state.cycle.result_total_taps = 0
+    state.cycle.result_subtype = ""
+    state.cycle.home_nav_count = 0
+    state.cycle.home_tutorial_tap_count = 0
+    state.cycle.char_just_selected = False
+    state.cycle.character_selected = False
     quest_btn = has_text(ctx.ocr, "クエスト", min_conf=0.3)
     if quest_btn:
         cx, cy = quest_btn["center"]
         logger.info(">>> [GRIND] クエストボタン (%d,%d) タップ", cx, cy)
         tap_device(cx, cy, state, "GRIND_QUEST_NAV")
     else:
-        _qf_x, _qf_y = roi_to_device(int(ctx.W * 0.88), int(ctx.H * 0.96), state.game_roi)
+        _qf_x, _qf_y = roi_to_device(int(ctx.W * 0.88), int(ctx.H * 0.96), state.cycle.game_roi)
         logger.info(">>> [GRIND] クエスト固定位置 (%d,%d) タップ", _qf_x, _qf_y)
         tap_device(_qf_x, _qf_y, state, "GRIND_QUEST_NAV_FIXED")
     return "GRIND_QUEST_NAV", 3.0
@@ -71,12 +71,12 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     if home_count < 3:
         return None
 
-    state.home_reached = True
+    state.cycle.home_reached = True
 
     # 前段ハンドラ (finger_priority) で指テンプレが処理済みの場合、
     # チュートリアル証拠として iter を更新 (誤完了判定防止)
     if ctx.pre_dialog_finger:
-        state._home_last_evidence_iter = state.iteration
+        state.cycle._home_last_evidence_iter = state.cycle.iteration
 
     # ── チュートリアル完了判定: 指テンプレ / 暗転+金枠 の有無 ──
     # チュートリアル中: 指アイコン or (暗転オーバーレイ + 金枠) が表示される
@@ -102,26 +102,26 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     _has_tutorial_evidence = _has_hand or (_has_overlay and _home_gold is not None)
 
     if _has_tutorial_evidence:
-        state._home_last_evidence_iter = state.iteration
-        state._home_no_evidence_count = 0  # 証拠ありでカウンタリセット
+        state.cycle._home_last_evidence_iter = state.cycle.iteration
+        state.cycle._home_no_evidence_count = 0  # 証拠ありでカウンタリセット
 
     _HOME_NO_EVIDENCE_THRESHOLD = 5  # ホーム画面で連続N回証拠なしで完了判定
 
     # ホーム画面で何らかのアクションがあった場合はカウンタリセット
     # (HOME_TUTORIAL_RECHECK のみカウント継続、それ以外は証拠なし連続を中断)
-    if state.last_action and state.last_action != "HOME_TUTORIAL_RECHECK":
-        state._home_no_evidence_count = 0
+    if state.cycle.last_action and state.cycle.last_action != "HOME_TUTORIAL_RECHECK":
+        state.cycle._home_no_evidence_count = 0
 
     if not _has_tutorial_evidence:
-        if not state.tutorial_cleared:
-            _no_ev = getattr(state, "_home_no_evidence_count", 0) + 1
-            state._home_no_evidence_count = _no_ev
+        if not state.cycle.tutorial_cleared:
+            _no_ev = getattr(state.cycle, "_home_no_evidence_count", 0) + 1
+            state.cycle._home_no_evidence_count = _no_ev
             if _no_ev < _HOME_NO_EVIDENCE_THRESHOLD:
                 logger.info(">>> ホーム画面 チュートリアル証拠なし (%d/%d回) → 次フレームで再確認",
                             _no_ev, _HOME_NO_EVIDENCE_THRESHOLD)
                 return "HOME_TUTORIAL_RECHECK", 0.5
             logger.info(">>> ホーム画面 証拠なし %d回連続 → チュートリアル完了", _no_ev)
-            state.tutorial_cleared = True
+            state.cycle.tutorial_cleared = True
             log_milestone(state, "HOME_REACHED")
         logger.info(">>> ホーム画面検出 (%d個) — チュートリアル完了済み", home_count)
         return "GOAL_HOME_REACHED", 0
@@ -132,17 +132,17 @@ def handle_home(ctx: DetectContext, state: PilotState) -> Optional[tuple[str, fl
     logger.info(">>> ホーム画面 チュートリアル中 (暗転=%s 金枠=%s)", _has_overlay, _home_gold is not None)
 
     # スタック時: クエストへナビゲート
-    if state.blob_same_count >= 5:
+    if state.cycle.blob_same_count >= 5:
         logger.info(">>> ホーム画面 + スタック → クエストへナビゲート")
-        state.blob_same_count = 0
-        state.home_nav_count += 1
+        state.cycle.blob_same_count = 0
+        state.cycle.home_nav_count += 1
         quest_btn = has_text(ocr, "クエスト", min_conf=0.3)
         if quest_btn:
             cx, cy = quest_btn["center"]
             logger.info(">>> クエストボタン (%d,%d) タップ", cx, cy)
             tap_device(cx, cy, state, "QUEST_FROM_HOME")
             return "QUEST_FROM_HOME", 3.0
-        _qf_x, _qf_y = roi_to_device(int(W * 0.88), int(H * 0.96), state.game_roi)
+        _qf_x, _qf_y = roi_to_device(int(W * 0.88), int(H * 0.96), state.cycle.game_roi)
         tap_device(_qf_x, _qf_y, state, "QUEST_FIXED")
         return "QUEST_FROM_HOME", 3.0
 

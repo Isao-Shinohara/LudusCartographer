@@ -514,7 +514,7 @@ def _run_battle_glow_sm(
                     len(right), right[0]["area"] if right else 0)
 
     # P1: 左キャラ発光 (キャラ未選択)
-    if not state.character_selected and left:
+    if not state.cycle.character_selected and left:
         g = max(left, key=lambda g: g["area"])
         # bbox上端 + 高さ2/3 = ボタン視覚中心 (centroidはハロに引かれ上にずれる)
         gx = g["cx"]
@@ -523,14 +523,14 @@ def _run_battle_glow_sm(
                     tag, g["cx"], g["cy"], g["by"], g["bh"], gx, gy)
         tap_device(gx, gy, state, "GLOW_LEFT_CHAR", rapid=True)
         tap_device(gx, gy, state, "GLOW_LEFT_CHAR")  # ダブルタップ
-        state.character_selected = True
-        state.char_just_selected = True
-        state.finger_detections += 1
-        state.phash_moving_count = 0
+        state.cycle.character_selected = True
+        state.cycle.char_just_selected = True
+        state.cycle.finger_detections += 1
+        state.cycle.phash_moving_count = 0
         return "GLOW_LEFT_CHAR", 0.3
 
     # P2: 右スキル発光 (キャラ選択済み)
-    if state.character_selected and (right or True):
+    if state.cycle.character_selected and (right or True):
         # P2-a: テンプレートで battle_skill / battle_normal_attack を探す (精度最優先)
         _p2_tmpl_hit = False
         for _btn in ("battle_skill", "battle_normal_attack"):
@@ -540,10 +540,10 @@ def _run_battle_glow_sm(
                 logger.info("[%s P2] テンプレ %s (%.2f) → tap(%d,%d)",
                             tag, _btn, _bm[2], gx, gy)
                 tap_device(gx, gy, state, f"GLOW_RIGHT_{_btn.upper()}")
-                state.character_selected = False
-                state.char_just_selected = False
-                state.finger_detections += 1
-                state.phash_moving_count = 0
+                state.cycle.character_selected = False
+                state.cycle.char_just_selected = False
+                state.cycle.finger_detections += 1
+                state.cycle.phash_moving_count = 0
                 _p2_tmpl_hit = True
                 return f"GLOW_RIGHT_{_btn.upper()}", 0.3
         # P2-b: テンプレ未検出 → glow フォールバック
@@ -554,15 +554,15 @@ def _run_battle_glow_sm(
             logger.info("[%s P2] 右発光 centroid(%d,%d) bbox_y=%d+%d → tap(%d,%d)",
                         tag, g["cx"], g["cy"], g["by"], g["bh"], gx, gy)
             tap_device(gx, gy, state, "GLOW_RIGHT_SKILL")
-            state.character_selected = False
-            state.char_just_selected = False
-            state.finger_detections += 1
+            state.cycle.character_selected = False
+            state.cycle.char_just_selected = False
+            state.cycle.finger_detections += 1
             # バトルアニメーションで MOVIE 誤昇格しないようリセット
-            state.phash_moving_count = 0
+            state.cycle.phash_moving_count = 0
             return "GLOW_RIGHT_SKILL", 0.3
 
     # P3: キャラ選択済み + 発光なし → 通常攻撃 OCR フォールバック
-    if state.character_selected and not right:
+    if state.cycle.character_selected and not right:
         na = has_any(ocr, ["通常攻撃", "单体攻撃", "単体攻撃"])
         if na:
             nx, ny = na["center"]
@@ -570,10 +570,10 @@ def _run_battle_glow_sm(
                 # OCRテキスト中心 ≈ ボタン視覚中心 (オフセット不要)
                 logger.info("[%s P3] 攻撃ボタンOCR '%s'(%d,%d) → tap", tag, na["text"], nx, ny)
                 tap_device(nx, ny, state, "NORMATK_TAP")
-                state.character_selected = False
-                state.char_just_selected = False
+                state.cycle.character_selected = False
+                state.cycle.char_just_selected = False
                 # バトルアニメーションで MOVIE 誤昇格しないようリセット
-                state.phash_moving_count = 0
+                state.cycle.phash_moving_count = 0
                 return "NORMATK_TAP", 1.0
 
     return None
@@ -2394,7 +2394,7 @@ def process_paging_dialog(
 
     Returns: "DIALOG_CLOSED" | "DIALOG_PAGING_TIMEOUT"
     """
-    _roi = state.game_roi
+    _roi = state.cycle.game_roi
     _prev_phash = compute_phash(analysis_path)
     _no_close_streak = 0  # × ROI bright_pixels=0 の連続回数
     # ページドットで総ページ数を把握
@@ -2420,13 +2420,13 @@ def process_paging_dialog(
                 logger.info("[PAGING] ▷未検出だがドット残(%d/%d) → 固定座標で続行", _page + 1, _total_dots)
             else:
                 logger.info("[PAGING] ダイアログ消失 (page=%d) → 完了", _page)
-                state.dialog_detections += 1
+                state.cycle.dialog_detections += 1
                 return "DIALOG_CLOSED"
         _kind, _dx, _dy = _dlg
         if _kind == "close":
             tap_device(_dx, _dy, state, "PAGING_CLOSE")
             logger.info("[PAGING] ×タップ (page=%d) → クローズ完了", _page + 1)
-            state.dialog_detections += 1
+            state.cycle.dialog_detections += 1
             return "DIALOG_CLOSED"
         # ドット数到達: 最終ページのはず → × を強制探索
         if _total_dots >= 2 and _page >= _total_dots - 1:
@@ -2435,19 +2435,19 @@ def process_paging_dialog(
                 tap_device(_close_asset[0], _close_asset[1], state, "PAGING_CLOSE_DOTS_END")
                 logger.info("[PAGING] ドット%d到達 → ×アセット(%d,%d) クローズ",
                             _total_dots, _close_asset[0], _close_asset[1])
-                state.dialog_detections += 1
+                state.cycle.dialog_detections += 1
                 return "DIALOG_CLOSED"
             # アセットでも見つからない → 右上固定×
             _fx = int(W * 0.975)
             _fy = int(H * 0.055)
             tap_device(_fx, _fy, state, "PAGING_CLOSE_DOTS_FIXED")
             logger.info("[PAGING] ドット%d到達 → 右上固定×(%d,%d) クローズ", _total_dots, _fx, _fy)
-            state.dialog_detections += 1
+            state.cycle.dialog_detections += 1
             return "DIALOG_CLOSED"
         # "next" or "bottom" → ▷ タップして次ページ
         tap_device(_dx, _dy, state, "PAGING_NEXT")
         logger.info("[PAGING] ▷タップ (page=%d/%d, dots=%d)", _page + 1, _max_iter, _total_dots)
-        state.dialog_detections += 1
+        state.cycle.dialog_detections += 1
         time.sleep(0.05)
         # 次ページのスクリーンショットを取得して解析
         _img_path, _aw, _ah, _ = take_screenshot()
@@ -2475,7 +2475,7 @@ def process_paging_dialog(
                     if _fallback_dlg and _fallback_dlg[0] == "close":
                         tap_device(_fallback_dlg[1], _fallback_dlg[2], state, "PAGING_CLOSE_FALLBACK")
                         logger.info("[PAGING] ×フォールバッククローズ成功")
-                        state.dialog_detections += 1
+                        state.cycle.dialog_detections += 1
                         return "DIALOG_CLOSED"
                     # ASSET_MANAGER テンプレートで × を直接探す (枠検出不要)
                     _close_asset = _find_close_by_asset(analysis_path)
@@ -2483,7 +2483,7 @@ def process_paging_dialog(
                         tap_device(_close_asset[0], _close_asset[1], state, "PAGING_CLOSE_ASSET")
                         logger.info("[PAGING] ×アセットテンプレクローズ成功 (%d,%d)",
                                     _close_asset[0], _close_asset[1])
-                        state.dialog_detections += 1
+                        state.cycle.dialog_detections += 1
                         return "DIALOG_CLOSED"
                     # × がまだ出ていない → もう少し▷を叩く (アニメーション遅延など)
                     if _phash_fail_count < _phash_tolerance + 3:
@@ -2506,7 +2506,7 @@ def process_paging_dialog(
     if _final_dlg and _final_dlg[0] == "close":
         tap_device(_final_dlg[1], _final_dlg[2], state, "PAGING_CLOSE_MAXPAGE")
         logger.info("[PAGING] max超過後 ×クローズ成功")
-        state.dialog_detections += 1
+        state.cycle.dialog_detections += 1
         return "DIALOG_CLOSED"
     # ASSET_MANAGER テンプレートで × を直接探す (枠検出不要)
     _close_asset = _find_close_by_asset(analysis_path)
@@ -2514,7 +2514,7 @@ def process_paging_dialog(
         tap_device(_close_asset[0], _close_asset[1], state, "PAGING_CLOSE_ASSET_MAX")
         logger.info("[PAGING] max超過後 ×アセットテンプレクローズ成功 (%d,%d)",
                     _close_asset[0], _close_asset[1])
-        state.dialog_detections += 1
+        state.cycle.dialog_detections += 1
         return "DIALOG_CLOSED"
     return "DIALOG_PAGING_TIMEOUT"
 

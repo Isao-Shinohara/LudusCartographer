@@ -96,11 +96,11 @@ def handle_quest_early(ctx: DetectContext, state: PilotState) -> Optional[tuple[
     # "Result" + "次へ" が見えたら即タップ (SWIPE_UP 誤マッチ防止)
     _is_result_early = any("Result" in t for t in texts)
     if _is_result_early:
-        state.result_total_taps += 1
+        state.cycle.result_total_taps += 1
         # 30タップ超えても座標ズレの可能性が高い — ログのみ出して継続
-        if state.result_total_taps >= 30 and state.result_total_taps % 30 == 0:
+        if state.cycle.result_total_taps >= 30 and state.cycle.result_total_taps % 30 == 0:
             logger.warning("[RESULT_STALL] RESULT_NEXT_EARLY %d回 — 座標ズレの可能性 (force-stop しない)",
-                           state.result_total_taps)
+                           state.cycle.result_total_taps)
         _next_btn = has_text(ocr, "次へ", min_conf=0.3)
         if _next_btn:
             _nx, _ny = _next_btn["center"]
@@ -130,8 +130,8 @@ def handle_quest_early(ctx: DetectContext, state: PilotState) -> Optional[tuple[
         else:
             # 固定位置: 挑戦ボタンは画面右下 (x=92%, y=90%)
             _qcx, _qcy = int(W * 0.92), int(H * 0.90)
-        if state.game_roi:
-            _roi_max_y = state.game_roi[1] + state.game_roi[3] - 5
+        if state.cycle.game_roi:
+            _roi_max_y = state.cycle.game_roi[1] + state.cycle.game_roi[3] - 5
             _qcy = min(_qcy, _roi_max_y)
         logger.info(">>> クエスト詳細 — 挑戦ボタン(%d,%d) タップ", _qcx, _qcy)
         tap_device(_qcx, _qcy, state, "QUEST_DETAIL_CHALLENGE")

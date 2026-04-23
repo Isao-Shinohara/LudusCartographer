@@ -427,6 +427,21 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 - ルールは **CLAUDE.md に記述** する（memory ではなく）
 - プロジェクト共通で他の人が利用した際にも理解できる場所に置く
 
+### PilotState / CycleState の分離ルール（厳格）
+
+操縦状態は2つのクラスに分離されている（`ap/state.py`）：
+
+| クラス | ライフサイクル | 用途 |
+|--------|-------------|------|
+| **PilotState** | プロセス全体 | 周回をまたいで引き継ぐ（grind_*, device_*, launch_time） |
+| **CycleState** | 周回ごとに再作成 | 周回ごとにリセットされる全状態 |
+
+- **新しい状態変数は CycleState に追加する**（周回をまたいで引き継ぐ必要がない限り）
+- CycleState へのアクセスは `state.cycle.xxx` で行う（`state.xxx` ではない）
+- 動的属性（`state.cycle._from_movie_ttl` 等）も CycleState に設定する
+- 周回リセットは `state.reset_for_new_cycle()` → `CycleState()` 再作成で自動的に全リセット
+- 周回リセット後に再設定が必要なもの（recorder, game_foreground 等）は `auto_pilot.py` の周回リセットブロックに記載（コメントで明示）
+
 ### 指アイコン+金枠タップのルール（厳格）
 
 チュートリアル中に表示される指アイコン（tutorial_finger_*）+ 金枠ハイライトの処理:
@@ -556,6 +571,21 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 4. 遷移グラフ構築 (120秒間隔、cluster + OCR 全完了後に実行)
 
 **OCR → クラスタリングの順序が重要**: HQ OCR 結果でテキスト比較することで間引き精度が向上する
+
+### 起動シーン撮影制御 (`startup_phase`)
+
+起動時のスクリーンショット撮影は `startup_phase` フラグで制御する。
+
+| 条件 | `startup_phase` | 撮影関数 |
+|------|-----------------|---------|
+| `-r`（新規インストール）初回起動 | `True` | `record_startup` |
+| GRIND 新周回開始 | `True` | `record_startup` |
+| 途中再開・再起動・クラッシュ復帰 | `False`（デフォルト） | `maybe_record`（LOADING/STARTUP シーンはスキップ） |
+
+- **`True` → `False`**: MENU / ADV / BATTLE 到達時のみ（メインループ内、1箇所）
+- **TAP TO START 検出時**: `startup_phase` を変更しない（ロード画面まで `record_startup` の管理下に置く）
+- **クラッシュ復帰（Watchdog / BLACKOUT_RECOVER）**: `startup_phase` を変更しない（True なら起動記録継続、False なら再起動由来のロード画面をスキップ）
+- **再起動時の LOADING/STARTUP シーン**: `maybe_record` のスキップ条件で除外（`scene not in ("LOADING", "STARTUP")`）
 
 ### クロスセッションマージのアンカー方針（厳格）
 

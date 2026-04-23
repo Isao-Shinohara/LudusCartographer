@@ -51,7 +51,7 @@ class TutorialMission(Mission):
     description = "チュートリアル突破 (ホーム画面到達で停止)"
 
     def configure_state(self, state, args):
-        state.is_fresh_start = True
+        state.cycle.is_fresh_start = True
         state.grind_mode = False
 
     def pre_loop(self, args, serial):
@@ -80,7 +80,7 @@ class GrindMission(Mission):
         state.grind_mode = True
         state.grind_max_cycles = self.max_cycles
         if self.fresh_start:
-            state.is_fresh_start = True
+            state.cycle.is_fresh_start = True
 
     def is_goal(self, action, state):
         return action == "GOAL_GRIND_COMPLETE"

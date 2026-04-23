@@ -1,56 +1,89 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-04-21
+最終更新: 2026-04-23
 
 ## 現在のブランチ
 - `feature/screen-recorder` (main 未マージ)
 
-## 最終セッション (2026-04-21 深夜)
-- 主な作業: 不採用ノード設計・マージプレビューUI改善・Finalタブ改善
-- コミット: 未コミット（要コミット）
+## 最終セッション (2026-04-23)
+- 主な作業: セッション物理削除・CycleState分離・Live不採用フィルタ分離・クラスタバリデーション・scrcpy自動復旧
+- コミット: 未コミット
 
-## 完了済み
-
-### 不採用ノード設計 (新規)
-- ✅ 不採用ノードをアンカーから分離（「不採用ノード一致」として別管理）
-- ✅ 不採用ノードは sort_order = NULL（SafeInsert に影響しない）
-- ✅ toggleExclude: 不採用時に sort_order NULL + リナンバリング、採用復帰時は末尾追加
-- ✅ マージ時は node_mappings に excluded_match として記録（重複防止）
-- ✅ プレビューに「不採用ノード一致」セクション表示（オレンジ色）
-
-### マージプレビューUI改善
-- ✅ トーストに Phase 進捗表示（P1実行中... → P4 Gemini テキスト判定中... → 完了）
-- ✅ 進捗は n / total 形式で全体と現在を表示
-- ✅ プレビュー完了後に merge-container へ自動スクロール
-- ✅ 不採用カードにオーバーレイ（右上に「不採用」ラベル + 黒半透明背景）
-- ✅ 採用/不採用変更後にモーダル自動クローズ
-- ✅ 数値表示に半角スペース（5 / 709, 採用 37 / 236）
-
-### Finalタブ改善
-- ✅ 同一クラスタを lc_node_mappings ベースに変更（全セッションの代表画面を表示）
-- ✅ 「同クラスタ」→「同一クラスタ」名称変更
-- ✅ 「マージ済み」フィルター追加（セッション別のアンカー+新規ノードのみ表示）
-- ✅ all_mapping_info カラム追加（new を含む全マッピング情報）
-- ✅ Debug デフォルト有効（セッション未選択時は枠線なし）
-- ✅ レイアウト改善: Debug ボタンをタブ行右端に移動、アクションバーを2段目に分離・右詰
-
-### UI全般
-- ✅ Cost 円表示を切り上げ整数に（¥37.7 → ¥38）
-- ✅ 確認ダイアログのボタンラベルをアクションに合わせて変更（変更/採用/不採用/削除/統合/実行）
+## 現在の状態
+- **DB**: クリーンアップ済み（セッション0件、OCR修正ルール15,205件保護）
+- **マスター**: 空（クリーンアップ済み）
+- **自動マージ**: 廃止済み
 
 ## 未コミットの変更
-- crawler/tools/anchor_matcher.py: _write_progress, excluded_master_fps 分離
-- crawler/tools/cross_session_merger.py: excluded_mapping 対応
-- crawler/tests/test_anchor_matcher.py: 戻り値4つ対応
-- web/src/EvidenceRepository.php: getMasterSiblings, toggleExclude sort_order, all_mapping_info
-- web/public/api/search.php: merge_progress 進捗, master_fp 対応
-- web/templates/dashboard.html.twig: 多数のUI改善
 
-## 次回の作業候補
-- 実際に不採用ノードがある状態でのマージ動作確認
-- セッションを順次マージして不採用ノード一致の動作検証
-- Gemini モデルを Settings から設定変更可能に
-- prefer フィールドの活用（マスター OCR テキスト更新）
+### 大きな変更
+
+#### PilotState / CycleState 分離
+- `state.py`: PilotState（6フィールド、周回引継ぎ）と CycleState（~78フィールド、周回リセット）に分離
+- 全ファイル ~960箇所を `state.xxx` → `state.cycle.xxx` に書き換え
+- `reset_for_new_cycle()` → `CycleState()` 再作成に簡素化
+- 互換レイヤー実装→全書き換え後に削除済み
+- CLAUDE.md §13 にルール追記
+
+#### セッション物理削除機能
+- `EvidenceRepository.php`: `deleteSession()` 書き換え — running→discarded、未マージ→全削除、マージ済み→非代表のみ削除
+- `search.php`: セッションディレクトリ自動クリーンアップ
+- `screen_recorder.py`: `check_discarded()` 追加、`start_new_session()` で discarded 上書き防止
+- `background_worker.py`: `session_id` プロパティ追加
+- `auto_pilot.py`: discarded 検出→自動新セッション作成
+- `dashboard.html.twig`: 全状態に削除ボタン、確認ダイアログを状態別に表示
+
+#### is_artifact 値分離（Gemini/ユーザー区別）
+- `is_artifact`: 0=通常、1=Gemini不採用、2=ユーザー不採用
+- `EvidenceRepository.php`: toggleScreenArtifact で 0↔2 トグル、レスポンス/フィールドを(int)に
+- `dashboard.html.twig`: タイトル[Gemini不採用]/[不採用]/[非代表]、ドット色分け（赤/オレンジ/灰）
+
+#### Liveタブ フィルタ再構成
+- 採用 / 不採用 / 非代表 / 未処理 / すべて の5フィルタに分離
+- Shift+クリック: 採用フィルタ→不採用ボタン、不採用フィルタ→採用ボタン
+- 0件時のメッセージをフィルタ別に表示
+- 暗い表示（opacity-40）は「すべて」フィルタ時のみ
+
+#### Liveタブ 同一クラスタパネル
+- モーダルに同一クラスタ表示（Finalと共通）
+- 代表変更機能（master_fp不要でも動作）
+- 表示中画像: 暗めオレンジ枠、代表: ★バッジ、選択中: 緑枠
+- 初期表示時に選択画像までスクロール
+- 非代表画像では採用/不採用ボタン非表示
+
+#### クラスタ内バリデーション
+- `background_worker.py`: `_validate_clusters()` — テキスト空メンバーが代表とphash距離>=12なら新クラスタに分離
+- dedup 後に毎回実行
+
+#### artifact 判定後の代表入れ替え
+- `background_worker.py`: Gemini artifact 判定で代表降格時、同クラスタ非artifactメンバーから新代表を選出
+
+#### scrcpy 自動復旧
+- `auto_pilot.py`: scrcpy ウィンドウ未生成時に adb kill-server → start-server → scrcpy 再起動（最大3回リトライ）
+
+#### tap_device スクショスキップログ
+- `device.py`: 暗転スキップ、キャプチャ失敗、maybe_record失敗、ゲーム非フォアグラウンド、例外のログ追加
+
+#### 2周目スクショ消失バグ修正
+- `auto_pilot.py`: 周回リセット後に `state.cycle.recorder = recorder` を再設定（`reset_for_new_cycle` で None にリセットされていた）
+
+#### 未処理フィルタ修正
+- `dashboard.html.twig`: Gemini OCR完了も「処理済み」として扱う（`!has_hq_ocr && !has_gemini`）
+
+### 前回セッションからの継続変更
+- startup_phase制御改善
+- アニメーションループ救済カウンタ
+- 自動マージ廃止
+- gemini remerge 1件ごとcommit
+- toggle_screen_artifact / check_screen_master / adopt_and_rebuild API
+- cross_session_merger: is_artifactフィルタ
+
+## 未解決の課題
+1. ~~ループ救済カウンタのリセット問題~~ → CycleState分離で解決
+2. **DL完了ダイアログのOK押下失敗**: 動画ループの根本原因（未調査）
+3. **anchor_matcher Phase 1の候補複数問題**: 同一テキストのマスターノードが複数ある場合にスキップされる
+4. **Gemini がキャラカットシーンを artifact と誤判定**: プロンプト改善が必要
+5. **2周目ADVスクショ不足の根本原因**: `state.recorder` リセット漏れは修正済み。次回周回で検証
 
 ## 設計ドキュメント
 - `docs/merge_sort_algorithm.md` — SafeInsert 仕様
