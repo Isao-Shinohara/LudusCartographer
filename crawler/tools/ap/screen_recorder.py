@@ -848,6 +848,9 @@ class ScreenRecorder:
 
     # ─── DB 操作 ──────────────────────────────────────
 
+    _DB_RETRY_MAX = 3
+    _DB_RETRY_INTERVAL = 0.5
+
     def _insert_screen(
         self,
         fingerprint: str,
@@ -859,36 +862,47 @@ class ScreenRecorder:
         ocr_text: str,
         scene: str = "",
     ) -> int:
-        """lc_screens に INSERT し、生成された ID を返す。"""
-        cur = self._conn.execute(
-            "INSERT INTO lc_screens"
-            " (session_id, fingerprint, title, depth, parent_fp,"
-            "  phash, screenshot_path, thumbnail_path, ocr_text, scene, discovered_at)"
-            " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                self._session_id,
-                fingerprint,
-                title,
-                parent_fp,
-                phash,
-                screenshot_path,
-                thumbnail_path,
-                ocr_text,
-                scene,
-                datetime.now().isoformat(),
-            ),
-        )
-        self._conn.commit()
+        """lc_screens に INSERT し、生成された ID を返す。DB locked 時はリトライ。"""
+        import time
+        import sqlite3
+        for attempt in range(self._DB_RETRY_MAX):
+            try:
+                cur = self._conn.execute(
+                    "INSERT INTO lc_screens"
+                    " (session_id, fingerprint, title, depth, parent_fp,"
+                    "  phash, screenshot_path, thumbnail_path, ocr_text, scene, discovered_at)"
+                    " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        self._session_id,
+                        fingerprint,
+                        title,
+                        parent_fp,
+                        phash,
+                        screenshot_path,
+                        thumbnail_path,
+                        ocr_text,
+                        scene,
+                        datetime.now().isoformat(),
+                    ),
+                )
+                self._conn.commit()
 
-        # セッションの screens_found を更新
-        self._conn.execute(
-            "UPDATE lc_sessions SET screens_found = screens_found + 1"
-            " WHERE session_id = ?",
-            (self._session_id,),
-        )
-        self._conn.commit()
-        self._last_inserted_id = cur.lastrowid
-        return cur.lastrowid  # type: ignore[return-value]
+                # セッションの screens_found を更新
+                self._conn.execute(
+                    "UPDATE lc_sessions SET screens_found = screens_found + 1"
+                    " WHERE session_id = ?",
+                    (self._session_id,),
+                )
+                self._conn.commit()
+                self._last_inserted_id = cur.lastrowid
+                return cur.lastrowid  # type: ignore[return-value]
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e) and attempt < self._DB_RETRY_MAX - 1:
+                    logger.warning("[ScreenRecorder] DB locked, リトライ %d/%d (%.1fs後)",
+                                   attempt + 1, self._DB_RETRY_MAX, self._DB_RETRY_INTERVAL)
+                    time.sleep(self._DB_RETRY_INTERVAL)
+                else:
+                    raise
 
     def _insert_transition(self, t: dict) -> None:
         """lc_transitions に遷移レコードを INSERT する。"""
