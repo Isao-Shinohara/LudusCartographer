@@ -510,13 +510,14 @@ class BackgroundWorker:
                     _new_text_len = len(ocr_text)
                     if _new_text_len > _old_text_len and old_rep_id:
                         # 新しい方がテキスト長い → 代表交代
+                        # クラスタ内の全代表をリセットしてから新代表を設定
+                        conn.execute(
+                            "UPDATE lc_screens SET is_representative = 0 WHERE cluster_id = ? AND is_representative = 1",
+                            (text_match_cid,),
+                        )
                         conn.execute(
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                             (text_match_cid, sid),
-                        )
-                        conn.execute(
-                            "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
-                            (old_rep_id,),
                         )
                         logger.debug("[REP_TRACE] id=%d rep=0 (text_match代表交代, 新代表=%d, cid=%d)", old_rep_id, sid, text_match_cid)
                         rep_map[text_match_cid] = (ph, title, norm_text)
@@ -542,15 +543,16 @@ class BackgroundWorker:
                             # 直前テキスト空 + phash 近い → 統合 (テキストあり側が代表)
                             _merge_to_prev = True
                             old_rep_id = self._get_rep_id(conn, _prev_cid)
+                            # クラスタ内の全代表をリセットしてから新代表を設定
+                            conn.execute(
+                                "UPDATE lc_screens SET is_representative = 0 WHERE cluster_id = ? AND is_representative = 1",
+                                (_prev_cid,),
+                            )
                             conn.execute(
                                 "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                                 (_prev_cid, sid),
                             )
                             if old_rep_id:
-                                conn.execute(
-                                    "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
-                                    (old_rep_id,),
-                                )
                                 logger.debug("[REP_TRACE] id=%d rep=0 (prev_merge空テキスト代表交代, 新代表=%d, cid=%d)", old_rep_id, sid, _prev_cid)
                             rep_map[_prev_cid] = (ph, title, norm_text)
                         elif _rep_norm and d < 5 and _text_similarity(norm_text, _rep_norm) >= 0.5:
@@ -566,13 +568,14 @@ class BackgroundWorker:
                                 ).fetchone()
                                 _old_tlen = _old_row["tlen"] if _old_row else 0
                             if len(ocr_text) > _old_tlen and old_rep_id:
+                                # クラスタ内の全代表をリセットしてから新代表を設定
+                                conn.execute(
+                                    "UPDATE lc_screens SET is_representative = 0 WHERE cluster_id = ? AND is_representative = 1",
+                                    (_prev_cid,),
+                                )
                                 conn.execute(
                                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                                     (_prev_cid, sid),
-                                )
-                                conn.execute(
-                                    "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
-                                    (old_rep_id,),
                                 )
                                 logger.debug("[REP_TRACE] id=%d rep=0 (prev_mergeテキスト類似代表交代, 新代表=%d, cid=%d)", old_rep_id, sid, _prev_cid)
                                 rep_map[_prev_cid] = (ph, title, norm_text)
@@ -619,13 +622,14 @@ class BackgroundWorker:
                                     if new_face > old_face:
                                         _should_promote = True
                             if _should_promote and old_rep_id:
+                                # クラスタ内の全代表をリセットしてから新代表を設定
+                                conn.execute(
+                                    "UPDATE lc_screens SET is_representative = 0 WHERE cluster_id = ? AND is_representative = 1",
+                                    (_prev_cid,),
+                                )
                                 conn.execute(
                                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                                     (_prev_cid, sid),
-                                )
-                                conn.execute(
-                                    "UPDATE lc_screens SET is_representative = 0 WHERE id = ?",
-                                    (old_rep_id,),
                                 )
                                 logger.debug("[REP_TRACE] id=%d rep=0 (空テキストphash代表交代, 新代表=%d, cid=%d)", old_rep_id, sid, _prev_cid)
                                 rep_map[_prev_cid] = (ph, title, norm_text)
@@ -1051,6 +1055,12 @@ class BackgroundWorker:
                                 logger.debug("[REP_TRACE] id=%d rep=0 (artifact判定, マスター未登録)", sid)
                                 # 同クラスタの非 artifact メンバーから新代表を選出
                                 if _art_screen and _art_screen["cluster_id"] is not None:
+                                    # 既存の全代表をリセットしてから新代表を設定
+                                    conn.execute(
+                                        "UPDATE lc_screens SET is_representative = 0"
+                                        " WHERE cluster_id = ? AND is_representative = 1",
+                                        (_art_screen["cluster_id"],),
+                                    )
                                     _new_rep = conn.execute(
                                         "SELECT id FROM lc_screens"
                                         " WHERE cluster_id = ? AND session_id = ?"
@@ -1176,12 +1186,12 @@ class BackgroundWorker:
                 _normalize_for_comparison, _text_similarity,
             )
 
-            # cluster_id → (phash, normalized_gemini_text) マップ
-            cluster_info: dict[int, tuple[str, str]] = {}
+            # cluster_id → (phash, normalized_gemini_text, orig_text) マップ
+            cluster_info: dict[int, tuple[str, str, str]] = {}
             for r in reps:
-                norm = _normalize_for_comparison(
-                    _normalize_text(r["gemini_text"]), conn)
-                cluster_info[r["cluster_id"]] = (r["phash"], norm)
+                orig = _normalize_text(r["gemini_text"])
+                norm = _normalize_for_comparison(orig, conn)
+                cluster_info[r["cluster_id"]] = (r["phash"], norm, orig)
 
             merged = 0
             merged_clusters: set[int] = set()
@@ -1194,7 +1204,7 @@ class BackgroundWorker:
                     _normalize_text(r["gemini_text"]), conn)
                 ph = r["phash"]
 
-                for other_cid, (other_ph, other_norm) in cluster_info.items():
+                for other_cid, (other_ph, other_norm, other_orig) in cluster_info.items():
                     if other_cid == cid or other_cid in merged_clusters:
                         continue
 
@@ -1212,9 +1222,13 @@ class BackgroundWorker:
                                 should_merge = True
                     elif not norm and not other_norm:
                         # 両方テキスト空 → phash で判定
-                        d = phash_distance(ph, other_ph) if ph and other_ph else 999
-                        if d < 20:
-                            should_merge = True
+                        # ただし、ノイズ除去前のテキストが両方空の場合のみ
+                        # (バトルUI等のテキストがノイズ除去で消えたケースはマージしない)
+                        orig = _normalize_text(r["gemini_text"])
+                        if not orig and not other_orig:
+                            d = phash_distance(ph, other_ph) if ph and other_ph else 999
+                            if d < 20:
+                                should_merge = True
 
                     if should_merge:
                         # other_cid を cid に統合 (1件ごとにcommitでロック時間を最小化)
