@@ -364,8 +364,11 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     if _is_title_screen:
         logger.info("  タイトル画面検出 → TAP TO START タップ")
         log_milestone(state, "TITLE_TAP")
-        # startup_phase は MENU/ADV/BATTLE 到達まで True のまま維持
-        # (TAP TO START 後のロード画面を record_startup の管理下に置く)
+        # TAP TO START タップ → startup_phase 終了
+        # (タイトル以降のストーリー動画等を STARTUP ではなく通常シーンとして記録する)
+        if state.cycle.startup_phase:
+            state.cycle.startup_phase = False
+            logger.info("[STARTUP] TAP TO START タップ → 起動シーン記録モード終了")
         _tt_x, _tt_y = roi_to_device(int(W * 0.5), int(H * 0.87), state.cycle.game_roi)
         tap_device(_tt_x, _tt_y, state, "TITLE_TAP_START")
         return "TITLE_TAP", 2.0
