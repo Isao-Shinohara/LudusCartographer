@@ -1027,7 +1027,7 @@ class BackgroundWorker:
             if not items:
                 return
 
-            # 1枚1リクエストで並列送信
+            # 1枚1リクエストで並列送信（スレッドごとにClient作成でコネクションプール競合を回避）
             results_list: list[Optional[dict]] = []
             with ThreadPoolExecutor(max_workers=_GEMINI_PARALLEL_WORKERS) as executor:
                 futures = {
@@ -1035,7 +1035,7 @@ class BackgroundWorker:
                         gemini_correct_single,
                         item["screenshot_path"],
                         item["ocr_text"],
-                        client,
+                        None,  # スレッドごとに新規Client作成（共有Client→SSLタイムアウト対策）
                         item["id"],
                     ): item
                     for item in items
