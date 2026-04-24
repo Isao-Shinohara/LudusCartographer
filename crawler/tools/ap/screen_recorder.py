@@ -156,8 +156,8 @@ class ScreenRecorder:
         # ディレクトリ先行作成
         self._storage_dir.mkdir(parents=True, exist_ok=True)
 
-        # SQLite 接続 (timeout=10 で BUSY 対策)
-        self._conn = sqlite3.connect(str(self._db_path), timeout=10)
+        # SQLite 接続 (timeout=30 で BUSY 対策)
+        self._conn = sqlite3.connect(str(self._db_path), timeout=30)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
         self._migrate()
@@ -848,8 +848,8 @@ class ScreenRecorder:
 
     # ─── DB 操作 ──────────────────────────────────────
 
-    _DB_RETRY_MAX = 3
-    _DB_RETRY_INTERVAL = 0.5
+    _DB_RETRY_MAX = 5
+    _DB_RETRY_INTERVAL = 2.0
 
     def _insert_screen(
         self,
