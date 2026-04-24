@@ -926,25 +926,23 @@ class BackgroundWorker:
     def _run_gemini_batch_correction(self) -> None:
         """Gemini Flash で代表画像の OCR を画像付きで補正 (API キー未設定ならスキップ)。
 
+        1枚1リクエストで8並列送信（コンテキスト汚染防止で精度最優先）。
         ocr_text_gemini カラムに保存。ocr_text_hq は PaddleOCR 結果として保持。
         """
         import os
-        import time as _time
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
             return
 
         conn = self._get_conn()
         try:
-            # ocr_text_gemini が NULL の代表画像のみ対象
-            # Gemini が画像から直接 OCR するため HQ OCR 不要
             from tools.ap.ocr_correction import (
-                _init_gemini_client, _GEMINI_BATCH_SIZE, _GEMINI_RATE_LIMIT,
-                gemini_correct_multi,
+                _init_gemini_client, _GEMINI_PARALLEL_WORKERS,
+                gemini_correct_single,
             )
-            # 1バッチ = _GEMINI_BATCH_SIZE 枚, 1回の起動で 6 バッチまで処理
-            # 自動処理: self._session_id → running → completed (OCR未完了) の順で対象を探す
-            fetch_limit = _GEMINI_BATCH_SIZE * 6
+            # 1回の起動で最大24枚処理
+            fetch_limit = 24
             target_sid = self._session_id
             if not target_sid:
                 row = conn.execute(
@@ -955,7 +953,6 @@ class BackgroundWorker:
                 if row:
                     target_sid = row["session_id"]
             if not target_sid:
-                # completed セッションで OCR 未完了のものを古い順に処理
                 row = conn.execute(
                     "SELECT s.session_id FROM lc_sessions s"
                     " WHERE s.status = 'completed'"
@@ -993,201 +990,203 @@ class BackgroundWorker:
             if client is None:
                 return
 
+            # 前処理: 見切れ検出 + 有効アイテム収集
+            items = []
+            _BLACK_PIXEL_THRESHOLD = 0.50
+            for row in rows:
+                sid = row["id"]
+                path = row["screenshot_path"]
+                if not path or not Path(path).exists():
+                    conn.execute(
+                        "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?",
+                        (sid,),
+                    )
+                    continue
+                try:
+                    import cv2
+                    _img = cv2.imread(str(path))
+                    if _img is not None:
+                        _gray = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY)
+                        _black_ratio = (_gray < 15).sum() / _gray.size
+                        if _black_ratio >= _BLACK_PIXEL_THRESHOLD:
+                            conn.execute(
+                                "UPDATE lc_screens SET ocr_text_gemini = '', is_artifact = 1"
+                                " WHERE id = ?", (sid,),
+                            )
+                            logger.info("[BG_WORKER] 見切れ検出: id=%d black=%.0f%% → artifact",
+                                        sid, _black_ratio * 100)
+                            continue
+                except Exception:
+                    pass
+                items.append({
+                    "id": sid,
+                    "screenshot_path": path,
+                    "ocr_text": row["ocr"],
+                })
+
+            if not items:
+                return
+
+            # 1枚1リクエストで並列送信
+            results_list: list[Optional[dict]] = []
+            with ThreadPoolExecutor(max_workers=_GEMINI_PARALLEL_WORKERS) as executor:
+                futures = {
+                    executor.submit(
+                        gemini_correct_single,
+                        item["screenshot_path"],
+                        item["ocr_text"],
+                        client,
+                        item["id"],
+                    ): item
+                    for item in items
+                }
+                for future in as_completed(futures):
+                    item = futures[future]
+                    try:
+                        result = future.result()
+                        results_list.append(result)
+                    except Exception as e:
+                        logger.warning("[GEMINI] 並列処理エラー id=%d: %s", item["id"], e)
+                        results_list.append(None)
+
+            # 結果を DB に反映
+            import re as _re
+            from tools.ap.ocr_correction import _clean_gemini_output
+            _has_text = _re.compile(r'[\u3040-\u9fff\u30a0-\u30ffA-Za-z]')
+            _pure_num = _re.compile(r'^[\d\s.:/%×+\-~]+$')
             updated = 0
             total = 0
-            # _GEMINI_BATCH_SIZE 枚ごとに分割してバッチ送信
-            for batch_start in range(0, len(rows), _GEMINI_BATCH_SIZE):
-                batch = rows[batch_start:batch_start + _GEMINI_BATCH_SIZE]
-                items = []
-                _BLACK_PIXEL_THRESHOLD = 0.50  # 黒ピクセル50%以上 → 見切れ/不完全キャプチャ
-                for row in batch:
-                    sid = row["id"]
-                    path = row["screenshot_path"]
-                    if not path or not Path(path).exists():
-                        # 画像なし → 空文字でスキップマーク
-                        conn.execute(
-                            "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?",
-                            (sid,),
-                        )
-                        continue
-                    # 黒ピクセル比率チェック: 見切れ/不完全キャプチャを自動artifact
-                    try:
-                        import cv2
-                        _img = cv2.imread(str(path))
-                        if _img is not None:
-                            _gray = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY)
-                            _black_ratio = (_gray < 15).sum() / _gray.size
-                            if _black_ratio >= _BLACK_PIXEL_THRESHOLD:
-                                conn.execute(
-                                    "UPDATE lc_screens SET ocr_text_gemini = '', is_artifact = 1"
-                                    " WHERE id = ?", (sid,),
-                                )
-                                logger.info("[BG_WORKER] 見切れ検出: id=%d black=%.0f%% → artifact",
-                                            sid, _black_ratio * 100)
-                                continue
-                    except Exception:
-                        pass
-                    items.append({
-                        "id": sid,
-                        "screenshot_path": path,
-                        "ocr_text": row["ocr"],
-                    })
+            artifact_count = 0
 
-                if not items:
+            # id → item マップ
+            item_map = {item["id"]: item for item in items}
+
+            for r in results_list:
+                if r is None:
                     continue
-
-                results = gemini_correct_multi(items, client=client)
-                if results is None:
-                    # API エラー (safety filter 等) → バッチ内の画像を空文字でマークして次へ
-                    logger.warning("[GEMINI] バッチ失敗 → %d 件を空文字マーク", len(items))
-                    for item in items:
-                        conn.execute(
-                            "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?",
-                            (item["id"],),
-                        )
-                    conn.commit()
-                    _time.sleep(_GEMINI_RATE_LIMIT)
+                sid = r.get("id")
+                if sid is None or sid not in item_map:
                     continue
+                item = item_map[sid]
 
-                # 結果を id でマップ
-                result_map = {r["id"]: r for r in results}
-                import re as _re
-                from tools.ap.ocr_correction import _clean_gemini_output
-                _has_text = _re.compile(r'[\u3040-\u9fff\u30a0-\u30ffA-Za-z]')
-                _pure_num = _re.compile(r'^[\d\s.:/%×+\-~]+$')
-                artifact_count = 0
-                for item in items:
-                    sid = item["id"]
-                    r = result_map.get(sid)
-                    raw_corrected = (r.get("corrected_text", "") if r else "").strip()
-                    corrected = _clean_gemini_output(raw_corrected)
-                    # is_artifact 検知 → 対応するマスターノードを user_excluded=1 に
-                    is_artifact = bool(r.get("is_artifact", False)) if r else False
-                    screen_type = (r.get("screen_type", "") if r else "")
-                    if is_artifact:
-                        logger.info("[BG_WORKER] artifact 検出: id=%d type=%s text=%s",
-                                    sid, screen_type, corrected[:30] if corrected else "(empty)")
-                        # is_artifact フラグを DB に記録
-                        conn.execute(
-                            "UPDATE lc_screens SET is_artifact = 1 WHERE id = ?",
-                            (sid,),
-                        )
-                        # screen の fingerprint からマスターノードを特定
-                        screen_fp = conn.execute(
-                            "SELECT fingerprint FROM lc_screens WHERE id = ?",
-                            (sid,),
-                        ).fetchone()
-                        if screen_fp:
-                            updated_nodes = conn.execute(
-                                "UPDATE lc_master_nodes SET user_excluded = 1"
-                                " WHERE master_fp = ?",
-                                (screen_fp["fingerprint"],),
-                            ).rowcount
-                            if updated_nodes > 0:
-                                artifact_count += 1
-                            # マスター未登録の場合は代表を降格し、同クラスタから新代表を選出
-                            else:
-                                # 現在のクラスタ情報を取得
-                                _art_screen = conn.execute(
-                                    "SELECT cluster_id, session_id FROM lc_screens WHERE id = ?",
-                                    (sid,),
-                                ).fetchone()
+                raw_corrected = (r.get("corrected_text", "") or "").strip()
+                corrected = _clean_gemini_output(raw_corrected)
+                is_artifact = bool(r.get("is_artifact", False))
+                screen_type = r.get("screen_type", "")
+
+                if is_artifact:
+                    logger.info("[BG_WORKER] artifact 検出: id=%d type=%s text=%s",
+                                sid, screen_type, corrected[:30] if corrected else "(empty)")
+                    conn.execute(
+                        "UPDATE lc_screens SET is_artifact = 1 WHERE id = ?",
+                        (sid,),
+                    )
+                    screen_fp = conn.execute(
+                        "SELECT fingerprint FROM lc_screens WHERE id = ?",
+                        (sid,),
+                    ).fetchone()
+                    if screen_fp:
+                        updated_nodes = conn.execute(
+                            "UPDATE lc_master_nodes SET user_excluded = 1"
+                            " WHERE master_fp = ?",
+                            (screen_fp["fingerprint"],),
+                        ).rowcount
+                        if updated_nodes > 0:
+                            artifact_count += 1
+                        else:
+                            _art_screen = conn.execute(
+                                "SELECT cluster_id, session_id FROM lc_screens WHERE id = ?",
+                                (sid,),
+                            ).fetchone()
+                            conn.execute(
+                                "UPDATE lc_screens SET is_representative = 0"
+                                " WHERE id = ?", (sid,),
+                            )
+                            logger.debug("[REP_TRACE] id=%d rep=0 (artifact判定, マスター未登録)", sid)
+                            if _art_screen and _art_screen["cluster_id"] is not None:
                                 conn.execute(
                                     "UPDATE lc_screens SET is_representative = 0"
-                                    " WHERE id = ?", (sid,),
+                                    " WHERE cluster_id = ? AND is_representative = 1",
+                                    (_art_screen["cluster_id"],),
                                 )
-                                logger.debug("[REP_TRACE] id=%d rep=0 (artifact判定, マスター未登録)", sid)
-                                # 同クラスタの非 artifact メンバーから新代表を選出
-                                if _art_screen and _art_screen["cluster_id"] is not None:
-                                    # 既存の全代表をリセットしてから新代表を設定
+                                _new_rep = conn.execute(
+                                    "SELECT id FROM lc_screens"
+                                    " WHERE cluster_id = ? AND session_id = ?"
+                                    "   AND id != ? AND is_artifact = 0"
+                                    " ORDER BY discovered_at LIMIT 1",
+                                    (_art_screen["cluster_id"], _art_screen["session_id"], sid),
+                                ).fetchone()
+                                if _new_rep:
                                     conn.execute(
-                                        "UPDATE lc_screens SET is_representative = 0"
-                                        " WHERE cluster_id = ? AND is_representative = 1",
-                                        (_art_screen["cluster_id"],),
+                                        "UPDATE lc_screens SET is_representative = 1 WHERE id = ?",
+                                        (_new_rep["id"],),
                                     )
-                                    _new_rep = conn.execute(
-                                        "SELECT id FROM lc_screens"
-                                        " WHERE cluster_id = ? AND session_id = ?"
-                                        "   AND id != ? AND is_artifact = 0"
-                                        " ORDER BY discovered_at LIMIT 1",
-                                        (_art_screen["cluster_id"], _art_screen["session_id"], sid),
-                                    ).fetchone()
-                                    if _new_rep:
-                                        conn.execute(
-                                            "UPDATE lc_screens SET is_representative = 1 WHERE id = ?",
-                                            (_new_rep["id"],),
-                                        )
-                                        logger.debug("[REP_TRACE] id=%d rep=1 (artifact代替代表, cid=%d)",
-                                                    _new_rep["id"], _art_screen["cluster_id"])
-                    # Gemini がテキストなしと判断 → タイトルもクリア
-                    if not corrected and item["ocr_text"]:
+                                    logger.debug("[REP_TRACE] id=%d rep=1 (artifact代替代表, cid=%d)",
+                                                _new_rep["id"], _art_screen["cluster_id"])
+
+                if not corrected and item["ocr_text"]:
+                    conn.execute(
+                        "UPDATE lc_screens SET ocr_text_gemini = '', title = '(UNKNOWN)'"
+                        " WHERE id = ?",
+                        (sid,),
+                    )
+                elif corrected:
+                    words = [w.strip() for w in corrected.split()
+                             if w.strip() and _has_text.search(w)
+                             and not _pure_num.match(w.strip())]
+                    new_title = " / ".join(words[:3]) if words else None
+                    if new_title:
                         conn.execute(
-                            "UPDATE lc_screens SET ocr_text_gemini = '', title = '(UNKNOWN)'"
+                            "UPDATE lc_screens SET ocr_text_gemini = ?, title = ?"
                             " WHERE id = ?",
-                            (sid,),
+                            (corrected, new_title, sid),
                         )
-                    elif corrected:
-                        # Gemini 補正テキストからタイトルを常に再生成
-                        words = [w.strip() for w in corrected.split()
-                                 if w.strip() and _has_text.search(w)
-                                 and not _pure_num.match(w.strip())]
-                        new_title = " / ".join(words[:3]) if words else None
-                        if new_title:
-                            conn.execute(
-                                "UPDATE lc_screens SET ocr_text_gemini = ?, title = ?"
-                                " WHERE id = ?",
-                                (corrected, new_title, sid),
-                            )
-                        else:
-                            conn.execute(
-                                "UPDATE lc_screens SET ocr_text_gemini = ? WHERE id = ?",
-                                (corrected, sid),
-                            )
                     else:
                         conn.execute(
-                            "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?",
-                            (sid,),
+                            "UPDATE lc_screens SET ocr_text_gemini = ? WHERE id = ?",
+                            (corrected, sid),
                         )
-                    if corrected and corrected != item["ocr_text"]:
-                        updated += 1
-                    total += 1
+                else:
+                    conn.execute(
+                        "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?",
+                        (sid,),
+                    )
+                if corrected and corrected != item["ocr_text"]:
+                    updated += 1
+                total += 1
 
                 # ノイズ語辞書に登録
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS lc_ocr_noise_words (
-                        word TEXT PRIMARY KEY,
-                        count INTEGER DEFAULT 1,
-                        first_seen_at TEXT DEFAULT (datetime('now')),
-                        last_seen_at TEXT DEFAULT (datetime('now'))
+                for nw in r.get("noise_words", []):
+                    nw = (nw or "").strip()
+                    if nw:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO lc_ocr_noise_words (word) VALUES (?)",
+                            (nw,),
+                        )
+                        conn.execute(
+                            "UPDATE lc_ocr_noise_words SET count = count + 1,"
+                            " last_seen_at = datetime('now') WHERE word = ?",
+                            (nw,),
+                        )
+
+            # API エラーで結果が返らなかったアイテムを空文字マーク
+            processed_ids = {r.get("id") for r in results_list if r is not None}
+            for item in items:
+                if item["id"] not in processed_ids:
+                    conn.execute(
+                        "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?",
+                        (item["id"],),
                     )
-                """)
-                for item in items:
-                    sid_item = item["id"]
-                    r = result_map.get(sid_item)
-                    if r:
-                        for nw in r.get("noise_words", []):
-                            nw = (nw or "").strip()
-                            if nw:
-                                conn.execute(
-                                    "INSERT INTO lc_ocr_noise_words (word) VALUES (?)"
-                                    " ON CONFLICT(word) DO UPDATE SET"
-                                    " count = count + 1, last_seen_at = datetime('now')",
-                                    (nw,),
-                                )
+                    logger.warning("[GEMINI] 結果なし → 空文字マーク id=%d", item["id"])
 
-                conn.commit()
-                if artifact_count > 0:
-                    logger.info("[BG_WORKER] gemini batch: %d 枚処理 (バッチサイズ=%d, アーティファクト除外=%d)",
-                                len(items), _GEMINI_BATCH_SIZE, artifact_count)
-                else:
-                    logger.info("[BG_WORKER] gemini batch: %d 枚処理 (バッチサイズ=%d)",
-                                len(items), _GEMINI_BATCH_SIZE)
-                # レート制限対策
-                _time.sleep(_GEMINI_RATE_LIMIT)
-
+            conn.commit()
+            if artifact_count > 0:
+                logger.info("[BG_WORKER] gemini: %d/%d 件修正, %d artifact (並列%dワーカー)",
+                            updated, total, artifact_count, _GEMINI_PARALLEL_WORKERS)
+            elif total > 0:
+                logger.info("[BG_WORKER] gemini: %d/%d 件修正 (並列%dワーカー)",
+                            updated, total, _GEMINI_PARALLEL_WORKERS)
             if total > 0:
-                logger.info("[BG_WORKER] gemini: %d/%d 件修正 (合計)", updated, total)
-                # Gemini 補正後の再マージ
                 self._remerge_after_gemini(conn)
         finally:
             conn.close()

@@ -231,8 +231,9 @@ def _stage2_dictionary(text: str, dictionary: list[str] = _GAME_DICTIONARY) -> s
 # ─── 段階3: Gemini Flash ─────────────────────────────────
 
 _GEMINI_MODEL = "gemini-2.5-flash-lite"
-_GEMINI_RATE_LIMIT = 1.5  # 40 RPM (有料枠) → 1.5秒間隔で安全
-_GEMINI_BATCH_SIZE = 4    # 1リクエストあたりの画像枚数（8枚で出力途切れ頻発のため4に縮小）
+_GEMINI_RATE_LIMIT = 0    # 従量課金枠 (1000 RPM) → sleep 不要、並列数で制御
+_GEMINI_PARALLEL_WORKERS = 8  # 1枚1リクエストの並列数
+_GEMINI_BATCH_SIZE = 1    # 1リクエスト1画像（コンテキスト汚染防止で精度最優先）
 
 # Gemini が誤って返す「テキストなし」系の説明文パターン (空文字に変換)
 _NO_TEXT_PATTERNS = [
@@ -275,7 +276,8 @@ _GEMINI_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedr
     {{"before": "初期OCRの誤読", "after": "正しいテキスト"}}
   ],
   "is_artifact": false,
-  "screen_type": "ADV"
+  "screen_type": "ADV",
+  "noise_words": ["AUTO", "SKIP"]
 }}
 
 ## 重要な制約
@@ -290,6 +292,12 @@ _GEMINI_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedr
 - ひらがな→漢字、カタカナ→ひらがな等の **文字種変換は禁止**
   - 例: 「つかいま」→「使い魔」に変えない
 - 修正対象は OCR 由来の **誤認識のみ** (例: 「明美」→「暁美」、「fu.」→「Lv.」)
+
+## UIノイズ語の抽出
+テキスト中に、画面の本来のコンテンツ（セリフ、メニュー名、説明文）ではなく、
+UIの装飾・ボタン・ステータス表示として頻出する短い文字列を検出してください。
+例: "AUTO", "SKIP", "WAVE", "Turn", "+", "×", "NEW", "Lv.", "HP", "MP", "MAX"
+（該当なしなら空配列 []）
 
 ## is_artifact 判定ルール
 以下の【判定ステップ】に沿って、上から順に評価し、最初に該当した条件で判定を確定してください。
@@ -447,10 +455,12 @@ def gemini_correct_single(
     screenshot_path: str,
     ocr_text: str,
     client=None,
+    item_id: Optional[int] = None,
 ) -> Optional[dict]:
     """1枚の画像に対して Gemini で OCR 補正を実行。
 
-    Returns: {"corrected_text": str, "corrections": list} or None
+    Returns: {"id": int, "corrected_text": str, "corrections": list,
+              "is_artifact": bool, "screen_type": str, "noise_words": list} or None
     """
     if client is None:
         client = _init_gemini_client()
@@ -505,6 +515,9 @@ def gemini_correct_single(
                 if c.get("before") and c.get("after"):
                     learn_from_correction(c["before"], c["after"])
 
+        # id を付与して返却
+        if item_id is not None:
+            result["id"] = item_id
         return result
 
     except json.JSONDecodeError as e:
