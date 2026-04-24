@@ -1202,7 +1202,7 @@ class EvidenceRepository
         // 未マージ/running: 全画面削除
         $deleteAll = !$hasMappings;
 
-        // 1. 画像ファイル物理削除
+        // 1. 画像ファイル物理削除（DB ロック不要）
         $fileCondition = $deleteAll ? "" : " AND is_representative = 0";
         $stmt = $this->db->prepare(
             "SELECT id, screenshot_path, thumbnail_path FROM lc_screens"
@@ -1221,44 +1221,58 @@ class EvidenceRepository
             }
         }
 
-        // 2. lc_tappable_items 削除
-        if (!empty($deleteScreenIds)) {
-            $chunks = array_chunk($deleteScreenIds, 500);
-            foreach ($chunks as $chunk) {
-                $placeholders = implode(',', array_fill(0, count($chunk), '?'));
-                $this->db->prepare(
-                    "DELETE FROM lc_tappable_items WHERE screen_id IN ($placeholders)"
-                )->execute($chunk);
-            }
-        }
-
-        // 3. lc_screens 削除
+        // 2-6. DB 削除（チャンクごとにリトライ）
         $deletedScreens = 0;
-        if (!empty($deleteScreenIds)) {
-            $chunks = array_chunk($deleteScreenIds, 500);
-            foreach ($chunks as $chunk) {
-                $placeholders = implode(',', array_fill(0, count($chunk), '?'));
-                $this->db->prepare(
-                    "DELETE FROM lc_screens WHERE id IN ($placeholders)"
-                )->execute($chunk);
-                $deletedScreens += (int)$this->db->prepare("SELECT changes()")->fetchColumn();
+        $maxRetries = 3;
+        $chunks = !empty($deleteScreenIds) ? array_chunk($deleteScreenIds, 200) : [];
+
+        foreach ($chunks as $chunk) {
+            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            for ($retry = 0; $retry < $maxRetries; $retry++) {
+                try {
+                    $this->db->beginTransaction();
+                    $this->db->prepare(
+                        "DELETE FROM lc_tappable_items WHERE screen_id IN ($placeholders)"
+                    )->execute($chunk);
+                    $this->db->prepare(
+                        "DELETE FROM lc_screens WHERE id IN ($placeholders)"
+                    )->execute($chunk);
+                    $deletedScreens += count($chunk);
+                    $this->db->commit();
+                    break;
+                } catch (\PDOException $e) {
+                    if ($this->db->inTransaction()) {
+                        $this->db->rollBack();
+                    }
+                    if ($retry < $maxRetries - 1 && stripos($e->getMessage(), 'locked') !== false) {
+                        usleep(500_000); // 0.5s
+                        continue;
+                    }
+                    throw $e;
+                }
             }
         }
 
-        // 4. lc_transitions 削除
-        $this->db->prepare(
-            "DELETE FROM lc_transitions WHERE session_id = ?"
-        )->execute([$sessionId]);
-
-        // 5. lc_screen_groups 削除
-        $this->db->prepare(
-            "DELETE FROM lc_screen_groups WHERE session_id = ?"
-        )->execute([$sessionId]);
-
-        // 6. lc_session_graphs 削除
-        $this->db->prepare(
-            "DELETE FROM lc_session_graphs WHERE session_id = ?"
-        )->execute([$sessionId]);
+        // セッション関連テーブル削除（リトライ付き）
+        $sessionDeletes = [
+            "DELETE FROM lc_transitions WHERE session_id = ?",
+            "DELETE FROM lc_screen_groups WHERE session_id = ?",
+            "DELETE FROM lc_session_graphs WHERE session_id = ?",
+        ];
+        foreach ($sessionDeletes as $sql) {
+            for ($retry = 0; $retry < $maxRetries; $retry++) {
+                try {
+                    $this->db->prepare($sql)->execute([$sessionId]);
+                    break;
+                } catch (\PDOException $e) {
+                    if ($retry < $maxRetries - 1 && stripos($e->getMessage(), 'locked') !== false) {
+                        usleep(500_000);
+                        continue;
+                    }
+                    throw $e;
+                }
+            }
+        }
 
         // 7. セッション status 更新 (running以外は archived に)
         if ($status !== 'running') {
