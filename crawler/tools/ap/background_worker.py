@@ -1179,6 +1179,25 @@ class BackgroundWorker:
                     )
                     logger.warning("[GEMINI] 結果なし → 空文字マーク id=%d", item["id"])
 
+            # 代表の Gemini 結果を同クラスタの非代表に伝播
+            # （非代表が代表昇格した際に再送信不要 + コスト削減）
+            propagated = conn.execute(
+                "UPDATE lc_screens SET"
+                " ocr_text_gemini = (SELECT r.ocr_text_gemini FROM lc_screens r"
+                "   WHERE r.cluster_id = lc_screens.cluster_id AND r.is_representative = 1 LIMIT 1),"
+                " is_artifact = (SELECT r.is_artifact FROM lc_screens r"
+                "   WHERE r.cluster_id = lc_screens.cluster_id AND r.is_representative = 1 LIMIT 1)"
+                " WHERE is_representative = 0"
+                " AND ocr_text_gemini IS NULL"
+                " AND cluster_id IN ("
+                "   SELECT cluster_id FROM lc_screens"
+                "   WHERE is_representative = 1 AND ocr_text_gemini IS NOT NULL"
+                "   AND session_id = ?)",
+                (target_sid,),
+            ).rowcount
+            if propagated > 0:
+                logger.info("[BG_WORKER] gemini 伝播: %d 非代表に結果コピー", propagated)
+
             conn.commit()
             if artifact_count > 0:
                 logger.info("[BG_WORKER] gemini: %d/%d 件修正, %d artifact (並列%dワーカー)",
