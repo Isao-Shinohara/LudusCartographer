@@ -291,12 +291,13 @@ class ScreenRecorder:
         # startup_phase では暗画面スキップを無効化（ロゴ等の暗い画面を残すため）
         # maybe_record 側の暗画面スキップはそのまま残す
 
-        # 変化判定: phash または brightness がわずかでも変わったら保存
+        # 変化判定: ハッシュ または brightness がわずかでも変わったら保存
         _changed = False
         if phash and self._startup_last_phash:
-            from lc.utils import phash_distance
-            _dist = phash_distance(self._startup_last_phash, phash)
-            _changed = _dist >= 3  # 微小な変化でも検出
+            from lc.image_comparator import get_comparator
+            _cmp = get_comparator()
+            _dist = _cmp.distance(self._startup_last_phash, phash)
+            _changed = _dist >= _cmp.translate_threshold(3)  # 微小な変化でも検出
         elif not self._startup_last_phash:
             _changed = True  # 初回の非暗転フレーム
 
@@ -629,6 +630,17 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: dhash カラム追加")
+        # lc_master_nodes に dhash カラム
+        try:
+            mn_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_master_nodes)")}
+            if "dhash" not in mn_cols:
+                self._conn.execute(
+                    "ALTER TABLE lc_master_nodes ADD COLUMN dhash TEXT"
+                )
+                self._conn.commit()
+                logger.info("[ScreenRecorder] migrate: lc_master_nodes.dhash カラム追加")
+        except Exception:
+            pass  # テーブル未作成時
         # lc_transitions に edge_type カラム
         trans_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_transitions)")}
         if "edge_type" not in trans_cols:

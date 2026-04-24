@@ -218,7 +218,7 @@ def _ensure_judgment_table(conn: sqlite3.Connection) -> None:
 class AnchorMatcher:
     """段階的アンカーマッチング。"""
 
-    # Phase 1: テキスト一致 + phash 閾値
+    # Phase 1: テキスト一致 + ハッシュ閾値 (phash ベース値、translate_threshold で変換)
     PHASE1_PHASH_THRESHOLD = 30       # 完全一致/前方一致用
     PHASE1_FUZZY_PHASH_THRESHOLD = 20  # あいまい一致用
 
@@ -227,6 +227,22 @@ class AnchorMatcher:
 
     # Phase 3: tap + テキスト空 + phash のみ
     PHASE3_PHASH_THRESHOLD = 15
+
+    @staticmethod
+    def _hash_col() -> str:
+        """LC_HASH_ALGO に応じた DB カラム名。"""
+        import os
+        return "dhash" if os.environ.get("LC_HASH_ALGO", "phash").lower() == "dhash" else "phash"
+
+    @staticmethod
+    def _hash_distance(h1: str, h2: str) -> int:
+        from lc.image_comparator import get_comparator
+        return get_comparator().distance(h1, h2)
+
+    @staticmethod
+    def _th(phash_threshold: int) -> int:
+        from lc.image_comparator import get_comparator
+        return get_comparator().translate_threshold(phash_threshold)
 
     @staticmethod
     def _fuzzy_sim_threshold(text_len: int) -> float:
@@ -398,11 +414,11 @@ class AnchorMatcher:
             (session_nodes, master_nodes, master_sort_map, excluded_master_fps)
             excluded_master_fps: user_excluded=1 のマスターノード fp セット
         """
-        from lc.utils import phash_distance  # noqa: F401 (import test)
+        _hcol = self._hash_col()
 
         # セッション側: 代表画面を時系列順に取得
         rows = conn.execute(
-            "SELECT s.fingerprint, s.phash, s.scene,"
+            f"SELECT s.fingerprint, s.{_hcol} AS phash, s.scene,"
             " COALESCE(s.ocr_text_gemini, s.ocr_text_hq, s.ocr_text, '') AS text"
             " FROM lc_screens s"
             " WHERE s.session_id = ? AND s.is_representative = 1"
@@ -451,7 +467,7 @@ class AnchorMatcher:
         _v_filter = " WHERE version_id = ?" if version_id else ""
         _v_params = (version_id,) if version_id else ()
         master_rows = conn.execute(
-            "SELECT master_fp, phash, scene, sort_order,"
+            f"SELECT master_fp, {_hcol} AS phash, scene, sort_order,"
             " COALESCE(ocr_text_manual, ocr_text, '') AS text,"
             " COALESCE(user_excluded, 0) AS user_excluded"
             " FROM lc_master_nodes" + _v_filter
@@ -487,7 +503,7 @@ class AnchorMatcher:
         """tap + テキストありノードをテキスト一致 + phash でマッチ。
         完全一致/前方一致 → あいまい一致 (sim>=0.9, phash<20, 候補1件) の順。
         """
-        from lc.utils import phash_distance
+        _hash_distance = self._hash_distance
 
         # マスター側のテキスト → ノード逆引き
         master_by_text: dict[str, list[NodeInfo]] = {}
@@ -518,8 +534,8 @@ class AnchorMatcher:
 
             m = candidates[0]
             if s.phash and m.phash:
-                dist = phash_distance(s.phash, m.phash)
-                if dist >= self.PHASE1_PHASH_THRESHOLD:
+                dist = _hash_distance(s.phash, m.phash)
+                if dist >= self._th(self.PHASE1_PHASH_THRESHOLD):
                     continue
 
             anchors.append(AnchorMatch(
@@ -541,8 +557,8 @@ class AnchorMatcher:
             for m in master_nodes:
                 if m.fp in matched_master_fps or not m.phash or not m.has_text:
                     continue
-                dist = phash_distance(s.phash, m.phash)
-                if dist >= self.PHASE1_FUZZY_PHASH_THRESHOLD:
+                dist = _hash_distance(s.phash, m.phash)
+                if dist >= self._th(self.PHASE1_FUZZY_PHASH_THRESHOLD):
                     continue
                 sim = _text_similarity(s.text, m.text)
                 if sim >= self._fuzzy_sim_threshold(len(s.text)):
@@ -582,7 +598,7 @@ class AnchorMatcher:
             new_anchors: 新たにマッチしたアンカー
             rejected_candidates: 棄却された候補 [(session_node, master_node, sim)] — P5 で画像再検証用
         """
-        from lc.utils import phash_distance
+        _hash_distance = self._hash_distance
 
         matched_session_fps = {a.session_fp for a in existing_anchors}
         matched_master_fps = {a.master_fp for a in existing_anchors}
@@ -601,8 +617,8 @@ class AnchorMatcher:
             for m in master_nodes:
                 if m.fp in matched_master_fps or not m.phash or not m.has_text:
                     continue
-                dist = phash_distance(s.phash, m.phash)
-                if dist >= self.PHASE4_PHASH_THRESHOLD:
+                dist = _hash_distance(s.phash, m.phash)
+                if dist >= self._th(self.PHASE4_PHASH_THRESHOLD):
                     continue
                 sim = _text_similarity(s.text, m.text)
                 if sim >= self.PHASE4_TEXT_SIMILARITY and sim > best_sim:
@@ -807,7 +823,7 @@ class AnchorMatcher:
             new_anchors: 新たにマッチしたアンカー (P4棄却復活 + 新規)
             rejected_anchors: 既存アンカーのうち Gemini が棄却したもの
         """
-        from lc.utils import phash_distance
+        _hash_distance = self._hash_distance
 
         matched_session_fps = {a.session_fp for a in existing_anchors}
         matched_master_fps = {a.master_fp for a in existing_anchors}
@@ -892,8 +908,8 @@ class AnchorMatcher:
             for m in master_nodes:
                 if m.fp in matched_master_fps or not m.phash or not m.has_text:
                     continue
-                dist = phash_distance(s.phash, m.phash)
-                if dist >= self.PHASE5_PHASH_THRESHOLD:
+                dist = _hash_distance(s.phash, m.phash)
+                if dist >= self._th(self.PHASE5_PHASH_THRESHOLD):
                     continue
                 sim = _text_similarity(s.text, m.text)
                 if sim >= self.PHASE5_TEXT_SIMILARITY and sim > best_sim:
@@ -1153,7 +1169,7 @@ class AnchorMatcher:
             new_anchors: 新たにマッチしたアンカー (P6 新規 + P5 棄却復活)
             final_rejected: P5 でも棄却されたもの (最終棄却)
         """
-        from lc.utils import phash_distance
+        _hash_distance = self._hash_distance
 
         matched_session_fps = {a.session_fp for a in existing_anchors}
         matched_master_fps = {a.master_fp for a in existing_anchors}
@@ -1229,8 +1245,8 @@ class AnchorMatcher:
             for m in master_nodes:
                 if m.fp in matched_master_fps or not m.phash or not m.has_text:
                     continue
-                dist = phash_distance(s.phash, m.phash)
-                if dist < self.PHASE6_PHASH_MIN or dist >= self.PHASE6_PHASH_MAX:
+                dist = _hash_distance(s.phash, m.phash)
+                if dist < self._th(self.PHASE6_PHASH_MIN) or dist >= self._th(self.PHASE6_PHASH_MAX):
                     continue
                 sim = _text_similarity(s.text, m.text)
                 if sim >= self.PHASE6_TEXT_SIMILARITY and sim > best_sim:
@@ -1334,7 +1350,7 @@ class AnchorMatcher:
         """Phase 2: auto + テキストありノードを、アンカー範囲制限付きでマッチ。
         完全一致/前方一致 → あいまい一致 (sim>=0.9, phash<20, 候補1件) の順。
         """
-        from lc.utils import phash_distance
+        _hash_distance = self._hash_distance
 
         matched_master_fps = {a.master_fp for a in existing_anchors}
         matched_session_fps = {a.session_fp for a in existing_anchors}
@@ -1383,8 +1399,8 @@ class AnchorMatcher:
 
             m = candidates[0]
             if s.phash and m.phash:
-                dist = phash_distance(s.phash, m.phash)
-                if dist >= self.PHASE1_PHASH_THRESHOLD:
+                dist = _hash_distance(s.phash, m.phash)
+                if dist >= self._th(self.PHASE1_PHASH_THRESHOLD):
                     continue
 
             anchors.append(AnchorMatch(
@@ -1417,8 +1433,8 @@ class AnchorMatcher:
                 m_sort = master_sort_map.get(m.fp, -1)
                 if not (sort_min <= m_sort <= sort_max):
                     continue
-                dist = phash_distance(s.phash, m.phash)
-                if dist >= self.PHASE2_FUZZY_PHASH_THRESHOLD:
+                dist = _hash_distance(s.phash, m.phash)
+                if dist >= self._th(self.PHASE2_FUZZY_PHASH_THRESHOLD):
                     continue
                 sim = _text_similarity(s.text, m.text)
                 if sim >= self._fuzzy_sim_threshold(len(s.text)):
@@ -1446,7 +1462,7 @@ class AnchorMatcher:
         existing_anchors: list[AnchorMatch],
     ) -> list[AnchorMatch]:
         """tap + テキスト空ノードを、前後アンカー必須 + phash でマッチ。"""
-        from lc.utils import phash_distance
+        _hash_distance = self._hash_distance
 
         matched_master_fps = {a.master_fp for a in existing_anchors}
         matched_session_fps = {a.session_fp for a in existing_anchors}
@@ -1476,8 +1492,8 @@ class AnchorMatcher:
                 if m_sort < sort_min or m_sort > sort_max:
                     continue
                 if s.phash and m.phash:
-                    dist = phash_distance(s.phash, m.phash)
-                    if dist < self.PHASE3_PHASH_THRESHOLD:
+                    dist = _hash_distance(s.phash, m.phash)
+                    if dist < self._th(self.PHASE3_PHASH_THRESHOLD):
                         candidates.append((m, dist))
 
             if len(candidates) != 1:

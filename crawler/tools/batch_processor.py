@@ -398,7 +398,8 @@ class BatchProcessor:
 
         Returns: 代表画像の数
         """
-        from lc.utils import phash_distance
+        from lc.image_comparator import get_comparator
+        phash_distance = get_comparator().distance
 
         where = "WHERE g.session_id = ?" if session_id else ""
         params = (session_id,) if session_id else ()

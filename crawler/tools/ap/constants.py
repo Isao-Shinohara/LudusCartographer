@@ -20,7 +20,16 @@ EVIDENCE_DIR = _CRAWLER_ROOT / "evidence" / f"autopilot_{datetime.now().strftime
 # ─── タイミング ───
 
 POLL_INTERVAL = 0.2         # phash ポーリング間隔 (秒)
-PHASH_THRESHOLD = 5         # phash 距離 >= 5 → 画面変化あり
+_PHASH_THRESHOLD_BASE = 5   # phash ベース閾値 (LC_HASH_ALGO で変換される)
+
+def _get_hash_threshold() -> int:
+    try:
+        from lc.image_comparator import get_comparator
+        return get_comparator().translate_threshold(_PHASH_THRESHOLD_BASE)
+    except Exception:
+        return _PHASH_THRESHOLD_BASE
+
+PHASH_THRESHOLD = _get_hash_threshold()  # 画面変化あり判定
 FORCE_ANALYZE_AFTER = 3     # phash 変化なし連続 N 回 → 強制 OCR (MOVIE 用)
 FORCE_ANALYZE_AFTER_FAST = 2  # MOVIE 以外のシーン用 (応答速度優先)
 STALL_TIMEOUT = 15.0        # 強制OCRでもタップできず続く秒数 → スタック介入

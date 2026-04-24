@@ -18,7 +18,10 @@ from tools.ap.constants import (
     _CHAR_HEAD_Y1, _CHAR_HEAD_Y2, _SINGLE_ONLY, _CRAWLER_ROOT,
     _DEBUG_SAVE_IMAGES,
 )
-from lc.utils import compute_phash, phash_distance
+from lc.image_comparator import get_comparator as _get_cmp
+
+def compute_phash(p): return _get_cmp().compute_hash(p)
+def phash_distance(a, b): return _get_cmp().distance(a, b)
 from tools.ap.device import tap_device, take_screenshot
 from tools.ap.helpers import has_any
 

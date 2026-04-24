@@ -155,7 +155,8 @@ class CrossSessionMerger:
         master_neighbors_map = self._get_master_neighbors_batch(master_fps_list)
 
         # マッチ詳細
-        from lc.utils import phash_distance
+        from lc.image_comparator import get_comparator
+        phash_distance = get_comparator().distance
         from difflib import SequenceMatcher as _SM
         # phash/テキスト情報を一括取得
         _screen_phash: dict[str, str] = {}

@@ -12,8 +12,11 @@ import re
 import time
 from typing import Optional
 
-from lc.utils import compute_phash, phash_distance
+from lc.image_comparator import get_comparator as _get_cmp
 from tools.ap.constants import _CLOSE_BTN_OFFSET, _MENU_SCREEN_KWS, PHASH_THRESHOLD
+
+def compute_phash(p): return _get_cmp().compute_hash(p)
+def phash_distance(a, b): return _get_cmp().distance(a, b)
 from tools.ap.context import DetectContext
 from tools.ap.device import adb, tap_device, swipe_device, take_screenshot
 from tools.ap.helpers import has_any, has_text, log_milestone
