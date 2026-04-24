@@ -1193,14 +1193,17 @@ class BackgroundWorker:
             conn.close()
 
     def _remerge_after_gemini(self, conn) -> None:
-        """Gemini 補正後、修正されたテキストで既存クラスタと再照合する。
+        """Gemini 補正後、修正されたテキストで直前クラスタと再照合する。
 
-        対象: ocr_text_gemini が設定済みで、初期 OCR と異なるテキストを持つ代表画面。
-        - テキスト一致/前方一致 → 既存クラスタに統合 (長い方が代表)
-        - テキストが空になった画面同士 → phash 近接で統合
+        対象: ocr_text_gemini が設定済みの代表画面。
+        discovered_at 順に走査し、直前クラスタとのみ比較する（§16 厳格ルール）。
+        - テキスト一致/前方一致/類似 → 直前クラスタに統合 (長い方が代表)
+        - テキスト空同士 → phash < 30 で直前クラスタに統合
         """
         try:
             from lc.utils import phash_distance
+
+            _EMPTY_PHASH_THRESHOLD = 30
 
             sid_filter = ""
             sid_params: tuple = ()
@@ -1208,104 +1211,112 @@ class BackgroundWorker:
                 sid_filter = " AND session_id = ?"
                 sid_params = (self._session_id,)
 
-            # 代表画面の Gemini 補正テキストを取得
+            # anchor_matcher のノイズ除去 + 類似度計算を流用
+            from tools.anchor_matcher import (
+                _normalize_for_comparison, _text_similarity,
+            )
+
+            # 代表画面の Gemini 補正テキストを discovered_at 順に取得
             reps = conn.execute(
                 "SELECT id, cluster_id, phash,"
-                " COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS gemini_text,"
-                " COALESCE(ocr_text, '') AS orig_text"
+                " COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS gemini_text"
                 " FROM lc_screens"
                 " WHERE is_representative = 1"
                 " AND ocr_text_gemini IS NOT NULL"
                 " AND phash IS NOT NULL AND phash != ''"
                 + sid_filter +
-                " ORDER BY cluster_id",
+                " ORDER BY discovered_at",
                 sid_params,
             ).fetchall()
 
             if len(reps) < 2:
                 return
 
-            # anchor_matcher のノイズ除去 + 類似度計算を流用
-            from tools.anchor_matcher import (
-                _normalize_for_comparison, _text_similarity,
-            )
-
-            # cluster_id → (phash, normalized_gemini_text, orig_text) マップ
-            cluster_info: dict[int, tuple[str, str, str]] = {}
-            for r in reps:
-                orig = _normalize_text(r["gemini_text"])
-                norm = _normalize_for_comparison(orig, conn)
-                cluster_info[r["cluster_id"]] = (r["phash"], norm, orig)
-
             merged = 0
             merged_clusters: set[int] = set()
+
+            # 直前クラスタの情報を追跡
+            prev_cid: Optional[int] = None
+            prev_ph: Optional[str] = None
+            prev_norm: Optional[str] = None
+            prev_orig: Optional[str] = None
 
             for r in reps:
                 cid = r["cluster_id"]
                 if cid in merged_clusters:
                     continue
-                norm = _normalize_for_comparison(
-                    _normalize_text(r["gemini_text"]), conn)
                 ph = r["phash"]
+                orig = _normalize_text(r["gemini_text"])
+                norm = _normalize_for_comparison(orig, conn)
 
-                for other_cid, (other_ph, other_norm, other_orig) in cluster_info.items():
-                    if other_cid == cid or other_cid in merged_clusters:
-                        continue
+                should_merge = False
 
-                    should_merge = False
-
-                    if norm and other_norm:
-                        # 類似度判定 (SequenceMatcher + Jaccard の高い方)
-                        sim = _text_similarity(norm, other_norm)
+                if prev_cid is not None and prev_cid != cid:
+                    if norm and prev_norm:
+                        # テキストあり同士: 類似度判定
+                        sim = _text_similarity(norm, prev_norm)
                         if sim >= 0.85:
                             should_merge = True
-                        # 前方一致 (5文字以上) もフォールバック
-                        elif not should_merge:
-                            shorter, longer = (norm, other_norm) if len(norm) <= len(other_norm) else (other_norm, norm)
+                        else:
+                            # 前方一致 (5文字以上) フォールバック
+                            shorter, longer = (norm, prev_norm) if len(norm) <= len(prev_norm) else (prev_norm, norm)
                             if len(shorter) >= 5 and longer.startswith(shorter):
                                 should_merge = True
-                    elif not norm and not other_norm:
-                        # 両方テキスト空 → phash で判定
-                        # ただし、ノイズ除去前のテキストが両方空の場合のみ
-                        # (バトルUI等のテキストがノイズ除去で消えたケースはマージしない)
-                        orig = _normalize_text(r["gemini_text"])
-                        if not orig and not other_orig:
-                            d = phash_distance(ph, other_ph) if ph and other_ph else 999
-                            if d < 20:
+                    elif not norm and not prev_norm:
+                        # テキスト空同士: ノイズ除去前も空の場合のみ phash で判定
+                        if not orig and not prev_orig:
+                            d = phash_distance(ph, prev_ph) if ph and prev_ph else 999
+                            if d < _EMPTY_PHASH_THRESHOLD:
                                 should_merge = True
 
-                    if should_merge:
-                        # other_cid を cid に統合 (1件ごとにcommitでロック時間を最小化)
-                        _affected_ids = [r["id"] for r in conn.execute(
-                            "SELECT id FROM lc_screens WHERE cluster_id = ?", (other_cid,)).fetchall()]
+                if should_merge:
+                    # cid を prev_cid に統合
+                    _affected_ids = [row["id"] for row in conn.execute(
+                        "SELECT id FROM lc_screens WHERE cluster_id = ?", (cid,)).fetchall()]
+                    conn.execute(
+                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 0"
+                        " WHERE cluster_id = ?",
+                        (prev_cid, cid),
+                    )
+                    for _aid in _affected_ids:
+                        logger.debug("[REP_TRACE] id=%d rep=0 (remerge統合, cid=%d→prev_cid=%d)", _aid, cid, prev_cid)
+                    # 統合先クラスタの代表をリセットしてから1枚だけ選出
+                    conn.execute(
+                        "UPDATE lc_screens SET is_representative = 0 WHERE cluster_id = ?",
+                        (prev_cid,),
+                    )
+                    rep = conn.execute(
+                        "SELECT id FROM lc_screens WHERE cluster_id = ?"
+                        " ORDER BY LENGTH(COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '')) DESC,"
+                        " discovered_at ASC LIMIT 1",
+                        (prev_cid,),
+                    ).fetchone()
+                    if rep:
                         conn.execute(
-                            "UPDATE lc_screens SET cluster_id = ?, is_representative = 0"
-                            " WHERE cluster_id = ?",
-                            (cid, other_cid),
+                            "UPDATE lc_screens SET is_representative = 1 WHERE id = ?",
+                            (rep["id"],),
                         )
-                        for _aid in _affected_ids:
-                            logger.debug("[REP_TRACE] id=%d rep=0 (remerge統合, other_cid=%d→cid=%d)", _aid, other_cid, cid)
-                        # 統合先クラスタも含め全画面の代表をリセットしてから1枚だけ選出
-                        conn.execute(
-                            "UPDATE lc_screens SET is_representative = 0"
-                            " WHERE cluster_id = ?",
-                            (cid,),
-                        )
-                        # テキストが長い方を代表に
-                        rep = conn.execute(
-                            "SELECT id FROM lc_screens WHERE cluster_id = ?"
-                            " ORDER BY LENGTH(COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '')) DESC,"
-                            " discovered_at ASC LIMIT 1",
-                            (cid,),
+                    conn.commit()
+                    merged_clusters.add(cid)
+                    merged += 1
+                    # prev_cid はそのまま（統合先を維持）
+                    # prev の norm/orig/ph は代表が変わった可能性があるので更新
+                    if rep:
+                        _new_rep = conn.execute(
+                            "SELECT phash, COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS gemini_text"
+                            " FROM lc_screens WHERE id = ?",
+                            (rep["id"],),
                         ).fetchone()
-                        if rep:
-                            conn.execute(
-                                "UPDATE lc_screens SET is_representative = 1 WHERE id = ?",
-                                (rep["id"],),
-                            )
-                        conn.commit()
-                        merged_clusters.add(other_cid)
-                        merged += 1
+                        if _new_rep:
+                            prev_ph = _new_rep["phash"]
+                            prev_orig = _normalize_text(_new_rep["gemini_text"])
+                            prev_norm = _normalize_for_comparison(prev_orig, conn)
+                else:
+                    # 統合しない → 直前クラスタを更新
+                    prev_cid = cid
+                    prev_ph = ph
+                    prev_norm = norm
+                    prev_orig = orig
 
             if merged > 0:
                 logger.info("[BG_WORKER] gemini remerge: %d クラスタ統合", merged)
