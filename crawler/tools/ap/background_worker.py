@@ -481,21 +481,20 @@ class BackgroundWorker:
 
                 _is_meaningful = len(norm_text) > 0
 
-                # 1) テキスト一致チェック (グローバル): 同じテキスト or 前方一致なら同一画面
+                # 1) テキスト一致チェック (直前クラスタのみ): 同じテキスト or 前方一致なら同一画面
                 #    セリフ途中（文字送り中）のスクショは前方一致で同クラスタに統合
+                #    §16: 間引きは直前クラスタとのみ比較（厳格）
                 text_match_cid = None
-                if _is_meaningful:
-                    for cid, (rep_ph, rep_title, rep_norm) in rep_map.items():
-                        if not rep_norm:
-                            continue
+                if _is_meaningful and _prev_cid is not None and _prev_cid in rep_map:
+                    rep_ph, rep_title, rep_norm = rep_map[_prev_cid]
+                    if rep_norm:
                         if rep_norm == norm_text:
-                            text_match_cid = cid
-                            break
-                        # 前方一致: 短い方が長い方の先頭と一致 (最低5文字)
-                        shorter, longer = (norm_text, rep_norm) if len(norm_text) <= len(rep_norm) else (rep_norm, norm_text)
-                        if len(shorter) >= 5 and longer.startswith(shorter):
-                            text_match_cid = cid
-                            break
+                            text_match_cid = _prev_cid
+                        else:
+                            # 前方一致: 短い方が長い方の先頭と一致 (最低5文字)
+                            shorter, longer = (norm_text, rep_norm) if len(norm_text) <= len(rep_norm) else (rep_norm, norm_text)
+                            if len(shorter) >= 5 and longer.startswith(shorter):
+                                text_match_cid = _prev_cid
 
                 if text_match_cid is not None:
                     # テキスト一致: OCR テキストが長い方を代表に採用
