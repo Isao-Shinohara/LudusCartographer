@@ -457,19 +457,22 @@ def gemini_correct_single(
     client=None,
     item_id: Optional[int] = None,
 ) -> Optional[dict]:
-    """1枚の画像に対して Gemini で OCR 補正を実行。
+    """1枚の画像に対して Gemini REST API で OCR 補正を実行。
+
+    google-genai SDK の画像送信にタイムアウトバグがあるため、
+    urllib で REST API を直接呼び出す。
 
     Returns: {"id": int, "corrected_text": str, "corrections": list,
               "is_artifact": bool, "screen_type": str, "noise_words": list} or None
     """
-    if client is None:
-        client = _init_gemini_client()
-    if client is None:
-        return None
-
-    from google import genai as _genai
+    import base64
     import time as _time
     import random as _random
+    import urllib.request
+
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        return None
 
     try:
         # Jitter: SSLハンドシェイク衝突防止（Thundering Herd対策）
@@ -483,29 +486,44 @@ def gemini_correct_single(
             img_data = f.read()
 
         mime = "image/webp" if img_path.suffix == ".webp" else "image/png"
+        img_b64 = base64.b64encode(img_data).decode()
 
-        response = client.models.generate_content(
-            model=_GEMINI_MODEL,
-            contents=[
-                _genai.types.Part.from_bytes(data=img_data, mime_type=mime),
-                _GEMINI_PROMPT.format(ocr_text=ocr_text),
-            ],
-            config=_genai.types.GenerateContentConfig(
-                response_mime_type="application/json",
-                max_output_tokens=8192,
-                temperature=0.1,
-            ),
-        )
+        prompt_text = _GEMINI_PROMPT.format(ocr_text=ocr_text)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent?key={api_key}"
+        body = json.dumps({
+            "contents": [{"parts": [
+                {"inline_data": {"mime_type": mime, "data": img_b64}},
+                {"text": prompt_text},
+            ]}],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "maxOutputTokens": 8192,
+                "temperature": 0.1,
+            },
+        }).encode()
+
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=_GEMINI_TIMEOUT) as resp:
+            resp_data = json.loads(resp.read())
 
         # API 使用量記録
-        from tools.ap.api_usage import record_api_usage, extract_usage_from_response
-        in_tok, out_tok = extract_usage_from_response(response)
+        usage = resp_data.get("usageMetadata", {})
+        in_tok = usage.get("promptTokenCount", 0)
+        out_tok = usage.get("candidatesTokenCount", 0)
+        from tools.ap.api_usage import record_api_usage
         record_api_usage(_GEMINI_MODEL, "hq_ocr", in_tok, out_tok)
 
-        if response.text is None:
-            logger.warning("[GEMINI] 単体応答が空 (safety filter?)")
+        # レスポンス解析
+        candidates = resp_data.get("candidates", [])
+        if not candidates:
+            logger.warning("[GEMINI] 応答なし (safety filter?)")
             return None
-        text = response.text.strip()
+        parts = candidates[0].get("content", {}).get("parts", [])
+        if not parts:
+            logger.warning("[GEMINI] 応答パーツなし")
+            return None
+        text = parts[0].get("text", "").strip()
+
         # ```json ... ``` を除去
         if text.startswith("```"):
             text = re.sub(r'^```\w*\n?', '', text)
