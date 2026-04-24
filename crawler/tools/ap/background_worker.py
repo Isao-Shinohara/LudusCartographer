@@ -1134,18 +1134,12 @@ class BackgroundWorker:
                     words = [w.strip() for w in corrected.split()
                              if w.strip() and _has_text.search(w)
                              and not _pure_num.match(w.strip())]
-                    new_title = " / ".join(words[:3]) if words else None
-                    if new_title:
-                        conn.execute(
-                            "UPDATE lc_screens SET ocr_text_gemini = ?, title = ?"
-                            " WHERE id = ?",
-                            (corrected, new_title, sid),
-                        )
-                    else:
-                        conn.execute(
-                            "UPDATE lc_screens SET ocr_text_gemini = ? WHERE id = ?",
-                            (corrected, sid),
-                        )
+                    new_title = " / ".join(words[:3]) if words else corrected[:30]
+                    conn.execute(
+                        "UPDATE lc_screens SET ocr_text_gemini = ?, title = ?"
+                        " WHERE id = ?",
+                        (corrected, new_title, sid),
+                    )
                 else:
                     conn.execute(
                         "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?",
