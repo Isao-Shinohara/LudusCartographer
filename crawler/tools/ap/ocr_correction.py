@@ -424,6 +424,9 @@ result オブジェクトに以下を追加:
 （該当なしなら空配列 []）'''
 
 
+_GEMINI_TIMEOUT = 60  # API リクエストタイムアウト (秒)
+
+
 def _init_gemini_client():
     """Gemini クライアントを初期化（遅延ロード）。"""
     api_key = os.environ.get("GEMINI_API_KEY", "")
@@ -431,7 +434,10 @@ def _init_gemini_client():
         return None
     try:
         from google import genai
-        return genai.Client(api_key=api_key)
+        return genai.Client(
+            api_key=api_key,
+            http_options=genai.types.HttpOptions(timeout=_GEMINI_TIMEOUT),
+        )
     except Exception as e:
         logger.warning("[GEMINI] クライアント初期化失敗: %s", e)
         return None
