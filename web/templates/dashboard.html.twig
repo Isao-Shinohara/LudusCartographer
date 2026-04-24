@@ -2725,12 +2725,26 @@
                 const res = await fetch(promoteUrl);
                 const result = await res.json();
                 if (result.ok) {
+                    // 一覧のサムネイルを即座に差し替え（再取得前にプレビュー反映）
+                    const newSib = _clusterSiblings.find(s => s.id == _clusterSelectedId);
+                    if (newSib && modalIdx >= 0 && modalIdx < filteredScreens.length) {
+                        const s = filteredScreens[modalIdx];
+                        if (newSib.thumbnail_path) s.thumbnail_path = newSib.thumbnail_path;
+                        if (newSib.screenshot_path) s.screenshot_path = newSib.screenshot_path;
+                        // 一覧のカード画像を差し替え
+                        const card = grid.querySelector(`[data-idx="${modalIdx}"] img`);
+                        if (card) card.src = imgUrl(newSib.thumbnail_path || newSib.screenshot_path);
+                    }
+                    const _curId = filteredScreens[modalIdx]?.id;
                     if (currentTab === 'final') {
                         await fetchFinal();
                     } else {
                         await fetchLive();
                     }
-                    if (modalIdx >= 0 && modalIdx < filteredScreens.length) showModal(modalIdx);
+                    // 再取得後にモーダルの位置を復元
+                    const newIdx = filteredScreens.findIndex(s => s.id === _curId);
+                    if (newIdx >= 0) showModal(newIdx);
+                    else if (modalIdx >= 0 && modalIdx < filteredScreens.length) showModal(modalIdx);
                 }
             } catch (e) {}
         }, { okLabel: '変更' });
