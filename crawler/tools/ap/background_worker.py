@@ -1170,13 +1170,13 @@ class BackgroundWorker:
                 logger.warning("[GEMINI] %d 件 APIエラー → NULL維持（次回再送信）: %s",
                                len(skipped), skipped[:5])
 
-            # 代表の Gemini 結果を同クラスタの非代表に伝播
+            # 代表の Gemini OCR テキストのみを同クラスタの非代表に伝播
             # （非代表が代表昇格した際に再送信不要 + コスト削減）
+            # ※ is_artifact は伝播しない — 代表がartifact判定された場合に
+            #   非代表から代替代表を選出する必要があるため
             propagated = conn.execute(
                 "UPDATE lc_screens SET"
                 " ocr_text_gemini = (SELECT r.ocr_text_gemini FROM lc_screens r"
-                "   WHERE r.cluster_id = lc_screens.cluster_id AND r.is_representative = 1 LIMIT 1),"
-                " is_artifact = (SELECT r.is_artifact FROM lc_screens r"
                 "   WHERE r.cluster_id = lc_screens.cluster_id AND r.is_representative = 1 LIMIT 1)"
                 " WHERE is_representative = 0"
                 " AND ocr_text_gemini IS NULL"
