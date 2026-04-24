@@ -623,6 +623,12 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: is_artifact カラム追加")
+        if "dhash" not in cols:
+            self._conn.execute(
+                "ALTER TABLE lc_screens ADD COLUMN dhash TEXT"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: dhash カラム追加")
         # lc_transitions に edge_type カラム
         trans_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_transitions)")}
         if "edge_type" not in trans_cols:
@@ -865,19 +871,28 @@ class ScreenRecorder:
         """lc_screens に INSERT し、生成された ID を返す。DB locked 時はリトライ。"""
         import time
         import sqlite3
+        # dhash を計算（screenshot_path から）
+        dhash_val = None
+        if screenshot_path and Path(screenshot_path).exists():
+            try:
+                from lc.utils import compute_dhash
+                dhash_val = compute_dhash(Path(screenshot_path))
+            except Exception:
+                pass
         for attempt in range(self._DB_RETRY_MAX):
             try:
                 cur = self._conn.execute(
                     "INSERT INTO lc_screens"
                     " (session_id, fingerprint, title, depth, parent_fp,"
-                    "  phash, screenshot_path, thumbnail_path, ocr_text, scene, discovered_at)"
-                    " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)",
+                    "  phash, dhash, screenshot_path, thumbnail_path, ocr_text, scene, discovered_at)"
+                    " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         self._session_id,
                         fingerprint,
                         title,
                         parent_fp,
                         phash,
+                        dhash_val,
                         screenshot_path,
                         thumbnail_path,
                         ocr_text,
