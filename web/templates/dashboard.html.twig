@@ -2690,7 +2690,7 @@
                 const sib = _clusterSiblings.find(s => s.id == sibId);
                 if (sib) {
                     document.getElementById('modal-img').src = sib.screenshot_path ? imgUrl(sib.screenshot_path) : '';
-                    document.getElementById('modal-ocr').textContent = sib.ocr_text_hq || sib.ocr_text || '';
+                    document.getElementById('modal-ocr').textContent = sib.ocr_text_gemini || sib.ocr_text_hq || sib.ocr_text || '';
                 }
                 renderClusterGrid();
             });
@@ -3269,7 +3269,7 @@
                 _clusterSelectedId = sib.id;
                 if (sib) {
                     document.getElementById('modal-img').src = sib.screenshot_path ? imgUrl(sib.screenshot_path) : '';
-                    document.getElementById('modal-ocr').textContent = sib.ocr_text_hq || sib.ocr_text || '';
+                    document.getElementById('modal-ocr').textContent = sib.ocr_text_gemini || sib.ocr_text_hq || sib.ocr_text || '';
                 }
                 renderClusterGrid();
                 // 選択したサムネをスクロールに表示

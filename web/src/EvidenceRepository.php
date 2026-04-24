@@ -1071,7 +1071,7 @@ class EvidenceRepository
 
         $stmt = $this->db->prepare(<<<SQL
             SELECT id, fingerprint, title, screenshot_path, thumbnail_path,
-                   ocr_text, ocr_text_hq, is_representative, discovered_at, scene
+                   ocr_text, ocr_text_hq, ocr_text_gemini, is_representative, discovered_at, scene
             FROM lc_screens
             WHERE cluster_id = :cluster_id AND session_id = :session_id
             ORDER BY is_representative DESC, discovered_at ASC
