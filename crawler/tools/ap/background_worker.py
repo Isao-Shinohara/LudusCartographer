@@ -1169,15 +1169,12 @@ class BackgroundWorker:
                             (nw,),
                         )
 
-            # API エラーで結果が返らなかったアイテムを空文字マーク
+            # API エラーで結果が返らなかったアイテムは NULL のまま（次回再送信）
             processed_ids = {r.get("id") for r in results_list if r is not None}
-            for item in items:
-                if item["id"] not in processed_ids:
-                    conn.execute(
-                        "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?",
-                        (item["id"],),
-                    )
-                    logger.warning("[GEMINI] 結果なし → 空文字マーク id=%d", item["id"])
+            skipped = [item["id"] for item in items if item["id"] not in processed_ids]
+            if skipped:
+                logger.warning("[GEMINI] %d 件 APIエラー → NULL維持（次回再送信）: %s",
+                               len(skipped), skipped[:5])
 
             # 代表の Gemini 結果を同クラスタの非代表に伝播
             # （非代表が代表昇格した際に再送信不要 + コスト削減）
