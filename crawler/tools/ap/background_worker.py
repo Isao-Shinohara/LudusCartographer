@@ -672,9 +672,12 @@ class BackgroundWorker:
 
         テキスト一致で統合されたメンバーは正当なので対象外。
         テキスト空のメンバーのみ代表との phash 距離を検証し、
-        閾値を超えていれば新規クラスタとして分離する。
+        閾値を超えていれば分離する。
+        分離後、時系列順に隣り合う画像同士を phash < 30 で再グループ化する。
         """
         from lc.utils import phash_distance
+
+        _EMPTY_PHASH_THRESHOLD = 30  # ステップ3 と同じ閾値
 
         # 2メンバー以上のクラスタを取得
         clusters = conn.execute(
@@ -687,9 +690,11 @@ class BackgroundWorker:
         if not clusters:
             return
 
-        _VALIDATE_THRESHOLD = 12  # 代表との phash 距離がこれ以上なら分離
+        _VALIDATE_THRESHOLD = _EMPTY_PHASH_THRESHOLD  # 統合閾値と一致させる
 
-        split_count = 0
+        # 分離対象を収集（後で時系列順に再グループ化するため）
+        split_items: list[tuple[int, str]] = []  # (id, phash)
+
         for cluster in clusters:
             cid = cluster["cluster_id"]
 
@@ -715,21 +720,61 @@ class BackgroundWorker:
             for member in members:
                 d = phash_distance(rep_phash, member["phash"])
                 if d >= _VALIDATE_THRESHOLD:
-                    # 新規クラスタとして分離
+                    # クラスタから外す（後で再グループ化）
                     conn.execute(
-                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
-                        (next_cid, member["id"]),
+                        "UPDATE lc_screens SET cluster_id = NULL, is_representative = 0 WHERE id = ?",
+                        (member["id"],),
                     )
+                    split_items.append((member["id"], member["phash"]))
                     logger.debug(
-                        "[BG_WORKER] cluster_validate: id=%d をクラスタ %d から分離 → 新クラスタ %d (phash距離=%d)",
-                        member["id"], cid, next_cid, d,
+                        "[BG_WORKER] cluster_validate: id=%d をクラスタ %d から分離 (phash距離=%d)",
+                        member["id"], cid, d,
                     )
-                    next_cid += 1
-                    split_count += 1
 
-        if split_count > 0:
-            conn.commit()
-            logger.debug("[BG_WORKER] cluster_validate: %d 件分離", split_count)
+        if not split_items:
+            return
+
+        # 分離された画像を discovered_at 順に取得して再グループ化
+        split_ids = [s[0] for s in split_items]
+        placeholders = ",".join("?" * len(split_ids))
+        ordered = conn.execute(
+            f"SELECT id, phash FROM lc_screens WHERE id IN ({placeholders}) ORDER BY discovered_at",
+            split_ids,
+        ).fetchall()
+
+        # 時系列順に隣り合う画像同士を phash < 30 で統合
+        prev_cid: Optional[int] = None
+        prev_phash: Optional[str] = None
+        regroup_count = 0
+        for row in ordered:
+            sid, ph = row["id"], row["phash"]
+            merged = False
+            if prev_cid is not None and prev_phash is not None:
+                d = phash_distance(prev_phash, ph)
+                if d < _EMPTY_PHASH_THRESHOLD:
+                    # 直前の分離画像と近い → 同じクラスタに統合（非代表）
+                    conn.execute(
+                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
+                        (prev_cid, sid),
+                    )
+                    merged = True
+                    regroup_count += 1
+
+            if not merged:
+                # 新規クラスタ
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                    (next_cid, sid),
+                )
+                prev_cid = next_cid
+                prev_phash = ph
+                next_cid += 1
+
+        conn.commit()
+        logger.debug(
+            "[BG_WORKER] cluster_validate: %d 件分離, %d 件再グループ化 → %d 新クラスタ",
+            len(split_items), regroup_count, len(split_items) - regroup_count,
+        )
 
     @staticmethod
     def _get_brightness(conn: sqlite3.Connection, screen_id: int) -> float:
