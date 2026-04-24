@@ -232,7 +232,7 @@ def _stage2_dictionary(text: str, dictionary: list[str] = _GAME_DICTIONARY) -> s
 
 _GEMINI_MODEL = "gemini-2.5-flash-lite"
 _GEMINI_RATE_LIMIT = 0    # 従量課金枠 (1000 RPM) → sleep 不要、並列数で制御
-_GEMINI_PARALLEL_WORKERS = 4  # 1枚1リクエストの並列数（8でSSLタイムアウト頻発のため4に縮小）
+_GEMINI_PARALLEL_WORKERS = 8  # 1枚1リクエストの並列数（REST API直接呼び出しでSDK制約なし）
 _GEMINI_BATCH_SIZE = 1    # 1リクエスト1画像（コンテキスト汚染防止で精度最優先）
 
 # Gemini が誤って返す「テキストなし」系の説明文パターン (空文字に変換)
