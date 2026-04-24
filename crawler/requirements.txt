@@ -8,6 +8,7 @@
 Appium-Python-Client>=5.0.0       # v5.x: AppiumOptions が appium.options.common に移動
 
 # --- OCR ---
+paddlepaddle>=3.3.0               # PaddlePaddle 推論エンジン（paddleocr の依存）
 paddleocr>=3.4.0                  # predict() API、PP-OCRv5_server モデル使用
 paddlex>=3.4.0                    # paddleocr 3.x の依存ライブラリ
 Pillow>=10.0.0
