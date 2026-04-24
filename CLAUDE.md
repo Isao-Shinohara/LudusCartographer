@@ -327,6 +327,7 @@ PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
 ANDROID_HOME=~/Library/Android/sdk \
 ANDROID_SDK_ROOT=~/Library/Android/sdk \
 PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
+LC_HASH_ALGO=dhash \
 ./crawler/venv/bin/python -u ./crawler/tools/auto_pilot.py
 ```
 
