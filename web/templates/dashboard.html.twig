@@ -79,7 +79,7 @@
         <button id="cluster-algo-dhash" class="px-2 py-1 text-xs bg-gray-800 text-gray-400 hover:text-gray-200" onclick="setClusterAlgo('dhash')">dHashのみ</button>
         <button id="cluster-algo-compare" class="px-2 py-1 text-xs bg-gray-800 text-gray-400 hover:text-gray-200" onclick="setClusterAlgo('compare')" title="dHash vs hybrid の差分を比較">比較</button>
     </div>
-    <select id="diff-filter" class="hidden bg-gray-800 text-gray-300 text-xs px-2 py-1 rounded border border-gray-700">
+    <select id="diff-filter" class="bg-gray-800 text-gray-300 text-xs px-2 py-1 rounded border border-gray-700 disabled:opacity-40 disabled:cursor-not-allowed" disabled title="比較モード時のみ使用可能">
         <option value="all">全表示</option>
         <option value="diff">差分のみ</option>
         <option value="merged">ヒスト統合のみ</option>
@@ -385,7 +385,7 @@
         const diffSummary = document.getElementById('diff-summary');
         const diffWrap = document.getElementById('diff-wrap');
         const gridEl = document.getElementById('grid');
-        if (diffFilter) diffFilter.classList.toggle('hidden', algo !== 'compare');
+        if (diffFilter) diffFilter.disabled = (algo !== 'compare');
         if (diffSummary) diffSummary.classList.toggle('hidden', algo !== 'compare');
         if (diffWrap) diffWrap.classList.toggle('hidden', algo !== 'compare');
         if (gridEl) gridEl.classList.toggle('hidden', algo === 'compare');
