@@ -195,7 +195,7 @@
             const dDist = (!isRep && repDhash && s.dhash) ? hammingDistance(repDhash, s.dhash) : null;
             const metaParts = [];
             if (br !== null) metaParts.push(`<span>br:${escapeHtml(br)}</span>`);
-            if (dDist !== null) metaParts.push(`<span class="text-amber-300">Δd:${dDist}</span>`);
+            if (dDist !== null) metaParts.push(`<span class="text-amber-300" title="代表との dHash Hamming distance">dist:${dDist}</span>`);
             const metaHtml = metaParts.length > 0
                 ? `<div class="px-1 py-0.5 text-[9px] text-gray-400 bg-gray-950/70 flex flex-wrap gap-1.5 border-t border-gray-800">${metaParts.join('')}</div>`
                 : '';
