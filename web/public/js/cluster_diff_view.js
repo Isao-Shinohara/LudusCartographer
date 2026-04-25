@@ -175,10 +175,26 @@
             const repBadge = isRep
                 ? '<span class="absolute top-1 left-1 w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[11px] shadow" title="代表">★</span>'
                 : '';
-            return `<div class="relative bg-gray-900 border border-gray-800 rounded overflow-hidden${repRing}" title="${escapeHtml(opts.screenName(s))}" data-screen-id="${s.id}">
-                ${thumb ? `<img src="${escapeHtml(thumb)}" class="w-full aspect-video object-cover" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
-                ${repBadge}
-                <span class="absolute top-1 right-1 text-[9px] px-1 py-0.5 rounded bg-black/60 text-gray-300 font-mono">${arrow}${escapeHtml(otherLabel)}</span>
+            // メタ情報 (dhash 値・距離・輝度・ヒスト距離)
+            const dhashShort = s.dhash ? String(s.dhash).slice(0, 8) : '';
+            const br = (typeof s.avg_brightness === 'number') ? s.avg_brightness.toFixed(0) : null;
+            const dDist = (typeof s.dhash_dist_to_prev_rep === 'number') ? s.dhash_dist_to_prev_rep : null;
+            const hDist = (typeof s.hist_dist_to_prev_rep === 'number') ? s.hist_dist_to_prev_rep.toFixed(2) : null;
+            const metaParts = [];
+            if (dhashShort) metaParts.push(`<span class="font-mono">d:${escapeHtml(dhashShort)}</span>`);
+            if (br !== null) metaParts.push(`<span>br:${escapeHtml(br)}</span>`);
+            if (!isRep && dDist !== null) metaParts.push(`<span class="text-amber-300">Δd:${dDist}</span>`);
+            if (!isRep && hDist !== null) metaParts.push(`<span class="text-cyan-300">Δh:${hDist}</span>`);
+            const metaHtml = metaParts.length > 0
+                ? `<div class="px-1 py-0.5 text-[9px] text-gray-400 bg-gray-950/70 flex flex-wrap gap-1.5 border-t border-gray-800">${metaParts.join('')}</div>`
+                : '';
+            return `<div class="bg-gray-900 border border-gray-800 rounded overflow-hidden${repRing}" title="${escapeHtml(opts.screenName(s))}" data-screen-id="${s.id}">
+                <div class="relative">
+                    ${thumb ? `<img src="${escapeHtml(thumb)}" class="w-full aspect-video object-cover" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
+                    ${repBadge}
+                    <span class="absolute top-1 right-1 text-[9px] px-1 py-0.5 rounded bg-black/60 text-gray-300 font-mono">${arrow}${escapeHtml(otherLabel)}</span>
+                </div>
+                ${metaHtml}
             </div>`;
         }).join('');
         return `<div class="cdv-block border border-gray-800 rounded-lg p-2 bg-gray-950/40 cursor-pointer hover:border-gray-600 transition-colors h-full"
@@ -308,7 +324,12 @@
                 selectedIdx = idx;
                 if (idx >= 0 && blockEls[idx]) {
                     blockEls[idx].classList.add('ring-4', 'ring-yellow-400');
-                    if (scroll) blockEls[idx].scrollIntoView({ block: 'center', behavior: 'smooth' });
+                    if (scroll) {
+                        // block: 'start' でペイン上部を画面上端に揃える + sticky ヘッダ分のオフセット
+                        const el = blockEls[idx];
+                        el.style.scrollMarginTop = '120px';
+                        el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                    }
                 }
             };
             const handleKey = (e) => {

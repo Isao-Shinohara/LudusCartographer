@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from lc.cluster_decision import classify_empty_text_pair
+from lc.cluster_decision import classify_empty_text_pair, classify_empty_text_pair_with_metrics
 
 
 @pytest.fixture
@@ -187,3 +187,51 @@ def test_blackout_overrides_dhash_near(black_image: Path, gray_image: Path) -> N
     )
     assert is_same is False
     assert method == "blackout"
+
+
+# ─── 新 API: classify_empty_text_pair_with_metrics ─────────────
+
+
+def test_metrics_includes_brightness(black_image: Path, gray_image: Path) -> None:
+    r = classify_empty_text_pair_with_metrics(
+        prev_path=black_image, curr_path=gray_image,
+        hash_distance=10, near_threshold=8, far_threshold=40, fallback_threshold=30,
+    )
+    assert r.method == "blackout"
+    assert r.prev_brightness is not None and r.prev_brightness < 20
+    assert r.curr_brightness is not None and 100 < r.curr_brightness < 150
+
+
+def test_metrics_includes_hist_distance(
+    gradient_image: Path, gradient_image_v2: Path
+) -> None:
+    r = classify_empty_text_pair_with_metrics(
+        prev_path=gradient_image, curr_path=gradient_image_v2,
+        hash_distance=20, near_threshold=8, far_threshold=40, fallback_threshold=30,
+    )
+    assert r.method == "hist_match"
+    assert r.hist_distance is not None
+    assert 0.0 <= r.hist_distance <= 1.0
+
+
+def test_metrics_dhash_near_skip_hist(gray_image: Path) -> None:
+    """dhash_near は中間域に到達しないが、第0層で hist_dist が計算済みになる。"""
+    r = classify_empty_text_pair_with_metrics(
+        prev_path=gray_image, curr_path=gray_image,
+        hash_distance=3, near_threshold=8, far_threshold=40, fallback_threshold=30,
+    )
+    assert r.method == "dhash_near"
+    assert r.hash_distance == 3
+    # 同一画像なので hist_distance は 0 近辺
+    assert r.hist_distance is not None and r.hist_distance < 0.01
+
+
+def test_metrics_no_prev_path() -> None:
+    r = classify_empty_text_pair_with_metrics(
+        prev_path=None, curr_path=Path("dummy"),
+        hash_distance=10, near_threshold=8, far_threshold=40, fallback_threshold=30,
+    )
+    # curr_path 読めないので curr_brightness=None でも OK
+    assert r.method == "dhash_fallback"
+    assert r.prev_brightness is None
+    assert r.hist_distance is None

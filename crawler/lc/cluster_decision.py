@@ -11,8 +11,21 @@
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
+
+
+@dataclass
+class ClassifyResult:
+    """テキスト空ペア分類の結果と計算済み数値 (閾値調整用)。"""
+
+    is_same: bool
+    method: str
+    hash_distance: int
+    hist_distance: Optional[float]      # バタチャリヤ距離 (0=同一, 1=完全異なる)
+    prev_brightness: Optional[float]    # 直前画像の平均輝度
+    curr_brightness: Optional[float]    # 現画像の平均輝度
 
 
 def classify_empty_text_pair(
@@ -24,47 +37,79 @@ def classify_empty_text_pair(
     far_threshold: int,
     fallback_threshold: int,
 ) -> Tuple[bool, str]:
-    """テキスト空フレームペアを4段階で分類する。
+    """4段階分類 (旧 API: 後方互換用、内部で classify_empty_text_pair_with_metrics を呼ぶ)。"""
+    r = classify_empty_text_pair_with_metrics(
+        prev_path=prev_path,
+        curr_path=curr_path,
+        hash_distance=hash_distance,
+        near_threshold=near_threshold,
+        far_threshold=far_threshold,
+        fallback_threshold=fallback_threshold,
+    )
+    return r.is_same, r.method
 
-    Args:
-        prev_path: 直前フレームの画像パス。None なら境界判定スキップ。
-        curr_path: 現フレームの画像パス。
-        hash_distance: 既算済みの dHash/phash 距離。
-        near_threshold: 即決同クラスタ (距離 < this)。translate_threshold(8) 推奨。
-        far_threshold: 即決別クラスタ (距離 >= this)。translate_threshold(40) 推奨。
-        fallback_threshold: prev_path が None の時のフォールバック (距離 < this で同)。
-                            translate_threshold(30) 推奨。
 
-    Returns:
-        (is_same_cluster, decision_method): decision_method は以下のいずれか:
-            "blackout"        — 暗転検出 (強制別)
-            "hard_cut"        — ハードカット (強制別)
-            "dhash_near"      — dHash 即決同
-            "dhash_far"       — dHash 即決別
-            "hist_match"      — dHash 中間 + ヒスト類似 (同)
-            "hist_mismatch"   — dHash 中間 + ヒスト非類似 (別)
-            "dhash_fallback"  — prev_path 取得失敗時の dHash 単純判定
+def classify_empty_text_pair_with_metrics(
+    *,
+    prev_path: Optional[Path | str],
+    curr_path: Path | str,
+    hash_distance: int,
+    near_threshold: int,
+    far_threshold: int,
+    fallback_threshold: int,
+) -> ClassifyResult:
+    """4段階分類を行い、判定結果 + 計算済み数値を返す。
+
+    閾値調整 UI で使うため、各層で計算した数値 (ヒスト距離・輝度) も保持する。
     """
+    import cv2
+
+    # 平均輝度 (暗転判定用)
+    def _brightness(path: Path | str) -> Optional[float]:
+        img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        return float(img.mean()) if img is not None else None
+
+    prev_br = _brightness(prev_path) if prev_path is not None else None
+    curr_br = _brightness(curr_path)
+
     # 第0層: 境界判定 (prev_path がある場合のみ)
     if prev_path is not None:
-        from lc.scene_boundary_detector import is_scene_boundary
+        from lc.scene_boundary_detector import (
+            compute_grayscale_histogram,
+            histogram_distance,
+        )
 
-        is_boundary, reason = is_scene_boundary(prev_path, curr_path)
-        if is_boundary:
-            return False, reason  # "blackout" or "hard_cut"
+        BLACKOUT_TH = 20.0
+        HIST_HARDCUT_TH = 0.7
+
+        if (prev_br is not None and prev_br < BLACKOUT_TH) or (
+            curr_br is not None and curr_br < BLACKOUT_TH
+        ):
+            return ClassifyResult(False, "blackout", hash_distance, None, prev_br, curr_br)
+
+        h1 = compute_grayscale_histogram(prev_path)
+        h2 = compute_grayscale_histogram(curr_path)
+        hist_dist = histogram_distance(h1, h2)
+        if hist_dist > HIST_HARDCUT_TH:
+            return ClassifyResult(False, "hard_cut", hash_distance, hist_dist, prev_br, curr_br)
+    else:
+        hist_dist = None
 
     # 第1層: dHash 即決
     if hash_distance < near_threshold:
-        return True, "dhash_near"
+        return ClassifyResult(True, "dhash_near", hash_distance, hist_dist, prev_br, curr_br)
     if hash_distance >= far_threshold:
-        return False, "dhash_far"
+        return ClassifyResult(False, "dhash_far", hash_distance, hist_dist, prev_br, curr_br)
 
     # 第2層: ヒストグラム (中間域)
     if prev_path is None:
-        return hash_distance < fallback_threshold, "dhash_fallback"
+        same = hash_distance < fallback_threshold
+        return ClassifyResult(same, "dhash_fallback", hash_distance, None, prev_br, curr_br)
 
-    from lc.image_comparator import is_similar_by_histogram
+    from lc.image_comparator import HIST_SIMILARITY_THRESHOLD
 
-    if is_similar_by_histogram(prev_path, curr_path):
-        return True, "hist_match"
-    return False, "hist_mismatch"
+    # hist_dist は第0層で既に計算済み
+    similarity = 1.0 - (hist_dist if hist_dist is not None else 0.0)
+    if similarity >= HIST_SIMILARITY_THRESHOLD:
+        return ClassifyResult(True, "hist_match", hash_distance, hist_dist, prev_br, curr_br)
+    return ClassifyResult(False, "hist_mismatch", hash_distance, hist_dist, prev_br, curr_br)

@@ -426,15 +426,35 @@ class BackgroundWorker:
 
     @staticmethod
     def _set_decision(
-        conn: sqlite3.Connection, screen_id: int, cluster_id: int, method: str
+        conn: sqlite3.Connection,
+        screen_id: int,
+        cluster_id: int,
+        method: str,
+        *,
+        dhash_dist: Optional[int] = None,
+        hist_dist: Optional[float] = None,
+        avg_brightness: Optional[float] = None,
     ) -> None:
-        """採用版クラスタID と判定理由を全カラムに同期する。"""
+        """採用版クラスタID と判定理由 + 計算済み数値を保存する。
+
+        dhash_dist / hist_dist は直前クラスタ代表との比較値 (閾値調整 UI 用)。
+        avg_brightness は現スクリーンの平均輝度 (暗転判定用)。
+        """
+        cols = ["cluster_id_hybrid = ?", "cluster_decision_method = ?"]
+        params: list = [cluster_id, method]
+        if dhash_dist is not None:
+            cols.append("dhash_dist_to_prev_rep = ?")
+            params.append(dhash_dist)
+        if hist_dist is not None:
+            cols.append("hist_dist_to_prev_rep = ?")
+            params.append(hist_dist)
+        if avg_brightness is not None:
+            cols.append("avg_brightness = ?")
+            params.append(avg_brightness)
+        params.append(screen_id)
         conn.execute(
-            "UPDATE lc_screens SET"
-            " cluster_id_hybrid = ?,"
-            " cluster_decision_method = ?"
-            " WHERE id = ?",
-            (cluster_id, method, screen_id),
+            f"UPDATE lc_screens SET {', '.join(cols)} WHERE id = ?",
+            params,
         )
 
     # ─── phash クラスタリング ──────────────────────────────
@@ -664,13 +684,16 @@ class BackgroundWorker:
                         next_cid += 1
                 else:
                     # 3) テキスト空 → 4段階判定 (暗転/ハードカット境界 + dHash + ヒスト)
-                    from lc.cluster_decision import classify_empty_text_pair
+                    from lc.cluster_decision import classify_empty_text_pair_with_metrics
 
                     _NEAR_TH = _th(8)
                     _FAR_TH = _th(40)
                     _FALLBACK_TH = _th(30)
                     _matched = False
                     _decision_method = "new_cluster"
+                    _metric_dhash = None  # 直前代表との dHash 距離
+                    _metric_hist = None   # 同 ヒストグラム距離
+                    _metric_brightness = None  # 現スクリーン平均輝度
 
                     if _prev_cid is not None and _prev_cid in rep_map:
                         _rep_ph, _rep_title, _rep_norm = rep_map[_prev_cid]
@@ -678,7 +701,7 @@ class BackgroundWorker:
                         prev_path = self._get_rep_screenshot_path(conn, _prev_cid)
                         curr_path = row["screenshot_path"]
 
-                        is_same, _decision_method = classify_empty_text_pair(
+                        _result = classify_empty_text_pair_with_metrics(
                             prev_path=prev_path,
                             curr_path=curr_path,
                             hash_distance=d,
@@ -686,6 +709,11 @@ class BackgroundWorker:
                             far_threshold=_FAR_TH,
                             fallback_threshold=_FALLBACK_TH,
                         )
+                        is_same = _result.is_same
+                        _decision_method = _result.method
+                        _metric_dhash = _result.hash_distance
+                        _metric_hist = _result.hist_distance
+                        _metric_brightness = _result.curr_brightness
 
                         if is_same:
                             # 代表交代判定: テキストあり > テキスト空 > 顔面積
@@ -725,7 +753,11 @@ class BackgroundWorker:
                                     (_prev_cid, sid),
                                 )
                                 logger.debug("[REP_TRACE] id=%d rep=0 (空テキスト非代表, cid=%d, method=%s)", sid, _prev_cid, _decision_method)
-                            self._set_decision(conn, sid, _prev_cid, _decision_method)
+                            self._set_decision(
+                                conn, sid, _prev_cid, _decision_method,
+                                dhash_dist=_metric_dhash, hist_dist=_metric_hist,
+                                avg_brightness=_metric_brightness,
+                            )
                             _matched = True
                     if not _matched:
                         conn.execute(
@@ -737,6 +769,8 @@ class BackgroundWorker:
                         self._set_decision(
                             conn, sid, next_cid,
                             f"new:{_decision_method}" if _decision_method != "new_cluster" else "new_cluster",
+                            dhash_dist=_metric_dhash, hist_dist=_metric_hist,
+                            avg_brightness=_metric_brightness,
                         )
                         _prev_cid = next_cid
                         next_cid += 1
