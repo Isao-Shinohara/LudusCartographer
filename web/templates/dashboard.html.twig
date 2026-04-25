@@ -281,6 +281,7 @@
     </div>
 </div>
 
+<script src="js/cluster_diff_view.js"></script>
 <script>
 (function() {
     // グローバルヘッダーを Dashboard sticky 内に移動（一体化）
@@ -454,233 +455,21 @@
     function renderDiffGrid(screens) {
         const grid = document.getElementById('diff-grid');
         if (!grid) return;
-
-        // フィルタ適用 (差分のみ等)
-        let filtered = screens;
-        if (_diffFilter !== 'all') {
-            const passSet = new Set();
-            for (const s of screens) {
-                const k = _diffMap[s.id] || 'same';
-                let pass = false;
-                if (_diffFilter === 'diff') pass = (k !== 'same');
-                else if (_diffFilter === 'merged') pass = (k === 'merged' || k === 'mixed');
-                else if (_diffFilter === 'split') pass = (k === 'split' || k === 'mixed');
-                if (pass) passSet.add(s.id);
-            }
-            const includeIds = new Set(passSet);
-            for (const s of screens) {
-                if (passSet.has(s.id)) {
-                    for (const t of screens) {
-                        if (t.cluster_id_dhash === s.cluster_id_dhash || t.cluster_id_hybrid === s.cluster_id_hybrid) {
-                            includeIds.add(t.id);
-                        }
-                    }
-                }
-            }
-            filtered = screens.filter(s => includeIds.has(s.id));
-        }
-
-        // クラスタ単位グループ化 (時系列順)
         const _hybridCid = (s) => (s.cluster_id_hybrid !== null && s.cluster_id_hybrid !== undefined ? s.cluster_id_hybrid : s.cluster_id);
-        const groupBy = (key) => {
-            const m = {};
-            for (const s of filtered) {
-                const cid = (key === 'dhash') ? s.cluster_id_dhash : _hybridCid(s);
-                if (cid === null || cid === undefined) continue;
-                (m[cid] ??= []).push(s);
-            }
-            const arr = Object.entries(m).map(([cid, items]) => {
-                items.sort((a, b) => (a.id || 0) - (b.id || 0));
-                return { cid: Number(cid), items, first_id: items[0].id };
-            });
-            arr.sort((a, b) => a.first_id - b.first_id);
-            return arr;
-        };
-        const dhashGroups = groupBy('dhash');
-        const hybridGroups = groupBy('hybrid');
-
-        if (dhashGroups.length === 0 && hybridGroups.length === 0) {
-            grid.innerHTML = '<div class="col-span-full text-center text-gray-600 py-8 text-xs">該当なし</div>';
-            return;
-        }
-
-        // 内訳カウント: クラスタ → 他カラムクラスタID別件数
-        const countOther = (group, side) => {
-            const c = {};
-            for (const s of group.items) {
-                const o = (side === 'dhash') ? _hybridCid(s) : s.cluster_id_dhash;
-                if (o === null || o === undefined) continue;
-                c[o] = (c[o] ?? 0) + 1;
-            }
-            return c;
-        };
-        const dhashOther = {};  // dhash cid → {hybridCid: n}
-        const hybridOther = {};
-        for (const g of dhashGroups) dhashOther[g.cid] = countOther(g, 'dhash');
-        for (const g of hybridGroups) hybridOther[g.cid] = countOther(g, 'hybrid');
-
-        // Union-Find で「関連する D 群と H 群」を1グループにまとめる
-        const parent = {};
-        const find = (x) => {
-            if (parent[x] === undefined) { parent[x] = x; return x; }
-            if (parent[x] === x) return x;
-            return (parent[x] = find(parent[x]));
-        };
-        const union = (x, y) => {
-            const rx = find(x), ry = find(y);
-            if (rx !== ry) parent[rx] = ry;
-        };
-        for (const s of filtered) {
-            const d = s.cluster_id_dhash;
-            const h = _hybridCid(s);
-            if (d !== null && d !== undefined && h !== null && h !== undefined) {
-                union(`D#${d}`, `H#${h}`);
-            }
-        }
-        // 全クラスタを find して component に振り分け
-        const components = {};  // root → { dhashCids: Set, hybridCids: Set, firstId: number }
-        const dhashByCid = {};
-        const hybridByCid = {};
-        for (const g of dhashGroups) dhashByCid[g.cid] = g;
-        for (const g of hybridGroups) hybridByCid[g.cid] = g;
-        for (const g of dhashGroups) {
-            const root = find(`D#${g.cid}`);
-            const c = (components[root] ??= { dhashCids: new Set(), hybridCids: new Set(), firstId: g.first_id });
-            c.dhashCids.add(g.cid);
-            c.firstId = Math.min(c.firstId, g.first_id);
-        }
-        for (const g of hybridGroups) {
-            const root = find(`H#${g.cid}`);
-            const c = (components[root] ??= { dhashCids: new Set(), hybridCids: new Set(), firstId: g.first_id });
-            c.hybridCids.add(g.cid);
-            c.firstId = Math.min(c.firstId, g.first_id);
-        }
-        // 各行を最古 firstId 順にソート
-        const rows = Object.values(components).map(c => ({
-            dhashCids: [...c.dhashCids].sort((a, b) => a - b),
-            hybridCids: [...c.hybridCids].sort((a, b) => a - b),
-            firstId: c.firstId,
-        }));
-        rows.sort((a, b) => a.firstId - b.firstId);
-
-        // クラスタブロック描画
-        const renderBlock = (group, side) => {
-            const otherCounts = side === 'dhash' ? dhashOther[group.cid] : hybridOther[group.cid];
-            const otherKeys = Object.keys(otherCounts).sort((a, b) => Number(a) - Number(b));
-            const otherSidePrefix = side === 'dhash' ? 'H' : 'D';
-            const arrow = side === 'dhash' ? '→' : '←';
-            // 内訳サマリ (他カラムラベル付き)
-            const summaryParts = otherKeys.map(k => {
-                const lbl = cidLabel[`${otherSidePrefix}${k}`] || `?#${k}`;
-                return `${lbl}(${otherCounts[k]})`;
-            });
-            const summaryStr = summaryParts.length > 0 ? summaryParts.join(', ') : '—';
-            // 状態マーク
-            let stateMark = '';
-            if (otherKeys.length === 1 && otherCounts[otherKeys[0]] === group.items.length) {
-                stateMark = '<span class="text-[10px] text-gray-500 ml-2">✓一致</span>';
-            } else if (otherKeys.length > 1) {
-                stateMark = side === 'dhash'
-                    ? '<span class="text-[10px] text-amber-400 ml-2">⚡分裂</span>'
-                    : '<span class="text-[10px] text-emerald-400 ml-2">⚡合流</span>';
-            }
-            const sideColor = side === 'dhash' ? 'text-amber-300' : 'text-emerald-300';
-            // 自身のラベル (#N or #N-i)
-            const myLabel = cidLabel[`${side === 'dhash' ? 'D' : 'H'}${group.cid}`] || `#${group.cid}`;
-            // クラスタ代表 ID: dhash 側は cluster_id_dhash 内最古、hybrid 側は元の is_representative
-            const repId = side === 'dhash'
-                ? Math.min(...group.items.map(s => s.id))
-                : ((group.items.find(s => s.is_representative) || group.items[0]).id);
-            const cardsHtml = group.items.map(s => {
-                const thumb = s.thumbnail_path ? imgUrl(s.thumbnail_path) : (s.screenshot_path ? imgUrl(s.screenshot_path) : '');
-                const otherCid = side === 'dhash' ? _hybridCid(s) : s.cluster_id_dhash;
-                const otherLabel = cidLabel[`${otherSidePrefix}${otherCid}`] || `?#${otherCid}`;
-                const isRep = s.id === repId;
-                const repRingCls = isRep ? ' ring-2 ring-amber-500/80' : '';
-                const repBadge = isRep
-                    ? '<span class="absolute top-1 left-1 w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[11px] shadow" title="代表">★</span>'
-                    : '';
-                return `<div class="relative bg-gray-900 border border-gray-800 rounded overflow-hidden${repRingCls}" title="${escapeHtml(s.name || '')}">
-                    ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
-                    ${repBadge}
-                    <span class="absolute top-1 right-1 text-[9px] px-1 py-0.5 rounded bg-black/60 text-gray-300 font-mono">${arrow}${escapeHtml(otherLabel)}</span>
-                </div>`;
-            }).join('');
-            return `<div class="diff-block border border-gray-800 rounded-lg p-2 bg-gray-950/40 cursor-pointer hover:border-gray-600 transition-colors h-full"
-                        data-side="${side}" data-cid="${group.cid}"
-                        data-pair-cids="${otherKeys.join(',')}">
-                <div class="flex items-center justify-between mb-2">
-                    <span class="text-xs font-bold ${sideColor}">${escapeHtml(myLabel)}</span>
-                    <span class="text-[10px] text-gray-500">${group.items.length} 枚 ${arrow} ${escapeHtml(summaryStr)}${stateMark}</span>
-                </div>
-                <div class="grid grid-cols-3 gap-1.5">${cardsHtml}</div>
-            </div>`;
-        };
-
-        // 「差分のみ」フィルタ: 完全一致行 (1-1 で同メンバー) を除外
-        const filterDiffOnly = (_diffFilter !== 'all');
-        const isCompleteMatch = (row) => {
-            if (row.dhashCids.length !== 1 || row.hybridCids.length !== 1) return false;
-            const dg = dhashByCid[row.dhashCids[0]];
-            const hg = hybridByCid[row.hybridCids[0]];
-            if (!dg || !hg || dg.items.length !== hg.items.length) return false;
-            const ds = new Set(dg.items.map(s => s.id));
-            return hg.items.every(s => ds.has(s.id));
-        };
-        const visibleRows = filterDiffOnly ? rows.filter(r => !isCompleteMatch(r)) : rows;
-
-        // 行ごとの通し番号 + 枝番ラベルを cid に付与
-        // 例: D#0 → "#0" (単独) / "#0-0" (複数), H#0 → "#0-0" (D 群1, H 群3 の場合)
-        // cidLabel['D'+cid] = '#N' or '#N-i'
-        const cidLabel = {};
-        visibleRows.forEach((row, idx) => {
-            row.dhashCids.forEach((cid, i) => {
-                cidLabel[`D${cid}`] = row.dhashCids.length > 1 ? `#${idx}-${i}` : `#${idx}`;
-            });
-            row.hybridCids.forEach((cid, i) => {
-                cidLabel[`H${cid}`] = row.hybridCids.length > 1 ? `#${idx}-${i}` : `#${idx}`;
-            });
+        const result = ClusterDiffView.render(grid, screens, {
+            getCidA: (s) => s.cluster_id_dhash,
+            getCidB: _hybridCid,
+            labelA: 'dHash 単独 (ヒスト無し)',
+            labelB: 'dHash + ヒスト (採用版)',
+            colorA: 'text-amber-300',
+            colorB: 'text-emerald-300',
+            getRepA: (items) => Math.min(...items.map(s => s.id)),
+            getRepB: (items) => ((items.find(s => s.is_representative) || items[0]).id),
+            diffFilter: _diffFilter,
+            imgUrl: imgUrl,
+            screenName: (s) => s.name || '',
         });
-
-        // CSS Grid に行番号 (gridRow) で配置 (左右で同じ row なら高さが揃う)
-        // 行ごとに背景色を交互に (zebra striping) — 左右で同じ背景色
-        const cells = [];
-        visibleRows.forEach((row, idx) => {
-            const gridRow = idx + 1;
-            const rowBg = (idx % 2 === 1) ? 'bg-gray-700/50' : 'bg-gray-800/40';
-            // 左カラム: D 群を縦並び (行高さに伸びる)
-            if (row.dhashCids.length > 0) {
-                const blocks = row.dhashCids.map(cid => renderBlock(dhashByCid[cid], 'dhash')).join('');
-                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 1;" class="flex flex-col gap-3 h-full ${rowBg} rounded-lg p-2">${blocks}</div>`);
-            } else {
-                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 1;" class="${rowBg} rounded-lg p-2 flex items-center justify-center"><span class="opacity-30 text-[10px] text-gray-600">— なし —</span></div>`);
-            }
-            // 右カラム: H 群を縦並び
-            if (row.hybridCids.length > 0) {
-                const blocks = row.hybridCids.map(cid => renderBlock(hybridByCid[cid], 'hybrid')).join('');
-                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 2;" class="flex flex-col gap-3 h-full ${rowBg} rounded-lg p-2">${blocks}</div>`);
-            } else {
-                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 2;" class="${rowBg} rounded-lg p-2 flex items-center justify-center"><span class="opacity-30 text-[10px] text-gray-600">— なし —</span></div>`);
-            }
-        });
-        grid.innerHTML = cells.join('');
-
-        // クリックで対応クラスタをハイライト
-        grid.querySelectorAll('.diff-block').forEach(el => {
-            el.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const side = el.dataset.side;
-                const cid = el.dataset.cid;
-                const pairCids = (el.dataset.pairCids || '').split(',').filter(Boolean);
-                grid.querySelectorAll('.diff-block').forEach(b => b.classList.remove('ring-4', 'ring-yellow-400'));
-                el.classList.add('ring-4', 'ring-yellow-400');
-                const otherSide = side === 'dhash' ? 'hybrid' : 'dhash';
-                pairCids.forEach(pcid => {
-                    const target = grid.querySelector(`.diff-block[data-side="${otherSide}"][data-cid="${pcid}"]`);
-                    if (target) target.classList.add('ring-4', 'ring-yellow-400');
-                });
-            });
-        });
+        if (result && result.diffMap) _diffMap = result.diffMap;
     }
     const TRASH_ICON = '<svg class="w-3.5 h-3.5 inline" viewBox="0 0 16 16" fill="currentColor"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM4.496 6.675a.75.75 0 10-1.492.15l.66 6.6A1.75 1.75 0 005.405 15h5.19a1.75 1.75 0 001.741-1.575l.66-6.6a.75.75 0 00-1.492-.15l-.66 6.6a.25.25 0 01-.249.225h-5.19a.25.25 0 01-.249-.225l-.66-6.6z"/></svg>';
     const filterSelect = document.getElementById('filter-select');
