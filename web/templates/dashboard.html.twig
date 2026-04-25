@@ -77,7 +77,14 @@
     <div class="inline-flex rounded overflow-hidden border border-gray-700">
         <button id="cluster-algo-hybrid" class="px-2 py-1 text-xs bg-brand/80 text-white" onclick="setClusterAlgo('hybrid')">dHash+ヒスト</button>
         <button id="cluster-algo-dhash" class="px-2 py-1 text-xs bg-gray-800 text-gray-400 hover:text-gray-200" onclick="setClusterAlgo('dhash')">dHashのみ</button>
+        <button id="cluster-algo-compare" class="px-2 py-1 text-xs bg-gray-800 text-gray-400 hover:text-gray-200" onclick="setClusterAlgo('compare')" title="dHash vs hybrid の差分を比較">比較</button>
     </div>
+    <select id="diff-filter" class="hidden bg-gray-800 text-gray-300 text-xs px-2 py-1 rounded border border-gray-700">
+        <option value="all">全表示</option>
+        <option value="diff">差分のみ</option>
+        <option value="merged">ヒスト統合のみ</option>
+        <option value="split">ヒスト分離のみ</option>
+    </select>
     <span class="text-xs text-gray-500 mx-2">|</span>
     <span class="text-xs text-gray-500">Shift+クリックで選択</span>
     <button id="live-adopt-btn" class="px-3 py-1 bg-emerald-900/70 hover:bg-emerald-800/80 text-emerald-200 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✓ 採用</button>
@@ -114,6 +121,17 @@
                 <span id="preview-time"></span>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- 比較モード サマリ (Live のみ) -->
+<div id="diff-summary" class="hidden bg-gray-900/50 border border-gray-800 rounded-lg p-3 mt-2 text-xs">
+    <div class="flex items-center gap-4">
+        <span class="text-gray-400">合計 <span id="diff-total" class="font-bold text-gray-200">0</span></span>
+        <span class="text-gray-400">同一 <span id="diff-same" class="font-bold text-gray-200">0</span></span>
+        <span class="text-emerald-400">+ヒスト統合 <span id="diff-merged" class="font-bold text-emerald-200">0</span></span>
+        <span class="text-amber-400">-ヒスト分離 <span id="diff-split" class="font-bold text-amber-200">0</span></span>
+        <span class="text-purple-400">複合 <span id="diff-mixed" class="font-bold text-purple-200">0</span></span>
     </div>
 </div>
 
@@ -282,7 +300,13 @@
     let geminiEnabled = false;  // GEMINI_API_KEY が設定されているか (API レスポンスで更新)
     let autoRefreshPaused = false;  // 自動更新一時停止フラグ
     let _debugMode = localStorage.getItem('lc_debug') !== '0';  // デバッグモード (デフォルト有効)
-    let currentClusterAlgo = (new URL(window.location)).searchParams.get('algo') === 'dhash' ? 'dhash' : 'hybrid';  // Live クラスタ算出アルゴリズム
+    // Live クラスタ算出モード: 'hybrid' / 'dhash' / 'compare'
+    let currentClusterAlgo = (function() {
+        const a = (new URL(window.location)).searchParams.get('algo');
+        return (a === 'dhash' || a === 'compare') ? a : 'hybrid';
+    })();
+    let _diffFilter = 'all';  // 'all' / 'diff' / 'merged' / 'split'
+    let _diffMap = {};  // screen_id → 'same' / 'merged' / 'split' / 'mixed'
 
     // クラスタID切替: cluster_id を currentClusterAlgo に応じて読み替える
     function effectiveClusterId(s) {
@@ -325,27 +349,91 @@
     }
 
     window.setClusterAlgo = function(algo) {
-        if (algo !== 'dhash' && algo !== 'hybrid') return;
+        if (algo !== 'dhash' && algo !== 'hybrid' && algo !== 'compare') return;
         currentClusterAlgo = algo;
         const url = new URL(window.location);
         url.searchParams.set('algo', algo);
         history.replaceState(null, '', url);
         // ボタンのアクティブ状態を更新
-        const hybridBtn = document.getElementById('cluster-algo-hybrid');
-        const dhashBtn = document.getElementById('cluster-algo-dhash');
-        if (hybridBtn && dhashBtn) {
-            const activeCls = ['bg-brand/80', 'text-white'];
-            const inactiveCls = ['bg-gray-800', 'text-gray-400'];
-            if (algo === 'hybrid') {
-                hybridBtn.classList.add(...activeCls); hybridBtn.classList.remove(...inactiveCls);
-                dhashBtn.classList.add(...inactiveCls); dhashBtn.classList.remove(...activeCls);
+        const btns = {
+            hybrid:  document.getElementById('cluster-algo-hybrid'),
+            dhash:   document.getElementById('cluster-algo-dhash'),
+            compare: document.getElementById('cluster-algo-compare'),
+        };
+        const activeCls = ['bg-brand/80', 'text-white'];
+        const inactiveCls = ['bg-gray-800', 'text-gray-400'];
+        for (const [k, btn] of Object.entries(btns)) {
+            if (!btn) continue;
+            if (k === algo) {
+                btn.classList.add(...activeCls); btn.classList.remove(...inactiveCls);
             } else {
-                dhashBtn.classList.add(...activeCls); dhashBtn.classList.remove(...inactiveCls);
-                hybridBtn.classList.add(...inactiveCls); hybridBtn.classList.remove(...activeCls);
+                btn.classList.add(...inactiveCls); btn.classList.remove(...activeCls);
             }
         }
+        // 比較モード時のみ diff フィルタとサマリを表示
+        const diffFilter = document.getElementById('diff-filter');
+        const diffSummary = document.getElementById('diff-summary');
+        if (diffFilter) diffFilter.classList.toggle('hidden', algo !== 'compare');
+        if (diffSummary) diffSummary.classList.toggle('hidden', algo !== 'compare');
         renderAll();
     };
+
+    // diff フィルタ変更
+    document.addEventListener('DOMContentLoaded', () => {
+        const sel = document.getElementById('diff-filter');
+        if (sel) sel.addEventListener('change', (e) => { _diffFilter = e.target.value; renderAll(); });
+    });
+
+    // diff 計算: 各 screen が 'same'/'merged'/'split'/'mixed' のどれかを返す
+    function computeDiffMap(screens) {
+        const dhashGroups = {};
+        const hybridGroups = {};
+        for (const s of screens) {
+            const dc = s.cluster_id_dhash;
+            const hc = s.cluster_id_hybrid !== null && s.cluster_id_hybrid !== undefined ? s.cluster_id_hybrid : s.cluster_id;
+            if (dc !== null && dc !== undefined) (dhashGroups[dc] ??= new Set()).add(s.id);
+            if (hc !== null && hc !== undefined) (hybridGroups[hc] ??= new Set()).add(s.id);
+        }
+        const map = {};
+        for (const s of screens) {
+            const dc = s.cluster_id_dhash;
+            const hc = s.cluster_id_hybrid !== null && s.cluster_id_hybrid !== undefined ? s.cluster_id_hybrid : s.cluster_id;
+            const dSet = (dc !== null && dc !== undefined) ? dhashGroups[dc] : null;
+            const hSet = (hc !== null && hc !== undefined) ? hybridGroups[hc] : null;
+            if (!dSet || !hSet) { map[s.id] = 'same'; continue; }
+            // 集合差分
+            let onlyInH = 0, onlyInD = 0;
+            for (const id of hSet) if (!dSet.has(id)) onlyInH++;
+            for (const id of dSet) if (!hSet.has(id)) onlyInD++;
+            if (onlyInH === 0 && onlyInD === 0) map[s.id] = 'same';
+            else if (onlyInH > 0 && onlyInD > 0) map[s.id] = 'mixed';
+            else if (onlyInH > 0) map[s.id] = 'merged';
+            else map[s.id] = 'split';
+        }
+        return map;
+    }
+
+    function diffBadge(kind) {
+        const map = {
+            'same':   null,
+            'merged': { color: 'bg-emerald-500/30 text-emerald-200', label: '+ヒスト統合' },
+            'split':  { color: 'bg-amber-500/30 text-amber-200',    label: '-ヒスト分離' },
+            'mixed':  { color: 'bg-purple-500/30 text-purple-200',  label: '複合diff' },
+        };
+        return map[kind] || null;
+    }
+
+    function updateDiffSummary(screens) {
+        const counts = { same: 0, merged: 0, split: 0, mixed: 0 };
+        for (const s of screens) counts[_diffMap[s.id] || 'same'] = (counts[_diffMap[s.id] || 'same']) + 1;
+        const total = screens.length;
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        set('diff-total', total);
+        set('diff-same', counts.same);
+        set('diff-merged', counts.merged);
+        set('diff-split', counts.split);
+        set('diff-mixed', counts.mixed);
+    }
     const TRASH_ICON = '<svg class="w-3.5 h-3.5 inline" viewBox="0 0 16 16" fill="currentColor"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM4.496 6.675a.75.75 0 10-1.492.15l.66 6.6A1.75 1.75 0 005.405 15h5.19a1.75 1.75 0 001.741-1.575l.66-6.6a.75.75 0 00-1.492-.15l-.66 6.6a.25.25 0 01-.249.225h-5.19a.25.25 0 01-.249-.225l-.66-6.6z"/></svg>';
     const filterSelect = document.getElementById('filter-select');
     const sessionSelect = document.getElementById('session-select');
@@ -466,6 +554,15 @@
                 dots.push('<span class="px-1 rounded text-[9px] font-medium ' + dmb.color + '" title="' + escapeHtml(s.cluster_decision_method) + '">' + escapeHtml(dmb.label) + '</span>');
             }
         }
+        // Live 比較モード: diff badge
+        if (currentTab === 'live' && currentClusterAlgo === 'compare') {
+            const dkind = _diffMap[s.id] || 'same';
+            const db = diffBadge(dkind);
+            if (db) {
+                const tip = `dhash:#${s.cluster_id_dhash ?? '?'} / hybrid:#${s.cluster_id_hybrid ?? s.cluster_id ?? '?'}`;
+                dots.push('<span class="px-1 rounded text-[9px] font-bold ' + db.color + '" title="' + escapeHtml(tip) + '">' + escapeHtml(db.label) + '</span>');
+            }
+        }
         const isExcluded = (currentTab === 'final' && s.user_excluded) || (currentTab === 'live' && s.is_artifact > 0);
         const dimClass = (filterSelect.value === 'all' && (isThinned || isExcluded)) ? ' opacity-40' : '';
         const hasPending = s.master_fp && (s.master_fp in pendingChanges);
@@ -513,7 +610,24 @@
 
     function renderAll() {
         const filter = filterSelect.value;
+        // 比較モード時は diff 計算 + フィルタ適用 (cluster_id は hybrid のまま)
+        if (currentTab === 'live' && currentClusterAlgo === 'compare') {
+            _diffMap = computeDiffMap(allScreens);
+            updateDiffSummary(allScreens);
+        } else {
+            _diffMap = {};
+        }
         let filtered = applyClusterAlgoOverride(allScreens);
+        // 比較モードの diff フィルタ
+        if (currentTab === 'live' && currentClusterAlgo === 'compare' && _diffFilter !== 'all') {
+            filtered = filtered.filter(s => {
+                const k = _diffMap[s.id] || 'same';
+                if (_diffFilter === 'diff') return k !== 'same';
+                if (_diffFilter === 'merged') return k === 'merged' || k === 'mixed';
+                if (_diffFilter === 'split') return k === 'split' || k === 'mixed';
+                return true;
+            });
+        }
         const baseScreens = filtered;
         if (currentTab === 'final') {
             if (filter === 'excluded') {
