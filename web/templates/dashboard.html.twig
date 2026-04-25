@@ -140,6 +140,18 @@
     <div class="col-span-full text-center text-gray-600 py-12">読み込み中...</div>
 </div>
 
+<!-- 比較モード: 2カラム diff ビュー (Live のみ) -->
+<div id="diff-grid" class="hidden grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4 pb-10">
+    <div class="bg-gray-900/30 rounded-lg p-3">
+        <h3 class="text-sm font-bold text-amber-300 mb-3 sticky top-0 bg-gray-950/80 backdrop-blur py-1">dHash 単独 (ヒスト無し)</h3>
+        <div id="diff-left" class="space-y-3"></div>
+    </div>
+    <div class="bg-gray-900/30 rounded-lg p-3">
+        <h3 class="text-sm font-bold text-emerald-300 mb-3 sticky top-0 bg-gray-950/80 backdrop-blur py-1">dHash + ヒスト (採用版)</h3>
+        <div id="diff-right" class="space-y-3"></div>
+    </div>
+</div>
+
 <!-- Merge タブ用コンテナ -->
 <div id="merge-container" class="hidden"></div>
 <div id="settings-container" class="hidden"></div>
@@ -370,11 +382,15 @@
                 btn.classList.add(...inactiveCls); btn.classList.remove(...activeCls);
             }
         }
-        // 比較モード時のみ diff フィルタとサマリを表示
+        // 比較モード時のみ diff フィルタとサマリを表示、グリッドを切替
         const diffFilter = document.getElementById('diff-filter');
         const diffSummary = document.getElementById('diff-summary');
+        const diffGrid = document.getElementById('diff-grid');
+        const grid = document.getElementById('grid');
         if (diffFilter) diffFilter.classList.toggle('hidden', algo !== 'compare');
         if (diffSummary) diffSummary.classList.toggle('hidden', algo !== 'compare');
+        if (diffGrid) diffGrid.classList.toggle('hidden', algo !== 'compare');
+        if (grid) grid.classList.toggle('hidden', algo === 'compare');
         renderAll();
     };
 
@@ -433,6 +449,96 @@
         set('diff-merged', counts.merged);
         set('diff-split', counts.split);
         set('diff-mixed', counts.mixed);
+    }
+
+    // 2カラム diff ビューを描画 (案 A: GitHub diff 風)
+    function renderDiffGrid(screens) {
+        const left = document.getElementById('diff-left');
+        const right = document.getElementById('diff-right');
+        if (!left || !right) return;
+
+        // フィルタ適用 (差分のみ等)
+        let filtered = screens;
+        if (_diffFilter !== 'all') {
+            const passSet = new Set();
+            for (const s of screens) {
+                const k = _diffMap[s.id] || 'same';
+                let pass = false;
+                if (_diffFilter === 'diff') pass = (k !== 'same');
+                else if (_diffFilter === 'merged') pass = (k === 'merged' || k === 'mixed');
+                else if (_diffFilter === 'split') pass = (k === 'split' || k === 'mixed');
+                if (pass) passSet.add(s.id);
+            }
+            // フィルタ通過した screen と「同じクラスタの仲間」も含める (クラスタ単位で見る必要があるため)
+            const includeIds = new Set(passSet);
+            for (const s of screens) {
+                if (passSet.has(s.id)) {
+                    for (const t of screens) {
+                        if (t.cluster_id_dhash === s.cluster_id_dhash || t.cluster_id_hybrid === s.cluster_id_hybrid) {
+                            includeIds.add(t.id);
+                        }
+                    }
+                }
+            }
+            filtered = screens.filter(s => includeIds.has(s.id));
+        }
+
+        // クラスタ単位にグループ化 (時系列順)
+        const groupBy = (key) => {
+            const m = {};
+            for (const s of filtered) {
+                const cid = (key === 'dhash') ? s.cluster_id_dhash :
+                            (s.cluster_id_hybrid !== null && s.cluster_id_hybrid !== undefined ? s.cluster_id_hybrid : s.cluster_id);
+                if (cid === null || cid === undefined) continue;
+                (m[cid] ??= []).push(s);
+            }
+            // 各クラスタ内を id 昇順、クラスタ自体は最古 id 昇順
+            const arr = Object.entries(m).map(([cid, items]) => {
+                items.sort((a, b) => (a.id || 0) - (b.id || 0));
+                return { cid: Number(cid), items, first_id: items[0].id };
+            });
+            arr.sort((a, b) => a.first_id - b.first_id);
+            return arr;
+        };
+
+        const dhashGroups = groupBy('dhash');
+        const hybridGroups = groupBy('hybrid');
+
+        const renderGroup = (group, sideLabel) => {
+            const cardsHtml = group.items.map(s => {
+                const thumb = s.thumbnail_path ? imgUrl(s.thumbnail_path) : (s.screenshot_path ? imgUrl(s.screenshot_path) : '');
+                const dkind = _diffMap[s.id] || 'same';
+                let ringCls = '';
+                if (dkind === 'merged') ringCls = ' ring-2 ring-emerald-500/60';
+                else if (dkind === 'split') ringCls = ' ring-2 ring-amber-500/60';
+                else if (dkind === 'mixed') ringCls = ' ring-2 ring-purple-500/60';
+                // 他カラム所属クラスタID
+                const otherCid = sideLabel === 'dhash'
+                    ? (s.cluster_id_hybrid !== null && s.cluster_id_hybrid !== undefined ? s.cluster_id_hybrid : s.cluster_id)
+                    : s.cluster_id_dhash;
+                const otherLabel = sideLabel === 'dhash' ? 'H' : 'D';
+                return `<div class="relative bg-gray-900 border border-gray-800 rounded overflow-hidden${ringCls}" title="${escapeHtml(s.name || '')}">
+                    ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
+                    <span class="absolute top-1 right-1 text-[9px] px-1 py-0.5 rounded bg-black/60 text-gray-300 font-mono">${escapeHtml(otherLabel)}#${otherCid ?? '?'}</span>
+                </div>`;
+            }).join('');
+            const sideColor = sideLabel === 'dhash' ? 'text-amber-300' : 'text-emerald-300';
+            return `<div class="border border-gray-800 rounded-lg p-2 bg-gray-950/40">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-bold ${sideColor}">${sideLabel === 'dhash' ? 'D' : 'H'}#${group.cid}</span>
+                    <span class="text-[10px] text-gray-500">${group.items.length} 枚</span>
+                </div>
+                <div class="grid grid-cols-3 gap-1.5">${cardsHtml}</div>
+            </div>`;
+        };
+
+        if (dhashGroups.length === 0 && hybridGroups.length === 0) {
+            left.innerHTML = '<div class="text-center text-gray-600 py-8 text-xs">該当なし</div>';
+            right.innerHTML = '<div class="text-center text-gray-600 py-8 text-xs">該当なし</div>';
+            return;
+        }
+        left.innerHTML = dhashGroups.map(g => renderGroup(g, 'dhash')).join('');
+        right.innerHTML = hybridGroups.map(g => renderGroup(g, 'hybrid')).join('');
     }
     const TRASH_ICON = '<svg class="w-3.5 h-3.5 inline" viewBox="0 0 16 16" fill="currentColor"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM4.496 6.675a.75.75 0 10-1.492.15l.66 6.6A1.75 1.75 0 005.405 15h5.19a1.75 1.75 0 001.741-1.575l.66-6.6a.75.75 0 00-1.492-.15l-.66 6.6a.25.25 0 01-.249.225h-5.19a.25.25 0 01-.249-.225l-.66-6.6z"/></svg>';
     const filterSelect = document.getElementById('filter-select');
@@ -610,10 +716,13 @@
 
     function renderAll() {
         const filter = filterSelect.value;
-        // 比較モード時は diff 計算 + フィルタ適用 (cluster_id は hybrid のまま)
+        // 比較モード時は diff 計算 + 2カラム diff ビュー描画
         if (currentTab === 'live' && currentClusterAlgo === 'compare') {
             _diffMap = computeDiffMap(allScreens);
             updateDiffSummary(allScreens);
+            renderDiffGrid(allScreens);
+            // 通常グリッドは描画スキップ (#grid は既に hidden)
+            return;
         } else {
             _diffMap = {};
         }
