@@ -764,61 +764,68 @@ class BackgroundWorker:
         sid_filter: str,
         sid_params: tuple,
     ) -> None:
-        """hybrid のクラスタを並べて隣接同士の dHash 距離 < 閾値なら統合し、
-        cluster_id_dhash に書き込む。
+        """全 screen を時系列順に「暗転 + dHash 距離」だけでクラスタリングし、
+        cluster_id_dhash に書き込む。ヒスト判定 (類似度・ハードカット) は除外。
 
-        UI で「dhash 単体ならどう統合されるか」を可視化するためのシミュレーション。
-        cluster_id_hybrid (= cluster_id) は変更しない。
+        UI で「dhash + 暗転 (ヒストなし) ならどう判定されるか」を可視化する
+        シミュレーション。cluster_id_hybrid (= cluster_id) は変更しない。
         """
         _hash_col = self._hash_col()
         _DHASH_TH = self._translate_th(20)
 
-        # cluster_id ごとの代表ハッシュと最初の発見時刻を取得 (時系列順)
-        where_inner = "WHERE cluster_id IS NOT NULL" + sid_filter
         rows = conn.execute(
-            f"SELECT cluster_id, MIN(discovered_at) AS first_at,"
-            f" (SELECT {_hash_col} FROM lc_screens s2"
-            f"  WHERE s2.cluster_id = s1.cluster_id AND s2.is_representative = 1 LIMIT 1) AS rep_hash"
-            f" FROM lc_screens s1 {where_inner}"
-            f" GROUP BY cluster_id ORDER BY first_at",
+            f"SELECT id, {_hash_col} AS hash_val, screenshot_path FROM lc_screens"
+            f" WHERE cluster_id IS NOT NULL{sid_filter}"
+            f" ORDER BY discovered_at, id",
             sid_params,
         ).fetchall()
 
-        cluster_to_dhash_id: dict[int, int] = {}
+        if not rows:
+            return
+
+        from lc.scene_boundary_detector import detect_blackout
+
         next_dhash_id = 0
+        current_dhash_id = -1
         prev_hash: Optional[str] = None
-        prev_dhash_id: Optional[int] = None
+        prev_blackout = False
 
         for r in rows:
-            cid = r["cluster_id"]
-            rh = r["rep_hash"]
-            if rh is None or rh == "":
-                # ハッシュ取得不可 → 単独クラスタ
-                cluster_to_dhash_id[cid] = next_dhash_id
-                prev_dhash_id = next_dhash_id
-                next_dhash_id += 1
-                prev_hash = None
-                continue
-            if prev_hash is not None and prev_dhash_id is not None:
-                d = self._hash_distance(prev_hash, rh)
-                if d < _DHASH_TH:
-                    # 隣接 hybrid クラスタが dhash 距離で近い → 同じ dhash クラスタID
-                    cluster_to_dhash_id[cid] = prev_dhash_id
-                    prev_hash = rh
-                    continue
-            cluster_to_dhash_id[cid] = next_dhash_id
-            prev_dhash_id = next_dhash_id
-            next_dhash_id += 1
-            prev_hash = rh
+            sid = r["id"]
+            h = r["hash_val"]
+            path = r["screenshot_path"]
 
-        # cluster_id_dhash を更新
-        for cid, dhash_id in cluster_to_dhash_id.items():
+            is_blackout = False
+            if path:
+                try:
+                    is_blackout = detect_blackout(path)
+                except Exception:
+                    pass
+
+            same = False
+            if (
+                current_dhash_id >= 0
+                and prev_hash is not None
+                and h
+                and not is_blackout
+                and not prev_blackout
+            ):
+                d = self._hash_distance(prev_hash, h)
+                if d < _DHASH_TH:
+                    same = True
+
+            if not same:
+                current_dhash_id = next_dhash_id
+                next_dhash_id += 1
+
             conn.execute(
                 "UPDATE lc_screens SET cluster_id_dhash = ?,"
                 " cluster_id_hybrid = COALESCE(cluster_id_hybrid, cluster_id)"
-                " WHERE cluster_id = ?",
-                (dhash_id, cid),
+                " WHERE id = ?",
+                (current_dhash_id, sid),
             )
+            prev_hash = h if h else prev_hash
+            prev_blackout = is_blackout
         conn.commit()
 
     def _validate_clusters(
