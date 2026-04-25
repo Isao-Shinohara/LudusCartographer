@@ -468,6 +468,12 @@
             diffFilter: _diffFilter,
             imgUrl: imgUrl,
             screenName: (s) => s.name || '',
+            onScreenClick: (s) => {
+                // 詳細モーダルを開く (filteredScreens を allScreens に同期してから)
+                filteredScreens = allScreens.slice();
+                const idx = filteredScreens.findIndex(x => x.id === s.id);
+                if (idx >= 0) showModal(idx);
+            },
         });
         if (result && result.diffMap) _diffMap = result.diffMap;
     }

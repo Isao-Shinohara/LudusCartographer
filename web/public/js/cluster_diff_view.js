@@ -33,6 +33,7 @@
             diffFilter: 'all',
             imgUrl: (path) => path,
             screenName: (s) => s.name || '',
+            onScreenClick: null,  // (screen, side) => void  カード単位のクリック (詳細モーダル表示用)
         }, o || {});
     }
 
@@ -268,21 +269,22 @@
 
         rootEl.innerHTML = cells.join('');
 
-        // クリック連動ハイライト
-        rootEl.querySelectorAll('.cdv-block').forEach(el => {
-            el.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const side = el.dataset.side;
-                const pairCids = (el.dataset.pairCids || '').split(',').filter(Boolean);
-                rootEl.querySelectorAll('.cdv-block').forEach(b => b.classList.remove('ring-4', 'ring-yellow-400'));
-                el.classList.add('ring-4', 'ring-yellow-400');
-                const otherSide = side === 'A' ? 'B' : 'A';
-                pairCids.forEach(pcid => {
-                    const t = rootEl.querySelector(`.cdv-block[data-side="${otherSide}"][data-cid="${pcid}"]`);
-                    if (t) t.classList.add('ring-4', 'ring-yellow-400');
+        // 各カード (スクショ単位) クリックで onScreenClick を呼ぶ (詳細モーダル等)
+        if (typeof opts.onScreenClick === 'function') {
+            const idMap = {};
+            for (const s of filtered) idMap[s.id] = s;
+            rootEl.querySelectorAll('[data-screen-id]').forEach(el => {
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const sid = Number(el.dataset.screenId);
+                    const s = idMap[sid];
+                    if (!s) return;
+                    const block = el.closest('.cdv-block');
+                    const side = block ? block.dataset.side : null;
+                    opts.onScreenClick(s, side);
                 });
             });
-        });
+        }
 
         // サマリ計算
         const counts = { same: 0, merged: 0, split: 0, mixed: 0 };
