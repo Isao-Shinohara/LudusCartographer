@@ -237,10 +237,11 @@
                         <button id="modal-adopt-btn" class="hidden px-2 py-0.5 text-xs bg-emerald-900/70 hover:bg-emerald-800 text-emerald-200 rounded transition-colors">✓ 採用する</button>
                         <button id="modal-exclude-btn" class="hidden px-2 py-0.5 text-xs bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 rounded transition-colors">✕ 不採用にする</button>
                     </div>
-                    <div class="mt-3 flex gap-4 text-xs text-gray-600">
+                    <div class="mt-3 flex gap-4 text-xs text-gray-600 items-center flex-wrap">
                         <span id="modal-scene"></span>
                         <span id="modal-fp" class="font-mono"></span>
                         <span id="modal-time"></span>
+                        <span id="modal-decision-badge" class="hidden"></span>
                     </div>
                 </div>
                 <!-- アンカー比較 (右サイド) -->
@@ -789,13 +790,7 @@
             const phaseLabel = _debugGetPhaseForSession(s.anchor_info, _debugFilterSession) || 'A';
             dots.push('<span class="px-1 rounded text-[9px] font-bold bg-cyan-400/80 text-black" title="アンカー: ' + escapeHtml(s.anchor_info) + '">' + phaseLabel + '</span>');
         }
-        // Live タブ: 判定理由 badge (cluster_decision_method)
-        if (currentTab === 'live' && s.cluster_decision_method) {
-            const dmb = decisionMethodBadge(s.cluster_decision_method);
-            if (dmb) {
-                dots.push('<span class="px-1 rounded text-[9px] font-medium ' + dmb.color + '" title="' + escapeHtml(s.cluster_decision_method) + '">' + escapeHtml(dmb.label) + '</span>');
-            }
-        }
+        // 判定理由 badge は一覧では非表示 — 詳細モーダルでのみ表示
         // Live 比較モード: diff badge
         if (currentTab === 'live' && currentClusterAlgo === 'compare') {
             const dkind = _diffMap[s.id] || 'same';
@@ -3023,6 +3018,19 @@
         document.getElementById('modal-fp').textContent = 'fp: ' + (s.screen_hash || '');
         document.getElementById('modal-time').textContent = s.last_seen_at || '';
         document.getElementById('modal-counter').textContent = chronoPos + ' / ' + filteredScreens.length;
+        // 判定理由 badge (詳細モーダルでのみ表示)
+        const decisionBadgeEl = document.getElementById('modal-decision-badge');
+        if (decisionBadgeEl) {
+            const dmb = s.cluster_decision_method ? decisionMethodBadge(s.cluster_decision_method) : null;
+            if (dmb) {
+                decisionBadgeEl.className = 'px-2 py-0.5 rounded text-[10px] font-medium ' + dmb.color;
+                decisionBadgeEl.textContent = dmb.label;
+                decisionBadgeEl.title = s.cluster_decision_method;
+            } else {
+                decisionBadgeEl.className = 'hidden';
+                decisionBadgeEl.textContent = '';
+            }
+        }
         // OCR ソース別表示 (Phase 3)
         renderOcrSources(s);
         // 編集 UI を閉じる
