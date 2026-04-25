@@ -111,7 +111,11 @@ class BackgroundWorker:
         """デーモンスレッドを起動。"""
         self._thread = threading.Thread(target=self._run_loop_safe, daemon=True, name="bg_worker")
         self._thread.start()
-        logger.info("[BG_WORKER] バックグラウンドワーカー起動")
+        text_sep = os.environ.get("LC_TEXT_SEPARATION", "on").lower() != "off"
+        logger.info(
+            "[BG_WORKER] バックグラウンドワーカー起動 (テキスト分離: %s)",
+            "ON" if text_sep else "OFF (dHash/ヒストのみで判定)",
+        )
 
     def _run_loop_safe(self) -> None:
         """クラッシュ時に自動再起動するラッパー。"""
@@ -461,10 +465,13 @@ class BackgroundWorker:
         3. どちらも一致しない → 新規クラスタ（採用）
 
         環境変数 LC_HASH_ALGO で phash/dhash を切替可能。
+        環境変数 LC_TEXT_SEPARATION=off でテキスト判定を完全スキップし
+        全 screen を dHash/ヒスト判定で分類する (デバッグ/視認用)。
         """
         _hash_col = self._hash_col()
         _hash_distance = self._hash_distance
         _th = self._translate_th
+        _text_sep_enabled = os.environ.get("LC_TEXT_SEPARATION", "on").lower() != "off"
 
         conn = self._get_conn()
         try:
@@ -530,7 +537,9 @@ class BackgroundWorker:
                 ocr_text = row["ocr"] or ""
                 norm_text = _normalize_text(ocr_text)
 
-                _is_meaningful = len(norm_text) > 0
+                # LC_TEXT_SEPARATION=off の場合、テキスト判定を完全スキップ
+                # ケース3 (4段階判定: 暗転/dHash/ヒスト) に直行させる
+                _is_meaningful = (len(norm_text) > 0) and _text_sep_enabled
 
                 # 1) テキスト一致チェック (直前クラスタのみ): 同じテキスト or 前方一致なら同一画面
                 #    セリフ途中（文字送り中）のスクショは前方一致で同クラスタに統合
