@@ -591,12 +591,7 @@
                 const thumb = s.thumbnail_path ? imgUrl(s.thumbnail_path) : (s.screenshot_path ? imgUrl(s.screenshot_path) : '');
                 const otherCid = side === 'dhash' ? _hybridCid(s) : s.cluster_id_dhash;
                 const otherLabel = cidLabel[`${otherSidePrefix}${otherCid}`] || `?#${otherCid}`;
-                const dkind = _diffMap[s.id] || 'same';
-                let ringCls = '';
-                if (dkind === 'merged') ringCls = ' ring-2 ring-emerald-500/60';
-                else if (dkind === 'split') ringCls = ' ring-2 ring-amber-500/60';
-                else if (dkind === 'mixed') ringCls = ' ring-2 ring-purple-500/60';
-                return `<div class="relative bg-gray-900 border border-gray-800 rounded overflow-hidden${ringCls}" title="${escapeHtml(s.name || '')}">
+                return `<div class="relative bg-gray-900 border border-gray-800 rounded overflow-hidden" title="${escapeHtml(s.name || '')}">
                     ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
                     <span class="absolute top-1 right-1 text-[9px] px-1 py-0.5 rounded bg-black/60 text-gray-300 font-mono">${arrow}${escapeHtml(otherLabel)}</span>
                 </div>`;
