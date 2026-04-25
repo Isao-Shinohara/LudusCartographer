@@ -733,3 +733,27 @@ CREATE TABLE IF NOT EXISTS lc_versions (
 
 - 挿入しなかったノードは `lc_node_mappings` にも記録しない
 - 詳細は `docs/merge_sort_algorithm.md` 参照
+
+---
+
+## 20. UI 設計ルール（厳格・全 UI 共通）
+
+### 表示/非表示によるレイアウトずれを禁止
+
+UI 要素 (ボタン・セレクト・入力欄・badge 等) のモード切替時、レイアウト幅が変わると周囲の要素がずれて操作性を損なうため:
+
+- **要素は常に DOM に配置する**（`hidden` クラスや `display:none` で着脱しない）
+- **状態切替は `disabled` 属性で行う**（ボタン/セレクト/入力欄等のフォーム要素）
+- 視覚的フィードバックは `disabled:opacity-40 disabled:cursor-not-allowed` 等の Tailwind ユーティリティで表現
+- ホバー時の説明 (`title="..."`) で「いつ使えるか」を明示
+
+### 例外
+
+- モード固有の **大きなパネル/グリッド** (例: 比較モードの 2 カラム diff ビュー) は `hidden` で切替してよい — レイアウト幅に影響しない縦方向の領域なら可
+- モーダル/ポップアップは `hidden` で OK
+- フィルタ・ソート・サマリ等の **ヘッダ/ツールバー領域の要素** は必ず常時表示 + `disabled` 切替
+
+### 既存の例
+
+- `web/templates/dashboard.html.twig` の `#diff-filter` (差分フィルタ) — 比較モード時のみ `disabled=false`
+- `live-adopt-btn` / `live-exclude-btn` / `live-reset-btn` — 選択時のみ `disabled=false`
