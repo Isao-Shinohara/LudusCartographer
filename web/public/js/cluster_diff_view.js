@@ -164,11 +164,11 @@
         const arrow = side === 'A' ? '→' : '←';
         const sideColor = side === 'A' ? opts.colorA : opts.colorB;
         const myLabel = cidLabel[`${side}${group.cid}`] || `#${group.cid}`;
-        // 判定理由 (代表の cluster_decision_method)
+        // 判定理由 (先頭 screen の cluster_decision_method = このクラスタが前から分かれた理由)
+        // 代表は「テキストあり等で交代」した結果なので、代表ではなく先頭 (時系列最古) を使う
         let reasonHtml = '';
-        const repForLabel = side === 'A' ? opts.getRepA(group.items) : opts.getRepB(group.items);
-        const repItemForLabel = group.items.find(s => s.id === repForLabel);
-        const method = repItemForLabel ? repItemForLabel.cluster_decision_method : null;
+        const firstItem = group.items[0];  // group.items は既に id 昇順ソート済み
+        const method = firstItem ? firstItem.cluster_decision_method : null;
         if (method && typeof opts.decisionLabel === 'function') {
             const lbl = opts.decisionLabel(method);
             if (lbl) {
