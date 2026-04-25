@@ -617,22 +617,24 @@
         const visibleRows = filterDiffOnly ? rows.filter(r => !isCompleteMatch(r)) : rows;
 
         // CSS Grid に行番号 (gridRow) で配置 (左右で同じ row なら高さが揃う)
+        // 行ごとに背景色を交互に (zebra striping) — 左右で同じ背景色
         const cells = [];
         visibleRows.forEach((row, idx) => {
             const gridRow = idx + 1;
+            const rowBg = (idx % 2 === 1) ? 'bg-gray-800/40' : 'bg-gray-950/30';
             // 左カラム: D 群を縦並び (行高さに伸びる)
             if (row.dhashCids.length > 0) {
                 const blocks = row.dhashCids.map(cid => renderBlock(dhashByCid[cid], 'dhash')).join('');
-                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 1;" class="flex flex-col gap-3 h-full">${blocks}</div>`);
+                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 1;" class="flex flex-col gap-3 h-full ${rowBg} rounded-lg p-2">${blocks}</div>`);
             } else {
-                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 1;" class="opacity-30 border border-dashed border-gray-800 rounded-lg p-2 text-center text-[10px] text-gray-600 self-center">— なし —</div>`);
+                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 1;" class="${rowBg} rounded-lg p-2 flex items-center justify-center"><span class="opacity-30 text-[10px] text-gray-600">— なし —</span></div>`);
             }
             // 右カラム: H 群を縦並び
             if (row.hybridCids.length > 0) {
                 const blocks = row.hybridCids.map(cid => renderBlock(hybridByCid[cid], 'hybrid')).join('');
-                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 2;" class="flex flex-col gap-3 h-full">${blocks}</div>`);
+                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 2;" class="flex flex-col gap-3 h-full ${rowBg} rounded-lg p-2">${blocks}</div>`);
             } else {
-                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 2;" class="opacity-30 border border-dashed border-gray-800 rounded-lg p-2 text-center text-[10px] text-gray-600 self-center">— なし —</div>`);
+                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 2;" class="${rowBg} rounded-lg p-2 flex items-center justify-center"><span class="opacity-30 text-[10px] text-gray-600">— なし —</span></div>`);
             }
         });
         grid.innerHTML = cells.join('');
