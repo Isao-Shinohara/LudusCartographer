@@ -20,6 +20,18 @@
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[c]));
 
+    // 16進ハッシュ文字列同士の Hamming 距離 (XOR ビット数)
+    function hammingDistance(h1, h2) {
+        if (!h1 || !h2 || h1.length !== h2.length) return null;
+        try {
+            const xor = BigInt('0x' + h1) ^ BigInt('0x' + h2);
+            // popcount
+            let n = xor, c = 0;
+            while (n > 0n) { c += Number(n & 1n); n >>= 1n; }
+            return c;
+        } catch (e) { return null; }
+    }
+
     function defaultOpts(o) {
         return Object.assign({
             getCidA: (s) => s.cluster_id_dhash,
@@ -159,12 +171,14 @@
             stateMark = '<span class="text-[10px] text-gray-500 ml-2">✓一致</span>';
         } else if (otherKeys.length > 1) {
             stateMark = side === 'A'
-                ? '<span class="text-[10px] text-amber-400 ml-2">⚡分裂</span>'
+                ? '<span class="text-[10px] text-amber-400 ml-2">⚡分割</span>'
                 : '<span class="text-[10px] text-emerald-400 ml-2">⚡合流</span>';
         }
         const sideColor = side === 'A' ? opts.colorA : opts.colorB;
         const myLabel = cidLabel[`${side}${group.cid}`] || `#${group.cid}`;
         const repId = side === 'A' ? opts.getRepA(group.items) : opts.getRepB(group.items);
+        const repItem = group.items.find(s => s.id === repId);
+        const repDhash = repItem ? repItem.dhash : null;
         const cardsHtml = group.items.map(s => {
             const thumb = s.thumbnail_path ? opts.imgUrl(s.thumbnail_path)
                        : (s.screenshot_path ? opts.imgUrl(s.screenshot_path) : '');
@@ -175,16 +189,14 @@
             const repBadge = isRep
                 ? '<span class="absolute top-1 left-1 w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[11px] shadow" title="代表">★</span>'
                 : '';
-            // メタ情報 (dhash 値・距離・輝度・ヒスト距離)
+            // メタ情報: dhash 値, 平均輝度, 代表との dHash 距離 (フロントで Hamming 計算)
             const dhashShort = s.dhash ? String(s.dhash).slice(0, 8) : '';
             const br = (typeof s.avg_brightness === 'number') ? s.avg_brightness.toFixed(0) : null;
-            const dDist = (typeof s.dhash_dist_to_prev_rep === 'number') ? s.dhash_dist_to_prev_rep : null;
-            const hDist = (typeof s.hist_dist_to_prev_rep === 'number') ? s.hist_dist_to_prev_rep.toFixed(2) : null;
+            const dDist = (!isRep && repDhash && s.dhash) ? hammingDistance(repDhash, s.dhash) : null;
             const metaParts = [];
             if (dhashShort) metaParts.push(`<span class="font-mono">d:${escapeHtml(dhashShort)}</span>`);
             if (br !== null) metaParts.push(`<span>br:${escapeHtml(br)}</span>`);
-            if (!isRep && dDist !== null) metaParts.push(`<span class="text-amber-300">Δd:${dDist}</span>`);
-            if (!isRep && hDist !== null) metaParts.push(`<span class="text-cyan-300">Δh:${hDist}</span>`);
+            if (dDist !== null) metaParts.push(`<span class="text-amber-300">Δd:${dDist}</span>`);
             const metaHtml = metaParts.length > 0
                 ? `<div class="px-1 py-0.5 text-[9px] text-gray-400 bg-gray-950/70 flex flex-wrap gap-1.5 border-t border-gray-800">${metaParts.join('')}</div>`
                 : '';
