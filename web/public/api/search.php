@@ -647,7 +647,7 @@ if ($action === 'process_session_bg') {
     $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
     $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
-    // Gemini OCR + dedup + graph build をフルパイプライン実行
+    // Gemini OCR + クラスタリング + graph build をフルパイプライン実行
     // 内部的にループして全件完了させる (1クリックで完了)
     $sidEsc = addslashes($sessionId);
     $script = <<<PYTHON
@@ -674,7 +674,7 @@ def _pending():
 def _update_progress(phase, total, done, remaining_g, remaining_d):
     c = sqlite3.connect(str(DB))
     c.execute("INSERT OR REPLACE INTO auto_pilot_state (key, value) VALUES ('merge_progress', ?)",
-              (json.dumps({"phase": phase, "total": total, "ocr_done": total - remaining_g, "ocr_total": total, "dedup_remaining": remaining_d}),))
+              (json.dumps({"phase": phase, "total": total, "ocr_done": total - remaining_g, "ocr_total": total, "clustering_remaining": remaining_d}),))
     c.commit()
     c.close()
 w = BackgroundWorker(db_path=DB, session_id=SID)
@@ -683,20 +683,20 @@ iters = 0
 total, g, d = _pending()
 while iters < MAX_ITERATIONS:
     iters += 1
-    w._run_incremental_dedup()
+    w._run_incremental_clustering()
     w._run_gemini_batch_correction()
     total, g, d = _pending()
     _update_progress("OCR", total, total - g, g, d)
     if g == 0 and d == 0:
         break
-w._run_incremental_dedup()
+w._run_incremental_clustering()
 w._synthesize_auto_edges()
 _update_progress("graph", total, total, 0, 0)
 bp = BatchProcessor(db_path=DB)
 sccs = bp.build_graph(session_id=SID)
 bp.close()
 total, g, d = _pending()
-print(json.dumps({"ok": True, "sccs": sccs, "iterations": iters, "remaining_gemini": g, "remaining_dedup": d}, ensure_ascii=False))
+print(json.dumps({"ok": True, "sccs": sccs, "iterations": iters, "remaining_gemini": g, "remaining_clustering": d}, ensure_ascii=False))
 PYTHON;
     $cmd = sprintf(
         'cd %s && exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- && ./venv/bin/python -B -W ignore -c %s > %s 2>>storage/process_session_bg.err.log </dev/null &',

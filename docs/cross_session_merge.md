@@ -2,7 +2,7 @@
 
 ## 概要
 
-LudusCartographer は周回ごとにセッションを生成し、各セッション内でUI画面を記録・間引きする。
+LudusCartographer は周回ごとにセッションを生成し、各セッション内でUI画面を記録・クラスタリングする。
 周回を重ねることでUI地図（遷移グラフ）が成長していく。
 
 本機能は、複数セッションの遷移グラフを正確にマージし、ゲーム全体のUI地図を構築する。
@@ -10,7 +10,7 @@ LudusCartographer は周回ごとにセッションを生成し、各セッシ�
 ## 設計思想
 
 ```
-セッション内: 時系列ベースの間引き（直前クラスタとの比較）
+セッション内: 時系列ベースのクラスタリング（直前クラスタとの比較）
   ↓
 セッション終了時: アンカーポイント + 遷移グラフ構造でマスターグラフに統合
   ↓
@@ -27,7 +27,7 @@ LudusCartographer は周回ごとにセッションを生成し、各セッシ�
 
 ### Phase A: セッション内クラスタリング分離（実装済み）
 
-`background_worker.py` の `_run_incremental_dedup()` と `_merge_clusters_by_phash()` に
+`background_worker.py` の `_run_incremental_clustering()` と `_merge_clusters_by_phash()` に
 `session_id` フィルタを追加。各セッションの画像は自セッション内でのみクラスタリングされる。
 
 - `cluster_id` はグローバルに一意（セッション間で重複しない）

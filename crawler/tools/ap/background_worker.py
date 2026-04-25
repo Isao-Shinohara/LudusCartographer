@@ -6,7 +6,7 @@ SQLite WAL モードで並行アクセスする。
 
 処理内容:
   1. グルーピング (scene + 時間ギャップでグループ化)
-  2. phash クラスタリング (間引き + 代表選出)
+  2. phash クラスタリング (代表選出)
   3. PaddleOCR 再処理 (代表画像のみ)
   4. 遷移グラフ構築 (BFS + SCC)
 """
@@ -79,21 +79,21 @@ class BackgroundWorker:
         self,
         db_path: Path,
         session_id: Optional[str] = None,
-        interval_dedup: float = 15.0,
+        interval_clustering: float = 15.0,
         interval_ocr: float = 0.5,
         interval_group: float = 30.0,
         interval_graph: float = 120.0,
     ):
         self._db_path = db_path
         self._session_id = session_id
-        self._interval_dedup = interval_dedup
+        self._interval_clustering = interval_clustering
         self._interval_ocr = interval_ocr
         self._interval_group = interval_group
         self._interval_graph = interval_graph
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         # 統計
-        self.dedup_count = 0
+        self.clustering_count = 0
         self.ocr_count = 0
         self.group_count = 0
         self.graph_sccs = 0
@@ -168,8 +168,8 @@ class BackgroundWorker:
         if self._thread:
             self._thread.join(timeout=10)
         logger.info(
-            "[BG_WORKER] 停止 (group=%d, dedup=%d, ocr=%d, scc=%d)",
-            self.group_count, self.dedup_count, self.ocr_count, self.graph_sccs,
+            "[BG_WORKER] 停止 (group=%d, clustering=%d, ocr=%d, scc=%d)",
+            self.group_count, self.clustering_count, self.ocr_count, self.graph_sccs,
         )
 
     def _get_conn(self) -> sqlite3.Connection:
@@ -188,7 +188,7 @@ class BackgroundWorker:
         except Exception:
             pass
 
-        last_dedup = 0.0
+        last_clustering = 0.0
         last_ocr = 0.0
         last_group = 0.0
         last_graph = 0.0
@@ -219,15 +219,15 @@ class BackgroundWorker:
                         logger.warning("[BG_WORKER] ocr 例外: %s", e)
                     last_ocr = time.time()
 
-            # 間引き処理 (15秒間隔) — OCR 完了後に実行
-            if now - last_dedup >= self._interval_dedup:
+            # クラスタリング処理 (15秒間隔) — OCR 完了後に実行
+            if now - last_clustering >= self._interval_clustering:
                 try:
-                    self._run_incremental_dedup()
+                    self._run_incremental_clustering()
                 except Exception as e:
-                    logger.warning("[BG_WORKER] dedup 例外: %s", e)
-                last_dedup = time.time()
+                    logger.warning("[BG_WORKER] clustering 例外: %s", e)
+                last_clustering = time.time()
 
-            # Gemini バッチ修正 (60秒間隔、OCR+間引き完了後)
+            # Gemini バッチ修正 (60秒間隔、OCR+クラスタリング完了後)
             if now - last_gemini >= 30.0:
                 try:
                     self._run_gemini_batch_correction()
@@ -457,7 +457,7 @@ class BackgroundWorker:
         from lc.image_comparator import get_comparator
         return get_comparator().translate_threshold(phash_threshold)
 
-    def _run_incremental_dedup(self) -> None:
+    def _run_incremental_clustering(self) -> None:
         """未処理スクリーンに対してテキスト優先 + ハッシュ距離フォールバックでクラスタリング。
 
         1. OCR テキスト (title) が既存代表と一致 → 同一クラスタ（不採用）
@@ -483,8 +483,8 @@ class BackgroundWorker:
                 _sid_filter = " AND session_id = ?"
                 _sid_params = (self._session_id,)
 
-            # 間引きは常に初期 OCR (Vision) で判定し、HQ OCR を待たない。
-            # HQ OCR (PaddleOCR/Gemini) は間引き後の代表のみで実行され、表示用テキストの精度向上が目的。
+            # クラスタリングは常に初期 OCR (Vision) で判定し、HQ OCR を待たない。
+            # HQ OCR (PaddleOCR/Gemini) はクラスタリング後の代表のみで実行され、表示用テキストの精度向上が目的。
             _hq_filter = ""
             rows = conn.execute(
                 f"SELECT id, {_hash_col} AS hash_val, title, screenshot_path,"
@@ -543,7 +543,7 @@ class BackgroundWorker:
 
                 # 1) テキスト一致チェック (直前クラスタのみ): 同じテキスト or 前方一致なら同一画面
                 #    セリフ途中（文字送り中）のスクショは前方一致で同クラスタに統合
-                #    §16: 間引きは直前クラスタとのみ比較（厳格）
+                #    §16: クラスタリングは直前クラスタとのみ比較（厳格）
                 text_match_cid = None
                 _text_match_method = ""
                 if _is_meaningful and _prev_cid is not None and _prev_cid in rep_map:
@@ -745,8 +745,8 @@ class BackgroundWorker:
 
             if processed > 0:
                 conn.commit()
-                self.dedup_count += processed
-                logger.info("[BG_WORKER] dedup: %d 枚処理 (合計 %d)", processed, self.dedup_count)
+                self.clustering_count += processed
+                logger.info("[BG_WORKER] clustering: %d 枚処理 (合計 %d)", processed, self.clustering_count)
 
             # クラスタ内バリデーション: テキスト空メンバーが代表から離れすぎていたら分離
             self._validate_clusters(conn, next_cid, _sid_filter, _sid_params)
@@ -966,9 +966,9 @@ class BackgroundWorker:
     # ─── PaddleOCR 再処理 ─────────────────────────────────
 
     def _run_incremental_ocr(self) -> None:
-        """ocr_text_hq IS NULL の代表スクリーンを 1 枚処理（間引き後の代表のみ対象）。
+        """ocr_text_hq IS NULL の代表スクリーンを 1 枚処理（クラスタリング後の代表のみ対象）。
 
-        間引きは Vision OCR (ocr_text) で判定済み。HQ OCR は表示用テキストの
+        クラスタリングは Vision OCR (ocr_text) で判定済み。HQ OCR は表示用テキストの
         精度向上が目的で、代表画像のみで十分。
         """
         conn = self._get_conn()
@@ -1582,13 +1582,13 @@ class BackgroundWorker:
     # ─── 遷移グラフ構築 ───────────────────────────────────
 
     def _run_graph_build(self) -> None:
-        """OCR + dedup 完了済みセッションの遷移グラフを構築。"""
+        """OCR + クラスタリング完了済みセッションの遷移グラフを構築。"""
         import os as _os
         _has_gemini = bool(_os.environ.get("GEMINI_API_KEY"))
         conn = self._get_conn()
         try:
             # グラフ未構築の completed セッションを探す
-            # OCR + dedup が完了しているセッションのみ対象
+            # OCR + クラスタリングが完了しているセッションのみ対象
             targets = conn.execute(
                 "SELECT s.session_id FROM lc_sessions s"
                 " WHERE s.status = 'completed'"

@@ -1,8 +1,8 @@
 """
-バッチプロセッサ — スクショの間引き・グルーピング・OCR再処理。
+バッチプロセッサ — スクショのクラスタリング・グルーピング・OCR再処理。
 
 リアルタイム撮影 (screen_recorder.py) で寛容に撮りためたスクショを
-バッチで間引き・分類・OCR再処理する。全てローカル完結。
+バッチでクラスタリング・分類・OCR再処理する。全てローカル完結。
 
 設計書: docs/screen_recorder.md
 
@@ -391,7 +391,7 @@ class BatchProcessor:
         logger.info("[group] %d グループ作成 (%d スクリーン)", groups_created, len(rows))
         return groups_created
 
-    # ─── Phase 2: phash クラスタリング間引き ───────────
+    # ─── Phase 2: phash クラスタリング ───────────
 
     def deduplicate(self, session_id: Optional[str] = None) -> int:
         """グループ内で phash クラスタリングし、代表1枚を選出。
@@ -488,10 +488,10 @@ class BatchProcessor:
         logger.info("[deduplicate] 代表画像 %d 枚選出", total_reps)
         return total_reps
 
-    # ─── 間引きファイル移動 ─────────────────────────────
+    # ─── 非代表ファイル移動 ─────────────────────────────
 
     def move_thinned(self, session_id: Optional[str] = None) -> int:
-        """間引かれた（非代表）画像をセッションディレクトリ内の thinned/ に移動。
+        """クラスタの非代表画像をセッションディレクトリ内の thinned/ に移動。
 
         Returns: 移動したファイル数
         """
@@ -992,7 +992,7 @@ class BatchProcessor:
         s = self.build_graph()
 
         logger.info("=" * 50)
-        logger.info("  完了: %dグループ, %d代表, %d間引き移動, %d OCR再処理, %d統合, %d SCC",
+        logger.info("  完了: %dグループ, %d代表, %d非代表移動, %d OCR再処理, %d統合, %d SCC",
                      g, d, m, r, i, s)
         logger.info("=" * 50)
 
@@ -1018,11 +1018,11 @@ def main():
     parser.add_argument("--group", action="store_true",
                         help="Phase 1: グルーピング + ラベル付け")
     parser.add_argument("--deduplicate", action="store_true",
-                        help="Phase 2: phash クラスタリング間引き")
+                        help="Phase 2: phash クラスタリング (CLI 名は後方互換のため維持)")
     parser.add_argument("--reocr", action="store_true",
                         help="Phase 3: PaddleOCR 再処理")
     parser.add_argument("--move-thinned", action="store_true",
-                        help="間引きファイルを thinned/ に移動")
+                        help="クラスタの非代表ファイルを thinned/ に移動")
     parser.add_argument("--integrate", action="store_true",
                         help="代表画像を final/ に統合コピー")
     parser.add_argument("--dry-run", action="store_true",

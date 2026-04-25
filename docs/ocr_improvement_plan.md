@@ -43,7 +43,7 @@ PaddleOCR/Vision の生テキストを段階的に改善し、最終的にユー
 ### 実行順序
 
 ```
-PaddleOCR (即時) → phash クラスタリング (間引き) → Gemini Flash (代表のみ) → 再クラスタリング → マージ
+Vision OCR (即時) → phash/dHash クラスタリング → PaddleOCR/Gemini Flash (代表のみ) → 再クラスタリング → マージ
 ```
 
 全画面ではなく代表のみに Gemini を適用し、補正結果をクラスタ内に伝播。

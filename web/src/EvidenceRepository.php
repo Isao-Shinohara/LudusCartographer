@@ -755,7 +755,7 @@ class EvidenceRepository
                    (SELECT COUNT(*) FROM lc_screens
                       WHERE session_id = s.session_id
                         AND cluster_id IS NULL
-                        AND phash IS NOT NULL AND phash != '') AS pending_dedup,
+                        AND phash IS NOT NULL AND phash != '') AS pending_clustering,
                    (SELECT COUNT(*) FROM lc_session_graphs WHERE session_id = s.session_id) AS has_graph,
                    (SELECT COUNT(*) FROM lc_transitions
                       WHERE session_id = s.session_id AND to_fp IS NOT NULL) AS transitions

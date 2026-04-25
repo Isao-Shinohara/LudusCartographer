@@ -455,7 +455,7 @@ def _build_phase_timeline(state: PilotState) -> list[str]:
 
 # ─── バッチプロセッサ自動実行 ────────────────────────────
 def _run_batch_processor() -> None:
-    """recorder.close() 後にバッチ処理 (グルーピング・間引き・OCR再処理) を実行。"""
+    """recorder.close() 後にバッチ処理 (グルーピング・クラスタリング・OCR再処理) を実行。"""
     try:
         from tools.batch_processor import BatchProcessor
         bp = BatchProcessor(db_path=_STATE_DB_PATH)
@@ -2531,7 +2531,7 @@ def main():
             version_id=args.version,
         )
         state.cycle.recorder = recorder
-        # バックグラウンドワーカー起動 (間引き + OCR 再処理)
+        # バックグラウンドワーカー起動 (クラスタリング + OCR 再処理)
         from tools.ap.background_worker import BackgroundWorker
         bg_worker = BackgroundWorker(db_path=_STATE_DB_PATH, session_id=_rec_session)
         bg_worker.start()

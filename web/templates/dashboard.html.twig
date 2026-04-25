@@ -1292,7 +1292,7 @@
             if (bgPending.length === 0) {
                 html += '<p class="text-gray-600 text-sm">バックグラウンド処理が未完了のセッションはありません</p>';
             } else {
-                html += '<p class="text-xs text-gray-500 mb-2">中断された後処理 (Gemini OCR / 間引き / グラフ構築) を「再開」で完了させる。画面なしは削除のみ可能。</p>';
+                html += '<p class="text-xs text-gray-500 mb-2">中断された後処理 (Gemini OCR / クラスタリング / グラフ構築) を「再開」で完了させる。画面なしは削除のみ可能。</p>';
                 html += _renderMergeSection('bgPending', bgPending, (s) => {
                     const hasScreens = s.actual_screens > 0;
                     const hasTransitions = (s.transitions || 0) > 0;
@@ -1305,12 +1305,12 @@
                             ${completionBadge(s.completion_type)}
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
                             ${s.pending_gemini > 0 ? `<span class="text-xs text-amber-500 ml-2">OCR ${s.pending_gemini} 件</span>` : ''}
-                            ${s.pending_dedup > 0 ? `<span class="text-xs text-emerald-500 ml-2">間引き ${s.pending_dedup} 件</span>` : ''}
+                            ${s.pending_clustering > 0 ? `<span class="text-xs text-emerald-500 ml-2">クラスタリング ${s.pending_clustering} 件</span>` : ''}
                             ${noGraphBadge}
                         </div>
                         <div class="flex items-center gap-2">
                             ${canResume ? `<button class="bg-process-btn px-3 py-1 bg-cyan-900/50 hover:bg-cyan-800/60 text-cyan-300 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" title="後処理 (OCR + 間引き + グラフ構築) を再開">再開</button>` : ''}
+                                    data-session-id="${escapeHtml(s.session_id)}" title="後処理 (OCR + クラスタリング + グラフ構築) を再開">再開</button>` : ''}
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
                                     data-session-id="${escapeHtml(s.session_id)}" data-node-count="0">${TRASH_ICON}</button>
                         </div>
@@ -2403,7 +2403,7 @@
     // --- グラフ構築 (バックグラウンド) ---
     async function processSessionBg(sessionId) {
         await withOperationLock('後処理実行', async () => {
-            const sticky = showToast(`後処理実行中: ${sessionId} (Gemini OCR + 間引き + グラフ構築)`, 'info', { sticky: true });
+            const sticky = showToast(`後処理実行中: ${sessionId} (Gemini OCR + クラスタリング + グラフ構築)`, 'info', { sticky: true });
             const startTime = Date.now();
             const elapsedTimer = setInterval(async () => {
                 const elapsed = Math.floor((Date.now() - startTime) / 1000);

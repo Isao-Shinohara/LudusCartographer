@@ -326,7 +326,7 @@ class ScreenRecorder:
         if not screenshot_path:
             return False
 
-        # OCR テキスト: Vision OCR で検出されたテキストを保存（dedup の精度向上）
+        # OCR テキスト: Vision OCR で検出されたテキストを保存（クラスタリングの精度向上）
         ocr_text = ""
         if ocr_results:
             ocr_text = " ".join(
@@ -364,7 +364,7 @@ class ScreenRecorder:
         phash: str,
         force: bool = False,
     ) -> bool:
-        """寛容撮影: 暗転以外は全部保存。間引きはバッチで行う。
+        """寛容撮影: 暗転以外は全部保存。クラスタリングはバッチで行う。
 
         force=True: タップ直前の強制保存。暗転・シーンチェック・重複チェックを
         すべてスキップし、必ず保存する。
