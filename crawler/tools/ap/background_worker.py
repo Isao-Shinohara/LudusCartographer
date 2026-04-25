@@ -483,9 +483,9 @@ class BackgroundWorker:
                 _sid_filter = " AND session_id = ?"
                 _sid_params = (self._session_id,)
 
-            # GEMINI_API_KEY 設定時: HQ OCR を待たず初期 OCR で間引き
-            # 未設定時: HQ OCR 完了済みのみ間引き対象
-            _hq_filter = "" if os.environ.get("GEMINI_API_KEY") else " AND ocr_text_hq IS NOT NULL"
+            # 間引きは常に初期 OCR (Vision) で判定し、HQ OCR を待たない。
+            # HQ OCR (PaddleOCR/Gemini) は間引き後の代表のみで実行され、表示用テキストの精度向上が目的。
+            _hq_filter = ""
             rows = conn.execute(
                 f"SELECT id, {_hash_col} AS hash_val, title, screenshot_path,"
                 f" COALESCE(ocr_text_hq, ocr_text) AS ocr FROM lc_screens"
@@ -966,12 +966,17 @@ class BackgroundWorker:
     # ─── PaddleOCR 再処理 ─────────────────────────────────
 
     def _run_incremental_ocr(self) -> None:
-        """ocr_text_hq IS NULL のスクリーンを 1 枚処理（間引き前なので全画像対象）。"""
+        """ocr_text_hq IS NULL の代表スクリーンを 1 枚処理（間引き後の代表のみ対象）。
+
+        間引きは Vision OCR (ocr_text) で判定済み。HQ OCR は表示用テキストの
+        精度向上が目的で、代表画像のみで十分。
+        """
         conn = self._get_conn()
         try:
             row = conn.execute(
                 "SELECT id, screenshot_path FROM lc_screens"
                 " WHERE ocr_text_hq IS NULL"
+                " AND is_representative = 1"
                 " AND screenshot_path IS NOT NULL AND screenshot_path != ''"
                 " ORDER BY discovered_at"
                 " LIMIT 1"
