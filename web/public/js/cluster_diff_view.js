@@ -190,12 +190,10 @@
             const repBadge = isRep
                 ? '<span class="absolute top-1 left-1 w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[11px] shadow" title="代表">★</span>'
                 : '';
-            // メタ情報: dhash 値, 平均輝度, 代表との dHash 距離 (フロントで Hamming 計算)
-            const dhashShort = s.dhash ? String(s.dhash).slice(0, 8) : '';
+            // メタ情報: 平均輝度, 代表との dHash 距離 (フロントで Hamming 計算)
             const br = (typeof s.avg_brightness === 'number') ? s.avg_brightness.toFixed(0) : null;
             const dDist = (!isRep && repDhash && s.dhash) ? hammingDistance(repDhash, s.dhash) : null;
             const metaParts = [];
-            if (dhashShort) metaParts.push(`<span class="font-mono">d:${escapeHtml(dhashShort)}</span>`);
             if (br !== null) metaParts.push(`<span>br:${escapeHtml(br)}</span>`);
             if (dDist !== null) metaParts.push(`<span class="text-amber-300">Δd:${dDist}</span>`);
             const metaHtml = metaParts.length > 0
