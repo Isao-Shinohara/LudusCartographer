@@ -146,8 +146,8 @@
         <h3 class="text-sm font-bold text-amber-300 sticky top-0 bg-gray-950/80 backdrop-blur py-1 px-3 rounded">dHash 単独 (ヒスト無し)</h3>
         <h3 class="text-sm font-bold text-emerald-300 sticky top-0 bg-gray-950/80 backdrop-blur py-1 px-3 rounded">dHash + ヒスト (採用版)</h3>
     </div>
-    <!-- ペア行揃えグリッド: 同じ grid-row のブロック同士は左右で対応 -->
-    <div id="diff-grid" class="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-3 items-start"></div>
+    <!-- ペア行揃えグリッド: 同じ grid-row のブロック同士は左右で対応 (高さ自動揃え) -->
+    <div id="diff-grid" class="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-3"></div>
 </div>
 
 <!-- Merge タブ用コンテナ -->
@@ -593,7 +593,7 @@
                     <span class="absolute top-1 right-1 text-[9px] px-1 py-0.5 rounded bg-black/60 text-gray-300 font-mono">${arrow}${escapeHtml(otherLabel)}#${otherCid ?? '?'}</span>
                 </div>`;
             }).join('');
-            return `<div class="diff-block border border-gray-800 rounded-lg p-2 bg-gray-950/40 cursor-pointer hover:border-gray-600 transition-colors"
+            return `<div class="diff-block border border-gray-800 rounded-lg p-2 bg-gray-950/40 cursor-pointer hover:border-gray-600 transition-colors h-full"
                         data-side="${side}" data-cid="${group.cid}"
                         data-pair-cids="${otherKeys.join(',')}">
                 <div class="flex items-center justify-between mb-2">
@@ -620,17 +620,17 @@
         const cells = [];
         visibleRows.forEach((row, idx) => {
             const gridRow = idx + 1;
-            // 左カラム: D 群を縦並び
+            // 左カラム: D 群を縦並び (行高さに伸びる)
             if (row.dhashCids.length > 0) {
                 const blocks = row.dhashCids.map(cid => renderBlock(dhashByCid[cid], 'dhash')).join('');
-                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 1;" class="flex flex-col gap-3">${blocks}</div>`);
+                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 1;" class="flex flex-col gap-3 h-full">${blocks}</div>`);
             } else {
                 cells.push(`<div style="grid-row: ${gridRow}; grid-column: 1;" class="opacity-30 border border-dashed border-gray-800 rounded-lg p-2 text-center text-[10px] text-gray-600 self-center">— なし —</div>`);
             }
             // 右カラム: H 群を縦並び
             if (row.hybridCids.length > 0) {
                 const blocks = row.hybridCids.map(cid => renderBlock(hybridByCid[cid], 'hybrid')).join('');
-                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 2;" class="flex flex-col gap-3">${blocks}</div>`);
+                cells.push(`<div style="grid-row: ${gridRow}; grid-column: 2;" class="flex flex-col gap-3 h-full">${blocks}</div>`);
             } else {
                 cells.push(`<div style="grid-row: ${gridRow}; grid-column: 2;" class="opacity-30 border border-dashed border-gray-800 rounded-lg p-2 text-center text-[10px] text-gray-600 self-center">— なし —</div>`);
             }
