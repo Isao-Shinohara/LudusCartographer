@@ -566,10 +566,14 @@
         const renderBlock = (group, side) => {
             const otherCounts = side === 'dhash' ? dhashOther[group.cid] : hybridOther[group.cid];
             const otherKeys = Object.keys(otherCounts).sort((a, b) => Number(a) - Number(b));
-            const otherLabel = side === 'dhash' ? 'H' : 'D';
-            const summaryParts = otherKeys.map(k => `${otherLabel}#${k}(${otherCounts[k]})`);
-            const summaryStr = summaryParts.length > 0 ? summaryParts.join(', ') : '—';
+            const otherSidePrefix = side === 'dhash' ? 'H' : 'D';
             const arrow = side === 'dhash' ? '→' : '←';
+            // 内訳サマリ (他カラムラベル付き)
+            const summaryParts = otherKeys.map(k => {
+                const lbl = cidLabel[`${otherSidePrefix}${k}`] || `?#${k}`;
+                return `${lbl}(${otherCounts[k]})`;
+            });
+            const summaryStr = summaryParts.length > 0 ? summaryParts.join(', ') : '—';
             // 状態マーク
             let stateMark = '';
             if (otherKeys.length === 1 && otherCounts[otherKeys[0]] === group.items.length) {
@@ -580,9 +584,12 @@
                     : '<span class="text-[10px] text-emerald-400 ml-2">⚡合流</span>';
             }
             const sideColor = side === 'dhash' ? 'text-amber-300' : 'text-emerald-300';
+            // 自身のラベル (#N or #N-i)
+            const myLabel = cidLabel[`${side === 'dhash' ? 'D' : 'H'}${group.cid}`] || `#${group.cid}`;
             const cardsHtml = group.items.map(s => {
                 const thumb = s.thumbnail_path ? imgUrl(s.thumbnail_path) : (s.screenshot_path ? imgUrl(s.screenshot_path) : '');
                 const otherCid = side === 'dhash' ? _hybridCid(s) : s.cluster_id_dhash;
+                const otherLabel = cidLabel[`${otherSidePrefix}${otherCid}`] || `?#${otherCid}`;
                 const dkind = _diffMap[s.id] || 'same';
                 let ringCls = '';
                 if (dkind === 'merged') ringCls = ' ring-2 ring-emerald-500/60';
@@ -590,14 +597,14 @@
                 else if (dkind === 'mixed') ringCls = ' ring-2 ring-purple-500/60';
                 return `<div class="relative bg-gray-900 border border-gray-800 rounded overflow-hidden${ringCls}" title="${escapeHtml(s.name || '')}">
                     ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
-                    <span class="absolute top-1 right-1 text-[9px] px-1 py-0.5 rounded bg-black/60 text-gray-300 font-mono">${arrow}${escapeHtml(otherLabel)}#${otherCid ?? '?'}</span>
+                    <span class="absolute top-1 right-1 text-[9px] px-1 py-0.5 rounded bg-black/60 text-gray-300 font-mono">${arrow}${escapeHtml(otherLabel)}</span>
                 </div>`;
             }).join('');
             return `<div class="diff-block border border-gray-800 rounded-lg p-2 bg-gray-950/40 cursor-pointer hover:border-gray-600 transition-colors h-full"
                         data-side="${side}" data-cid="${group.cid}"
                         data-pair-cids="${otherKeys.join(',')}">
                 <div class="flex items-center justify-between mb-2">
-                    <span class="text-xs font-bold ${sideColor}">${side === 'dhash' ? 'D' : 'H'}#${group.cid}</span>
+                    <span class="text-xs font-bold ${sideColor}">${escapeHtml(myLabel)}</span>
                     <span class="text-[10px] text-gray-500">${group.items.length} 枚 ${arrow} ${escapeHtml(summaryStr)}${stateMark}</span>
                 </div>
                 <div class="grid grid-cols-3 gap-1.5">${cardsHtml}</div>
@@ -615,6 +622,19 @@
             return hg.items.every(s => ds.has(s.id));
         };
         const visibleRows = filterDiffOnly ? rows.filter(r => !isCompleteMatch(r)) : rows;
+
+        // 行ごとの通し番号 + 枝番ラベルを cid に付与
+        // 例: D#0 → "#0" (単独) / "#0-0" (複数), H#0 → "#0-0" (D 群1, H 群3 の場合)
+        // cidLabel['D'+cid] = '#N' or '#N-i'
+        const cidLabel = {};
+        visibleRows.forEach((row, idx) => {
+            row.dhashCids.forEach((cid, i) => {
+                cidLabel[`D${cid}`] = row.dhashCids.length > 1 ? `#${idx}-${i}` : `#${idx}`;
+            });
+            row.hybridCids.forEach((cid, i) => {
+                cidLabel[`H${cid}`] = row.hybridCids.length > 1 ? `#${idx}-${i}` : `#${idx}`;
+            });
+        });
 
         // CSS Grid に行番号 (gridRow) で配置 (左右で同じ row なら高さが揃う)
         // 行ごとに背景色を交互に (zebra striping) — 左右で同じ背景色
