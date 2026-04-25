@@ -34,8 +34,13 @@
             imgUrl: (path) => path,
             screenName: (s) => s.name || '',
             onScreenClick: null,  // (screen, side) => void  カード単位のクリック (詳細モーダル表示用)
+            keyboardNav: false,   // true で矢印キーペイン移動を有効化
+            shouldHandleKey: () => true,  // false を返すとキー処理スキップ (モーダル開時等)
         }, o || {});
     }
+
+    // document keydown リスナーは ClusterDiffView 全体で 1 つだけ
+    let _activeKeyHandler = null;
 
     function groupBy(screens, getCid) {
         const m = {};
@@ -284,6 +289,70 @@
                     opts.onScreenClick(s, side);
                 });
             });
+        }
+
+        // キーボードナビゲーション (←→: 左右ペイン、↑↓: 同カラム上下ペイン)
+        if (opts.keyboardNav) {
+            const blockEls = [...rootEl.querySelectorAll('.cdv-block')];
+            // 各ペインの (gridRow, side) を取得
+            const blockMeta = blockEls.map(el => ({
+                el,
+                row: Number(el.parentElement.style.gridRow),
+                side: el.dataset.side,
+            }));
+            let selectedIdx = -1;
+            const setSelected = (idx, scroll) => {
+                if (selectedIdx >= 0 && blockEls[selectedIdx]) {
+                    blockEls[selectedIdx].classList.remove('ring-4', 'ring-yellow-400');
+                }
+                selectedIdx = idx;
+                if (idx >= 0 && blockEls[idx]) {
+                    blockEls[idx].classList.add('ring-4', 'ring-yellow-400');
+                    if (scroll) blockEls[idx].scrollIntoView({ block: 'center', behavior: 'smooth' });
+                }
+            };
+            const handleKey = (e) => {
+                if (!opts.shouldHandleKey(e)) return;
+                if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+                if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+                if (selectedIdx < 0) {
+                    if (blockEls.length > 0) { setSelected(0, true); e.preventDefault(); }
+                    return;
+                }
+                const cur = blockMeta[selectedIdx];
+                let target = null;
+                if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                    const targetSide = cur.side === 'A' ? 'B' : 'A';
+                    target = blockMeta.find(b => b.row === cur.row && b.side === targetSide);
+                } else {
+                    const dir = e.key === 'ArrowUp' ? -1 : 1;
+                    // 同 side の最も近い別 row を探す (空ペインは飛ばす)
+                    let nearest = null;
+                    for (const b of blockMeta) {
+                        if (b.side !== cur.side) continue;
+                        if (dir > 0 && b.row > cur.row) {
+                            if (!nearest || b.row < nearest.row) nearest = b;
+                        } else if (dir < 0 && b.row < cur.row) {
+                            if (!nearest || b.row > nearest.row) nearest = b;
+                        }
+                    }
+                    target = nearest;
+                }
+                if (target) {
+                    e.preventDefault();
+                    setSelected(blockMeta.indexOf(target), true);
+                }
+            };
+            // 既存リスナー解除して新規登録
+            if (_activeKeyHandler) document.removeEventListener('keydown', _activeKeyHandler);
+            _activeKeyHandler = handleKey;
+            document.addEventListener('keydown', handleKey);
+        } else {
+            // 無効化: 残存リスナー解除
+            if (_activeKeyHandler) {
+                document.removeEventListener('keydown', _activeKeyHandler);
+                _activeKeyHandler = null;
+            }
         }
 
         // サマリ計算

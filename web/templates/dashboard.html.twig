@@ -474,6 +474,13 @@
                 const idx = filteredScreens.findIndex(x => x.id === s.id);
                 if (idx >= 0) showModal(idx);
             },
+            keyboardNav: true,
+            shouldHandleKey: () => {
+                // モーダルが開いている時はモーダル側で←→使うので比較側は無効
+                const modalEl = document.getElementById('modal');
+                if (modalEl && !modalEl.classList.contains('hidden')) return false;
+                return currentTab === 'live' && currentClusterAlgo === 'compare';
+            },
         });
         if (result && result.diffMap) _diffMap = result.diffMap;
     }
