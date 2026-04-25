@@ -2004,7 +2004,10 @@ def _reinstall_from_play_store(serial: str, package: str) -> None:
             # --- 0th: 既インストール済みチェック ---
             _ui_open = _uiautomator_find_button(OPEN_KEYWORDS, xml_text=xml)
             if _ui_open:
-                if _reinstall_count >= MAX_REINSTALL:
+                # pm で実体確認: Play Store UI キャッシュで「プレイ」が残るケースの誤再アンインストール防止
+                if not is_app_installed(serial, package):
+                    logger.info("[REINSTALL] uiautomator「プレイ/開く」検出だが pm 未確認 → 継続")
+                elif _reinstall_count >= MAX_REINSTALL:
                     logger.warning("[REINSTALL] 再アンインストール上限(%d回)到達 → BACK + 再表示",
                                    MAX_REINSTALL)
                     _adb_key("4")
@@ -2012,14 +2015,15 @@ def _reinstall_from_play_store(serial: str, package: str) -> None:
                     open_play_store(serial, package)
                     time.sleep(5)
                     continue
-                logger.info("[REINSTALL] 既インストール済み（'プレイ'/'開く'検出）→ 再アンインストール (%d/%d)",
-                            _reinstall_count + 1, MAX_REINSTALL)
-                _reinstall_count += 1
-                uninstall_app(serial, package)
-                time.sleep(2)
-                open_play_store(serial, package)
-                time.sleep(5)
-                continue
+                else:
+                    logger.info("[REINSTALL] 既インストール済み（'プレイ'/'開く'検出 + pm確認）→ 再アンインストール (%d/%d)",
+                                _reinstall_count + 1, MAX_REINSTALL)
+                    _reinstall_count += 1
+                    uninstall_app(serial, package)
+                    time.sleep(2)
+                    open_play_store(serial, package)
+                    time.sleep(5)
+                    continue
 
             # --- 1st: uiautomator でインストールボタン (まどドラページ確認) ---
             _ui_on_app_page = any(
