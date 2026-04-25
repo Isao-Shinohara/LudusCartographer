@@ -48,6 +48,7 @@
             onScreenClick: null,  // (screen, side) => void  カード単位のクリック (詳細モーダル表示用)
             keyboardNav: false,   // true で矢印キーペイン移動を有効化
             shouldHandleKey: () => true,  // false を返すとキー処理スキップ (モーダル開時等)
+            decisionLabel: null,  // (method) => {color, label} | null  判定理由 → ラベル変換
         }, o || {});
     }
 
@@ -161,21 +162,21 @@
         const otherKeys = Object.keys(otherCounts).sort((x, y) => Number(x) - Number(y));
         const otherSidePrefix = side === 'A' ? 'B' : 'A';
         const arrow = side === 'A' ? '→' : '←';
-        const summaryParts = otherKeys.map(k => {
-            const lbl = cidLabel[`${otherSidePrefix}${k}`] || `?#${k}`;
-            return `${lbl}(${otherCounts[k]})`;
-        });
-        const summaryStr = summaryParts.length > 0 ? summaryParts.join(', ') : '—';
-        let stateMark = '';
-        if (otherKeys.length === 1 && otherCounts[otherKeys[0]] === group.items.length) {
-            stateMark = '<span class="text-[10px] text-gray-500 ml-2">✓一致</span>';
-        } else if (otherKeys.length > 1) {
-            stateMark = side === 'A'
-                ? '<span class="text-[10px] text-amber-400 ml-2">⚡分割</span>'
-                : '<span class="text-[10px] text-emerald-400 ml-2">⚡合流</span>';
-        }
         const sideColor = side === 'A' ? opts.colorA : opts.colorB;
         const myLabel = cidLabel[`${side}${group.cid}`] || `#${group.cid}`;
+        // 判定理由 (代表の cluster_decision_method)
+        let reasonHtml = '';
+        const repForLabel = side === 'A' ? opts.getRepA(group.items) : opts.getRepB(group.items);
+        const repItemForLabel = group.items.find(s => s.id === repForLabel);
+        const method = repItemForLabel ? repItemForLabel.cluster_decision_method : null;
+        if (method && typeof opts.decisionLabel === 'function') {
+            const lbl = opts.decisionLabel(method);
+            if (lbl) {
+                reasonHtml = `<span class="px-1.5 py-0.5 rounded text-[10px] ${lbl.color}" title="${escapeHtml(method)}">${escapeHtml(lbl.label)}</span>`;
+            }
+        } else if (method) {
+            reasonHtml = `<span class="text-[10px] text-gray-400">${escapeHtml(method)}</span>`;
+        }
         const repId = side === 'A' ? opts.getRepA(group.items) : opts.getRepB(group.items);
         const repItem = group.items.find(s => s.id === repId);
         const repDhash = repItem ? repItem.dhash : null;
@@ -214,7 +215,7 @@
                     data-pair-cids="${otherKeys.join(',')}">
             <div class="flex items-center justify-between mb-2">
                 <span class="text-xs font-bold ${sideColor}">${escapeHtml(myLabel)}</span>
-                <span class="text-[10px] text-gray-500">${group.items.length} 枚 ${arrow} ${escapeHtml(summaryStr)}${stateMark}</span>
+                ${reasonHtml}
             </div>
             <div class="grid grid-cols-3 gap-1.5">${cardsHtml}</div>
         </div>`;

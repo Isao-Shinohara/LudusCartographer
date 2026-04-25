@@ -481,6 +481,7 @@
                 if (modalEl && !modalEl.classList.contains('hidden')) return false;
                 return currentTab === 'live' && currentClusterAlgo === 'compare';
             },
+            decisionLabel: decisionMethodBadge,
         });
         if (result && result.diffMap) _diffMap = result.diffMap;
     }
