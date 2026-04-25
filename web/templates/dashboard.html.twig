@@ -72,6 +72,13 @@
 </div>
 <!-- Live 採用/不採用アクションバー (2段目) -->
 <div id="live-actions" class="hidden flex items-center justify-end gap-2 pb-2">
+    <!-- クラスタアルゴリズム切替 (Live のみ) -->
+    <span class="text-xs text-gray-500 mr-2">クラスタ算出:</span>
+    <div class="inline-flex rounded overflow-hidden border border-gray-700">
+        <button id="cluster-algo-hybrid" class="px-2 py-1 text-xs bg-brand/80 text-white" onclick="setClusterAlgo('hybrid')">dHash+ヒスト</button>
+        <button id="cluster-algo-dhash" class="px-2 py-1 text-xs bg-gray-800 text-gray-400 hover:text-gray-200" onclick="setClusterAlgo('dhash')">dHashのみ</button>
+    </div>
+    <span class="text-xs text-gray-500 mx-2">|</span>
     <span class="text-xs text-gray-500">Shift+クリックで選択</span>
     <button id="live-adopt-btn" class="px-3 py-1 bg-emerald-900/70 hover:bg-emerald-800/80 text-emerald-200 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✓ 採用</button>
     <button id="live-exclude-btn" class="px-3 py-1 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✕ 不採用</button>
@@ -275,6 +282,67 @@
     let geminiEnabled = false;  // GEMINI_API_KEY が設定されているか (API レスポンスで更新)
     let autoRefreshPaused = false;  // 自動更新一時停止フラグ
     let _debugMode = localStorage.getItem('lc_debug') !== '0';  // デバッグモード (デフォルト有効)
+    let currentClusterAlgo = (new URL(window.location)).searchParams.get('algo') === 'dhash' ? 'dhash' : 'hybrid';  // Live クラスタ算出アルゴリズム
+
+    // クラスタID切替: cluster_id を currentClusterAlgo に応じて読み替える
+    function effectiveClusterId(s) {
+        if (currentClusterAlgo === 'dhash') {
+            return s.cluster_id_dhash !== undefined && s.cluster_id_dhash !== null ? s.cluster_id_dhash : s.cluster_id;
+        }
+        return s.cluster_id_hybrid !== undefined && s.cluster_id_hybrid !== null ? s.cluster_id_hybrid : s.cluster_id;
+    }
+
+    // 判定理由 → badge色 + 表示ラベル
+    function decisionMethodBadge(method) {
+        if (!method) return null;
+        const map = {
+            'text_match':            { color: 'bg-blue-500/30 text-blue-200',    label: 'テキスト一致' },
+            'text_prefix':           { color: 'bg-blue-500/20 text-blue-300',    label: 'テキスト前方一致' },
+            'merge_to_prev_empty':   { color: 'bg-purple-500/30 text-purple-200',label: '空テキスト+phash' },
+            'merge_to_prev_similar': { color: 'bg-purple-500/20 text-purple-300',label: 'OCR揺れ' },
+            'dhash_near':            { color: 'bg-emerald-500/30 text-emerald-200', label: 'dHash近接' },
+            'hist_match':            { color: 'bg-cyan-500/30 text-cyan-200',    label: 'ヒスト一致' },
+            'dhash_fallback':        { color: 'bg-gray-500/30 text-gray-200',    label: 'dHash距離' },
+            'new_cluster':           { color: 'bg-gray-700/60 text-gray-400',    label: '新規' },
+        };
+        if (map[method]) return map[method];
+        // new:* (分離理由)
+        if (method.startsWith('new:')) {
+            const reason = method.substring(4);
+            const reasonMap = {
+                'blackout':      { color: 'bg-red-700/40 text-red-300',     label: '新規(暗転)' },
+                'hard_cut':      { color: 'bg-red-700/40 text-red-300',     label: '新規(ハードカット)' },
+                'dhash_far':     { color: 'bg-orange-600/40 text-orange-300', label: '新規(dHash離)' },
+                'hist_mismatch': { color: 'bg-orange-600/40 text-orange-300', label: '新規(ヒスト不一致)' },
+                'dhash_fallback':{ color: 'bg-gray-700/60 text-gray-400',  label: '新規(距離)' },
+            };
+            return reasonMap[reason] || { color: 'bg-gray-700/60 text-gray-400', label: '新規(' + reason + ')' };
+        }
+        return { color: 'bg-gray-700/60 text-gray-400', label: method };
+    }
+
+    window.setClusterAlgo = function(algo) {
+        if (algo !== 'dhash' && algo !== 'hybrid') return;
+        currentClusterAlgo = algo;
+        const url = new URL(window.location);
+        url.searchParams.set('algo', algo);
+        history.replaceState(null, '', url);
+        // ボタンのアクティブ状態を更新
+        const hybridBtn = document.getElementById('cluster-algo-hybrid');
+        const dhashBtn = document.getElementById('cluster-algo-dhash');
+        if (hybridBtn && dhashBtn) {
+            const activeCls = ['bg-brand/80', 'text-white'];
+            const inactiveCls = ['bg-gray-800', 'text-gray-400'];
+            if (algo === 'hybrid') {
+                hybridBtn.classList.add(...activeCls); hybridBtn.classList.remove(...inactiveCls);
+                dhashBtn.classList.add(...inactiveCls); dhashBtn.classList.remove(...activeCls);
+            } else {
+                dhashBtn.classList.add(...activeCls); dhashBtn.classList.remove(...inactiveCls);
+                hybridBtn.classList.add(...inactiveCls); hybridBtn.classList.remove(...activeCls);
+            }
+        }
+        renderAll();
+    };
     const TRASH_ICON = '<svg class="w-3.5 h-3.5 inline" viewBox="0 0 16 16" fill="currentColor"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM4.496 6.675a.75.75 0 10-1.492.15l.66 6.6A1.75 1.75 0 005.405 15h5.19a1.75 1.75 0 001.741-1.575l.66-6.6a.75.75 0 00-1.492-.15l-.66 6.6a.25.25 0 01-.249.225h-5.19a.25.25 0 01-.249-.225l-.66-6.6z"/></svg>';
     const filterSelect = document.getElementById('filter-select');
     const sessionSelect = document.getElementById('session-select');
@@ -388,6 +456,13 @@
             const phaseLabel = _debugGetPhaseForSession(s.anchor_info, _debugFilterSession) || 'A';
             dots.push('<span class="px-1 rounded text-[9px] font-bold bg-cyan-400/80 text-black" title="アンカー: ' + escapeHtml(s.anchor_info) + '">' + phaseLabel + '</span>');
         }
+        // Live タブ: 判定理由 badge (cluster_decision_method)
+        if (currentTab === 'live' && s.cluster_decision_method) {
+            const dmb = decisionMethodBadge(s.cluster_decision_method);
+            if (dmb) {
+                dots.push('<span class="px-1 rounded text-[9px] font-medium ' + dmb.color + '" title="' + escapeHtml(s.cluster_decision_method) + '">' + escapeHtml(dmb.label) + '</span>');
+            }
+        }
         const isExcluded = (currentTab === 'final' && s.user_excluded) || (currentTab === 'live' && s.is_artifact > 0);
         const dimClass = (filterSelect.value === 'all' && (isThinned || isExcluded)) ? ' opacity-40' : '';
         const hasPending = s.master_fp && (s.master_fp in pendingChanges);
@@ -410,32 +485,56 @@
         });
     }
 
+    // Live + dhash 算出モード時に allScreens を再マッピングする (cluster_id を cluster_id_dhash で上書き、代表を再選出)
+    function applyClusterAlgoOverride(screens) {
+        if (currentTab !== 'live') return screens;
+        if (currentClusterAlgo === 'hybrid') return screens;
+        const groupOldestId = {};
+        for (const s of screens) {
+            const cid = s.cluster_id_dhash;
+            if (cid === null || cid === undefined) continue;
+            if (!(cid in groupOldestId) || s.id < groupOldestId[cid]) {
+                groupOldestId[cid] = s.id;
+            }
+        }
+        return screens.map(s => {
+            const dhashCid = s.cluster_id_dhash;
+            if (dhashCid === null || dhashCid === undefined) return s;
+            return {
+                ...s,
+                cluster_id: dhashCid,
+                is_representative: (groupOldestId[dhashCid] === s.id),
+            };
+        });
+    }
+
     function renderAll() {
         const filter = filterSelect.value;
-        let filtered = allScreens;
+        let filtered = applyClusterAlgoOverride(allScreens);
+        const baseScreens = filtered;
         if (currentTab === 'final') {
             if (filter === 'excluded') {
-                filtered = allScreens.filter(s => s.user_excluded);
+                filtered = baseScreens.filter(s => s.user_excluded);
             } else if (filter === 'adopted') {
-                filtered = allScreens.filter(s => !s.user_excluded);
+                filtered = baseScreens.filter(s => !s.user_excluded);
             } else if (filter === 'session') {
                 // デバッグセッションで追加されたアンカー+新規のみ
                 const fs = _debugFilterSession;
                 if (fs) {
-                    filtered = allScreens.filter(s =>
+                    filtered = baseScreens.filter(s =>
                         s.all_mapping_info && s.all_mapping_info.includes(fs)
                     );
                 }
             }
             // 'all' はそのまま全件
         } else if (filter === 'reps') {
-            filtered = allScreens.filter(s => (s.is_representative || s.cluster_id === null || s.cluster_id === undefined) && !s.is_artifact);
+            filtered = baseScreens.filter(s => (s.is_representative || s.cluster_id === null || s.cluster_id === undefined) && !s.is_artifact);
         } else if (filter === 'excluded') {
-            filtered = allScreens.filter(s => s.is_artifact > 0);
+            filtered = baseScreens.filter(s => s.is_artifact > 0);
         } else if (filter === 'thinned') {
-            filtered = allScreens.filter(s => s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative);
+            filtered = baseScreens.filter(s => s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative);
         } else if (filter === 'pending') {
-            filtered = allScreens.filter(s => (s.cluster_id === null || s.cluster_id === undefined) || (s.is_representative && !s.has_hq_ocr && !s.has_gemini));
+            filtered = baseScreens.filter(s => (s.cluster_id === null || s.cluster_id === undefined) || (s.is_representative && !s.has_hq_ocr && !s.has_gemini));
         }
         // ソート: Live は API が降順(新しい順)、Final は API が昇順(古い順)
         const wantDesc = sortToggle.dataset.sort === 'desc';
@@ -2438,6 +2537,7 @@
     // --- 初期化 ---
     const initialTab = getUrlParam('tab', 'live');
     switchTab(initialTab, true);
+    setClusterAlgo(currentClusterAlgo);
     heartbeat();
     setInterval(heartbeat, 10000);
 

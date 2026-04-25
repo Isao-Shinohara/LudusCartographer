@@ -445,6 +445,7 @@ class EvidenceRepository
                    s.discovered_at, s.session_id,
                    s.fingerprint, s.scene,
                    s.is_representative, s.cluster_id,
+                   s.cluster_id_dhash, s.cluster_id_hybrid, s.cluster_decision_method,
                    COALESCE(sess.game_title, 'Unknown Game') AS game_title
             FROM lc_screens s
             LEFT JOIN lc_sessions sess ON sess.session_id = s.session_id
@@ -586,6 +587,9 @@ class EvidenceRepository
             'session_id'      => $raw['session_id'] ?? '',
             'is_representative' => (bool)($raw['is_representative'] ?? false),
             'cluster_id'      => $raw['cluster_id'] ?? null,
+            'cluster_id_dhash'  => $raw['cluster_id_dhash'] ?? null,
+            'cluster_id_hybrid' => $raw['cluster_id_hybrid'] ?? null,
+            'cluster_decision_method' => $raw['cluster_decision_method'] ?? null,
             'has_hq_ocr'      => ($raw['ocr_text_hq'] ?? null) !== null,
             'has_gemini'      => ($raw['ocr_text_gemini'] ?? null) !== null,
             'user_excluded'   => (bool)($raw['user_excluded'] ?? false),
