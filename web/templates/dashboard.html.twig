@@ -328,32 +328,32 @@
         return s.cluster_id_hybrid !== undefined && s.cluster_id_hybrid !== null ? s.cluster_id_hybrid : s.cluster_id;
     }
 
-    // 判定理由 → badge色 + 表示ラベル
+    // 判定理由 → badge色 + 閾値ベースのラベル (閾値調整時にどの閾値が効いたか分かる)
     function decisionMethodBadge(method) {
         if (!method) return null;
         const map = {
             'text_match':            { color: 'bg-blue-500/30 text-blue-200',    label: 'テキスト一致' },
             'text_prefix':           { color: 'bg-blue-500/20 text-blue-300',    label: 'テキスト前方一致' },
-            'merge_to_prev_empty':   { color: 'bg-purple-500/30 text-purple-200',label: '空テキスト+phash' },
-            'merge_to_prev_similar': { color: 'bg-purple-500/20 text-purple-300',label: 'OCR揺れ' },
-            'dhash_near':            { color: 'bg-emerald-500/30 text-emerald-200', label: 'dHash近接' },
-            'hist_match':            { color: 'bg-cyan-500/30 text-cyan-200',    label: 'ヒスト一致' },
-            'dhash_fallback':        { color: 'bg-gray-500/30 text-gray-200',    label: 'dHash距離' },
+            'merge_to_prev_empty':   { color: 'bg-purple-500/30 text-purple-200',label: '直前空+dHash<20' },
+            'merge_to_prev_similar': { color: 'bg-purple-500/20 text-purple-300',label: 'OCR揺れ dHash<5' },
+            'dhash_near':            { color: 'bg-emerald-500/30 text-emerald-200', label: 'dHash<8' },
+            'hist_match':            { color: 'bg-cyan-500/30 text-cyan-200',    label: 'ヒスト類似≥0.5' },
+            'dhash_fallback':        { color: 'bg-gray-500/30 text-gray-200',    label: 'dHash<30' },
             'new_cluster':           { color: 'bg-gray-700/60 text-gray-400',    label: '新規' },
             'revalidate_merge':      { color: 'bg-gray-500/30 text-gray-200',    label: '再検証統合' },
             'revalidate_split':      { color: 'bg-gray-500/20 text-gray-300',    label: '再検証分離' },
             'remerge':               { color: 'bg-fuchsia-500/30 text-fuchsia-200', label: 'クラスタ再統合' },
         };
         if (map[method]) return map[method];
-        // new:* (分離理由)
+        // new:* (分離理由) — どの閾値が引っかかったか明示
         if (method.startsWith('new:')) {
             const reason = method.substring(4);
             const reasonMap = {
-                'blackout':      { color: 'bg-red-700/40 text-red-300',     label: '新規(暗転)' },
-                'hard_cut':      { color: 'bg-red-700/40 text-red-300',     label: '新規(ハードカット)' },
-                'dhash_far':     { color: 'bg-orange-600/40 text-orange-300', label: '新規(dHash離)' },
-                'hist_mismatch': { color: 'bg-orange-600/40 text-orange-300', label: '新規(ヒスト不一致)' },
-                'dhash_fallback':{ color: 'bg-gray-700/60 text-gray-400',  label: '新規(距離)' },
+                'blackout':       { color: 'bg-red-700/40 text-red-300',         label: '暗転 br<20' },
+                'hard_cut':       { color: 'bg-red-700/40 text-red-300',         label: 'ヒスト差>0.7' },
+                'dhash_far':      { color: 'bg-orange-600/40 text-orange-300',   label: 'dHash≥40' },
+                'hist_mismatch':  { color: 'bg-orange-600/40 text-orange-300',   label: 'ヒスト類似<0.5' },
+                'dhash_fallback': { color: 'bg-gray-700/60 text-gray-400',       label: 'dHash≥30' },
             };
             return reasonMap[reason] || { color: 'bg-gray-700/60 text-gray-400', label: '新規(' + reason + ')' };
         }
