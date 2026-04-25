@@ -587,12 +587,22 @@
             const sideColor = side === 'dhash' ? 'text-amber-300' : 'text-emerald-300';
             // 自身のラベル (#N or #N-i)
             const myLabel = cidLabel[`${side === 'dhash' ? 'D' : 'H'}${group.cid}`] || `#${group.cid}`;
+            // クラスタ代表 ID: dhash 側は cluster_id_dhash 内最古、hybrid 側は元の is_representative
+            const repId = side === 'dhash'
+                ? Math.min(...group.items.map(s => s.id))
+                : ((group.items.find(s => s.is_representative) || group.items[0]).id);
             const cardsHtml = group.items.map(s => {
                 const thumb = s.thumbnail_path ? imgUrl(s.thumbnail_path) : (s.screenshot_path ? imgUrl(s.screenshot_path) : '');
                 const otherCid = side === 'dhash' ? _hybridCid(s) : s.cluster_id_dhash;
                 const otherLabel = cidLabel[`${otherSidePrefix}${otherCid}`] || `?#${otherCid}`;
-                return `<div class="relative bg-gray-900 border border-gray-800 rounded overflow-hidden" title="${escapeHtml(s.name || '')}">
+                const isRep = s.id === repId;
+                const repRingCls = isRep ? ' ring-2 ring-amber-500/80' : '';
+                const repBadge = isRep
+                    ? '<span class="absolute top-1 left-1 w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[11px] shadow" title="代表">★</span>'
+                    : '';
+                return `<div class="relative bg-gray-900 border border-gray-800 rounded overflow-hidden${repRingCls}" title="${escapeHtml(s.name || '')}">
                     ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800"></div>'}
+                    ${repBadge}
                     <span class="absolute top-1 right-1 text-[9px] px-1 py-0.5 rounded bg-black/60 text-gray-300 font-mono">${arrow}${escapeHtml(otherLabel)}</span>
                 </div>`;
             }).join('');
