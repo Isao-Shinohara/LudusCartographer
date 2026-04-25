@@ -621,7 +621,7 @@
         const cells = [];
         visibleRows.forEach((row, idx) => {
             const gridRow = idx + 1;
-            const rowBg = (idx % 2 === 1) ? 'bg-gray-800/40' : 'bg-gray-950/30';
+            const rowBg = (idx % 2 === 1) ? 'bg-gray-700/50' : 'bg-gray-800/40';
             // 左カラム: D 群を縦並び (行高さに伸びる)
             if (row.dhashCids.length > 0) {
                 const blocks = row.dhashCids.map(cid => renderBlock(dhashByCid[cid], 'dhash')).join('');
