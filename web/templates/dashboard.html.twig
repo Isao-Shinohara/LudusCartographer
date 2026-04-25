@@ -3098,6 +3098,32 @@
         _clusterSelectedId = screenId;  // 開いた画像を初期選択
         promoteBtn.disabled = true;
         promoteBtn.classList.add('hidden');
+
+        // Live タブ + dHashのみモード時は allScreens から cluster_id_dhash でフィルタ
+        // (API は cluster_id=hybrid のみ見るため、dhash 仲間は反映されない)
+        if (currentTab === 'live' && currentClusterAlgo === 'dhash') {
+            const target = allScreens.find(s => s.id === screenId);
+            const dcid = target ? target.cluster_id_dhash : null;
+            if (dcid !== null && dcid !== undefined) {
+                const sibs = allScreens.filter(s => s.cluster_id_dhash === dcid);
+                if (sibs.length > 0) {
+                    const oldestId = Math.min(...sibs.map(s => s.id));
+                    _clusterSiblings = sibs.map(s => ({ ...s, is_representative: s.id === oldestId ? 1 : 0 }));
+                    if (_clusterSiblings.length <= 1) {
+                        clusterGrid.innerHTML = '<span class="text-xs text-gray-600 whitespace-nowrap">クラスタ内に他の画像はありません</span>';
+                        return;
+                    }
+                    _clusterOriginalRepId = oldestId;
+                    renderClusterGrid();
+                    requestAnimationFrame(() => {
+                        const selected = clusterGrid.querySelector('.cluster-sib.border-emerald-500, .cluster-sib.border-amber-700');
+                        if (selected) selected.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+                    });
+                    return;
+                }
+            }
+        }
+
         try {
             let url = API_BASE + '?action=get_cluster_siblings&screen_id=' + screenId;
             if (currentTab === 'final' && masterFp) {
