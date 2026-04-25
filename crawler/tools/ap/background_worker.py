@@ -908,6 +908,7 @@ class BackgroundWorker:
                         "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
                         (prev_cid, sid),
                     )
+                    self._set_decision(conn, sid, prev_cid, "revalidate_merge")
                     merged = True
                     regroup_count += 1
 
@@ -917,6 +918,7 @@ class BackgroundWorker:
                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                     (next_cid, sid),
                 )
+                self._set_decision(conn, sid, next_cid, "revalidate_split")
                 prev_cid = next_cid
                 prev_hash = ph
                 next_cid += 1
@@ -1418,9 +1420,10 @@ class BackgroundWorker:
                     _affected_ids = [row["id"] for row in conn.execute(
                         "SELECT id FROM lc_screens WHERE cluster_id = ?", (cid,)).fetchall()]
                     conn.execute(
-                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 0"
+                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 0,"
+                        " cluster_id_hybrid = ?, cluster_decision_method = 'remerge'"
                         " WHERE cluster_id = ?",
-                        (prev_cid, cid),
+                        (prev_cid, prev_cid, cid),
                     )
                     for _aid in _affected_ids:
                         logger.debug("[REP_TRACE] id=%d rep=0 (remerge統合, cid=%d→prev_cid=%d)", _aid, cid, prev_cid)
