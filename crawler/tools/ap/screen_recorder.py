@@ -630,6 +630,24 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: dhash カラム追加")
+        if "cluster_id_dhash" not in cols:
+            self._conn.execute(
+                "ALTER TABLE lc_screens ADD COLUMN cluster_id_dhash INTEGER"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: cluster_id_dhash カラム追加")
+        if "cluster_id_hybrid" not in cols:
+            self._conn.execute(
+                "ALTER TABLE lc_screens ADD COLUMN cluster_id_hybrid INTEGER"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: cluster_id_hybrid カラム追加")
+        if "cluster_decision_method" not in cols:
+            self._conn.execute(
+                "ALTER TABLE lc_screens ADD COLUMN cluster_decision_method TEXT"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: cluster_decision_method カラム追加")
         # lc_master_nodes に dhash カラム
         try:
             mn_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_master_nodes)")}

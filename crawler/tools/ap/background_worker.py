@@ -405,6 +405,34 @@ class BackgroundWorker:
         ).fetchone()
         return row["id"] if row else None
 
+    @staticmethod
+    def _get_rep_screenshot_path(
+        conn: sqlite3.Connection, cluster_id: int
+    ) -> Optional[str]:
+        """クラスタ代表の screenshot_path を返す (NULL/空なら None)。"""
+        row = conn.execute(
+            "SELECT screenshot_path FROM lc_screens"
+            " WHERE cluster_id = ? AND is_representative = 1 LIMIT 1",
+            (cluster_id,),
+        ).fetchone()
+        if not row:
+            return None
+        path = row["screenshot_path"]
+        return path if path else None
+
+    @staticmethod
+    def _set_decision(
+        conn: sqlite3.Connection, screen_id: int, cluster_id: int, method: str
+    ) -> None:
+        """採用版クラスタID と判定理由を全カラムに同期する。"""
+        conn.execute(
+            "UPDATE lc_screens SET"
+            " cluster_id_hybrid = ?,"
+            " cluster_decision_method = ?"
+            " WHERE id = ?",
+            (cluster_id, method, screen_id),
+        )
+
     # ─── phash クラスタリング ──────────────────────────────
 
     @staticmethod
@@ -452,7 +480,8 @@ class BackgroundWorker:
             # 未設定時: HQ OCR 完了済みのみ間引き対象
             _hq_filter = "" if os.environ.get("GEMINI_API_KEY") else " AND ocr_text_hq IS NOT NULL"
             rows = conn.execute(
-                f"SELECT id, {_hash_col} AS hash_val, title, COALESCE(ocr_text_hq, ocr_text) AS ocr FROM lc_screens"
+                f"SELECT id, {_hash_col} AS hash_val, title, screenshot_path,"
+                f" COALESCE(ocr_text_hq, ocr_text) AS ocr FROM lc_screens"
                 f" WHERE cluster_id IS NULL AND {_hash_col} IS NOT NULL AND {_hash_col} != ''"
                 + _hq_filter
                 + _sid_filter +
@@ -507,16 +536,19 @@ class BackgroundWorker:
                 #    セリフ途中（文字送り中）のスクショは前方一致で同クラスタに統合
                 #    §16: 間引きは直前クラスタとのみ比較（厳格）
                 text_match_cid = None
+                _text_match_method = ""
                 if _is_meaningful and _prev_cid is not None and _prev_cid in rep_map:
                     rep_ph, rep_title, rep_norm = rep_map[_prev_cid]
                     if rep_norm:
                         if rep_norm == norm_text:
                             text_match_cid = _prev_cid
+                            _text_match_method = "text_match"
                         else:
                             # 前方一致: 短い方が長い方の先頭と一致 (最低5文字)
                             shorter, longer = (norm_text, rep_norm) if len(norm_text) <= len(rep_norm) else (rep_norm, norm_text)
                             if len(shorter) >= 5 and longer.startswith(shorter):
                                 text_match_cid = _prev_cid
+                                _text_match_method = "text_prefix"
 
                 if text_match_cid is not None:
                     # テキスト一致: OCR テキストが長い方を代表に採用
@@ -548,6 +580,7 @@ class BackgroundWorker:
                             (text_match_cid, sid),
                         )
                         logger.debug("[REP_TRACE] id=%d rep=0 (text_match非代表統合, cid=%d)", sid, text_match_cid)
+                    self._set_decision(conn, sid, text_match_cid, _text_match_method)
                     _prev_cid = text_match_cid
                 elif _is_meaningful:
                     # 2a) 直前テキスト空 + phash 近い → 統合 (テキストあり側が代表に)
@@ -555,6 +588,7 @@ class BackgroundWorker:
                     #     再度 2a に入ることはなく、連鎖マージは発生しない。
                     # 2b) 直前テキストあり + phash 近い + テキスト類似 → OCR 揺れ
                     _merge_to_prev = False
+                    _merge_method = ""
                     if _prev_cid is not None and _prev_cid in rep_map:
                         _rep_ph, _rep_title, _rep_norm = rep_map[_prev_cid]
                         d = _hash_distance(_rep_ph, ph) if _rep_ph else 999
@@ -563,6 +597,7 @@ class BackgroundWorker:
                         if not _rep_norm and d < _ph_lim:
                             # 直前テキスト空 + phash 近い → 統合 (テキストあり側が代表)
                             _merge_to_prev = True
+                            _merge_method = "merge_to_prev_empty"
                             old_rep_id = self._get_rep_id(conn, _prev_cid)
                             # クラスタ内の全代表をリセットしてから新代表を設定
                             conn.execute(
@@ -580,6 +615,7 @@ class BackgroundWorker:
                             # テキスト類似 + phash 近い → OCR 揺れ (テキスト長い方を代表に)
                             # phash が非常に近い (< 10) 場合はテキスト類似度を緩和 (OCR 誤読救済)
                             _merge_to_prev = True
+                            _merge_method = "merge_to_prev_similar"
                             old_rep_id = self._get_rep_id(conn, _prev_cid)
                             _old_tlen = 0
                             if old_rep_id:
@@ -606,23 +642,43 @@ class BackgroundWorker:
                                     (_prev_cid, sid),
                                 )
                                 logger.debug("[REP_TRACE] id=%d rep=0 (prev_mergeテキスト類似非代表, cid=%d)", sid, _prev_cid)
-                    if not _merge_to_prev:
+                    if _merge_to_prev:
+                        self._set_decision(conn, sid, _prev_cid, _merge_method)
+                    else:
                         conn.execute(
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                             (next_cid, sid),
                         )
                         rep_map[next_cid] = (ph, title, norm_text)
+                        self._set_decision(conn, sid, next_cid, "new_cluster")
                         _prev_cid = next_cid
                         next_cid += 1
                 else:
-                    # 3) テキスト空 → 直前クラスタ代表のハッシュと比較 (ドリフト防止)
-                    #    テキスト空同士は動画フレームの連続が多いため閾値を緩める (30)
-                    _EMPTY_HASH_THRESHOLD = _th(30)
+                    # 3) テキスト空 → 4段階判定 (暗転/ハードカット境界 + dHash + ヒスト)
+                    from lc.cluster_decision import classify_empty_text_pair
+
+                    _NEAR_TH = _th(8)
+                    _FAR_TH = _th(40)
+                    _FALLBACK_TH = _th(30)
                     _matched = False
+                    _decision_method = "new_cluster"
+
                     if _prev_cid is not None and _prev_cid in rep_map:
                         _rep_ph, _rep_title, _rep_norm = rep_map[_prev_cid]
                         d = _hash_distance(_rep_ph, ph) if _rep_ph else 999
-                        if d < _EMPTY_HASH_THRESHOLD:
+                        prev_path = self._get_rep_screenshot_path(conn, _prev_cid)
+                        curr_path = row["screenshot_path"]
+
+                        is_same, _decision_method = classify_empty_text_pair(
+                            prev_path=prev_path,
+                            curr_path=curr_path,
+                            hash_distance=d,
+                            near_threshold=_NEAR_TH,
+                            far_threshold=_FAR_TH,
+                            fallback_threshold=_FALLBACK_TH,
+                        )
+
+                        if is_same:
                             # 代表交代判定: テキストあり > テキスト空 > 顔面積
                             old_rep_id = self._get_rep_id(conn, _prev_cid)
                             _should_promote = False
@@ -652,14 +708,15 @@ class BackgroundWorker:
                                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
                                     (_prev_cid, sid),
                                 )
-                                logger.debug("[REP_TRACE] id=%d rep=0 (空テキストphash代表交代, 新代表=%d, cid=%d)", old_rep_id, sid, _prev_cid)
+                                logger.debug("[REP_TRACE] id=%d rep=0 (空テキスト代表交代, 新代表=%d, cid=%d, method=%s)", old_rep_id, sid, _prev_cid, _decision_method)
                                 rep_map[_prev_cid] = (ph, title, norm_text)
                             else:
                                 conn.execute(
                                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
                                     (_prev_cid, sid),
                                 )
-                                logger.debug("[REP_TRACE] id=%d rep=0 (空テキストphash非代表, cid=%d)", sid, _prev_cid)
+                                logger.debug("[REP_TRACE] id=%d rep=0 (空テキスト非代表, cid=%d, method=%s)", sid, _prev_cid, _decision_method)
+                            self._set_decision(conn, sid, _prev_cid, _decision_method)
                             _matched = True
                     if not _matched:
                         conn.execute(
@@ -667,6 +724,11 @@ class BackgroundWorker:
                             (next_cid, sid),
                         )
                         rep_map[next_cid] = (ph, title, norm_text)
+                        # 新規クラスタの分離理由を保存 (例: "new:blackout", "new:dhash_far")
+                        self._set_decision(
+                            conn, sid, next_cid,
+                            f"new:{_decision_method}" if _decision_method != "new_cluster" else "new_cluster",
+                        )
                         _prev_cid = next_cid
                         next_cid += 1
 
@@ -680,8 +742,75 @@ class BackgroundWorker:
             # クラスタ内バリデーション: テキスト空メンバーが代表から離れすぎていたら分離
             self._validate_clusters(conn, next_cid, _sid_filter, _sid_params)
 
+            # dhash 単体シミュレーション: 隣接 hybrid クラスタを dhash 距離で再統合
+            if processed > 0:
+                self._run_dhash_only_simulation(conn, _sid_filter, _sid_params)
+
         finally:
             conn.close()
+
+    def _run_dhash_only_simulation(
+        self,
+        conn: sqlite3.Connection,
+        sid_filter: str,
+        sid_params: tuple,
+    ) -> None:
+        """hybrid のクラスタを並べて隣接同士の dHash 距離 < 閾値なら統合し、
+        cluster_id_dhash に書き込む。
+
+        UI で「dhash 単体ならどう統合されるか」を可視化するためのシミュレーション。
+        cluster_id_hybrid (= cluster_id) は変更しない。
+        """
+        _hash_col = self._hash_col()
+        _DHASH_TH = self._translate_th(20)
+
+        # cluster_id ごとの代表ハッシュと最初の発見時刻を取得 (時系列順)
+        where_inner = "WHERE cluster_id IS NOT NULL" + sid_filter
+        rows = conn.execute(
+            f"SELECT cluster_id, MIN(discovered_at) AS first_at,"
+            f" (SELECT {_hash_col} FROM lc_screens s2"
+            f"  WHERE s2.cluster_id = s1.cluster_id AND s2.is_representative = 1 LIMIT 1) AS rep_hash"
+            f" FROM lc_screens s1 {where_inner}"
+            f" GROUP BY cluster_id ORDER BY first_at",
+            sid_params,
+        ).fetchall()
+
+        cluster_to_dhash_id: dict[int, int] = {}
+        next_dhash_id = 0
+        prev_hash: Optional[str] = None
+        prev_dhash_id: Optional[int] = None
+
+        for r in rows:
+            cid = r["cluster_id"]
+            rh = r["rep_hash"]
+            if rh is None or rh == "":
+                # ハッシュ取得不可 → 単独クラスタ
+                cluster_to_dhash_id[cid] = next_dhash_id
+                prev_dhash_id = next_dhash_id
+                next_dhash_id += 1
+                prev_hash = None
+                continue
+            if prev_hash is not None and prev_dhash_id is not None:
+                d = self._hash_distance(prev_hash, rh)
+                if d < _DHASH_TH:
+                    # 隣接 hybrid クラスタが dhash 距離で近い → 同じ dhash クラスタID
+                    cluster_to_dhash_id[cid] = prev_dhash_id
+                    prev_hash = rh
+                    continue
+            cluster_to_dhash_id[cid] = next_dhash_id
+            prev_dhash_id = next_dhash_id
+            next_dhash_id += 1
+            prev_hash = rh
+
+        # cluster_id_dhash を更新
+        for cid, dhash_id in cluster_to_dhash_id.items():
+            conn.execute(
+                "UPDATE lc_screens SET cluster_id_dhash = ?,"
+                " cluster_id_hybrid = COALESCE(cluster_id_hybrid, cluster_id)"
+                " WHERE cluster_id = ?",
+                (dhash_id, cid),
+            )
+        conn.commit()
 
     def _validate_clusters(
         self,

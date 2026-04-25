@@ -208,3 +208,25 @@ def reset_comparator() -> None:
     """テスト用: シングルトンをリセットする。"""
     global _instance
     _instance = None
+
+
+# ─── ヒストグラム類似度（dHash 補助） ─────────────────────────
+
+# dHash 中間域でヒストグラム類似度がこの値以上なら同シーンとみなす。
+HIST_SIMILARITY_THRESHOLD: float = 0.5
+
+
+def is_similar_by_histogram(
+    image_path1: Path,
+    image_path2: Path,
+    similarity_threshold: float = HIST_SIMILARITY_THRESHOLD,
+) -> bool:
+    """2画像のグレースケールヒストグラム類似度が threshold 以上なら True。"""
+    from lc.scene_boundary_detector import (
+        compute_grayscale_histogram,
+        histogram_similarity,
+    )
+
+    h1 = compute_grayscale_histogram(image_path1)
+    h2 = compute_grayscale_histogram(image_path2)
+    return histogram_similarity(h1, h2) >= similarity_threshold
