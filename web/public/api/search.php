@@ -764,6 +764,9 @@ if ($action === 'preview_merge') {
 import json, logging, sys, os, traceback
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.getcwd())
+if len(sys.argv) < 2 or sys.argv[1].startswith("<") or "object at 0x" in sys.argv[1]:
+    sys.stderr.write("[ERROR] invalid output path: %r\\n" % (sys.argv[1] if len(sys.argv) > 1 else None,))
+    sys.exit(1)
 logging.basicConfig(level=logging.INFO, format='%(message)s', stream=sys.stderr)
 try:
     from dotenv import load_dotenv
@@ -815,6 +818,9 @@ if ($action === 'execute_merge') {
 import json, logging, sys, os
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.getcwd())
+if len(sys.argv) < 2 or sys.argv[1].startswith("<") or "object at 0x" in sys.argv[1]:
+    sys.stderr.write("[ERROR] invalid output path: %r\\n" % (sys.argv[1] if len(sys.argv) > 1 else None,))
+    sys.exit(1)
 logging.disable(logging.CRITICAL)
 try:
     from dotenv import load_dotenv
