@@ -76,6 +76,12 @@ try:
 except ImportError:
     pass
 
+logger.info(
+    "[ENV] LC_TEXT_SEPARATION=%s LC_HASH_ALGO=%s",
+    os.environ.get("LC_TEXT_SEPARATION", "on"),
+    os.environ.get("LC_HASH_ALGO", "phash"),
+)
+
 # ─── 永続化: SQLite (ludus.db) ──────────────────────────────
 _STATE_DB_PATH = Path(__file__).parent.parent / "storage" / "ludus.db"
 
