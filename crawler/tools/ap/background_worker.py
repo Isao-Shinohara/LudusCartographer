@@ -809,7 +809,18 @@ class BackgroundWorker:
 
             # Step A 直後の cluster_id を cluster_id_phash_only にスナップショット保存
             # (Step B 適用前の実態。比較ビュー左ペイン用)
+            # 同時に「Step A で影響を受けた cluster_id」を集める (Step B の対象を限定)
+            target_cluster_ids: set[int] = set()
             if processed > 0:
+                # スナップショット直前 = cluster_id_phash_only IS NULL の screen が「新規処理」
+                target_cluster_ids = {
+                    r["cluster_id"] for r in conn.execute(
+                        "SELECT DISTINCT cluster_id FROM lc_screens"
+                        " WHERE cluster_id IS NOT NULL AND cluster_id_phash_only IS NULL"
+                        + _sid_filter,
+                        _sid_params,
+                    ).fetchall()
+                }
                 conn.execute(
                     "UPDATE lc_screens SET cluster_id_phash_only = cluster_id"
                     " WHERE cluster_id IS NOT NULL AND cluster_id_phash_only IS NULL"
@@ -818,9 +829,10 @@ class BackgroundWorker:
                 )
                 conn.commit()
 
-            # クラスタ内バリデーション: Step B (dHash 分割) を実行
+            # クラスタ内バリデーション: Step B (dHash 分割) を新規 screen を含む cluster のみで実行
             # cluster_id を更新するが cluster_id_phash_only は変えない
-            self._validate_clusters(conn, next_cid, _sid_filter, _sid_params)
+            if target_cluster_ids:
+                self._validate_clusters(conn, next_cid, _sid_filter, _sid_params, target_cluster_ids)
 
         finally:
             conn.close()
@@ -831,25 +843,32 @@ class BackgroundWorker:
         next_cid: int,
         sid_filter: str,
         sid_params: tuple,
+        target_cluster_ids: set,
     ) -> None:
-        """Step B: クラスタ内を dHash 距離で分割する。
+        """Step B: クラスタ内を dHash 距離で分割する (新規 screen を含む cluster のみ対象)。
 
         Step A (phash 中間域は「同」) で統合されたクラスタの中から、
         構図が大きく異なるメンバー (代表との dHash 距離 >= 閾値) を分離する。
         分離後、時系列順に隣り合うものを dHash 距離で再グループ化する。
 
-        テキスト一致で統合されたメンバーは正当なので対象外
-        (セリフ送り中の連続フレームは構図変化があっても同シーン)。
+        target_cluster_ids: Step A で影響を受けた (= 新規 screen を含む) cluster_id のセット。
+        このセットに含まれる cluster のみが Step B の対象。それ以外の既存 cluster は触らない。
         """
+        if not target_cluster_ids:
+            return
         _dhash_distance = self._dhash_distance
         DHASH_VALIDATE_THRESHOLD = 22  # cluster の直径 (max pairwise dHash) がこれ以上で分離
 
-        # 2メンバー以上のクラスタを取得
+        target_placeholders = ",".join("?" * len(target_cluster_ids))
+        target_params = list(target_cluster_ids)
+
+        # 2メンバー以上のクラスタを取得 (target_cluster_ids 内のみ)
         clusters = conn.execute(
-            "SELECT cluster_id, COUNT(*) as cnt FROM lc_screens"
-            " WHERE cluster_id IS NOT NULL" + sid_filter +
+            f"SELECT cluster_id, COUNT(*) as cnt FROM lc_screens"
+            f" WHERE cluster_id IN ({target_placeholders})"
+            + sid_filter +
             " GROUP BY cluster_id HAVING cnt > 1",
-            sid_params,
+            target_params + list(sid_params),
         ).fetchall()
 
         if not clusters:
@@ -981,14 +1000,14 @@ class BackgroundWorker:
         gap_merged = 0
         gap_new = 0
         # 必要なデータを 3 つの SELECT で一括取得 (パフォーマンス最適化)
-        # 1) 全 screen (id, cluster_id, dhash, rep) を時系列順
+        # 1) 走査対象は target_cluster_ids 内の screen のみ (新規 screen 含む cluster)
         all_data = conn.execute(
-            "SELECT id, cluster_id, dhash, is_representative AS rep FROM lc_screens"
-            " WHERE cluster_id IS NOT NULL"
-            "   AND dhash IS NOT NULL AND dhash != ''"
+            f"SELECT id, cluster_id, dhash, is_representative AS rep FROM lc_screens"
+            f" WHERE cluster_id IN ({target_placeholders})"
+            f"   AND dhash IS NOT NULL AND dhash != ''"
             + sid_filter +
             " ORDER BY id",
-            sid_params,
+            target_params + list(sid_params),
         ).fetchall()
         # 2) 各 cluster の代表 dhash
         rep_dhash_map: dict[int, str] = {
@@ -1010,16 +1029,22 @@ class BackgroundWorker:
             ).fetchall()
         }
         # 各 screen の「直前 screen の id と cluster_id」をメモリで計算
+        # 注: target 内 screen の直前は target 外でもありうるので、全 screen から計算
         prev_cid_map: dict[int, int] = {}
         prev_id_map: dict[int, int] = {}
         _prev_cid_so_far: Optional[int] = None
         _prev_id_so_far: Optional[int] = None
-        for m in all_data:
+        for s in conn.execute(
+            "SELECT id, cluster_id FROM lc_screens"
+            " WHERE cluster_id IS NOT NULL" + sid_filter +
+            " ORDER BY id",
+            sid_params,
+        ).fetchall():
             if _prev_cid_so_far is not None and _prev_id_so_far is not None:
-                prev_cid_map[m["id"]] = _prev_cid_so_far
-                prev_id_map[m["id"]] = _prev_id_so_far
-            _prev_cid_so_far = m["cluster_id"]
-            _prev_id_so_far = m["id"]
+                prev_cid_map[s["id"]] = _prev_cid_so_far
+                prev_id_map[s["id"]] = _prev_id_so_far
+            _prev_cid_so_far = s["cluster_id"]
+            _prev_id_so_far = s["id"]
         # 走査して必要な変更のみ DB に適用
         for m in all_data:
             if m["rep"] and m["cluster_id"] not in single_member_cids:
