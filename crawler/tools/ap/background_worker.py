@@ -1057,103 +1057,121 @@ class BackgroundWorker:
         # ─── 段階 2 完了: 再統合 → commit (DB 安定化) ───
         conn.commit()
 
-        # ─── 段階 3: 時系列連続性チェック ───
+        # ─── 段階 3: 時系列連続性チェック (収束まで反復) ───
 
         # 時系列連続性チェック: cluster 内のメンバーで「直前 screen の cluster_id」が
         # 当該 cluster と違う場合、§16「直前クラスタとのみ比較」ルール違反になるので
         # メンバーを切り離して再分配する。
         # 例: A(X) → B(X) → C(Y, 分離) → D(X) で、D の直前 C が X じゃない →
         #     D は X から切り離して別 cluster に。
-        gap_merged = 0
-        gap_new = 0
-        # 必要なデータを 3 つの SELECT で一括取得 (パフォーマンス最適化)
-        # 1) 走査対象は target_cluster_ids 内の screen のみ (新規 screen 含む cluster)
-        all_data = conn.execute(
-            f"SELECT id, cluster_id, dhash, is_representative AS rep FROM lc_screens"
-            f" WHERE cluster_id IN ({target_placeholders})"
-            f"   AND dhash IS NOT NULL AND dhash != ''"
-            + sid_filter +
-            " ORDER BY id",
-            target_params + list(sid_params),
-        ).fetchall()
-        # 2) 各 cluster の代表 dhash
-        rep_dhash_map: dict[int, str] = {
-            r["cluster_id"]: r["dhash"] for r in conn.execute(
-                "SELECT cluster_id, dhash FROM lc_screens"
-                " WHERE is_representative = 1"
-                "   AND dhash IS NOT NULL AND dhash != ''"
-                + sid_filter,
-                sid_params,
+        #
+        # 反復実行の必要性: 1 pass では prev_cid_map が静的なので、ある screen が動いた後、
+        # その直後の screen は更新後の状態を見られない (旧 prev_cid のまま続行 → 取り残し)。
+        # 完全収束まで反復することで連続フレーム全体が同じ cluster に揃う。
+        # MAX_PASSES は無限ループ防止の安全網 (通常 1〜5 pass で収束する)。
+        MAX_PASSES = 50
+        total_gap_merged = 0
+        total_gap_new = 0
+        for _pass in range(MAX_PASSES):
+            gap_merged = 0
+            gap_new = 0
+            # 各 pass で最新状態を取得
+            # 1) 走査対象は target_cluster_ids 内の screen のみ
+            all_data = conn.execute(
+                f"SELECT id, cluster_id, dhash, is_representative AS rep FROM lc_screens"
+                f" WHERE cluster_id IN ({target_placeholders})"
+                f"   AND dhash IS NOT NULL AND dhash != ''"
+                + sid_filter +
+                " ORDER BY id",
+                target_params + list(sid_params),
             ).fetchall()
-        }
-        # 3) 1メンバー cluster の cluster_id (代表が孤立している cluster)
-        single_member_cids = {
-            r["cluster_id"] for r in conn.execute(
-                "SELECT cluster_id FROM lc_screens"
+            # 2) 各 cluster の代表 dhash
+            rep_dhash_map: dict[int, str] = {
+                r["cluster_id"]: r["dhash"] for r in conn.execute(
+                    "SELECT cluster_id, dhash FROM lc_screens"
+                    " WHERE is_representative = 1"
+                    "   AND dhash IS NOT NULL AND dhash != ''"
+                    + sid_filter,
+                    sid_params,
+                ).fetchall()
+            }
+            # 3) 1メンバー cluster の cluster_id
+            single_member_cids = {
+                r["cluster_id"] for r in conn.execute(
+                    "SELECT cluster_id FROM lc_screens"
+                    " WHERE cluster_id IS NOT NULL" + sid_filter +
+                    " GROUP BY cluster_id HAVING COUNT(*) = 1",
+                    sid_params,
+                ).fetchall()
+            }
+            # 各 screen の「直前 screen の id と cluster_id」を最新状態で計算
+            prev_cid_map: dict[int, int] = {}
+            prev_id_map: dict[int, int] = {}
+            _prev_cid_so_far: Optional[int] = None
+            _prev_id_so_far: Optional[int] = None
+            for s in conn.execute(
+                "SELECT id, cluster_id FROM lc_screens"
                 " WHERE cluster_id IS NOT NULL" + sid_filter +
-                " GROUP BY cluster_id HAVING COUNT(*) = 1",
+                " ORDER BY id",
                 sid_params,
-            ).fetchall()
-        }
-        # 各 screen の「直前 screen の id と cluster_id」をメモリで計算
-        # 注: target 内 screen の直前は target 外でもありうるので、全 screen から計算
-        prev_cid_map: dict[int, int] = {}
-        prev_id_map: dict[int, int] = {}
-        _prev_cid_so_far: Optional[int] = None
-        _prev_id_so_far: Optional[int] = None
-        for s in conn.execute(
-            "SELECT id, cluster_id FROM lc_screens"
-            " WHERE cluster_id IS NOT NULL" + sid_filter +
-            " ORDER BY id",
-            sid_params,
-        ).fetchall():
-            if _prev_cid_so_far is not None and _prev_id_so_far is not None:
-                prev_cid_map[s["id"]] = _prev_cid_so_far
-                prev_id_map[s["id"]] = _prev_id_so_far
-            _prev_cid_so_far = s["cluster_id"]
-            _prev_id_so_far = s["id"]
-        # 走査して必要な変更のみ DB に適用
-        for m in all_data:
-            if m["rep"] and m["cluster_id"] not in single_member_cids:
-                continue  # 複数メンバー cluster の代表 → 対象外
-            mid = m["id"]
-            mcid = m["cluster_id"]
-            mdh = m["dhash"]
-            prev_for_m = prev_cid_map.get(mid)
-            prev_id_for_m = prev_id_map.get(mid)
-            if prev_for_m is None or prev_for_m == mcid:
-                continue  # 直前も同じ cluster → 連続性 OK
-            target_cid: Optional[int] = None
-            # id 差が大きい場合は統合先候補から除外 (時系列で離れた古い cluster は除外)
-            if prev_id_for_m is not None and mid - prev_id_for_m <= ID_GAP_THRESHOLD:
-                rep_dh = rep_dhash_map.get(prev_for_m)
-                if rep_dh:
-                    d = _dhash_distance(rep_dh, mdh)
-                    if d < DHASH_VALIDATE_THRESHOLD:
-                        target_cid = prev_for_m
-            if target_cid is not None and target_cid != mcid:
-                conn.execute(
-                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
-                    (target_cid, mid),
-                )
-                self._set_decision(conn, mid, target_cid, "revalidate_merge")
-                gap_merged += 1
-            elif target_cid is None:
-                conn.execute(
-                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
-                    (next_cid, mid),
-                )
-                self._set_decision(conn, mid, next_cid, "revalidate_split")
-                # 新規 cluster の代表 dhash を map に追加 (連鎖判定用)
-                rep_dhash_map[next_cid] = mdh
-                next_cid += 1
-                gap_new += 1
-        conn.commit()
+            ).fetchall():
+                if _prev_cid_so_far is not None and _prev_id_so_far is not None:
+                    prev_cid_map[s["id"]] = _prev_cid_so_far
+                    prev_id_map[s["id"]] = _prev_id_so_far
+                _prev_cid_so_far = s["cluster_id"]
+                _prev_id_so_far = s["id"]
+            # 走査して必要な変更のみ DB に適用
+            for m in all_data:
+                if m["rep"] and m["cluster_id"] not in single_member_cids:
+                    continue
+                mid = m["id"]
+                mcid = m["cluster_id"]
+                mdh = m["dhash"]
+                prev_for_m = prev_cid_map.get(mid)
+                prev_id_for_m = prev_id_map.get(mid)
+                if prev_for_m is None or prev_for_m == mcid:
+                    continue
+                target_cid: Optional[int] = None
+                if prev_id_for_m is not None and mid - prev_id_for_m <= ID_GAP_THRESHOLD:
+                    rep_dh = rep_dhash_map.get(prev_for_m)
+                    if rep_dh:
+                        d = _dhash_distance(rep_dh, mdh)
+                        if d < DHASH_VALIDATE_THRESHOLD:
+                            target_cid = prev_for_m
+                if target_cid is not None and target_cid != mcid:
+                    conn.execute(
+                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
+                        (target_cid, mid),
+                    )
+                    self._set_decision(conn, mid, target_cid, "revalidate_merge")
+                    gap_merged += 1
+                elif target_cid is None:
+                    conn.execute(
+                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                        (next_cid, mid),
+                    )
+                    self._set_decision(conn, mid, next_cid, "revalidate_split")
+                    rep_dhash_map[next_cid] = mdh
+                    next_cid += 1
+                    gap_new += 1
+            conn.commit()
+            total_gap_merged += gap_merged
+            total_gap_new += gap_new
+            if gap_merged == 0 and gap_new == 0:
+                break  # 収束
+        else:
+            # MAX_PASSES に到達しても収束しなかった (異常状態)
+            logger.warning(
+                "[BG_WORKER] cluster_validate: 段階3 が %d pass で収束せず",
+                MAX_PASSES,
+            )
 
         logger.debug(
             "[BG_WORKER] cluster_validate: %d 件分離 (再統合 %d / 新クラスタ %d) "
-            "+ 時系列ギャップ %d 件 (再統合 %d / 新クラスタ %d)",
-            len(split_items), merged_count, new_count, gap_merged + gap_new, gap_merged, gap_new,
+            "+ 時系列ギャップ %d 件 (再統合 %d / 新クラスタ %d, %d pass)",
+            len(split_items), merged_count, new_count,
+            total_gap_merged + total_gap_new, total_gap_merged, total_gap_new,
+            _pass + 1,
         )
 
     @staticmethod
