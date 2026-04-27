@@ -694,8 +694,8 @@ class BackgroundWorker:
                     from lc.cluster_decision import classify_empty_text_pair_with_metrics
 
                     _NEAR_TH = 8
-                    _FAR_TH = 30
-                    _FALLBACK_TH = 30
+                    _FAR_TH = 35
+                    _FALLBACK_TH = 35
                     _matched = False
                     _decision_method = "new_cluster"
                     _metric_phash = None       # 直前代表との phash 距離
