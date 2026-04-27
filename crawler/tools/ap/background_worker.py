@@ -54,6 +54,21 @@ def _text_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b, autojunk=False).ratio()
 
 
+def _is_degenerate_phash(ph: Optional[str]) -> bool:
+    """縮退 phash 判定: set bit が極端に少ない/多い (ほぼ単色画像)。
+
+    Hamming 距離は「異なるビット数」なので、bit がほぼ全 0 または全 1 の phash は
+    距離計算で見かけ上「他と近い」と誤判定されやすい。アンカーとして信頼できない。
+    """
+    if not ph:
+        return True
+    try:
+        n = bin(int(ph, 16)).count('1')
+    except (ValueError, TypeError):
+        return True
+    return n < 8 or n > 56  # 64 bit 中、8 未満 or 56 超 → 縮退
+
+
 def _normalize_text(text: str) -> str:
     """OCR テキストの揺れを正規化して比較用文字列を生成。"""
     import re
@@ -1612,9 +1627,14 @@ class BackgroundWorker:
                     elif not norm and not prev_norm:
                         # テキスト空同士: ノイズ除去前も空の場合のみハッシュで判定
                         if not orig and not prev_orig:
-                            d = _phash_distance(ph, prev_ph) if ph and prev_ph else 999
-                            if d < _EMPTY_HASH_THRESHOLD:
-                                should_merge = True
+                            # 縮退 phash (ほぼ単色画像) はアンカーとして信頼できない
+                            # → 連鎖マージで遠いクラスタまで吸い込む問題を防ぐため除外
+                            if _is_degenerate_phash(ph) or _is_degenerate_phash(prev_ph):
+                                pass  # 統合しない
+                            else:
+                                d = _phash_distance(ph, prev_ph) if ph and prev_ph else 999
+                                if d < _EMPTY_HASH_THRESHOLD:
+                                    should_merge = True
 
                 if should_merge:
                     # cid を prev_cid に統合
