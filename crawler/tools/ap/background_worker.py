@@ -1070,30 +1070,40 @@ class BackgroundWorker:
         # 完全収束まで反復することで連続フレーム全体が同じ cluster に揃う。
         # MAX_PASSES は無限ループ防止の安全網 (通常 1〜5 pass で収束する)。
         MAX_PASSES = 50
+        # 段階 3 用の B1 hybrid 閾値 (rep + prev)
+        STEP3_TH_STRICT = DHASH_VALIDATE_THRESHOLD  # 22
+        STEP3_TH_PREV = 22
+        STEP3_TH_LOOSE = 30
         total_gap_merged = 0
         total_gap_new = 0
         for _pass in range(MAX_PASSES):
             gap_merged = 0
             gap_new = 0
             # 各 pass で最新状態を取得
-            # 1) 走査対象は target_cluster_ids 内の screen のみ
+            # 1) 走査対象は target_cluster_ids 内の screen (text も取得)
             all_data = conn.execute(
-                f"SELECT id, cluster_id, dhash, is_representative AS rep FROM lc_screens"
+                f"SELECT id, cluster_id, dhash, is_representative AS rep,"
+                f"       ocr_text_hq, ocr_text"
+                f" FROM lc_screens"
                 f" WHERE cluster_id IN ({target_placeholders})"
                 f"   AND dhash IS NOT NULL AND dhash != ''"
                 + sid_filter +
                 " ORDER BY id",
                 target_params + list(sid_params),
             ).fetchall()
-            # 2) 各 cluster の代表 dhash
+            # 2) 各 cluster の代表の dhash と text
+            rep_info_map: dict[int, tuple[str, str]] = {}
+            for r in conn.execute(
+                "SELECT cluster_id, dhash, ocr_text_hq, ocr_text FROM lc_screens"
+                " WHERE is_representative = 1"
+                "   AND dhash IS NOT NULL AND dhash != ''"
+                + sid_filter,
+                sid_params,
+            ).fetchall():
+                raw_text = r["ocr_text_hq"] or r["ocr_text"] or ""
+                rep_info_map[r["cluster_id"]] = (r["dhash"], _normalize_text(raw_text))
             rep_dhash_map: dict[int, str] = {
-                r["cluster_id"]: r["dhash"] for r in conn.execute(
-                    "SELECT cluster_id, dhash FROM lc_screens"
-                    " WHERE is_representative = 1"
-                    "   AND dhash IS NOT NULL AND dhash != ''"
-                    + sid_filter,
-                    sid_params,
-                ).fetchall()
+                cid: dh for cid, (dh, _) in rep_info_map.items()
             }
             # 3) 1メンバー cluster の cluster_id
             single_member_cids = {
@@ -1104,13 +1114,15 @@ class BackgroundWorker:
                     sid_params,
                 ).fetchall()
             }
-            # 各 screen の「直前 screen の id と cluster_id」を最新状態で計算
+            # 各 screen の「直前 screen の id, cluster_id, dhash」を最新状態で計算
             prev_cid_map: dict[int, int] = {}
             prev_id_map: dict[int, int] = {}
+            prev_dhash_map: dict[int, str] = {}  # B1 RULE_B 用 (直前 screen の dhash)
             _prev_cid_so_far: Optional[int] = None
             _prev_id_so_far: Optional[int] = None
+            _prev_dh_so_far: Optional[str] = None
             for s in conn.execute(
-                "SELECT id, cluster_id FROM lc_screens"
+                "SELECT id, cluster_id, dhash FROM lc_screens"
                 " WHERE cluster_id IS NOT NULL" + sid_filter +
                 " ORDER BY id",
                 sid_params,
@@ -1118,8 +1130,25 @@ class BackgroundWorker:
                 if _prev_cid_so_far is not None and _prev_id_so_far is not None:
                     prev_cid_map[s["id"]] = _prev_cid_so_far
                     prev_id_map[s["id"]] = _prev_id_so_far
+                    if _prev_dh_so_far:
+                        prev_dhash_map[s["id"]] = _prev_dh_so_far
                 _prev_cid_so_far = s["cluster_id"]
                 _prev_id_so_far = s["id"]
+                _prev_dh_so_far = s["dhash"]
+
+            # text-mismatch 判定: 両方とも非空 text かつ完全/前方一致しない場合 True (= 統合棄却)
+            def _text_mismatch(curr_norm: str, rep_norm: str) -> bool:
+                if not text_sep_enabled:
+                    return False
+                if not curr_norm or not rep_norm:
+                    return False  # 片方空 → 「未知」として dHash に委ねる
+                if curr_norm == rep_norm:
+                    return False
+                shorter, longer = (curr_norm, rep_norm) if len(curr_norm) <= len(rep_norm) else (rep_norm, curr_norm)
+                if len(shorter) >= 5 and longer.startswith(shorter):
+                    return False
+                return True  # 両方 text あり、一致しない → mismatch
+
             # 走査して必要な変更のみ DB に適用
             for m in all_data:
                 if m["rep"] and m["cluster_id"] not in single_member_cids:
@@ -1127,17 +1156,32 @@ class BackgroundWorker:
                 mid = m["id"]
                 mcid = m["cluster_id"]
                 mdh = m["dhash"]
+                m_text = m["ocr_text_hq"] or m["ocr_text"] or ""
+                m_norm = _normalize_text(m_text)
                 prev_for_m = prev_cid_map.get(mid)
                 prev_id_for_m = prev_id_map.get(mid)
+                prev_dh_for_m = prev_dhash_map.get(mid)
                 if prev_for_m is None or prev_for_m == mcid:
                     continue
                 target_cid: Optional[int] = None
                 if prev_id_for_m is not None and mid - prev_id_for_m <= ID_GAP_THRESHOLD:
-                    rep_dh = rep_dhash_map.get(prev_for_m)
-                    if rep_dh:
-                        d = _dhash_distance(rep_dh, mdh)
-                        if d < DHASH_VALIDATE_THRESHOLD:
-                            target_cid = prev_for_m
+                    rep_info = rep_info_map.get(prev_for_m)
+                    if rep_info:
+                        rep_dh, rep_norm = rep_info
+                        # text-mismatch ブロック: 両方 text あり かつ 不一致 → 統合しない
+                        if not _text_mismatch(m_norm, rep_norm):
+                            d_rep = _dhash_distance(rep_dh, mdh)
+                            d_prev = (
+                                _dhash_distance(prev_dh_for_m, mdh)
+                                if prev_dh_for_m else 999
+                            )
+                            # B1 hybrid:
+                            # RULE_A: d(rep, X) < TH_STRICT
+                            # RULE_B: d(prev, X) < TH_PREV AND d(rep, X) < TH_LOOSE
+                            if d_rep < STEP3_TH_STRICT:
+                                target_cid = prev_for_m
+                            elif d_prev < STEP3_TH_PREV and d_rep < STEP3_TH_LOOSE:
+                                target_cid = prev_for_m
                 if target_cid is not None and target_cid != mcid:
                     conn.execute(
                         "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
@@ -1152,6 +1196,7 @@ class BackgroundWorker:
                     )
                     self._set_decision(conn, mid, next_cid, "revalidate_split")
                     rep_dhash_map[next_cid] = mdh
+                    rep_info_map[next_cid] = (mdh, m_norm)
                     next_cid += 1
                     gap_new += 1
             conn.commit()
