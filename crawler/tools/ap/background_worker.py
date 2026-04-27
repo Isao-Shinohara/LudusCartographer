@@ -959,21 +959,55 @@ class BackgroundWorker:
         if not split_items:
             return
 
-        # 分離された画像を各々独立した新規 cluster に割り当てる
-        # (dHash は「分割のみ」目的、再統合 = revalidate_merge は廃止)
-        # 後続フレームが phash で近ければ Step A の通常処理で統合される
-        for sid, _dhash in split_items:
-            conn.execute(
-                "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
-                (next_cid, sid),
-            )
-            self._set_decision(conn, sid, next_cid, "revalidate_split")
-            next_cid += 1
+        # 分離された screen を時系列順 (id 順) に処理し、
+        # 直前 screen の cluster の代表との dHash 距離を比較:
+        #   距離 < 閾値 → その cluster に再統合 (revalidate_merge)
+        #   距離 ≥ 閾値 → 新規独立 cluster (revalidate_split)
+        split_items.sort(key=lambda x: x[0])
+        merged_count = 0
+        new_count = 0
+        for sid, dhash in split_items:
+            # 直前 screen (cluster_id IS NOT NULL) の cluster_id を取得
+            prev_screen = conn.execute(
+                "SELECT cluster_id FROM lc_screens"
+                " WHERE id < ? AND cluster_id IS NOT NULL"
+                " ORDER BY id DESC LIMIT 1",
+                (sid,),
+            ).fetchone()
+
+            target_cid: Optional[int] = None
+            if prev_screen and prev_screen["cluster_id"] is not None:
+                prev_cid = prev_screen["cluster_id"]
+                rep = conn.execute(
+                    "SELECT dhash FROM lc_screens"
+                    " WHERE cluster_id = ? AND is_representative = 1 LIMIT 1",
+                    (prev_cid,),
+                ).fetchone()
+                if rep and rep["dhash"]:
+                    d = _dhash_distance(rep["dhash"], dhash)
+                    if d < DHASH_VALIDATE_THRESHOLD:
+                        target_cid = prev_cid
+
+            if target_cid is not None:
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
+                    (target_cid, sid),
+                )
+                self._set_decision(conn, sid, target_cid, "revalidate_merge")
+                merged_count += 1
+            else:
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                    (next_cid, sid),
+                )
+                self._set_decision(conn, sid, next_cid, "revalidate_split")
+                next_cid += 1
+                new_count += 1
 
         conn.commit()
         logger.debug(
-            "[BG_WORKER] cluster_validate: %d 件分離 → %d 新クラスタ",
-            len(split_items), len(split_items),
+            "[BG_WORKER] cluster_validate: %d 件分離 (再統合 %d / 新クラスタ %d)",
+            len(split_items), merged_count, new_count,
         )
 
     @staticmethod
