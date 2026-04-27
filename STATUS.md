@@ -1,70 +1,102 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-04-26
+最終更新: 2026-04-28
 
 ## 現在のブランチ
 - `feature/screen-recorder` (main 未マージ)
 
-## 最終セッション (2026-04-26)
-- 主な作業: Phase 1 (4段階クラスタ判定) + 比較ビュー (ClusterDiffView 部品化) + 用語統一 + UI 設計ルール永続化
-- コミット: da3e243 〜 5449c4b (約 35 コミット)
+## 最終セッション (2026-04-28 深夜〜早朝)
+- 主な作業: ORB 完全削除、Step B 二段判定強化、_remerge_text_clusters 拡張、Step A Jaccard 追加、閾値緩和、UI 改善
+- コミット: `5511e2d` 〜 `e99fc7f` (約 25 コミット)
 
 ## 現在の状態
 - **Python**: 3.11.8 + OpenSSL 3.6.2
-- **クラスタリングアルゴリズム**: phash 即決 + dHash 中間域判定の二段構え (LC_HASH_ALGO 廃止、phash/dhash 並走)
-- **テキスト分離**: `.env` に `LC_TEXT_SEPARATION=off` 追記済み (再起動で反映)
-- **Gemini OCR**: コメントアウトで無効化中 (PaddleOCR HQ で動作)
-- **DB**: 空 (前回クリーンアップ済み) → ただし auto_pilot 起動後の新規データあり
+- **クラスタリングアルゴリズム**: phash + dHash + Jaccard。ORB は完全削除済み
+- **テキスト分離**: `crawler/config/.env` で `LC_TEXT_SEPARATION=on` (本番モード)
+- **Gemini OCR**: 未設定 (PaddleOCR HQ で動作、`_remerge_text_clusters` が HQ で発火)
+- **DB**: クリーンアップ済み (3.7M、`lc_ocr_corrections` 21,720 件のみ保護)
 - **マスター**: 空 (未マージ)
+- **auto_pilot プロセス**: 停止中
 
-## 直近の主要変更
+## 直近の主要変更 (2026-04-28)
 
-### Step A + Step B の 2 段階クラスタ判定
-**Step A (cluster_decision.py)**: phash 単独で同/別を決める。
-- phash<8  → 同 (phash_near)
-- phash≥40 → 別 (phash_far)
-- 中間域 (8-39) → 同 (phash_mid)  ← まず統合し、Step B で分割
+### 1. ORB 完全削除 (`8294d23`)
+- `crawler/lc/orb_matcher.py`、`crawler/tests/test_orb_matcher.py` を削除
+- `screen_recorder.py` の ORB migration + descriptor 計算を削除
+- `background_worker.py` の `_run_orb_validation` (約 140 行) を削除
+- `EvidenceRepository.php` の cluster_id_orb 参照を削除
+- `dashboard.html.twig` の「比較ORB」タブと compare-orb モード分岐を削除
+- DB スキーマから `orb_descriptors` / `cluster_id_orb` カラム drop
+- 保持: `image_proc.py:detect_gacha_orbs` (ガチャの「光の玉」検出、ORB 特徴量と無関係)
 
-**Step B (background_worker._validate_clusters)**: クラスタ内を dHash 距離で分割。
-- 代表との dHash 距離 ≥ 20 → クラスタから分離 (revalidate_split)
-- 分離後の再グループ化: 隣接 dHash 距離 < 15 で統合 (revalidate_merge)
+### 2. Step B 段階 1 (反復分離) — text 一致時の分離抑制 (`6020393`)
+- LC_TEXT_SEPARATION=on の時、代表とテキスト完全/前方一致するメンバーは dHash 距離が大きくても分離しない
+- §16 ルール 1「テキスト一致 → 同クラスタ」を Step B でも尊重
 
-(旧 第0層 暗転/ハードカット、ヒスト類似度判定、dhash_match/mismatch はいずれも廃止)
+### 3. Step B 段階 2 (再統合) — 二段判定 (rep + prev hybrid) (`37cda1f`)
+```
+RULE_A: d(rep, X) < TH_STRICT (= 25)               # 標準
+RULE_B: d(prev, X) < TH_PREV (= 20)
+        AND d(rep, X) < TH_LOOSE (= 35)            # bridge: prev 近 + ドリフト上限
+```
+TH_LOOSE がドリフト絶対上限。連鎖統合で代表から TH_LOOSE 以上離れたら必ず止まる。
 
-### DB スキーマ (lc_screens、Q3=B 厳格刷新)
-- `cluster_id_phash_only` (新): phash 単独シミュレーション
-- `cluster_id_hybrid`: 採用版 (phash + dHash)
-- `cluster_decision_method`: phash_near/phash_far/dhash_match/dhash_mismatch/phash_fallback 等
-- `avg_brightness`: 平均輝度 (UI 表示)
-- `phash_dist_to_prev_rep` (新): phash 距離
-- `dhash_dist_to_prev_rep`: dHash 距離
-- 旧 `cluster_id_dhash` / `hist_dist_to_prev_rep` は廃止 (DROP COLUMN)
+### 4. Step B 段階 3 (時系列連続性) — 強化 (`537184b`, `6b2fd74`)
+- **完全収束まで反復**: 各 pass で `prev_cid_map` を最新状態で再計算、収束まで loop。MAX_PASSES=50 安全網
+- **B1 hybrid**: 段階 2 と同じ rep + prev hybrid 判定 (TH_PREV=25, TH_LOOSE=35)
+- **text-aware mismatch ブロック**: 両方とも非空 text かつ完全/前方一致しない場合のみ統合棄却。片方空 (= 未知) は dHash 判定に委ねる
 
-### HQ OCR フロー統一
-- 「クラスタリング → 代表のみ HQ OCR」に統一 (PaddleOCR/Gemini 共通)
-- 間引き判定は Vision OCR で行う
+### 5. _remerge_text_clusters (旧 _remerge_after_gemini) — 拡張 (`06524b5`, `82af1f7`, `c425553`)
+- リネーム: 関数名を Gemini 専用から汎用 (PaddleOCR HQ もトリガー)
+- WHERE 拡張: `ocr_text_gemini IS NOT NULL OR ocr_text_hq IS NOT NULL`
+- clustering 完了後 (15s 間隔) と Gemini batch 完了後の 2 箇所から呼び出し
+- **縮退 phash 除外**: set bit < 8 or > 56 の単色画像はアンカー対象外
+- **dhash 併用**: テキスト空同士の判定で phash + dhash 両方 < 閾値で統合 (誤統合防止)
 
-### 比較ビュー (Live タブ「比較」モード)
-- GitHub diff 風 2 カラム並列表示
-- `web/public/js/cluster_diff_view.js` に部品化
-- 閾値ベース badge ラベルで閾値調整に直結
+### 6. Step A 中間域 — Jaccard 類似度追加 (`34ecf5c`)
+- 中間域 (8 ≤ phash < 40) で `phash_jaccard_similarity < 0.3` なら別判定 (`phash_low_jaccard`)
+- Hamming 距離は「両方 0」を「同じ」と数えるため、疎な phash ペアの誤統合を防ぐ
+- `lc/image_comparator.py:phash_jaccard_similarity` 追加
 
-### 用語統一
-- 「間引き/dedup」→「クラスタリング」(CLAUDE.md §13 厳格化)
+### 7. 全体閾値緩和 (案 A、`e99fc7f`)
+- 動画フレーム連鎖や境界値での過剰分離を抑制
+- 比率関係を維持して各閾値を 3〜5 ずつ緩和
 
-### UI 設計ルール (§20 新規)
-- 表示/非表示でなく `disabled` 属性で UI 切替
+### 8. 比較ビュー UI 改善 (`e0cc4e0`)
+- 詳細モーダルの ←/→ がクリックしたペイン (A/B) のクラスタ間移動になる
+- `_compareSide` でペインを記憶、`_compareClusterNav(side, direction)` で代表を辿る
+
+## 現在の閾値一覧
+
+| 段階 | パラメータ | 値 |
+|---|---|---|
+| Step A | `_NEAR_TH` / `_FAR_TH` / `_FALLBACK_TH` | 8 / 40 / 40 |
+| | `min_jaccard` / `MAX_PHASH_DIAMETER` | 0.3 / 30 |
+| Step B 段階1 | `DHASH_VALIDATE_THRESHOLD` | 25 |
+| Step B 段階2 | `TH_STRICT` / `TH_PREV` / `TH_LOOSE` | 25 / 20 / 35 |
+| Step B 段階3 | `STEP3_TH_STRICT` / `STEP3_TH_PREV` / `STEP3_TH_LOOSE` | 25 / 25 / 35 |
+| remerge 空 text | `_EMPTY_PHASH_TH` / `_EMPTY_DHASH_TH` | 35 / 25 |
+| 共通 | `ID_GAP_THRESHOLD` | 30 |
 
 ## 未解決の課題
-1. **auto_pilot の LC_TEXT_SEPARATION 反映**: 現プロセスは OFF が反映されていない (.env 修正が起動後だったため)。停止+クリーンアップ+再起動で OFF データを生成する必要
-2. **dHash/ヒスト閾値の実データチューニング**: 比較ビューでデータ収集後に調整
-3. **GeminiOCR vs PaddleOCR の比較ビュー**: ClusterDiffView を再利用して別用途で実装 (別タスク)
-4. **batch_processor.py の `--deduplicate` CLI**: 後方互換のため残置、次回別タスクで `--cluster` にリネーム検討
-5. **Gemini 503 / scrcpy黒キャプチャ / DB locked散発**: 過去から継続
+1. **実データでの新閾値検証**: クリーンアップ済み、再起動して動画/ADV/バトル各シーンで挙動確認
+2. **段階 3 の収束性能監視**: 通常 1〜5 pass で収束想定。MAX_PASSES (50) 警告ログをチェック
+3. **Jaccard `phash_low_jaccard` の頻度**: 新閾値で発火状況をダッシュボードで観察
+4. **テキストありフレームと空フレームの統合品質**: 663/664 ケースの実機動作確認
+5. **Gemini API 設定**: 未設定のまま運用継続。設定する場合は `crawler/config/.env` に `GEMINI_API_KEY` 追記
+6. **batch_processor.py の `--deduplicate` CLI**: 後方互換、次回別タスクで `--cluster` にリネーム検討
+7. **Gemini 503 / scrcpy黒キャプチャ / DB locked散発**: 過去から継続
 
 ## 設計ドキュメント
 - `docs/merge_sort_algorithm.md` — SafeInsert 仕様
 - `docs/anchor_matching_design.md` — 段階的 Phase 設計
 - `docs/cross_session_merge.md` — クロスセッションマージ
-- CLAUDE.md §16 — クラスタリング採用/不採用判定 (4段階拡張済み)
-- CLAUDE.md §20 — UI 設計ルール (新規)
+- CLAUDE.md §16 — クラスタリング採用/不採用判定
+- CLAUDE.md §20 — UI 設計ルール
+
+## 次セッション開始時の推奨手順
+1. `git log --oneline -10` で直近変更を再確認
+2. STATUS.md と `docs/history/2026-04-28.md` を読む
+3. クリーンアップ済みなので `./crawler/tools/run_autopilot.sh -S -s -r` で新規スタート可能
+4. ダッシュボード (`http://localhost:8080/dashboard.php`) で比較ビュー確認
+5. 課題 1〜4 のいずれかから着手
