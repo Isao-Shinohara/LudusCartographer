@@ -6,10 +6,10 @@
  *
  * 使い方:
  *   ClusterDiffView.render(rootEl, screens, {
- *       getCidA: (s) => s.cluster_id_dhash,
+ *       getCidA: (s) => s.cluster_id_phash_only,
  *       getCidB: (s) => s.cluster_id_hybrid,
- *       labelA: 'dHash 単独',
- *       labelB: 'dHash + ヒスト',
+ *       labelA: 'phash 単独',
+ *       labelB: 'phash + dHash',
  *       imgUrl: (path) => path,
  *   });
  */
@@ -34,7 +34,7 @@
 
     function defaultOpts(o) {
         return Object.assign({
-            getCidA: (s) => s.cluster_id_dhash,
+            getCidA: (s) => s.cluster_id_phash_only,
             getCidB: (s) => s.cluster_id_hybrid,
             labelA: 'A',
             labelB: 'B',
@@ -164,9 +164,9 @@
         const arrow = side === 'A' ? '→' : '←';
         const sideColor = side === 'A' ? opts.colorA : opts.colorB;
         const myLabel = cidLabel[`${side}${group.cid}`] || `#${group.cid}`;
-        // ヒスト判定が dHash の結論を覆したケースのみを集計して表示
-        //   merge: dHash 単独では別 → ヒストで同じ cluster に吸収された
-        //   split: dHash 単独では同 → ヒストで別 cluster に切り離された
+        // dHash 判定が phash の中間域を覆したケースのみを集計して表示
+        //   merge: phash 単独では別 → dHash で同じ cluster に吸収された
+        //   split: phash 単独では同 → dHash で別 cluster に切り離された
         let mergeCount = 0, splitCount = 0;
         for (const s of group.items) {
             const e = ctx.histEffectByScreenId.get(s.id);
@@ -175,10 +175,10 @@
         }
         const reasonParts = [];
         if (mergeCount > 0) {
-            reasonParts.push(`<span class="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/30 text-emerald-200" title="dHash 単独では別クラスタだったが、ヒスト判定で統合された screen 数">ヒストで統合 ×${mergeCount}</span>`);
+            reasonParts.push(`<span class="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/30 text-emerald-200" title="phash 単独では別クラスタだったが、dHash 判定で統合された screen 数">dHashで統合 ×${mergeCount}</span>`);
         }
         if (splitCount > 0) {
-            reasonParts.push(`<span class="px-1.5 py-0.5 rounded text-[10px] bg-orange-500/30 text-orange-200" title="dHash 単独では同クラスタだったが、ヒスト判定で分離された screen 数">ヒストで分離 ×${splitCount}</span>`);
+            reasonParts.push(`<span class="px-1.5 py-0.5 rounded text-[10px] bg-orange-500/30 text-orange-200" title="phash 単独では同クラスタだったが、dHash 判定で分離された screen 数">dHashで分離 ×${splitCount}</span>`);
         }
         const reasonHtml = reasonParts.join(' ');
         const repId = side === 'A' ? opts.getRepA(group.items) : opts.getRepB(group.items);

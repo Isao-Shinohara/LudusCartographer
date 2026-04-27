@@ -230,19 +230,18 @@ class AnchorMatcher:
 
     @staticmethod
     def _hash_col() -> str:
-        """LC_HASH_ALGO に応じた DB カラム名。"""
-        import os
-        return "dhash" if os.environ.get("LC_HASH_ALGO", "phash").lower() == "dhash" else "phash"
+        """phash 固定 (常に phash カラムを使う)。"""
+        return "phash"
 
     @staticmethod
     def _hash_distance(h1: str, h2: str) -> int:
-        from lc.image_comparator import get_comparator
-        return get_comparator().distance(h1, h2)
+        from lc.image_comparator import phash_distance
+        return phash_distance(h1, h2)
 
     @staticmethod
     def _th(phash_threshold: int) -> int:
-        from lc.image_comparator import get_comparator
-        return get_comparator().translate_threshold(phash_threshold)
+        """phash 固定なので閾値変換は不要 (identity)。"""
+        return phash_threshold
 
     @staticmethod
     def _fuzzy_sim_threshold(text_len: int) -> float:

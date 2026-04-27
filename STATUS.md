@@ -11,7 +11,7 @@
 
 ## 現在の状態
 - **Python**: 3.11.8 + OpenSSL 3.6.2
-- **クラスタリングアルゴリズム**: dhash (LC_HASH_ALGO=dhash がデフォルト)
+- **クラスタリングアルゴリズム**: phash 即決 + dHash 中間域判定の二段構え (LC_HASH_ALGO 廃止、phash/dhash 並走)
 - **テキスト分離**: `.env` に `LC_TEXT_SEPARATION=off` 追記済み (再起動で反映)
 - **Gemini OCR**: コメントアウトで無効化中 (PaddleOCR HQ で動作)
 - **DB**: 空 (前回クリーンアップ済み) → ただし auto_pilot 起動後の新規データあり
@@ -20,14 +20,19 @@
 ## 直近の主要変更
 
 ### テキスト空フレームの 2 段階クラスタ判定
-1. **第1層 dHash 即決**: < 8 で同, ≥ 40 で別
-2. **第2層 ヒスト類似度**: 中間域でヒスト類似度 ≥ 0.5 で同 / 未満で別
+1. **第1層 phash 即決**: < 8 で同 (phash_near), ≥ 40 で別 (phash_far)
+2. **第2層 dHash 距離**: 中間域 (8-39) で dHash<25 なら同 (dhash_match) / dHash≥25 なら別 (dhash_mismatch)
 
-(旧 第0層 暗転/ハードカットは廃止 — 起動ロゴ画面が過剰分離される副作用のため)
+(旧 第0層 暗転/ハードカット、ヒスト類似度判定はいずれも廃止)
 
-### DB 新カラム (lc_screens)
-- `cluster_id_dhash` / `cluster_id_hybrid` / `cluster_decision_method`
-- `avg_brightness` / `dhash_dist_to_prev_rep` / `hist_dist_to_prev_rep`
+### DB スキーマ (lc_screens、Q3=B 厳格刷新)
+- `cluster_id_phash_only` (新): phash 単独シミュレーション
+- `cluster_id_hybrid`: 採用版 (phash + dHash)
+- `cluster_decision_method`: phash_near/phash_far/dhash_match/dhash_mismatch/phash_fallback 等
+- `avg_brightness`: 平均輝度 (UI 表示)
+- `phash_dist_to_prev_rep` (新): phash 距離
+- `dhash_dist_to_prev_rep`: dHash 距離
+- 旧 `cluster_id_dhash` / `hist_dist_to_prev_rep` は廃止 (DROP COLUMN)
 
 ### HQ OCR フロー統一
 - 「クラスタリング → 代表のみ HQ OCR」に統一 (PaddleOCR/Gemini 共通)

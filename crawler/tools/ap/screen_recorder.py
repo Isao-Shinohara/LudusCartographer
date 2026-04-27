@@ -294,10 +294,9 @@ class ScreenRecorder:
         # 変化判定: ハッシュ または brightness がわずかでも変わったら保存
         _changed = False
         if phash and self._startup_last_phash:
-            from lc.image_comparator import get_comparator
-            _cmp = get_comparator()
-            _dist = _cmp.distance(self._startup_last_phash, phash)
-            _changed = _dist >= _cmp.translate_threshold(3)  # 微小な変化でも検出
+            from lc.image_comparator import phash_distance
+            _dist = phash_distance(self._startup_last_phash, phash)
+            _changed = _dist >= 3  # 微小な変化でも検出
         elif not self._startup_last_phash:
             _changed = True  # 初回の非暗転フレーム
 
@@ -630,12 +629,20 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: dhash カラム追加")
-        if "cluster_id_dhash" not in cols:
+        if "cluster_id_phash_only" not in cols:
             self._conn.execute(
-                "ALTER TABLE lc_screens ADD COLUMN cluster_id_dhash INTEGER"
+                "ALTER TABLE lc_screens ADD COLUMN cluster_id_phash_only INTEGER"
             )
             self._conn.commit()
-            logger.info("[ScreenRecorder] migrate: cluster_id_dhash カラム追加")
+            logger.info("[ScreenRecorder] migrate: cluster_id_phash_only カラム追加")
+        # 旧カラム cluster_id_dhash は廃止 (Q3=B)
+        if "cluster_id_dhash" in cols:
+            try:
+                self._conn.execute("ALTER TABLE lc_screens DROP COLUMN cluster_id_dhash")
+                self._conn.commit()
+                logger.info("[ScreenRecorder] migrate: cluster_id_dhash カラム削除")
+            except sqlite3.OperationalError as e:
+                logger.warning("[ScreenRecorder] cluster_id_dhash DROP 失敗: %s", e)
         if "cluster_id_hybrid" not in cols:
             self._conn.execute(
                 "ALTER TABLE lc_screens ADD COLUMN cluster_id_hybrid INTEGER"
@@ -654,18 +661,26 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: avg_brightness カラム追加")
+        if "phash_dist_to_prev_rep" not in cols:
+            self._conn.execute(
+                "ALTER TABLE lc_screens ADD COLUMN phash_dist_to_prev_rep INTEGER"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: phash_dist_to_prev_rep カラム追加")
         if "dhash_dist_to_prev_rep" not in cols:
             self._conn.execute(
                 "ALTER TABLE lc_screens ADD COLUMN dhash_dist_to_prev_rep INTEGER"
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: dhash_dist_to_prev_rep カラム追加")
-        if "hist_dist_to_prev_rep" not in cols:
-            self._conn.execute(
-                "ALTER TABLE lc_screens ADD COLUMN hist_dist_to_prev_rep REAL"
-            )
-            self._conn.commit()
-            logger.info("[ScreenRecorder] migrate: hist_dist_to_prev_rep カラム追加")
+        # 旧カラム hist_dist_to_prev_rep は廃止 (Q3=B、ヒスト判定撤廃のため)
+        if "hist_dist_to_prev_rep" in cols:
+            try:
+                self._conn.execute("ALTER TABLE lc_screens DROP COLUMN hist_dist_to_prev_rep")
+                self._conn.commit()
+                logger.info("[ScreenRecorder] migrate: hist_dist_to_prev_rep カラム削除")
+            except sqlite3.OperationalError as e:
+                logger.warning("[ScreenRecorder] hist_dist_to_prev_rep DROP 失敗: %s", e)
         # lc_master_nodes に dhash カラム
         try:
             mn_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_master_nodes)")}

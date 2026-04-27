@@ -37,10 +37,7 @@ from tools.ap.image_proc import (
     detect_background_blur, imread_cached,
 )
 from lc.ocr import run_ocr
-from lc.image_comparator import get_comparator as _get_cmp
-
-def compute_phash(p): return _get_cmp().compute_hash(p)
-def phash_distance(a, b): return _get_cmp().distance(a, b)
+from lc.image_comparator import compute_phash, phash_distance  # re-export
 
 logger = logging.getLogger("auto_pilot")
 

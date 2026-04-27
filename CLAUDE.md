@@ -327,7 +327,6 @@ PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
 ANDROID_HOME=~/Library/Android/sdk \
 ANDROID_SDK_ROOT=~/Library/Android/sdk \
 PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
-LC_HASH_ALGO=dhash \
 ./crawler/venv/bin/python -u ./crawler/tools/auto_pilot.py
 ```
 
@@ -339,8 +338,9 @@ LC_HASH_ALGO=dhash \
 
 | 変数 | 値 | 効果 |
 |------|---|------|
-| `LC_HASH_ALGO` | `dhash`(default) / `phash` | 画像ハッシュアルゴリズム切替 |
-| `LC_TEXT_SEPARATION` | `on`(default) / `off` | OFF時は §16 ルール1〜2 のテキスト判定を完全スキップし、全 screen を dHash/ヒスト判定で分類（dHash/ヒスト視認用デバッグモード、本番は ON） |
+| `LC_TEXT_SEPARATION` | `on`(default) / `off` | OFF時は §16 ルール1〜2 のテキスト判定を完全スキップし、全 screen をハッシュ判定（phash 即決 → dHash 中間域）で分類（視認用デバッグモード、本番は ON） |
+
+クラスタリングは常に **phash 即決 + dHash 中間域判定** の2段構え (旧 `LC_HASH_ALGO` 切替は廃止)。
 
 - `LC_TEXT_SEPARATION=off` は **デバッグモード**。テキスト分離なしのクラスタを目視確認するため。本番運用では使わない
 - フラグを変えると同 DB 内で挙動が混在するため、**切替時は再起動 + クリーンアップ推奨**

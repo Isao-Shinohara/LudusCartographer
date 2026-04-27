@@ -75,15 +75,15 @@
     <!-- クラスタアルゴリズム切替 (Live のみ) -->
     <span class="text-xs text-gray-500 mr-2">クラスタ算出:</span>
     <div class="inline-flex rounded overflow-hidden border border-gray-700">
-        <button id="cluster-algo-hybrid" class="px-2 py-1 text-xs bg-brand/80 text-white" onclick="setClusterAlgo('hybrid')">dHash+ヒスト</button>
-        <button id="cluster-algo-dhash" class="px-2 py-1 text-xs bg-gray-800 text-gray-400 hover:text-gray-200" onclick="setClusterAlgo('dhash')">dHashのみ</button>
-        <button id="cluster-algo-compare" class="px-2 py-1 text-xs bg-gray-800 text-gray-400 hover:text-gray-200" onclick="setClusterAlgo('compare')" title="dHash vs hybrid の差分を比較">比較</button>
+        <button id="cluster-algo-hybrid" class="px-2 py-1 text-xs bg-brand/80 text-white" onclick="setClusterAlgo('hybrid')">phash+dHash</button>
+        <button id="cluster-algo-dhash" class="px-2 py-1 text-xs bg-gray-800 text-gray-400 hover:text-gray-200" onclick="setClusterAlgo('dhash')">phashのみ</button>
+        <button id="cluster-algo-compare" class="px-2 py-1 text-xs bg-gray-800 text-gray-400 hover:text-gray-200" onclick="setClusterAlgo('compare')" title="phash 単独 vs phash+dHash の差分を比較">比較</button>
     </div>
     <select id="diff-filter" class="bg-gray-800 text-gray-300 text-xs px-2 py-1 rounded border border-gray-700 disabled:opacity-40 disabled:cursor-not-allowed" disabled title="比較モード時のみ使用可能">
         <option value="all">全表示</option>
         <option value="diff">差分のみ</option>
-        <option value="merged">ヒスト統合のみ</option>
-        <option value="split">ヒスト分離のみ</option>
+        <option value="merged">dHashで統合のみ</option>
+        <option value="split">dHashで分離のみ</option>
     </select>
     <span class="text-xs text-gray-500 mx-2">|</span>
     <span class="text-xs text-gray-500">Shift+クリックで選択</span>
@@ -129,8 +129,8 @@
     <div class="flex items-center gap-4">
         <span class="text-gray-400">合計 <span id="diff-total" class="font-bold text-gray-200">0</span></span>
         <span class="text-gray-400">同一 <span id="diff-same" class="font-bold text-gray-200">0</span></span>
-        <span class="text-emerald-400">+ヒスト統合 <span id="diff-merged" class="font-bold text-emerald-200">0</span></span>
-        <span class="text-amber-400">-ヒスト分離 <span id="diff-split" class="font-bold text-amber-200">0</span></span>
+        <span class="text-emerald-400">+dHashで統合 <span id="diff-merged" class="font-bold text-emerald-200">0</span></span>
+        <span class="text-amber-400">-dHashで分離 <span id="diff-split" class="font-bold text-amber-200">0</span></span>
         <span class="text-purple-400">複合 <span id="diff-mixed" class="font-bold text-purple-200">0</span></span>
     </div>
 </div>
@@ -143,8 +143,8 @@
 <!-- 比較モード: 2カラム diff ビュー (Live のみ) -->
 <div id="diff-wrap" class="hidden mt-4 pb-10">
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-2">
-        <h3 class="text-sm font-bold text-amber-300 sticky top-0 bg-gray-950/80 backdrop-blur py-1 px-3 rounded">dHash 単独 (ヒスト無し)</h3>
-        <h3 class="text-sm font-bold text-emerald-300 sticky top-0 bg-gray-950/80 backdrop-blur py-1 px-3 rounded">dHash + ヒスト (採用版)</h3>
+        <h3 class="text-sm font-bold text-amber-300 sticky top-0 bg-gray-950/80 backdrop-blur py-1 px-3 rounded">phash 単独 (dHashなし)</h3>
+        <h3 class="text-sm font-bold text-emerald-300 sticky top-0 bg-gray-950/80 backdrop-blur py-1 px-3 rounded">phash + dHash (採用版)</h3>
     </div>
     <!-- ペア行揃えグリッド: 同じ grid-row のブロック同士は左右で対応 (高さ自動揃え) -->
     <div id="diff-grid" class="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-3"></div>
@@ -323,33 +323,32 @@
     // クラスタID切替: cluster_id を currentClusterAlgo に応じて読み替える
     function effectiveClusterId(s) {
         if (currentClusterAlgo === 'dhash') {
-            return s.cluster_id_dhash !== undefined && s.cluster_id_dhash !== null ? s.cluster_id_dhash : s.cluster_id;
+            return s.cluster_id_phash_only !== undefined && s.cluster_id_phash_only !== null ? s.cluster_id_phash_only : s.cluster_id;
         }
         return s.cluster_id_hybrid !== undefined && s.cluster_id_hybrid !== null ? s.cluster_id_hybrid : s.cluster_id;
     }
 
-    // 判定理由 → badge色 + 閾値ベースのラベル (閾値調整時にどの閾値が効いたか分かる)
-    // 比較ビュー (side='A' or 'B') では「ヒスト判定の効果」だけが見えるよう厳格フィルタ:
-    //   - ヒスト関連 (hist_match/hist_mismatch/hard_cut) のみ表示
+    // 判定理由 → badge色 + 閾値ベースのラベル
+    // 比較ビュー (side='A' or 'B') では「dHash 判定が phash の中間域を覆した瞬間」だけ表示:
+    //   - dhash_match / new:dhash_mismatch のみ表示
     //   - かつ左右で結果が異なる (isMatch=false) クラスタのみ表示
     // モーダル等 (side=undefined) では現状維持で全 badge を表示。
     function decisionMethodBadge(method, side, isMatch) {
         if (!method) return null;
         if (side === 'A' || side === 'B') {
-            const histOnly = method === 'hist_match'
-                || method === 'new:hist_mismatch'
-                || method === 'new:hard_cut';
-            if (!histOnly) return null;
+            const dhashOnly = method === 'dhash_match'
+                || method === 'new:dhash_mismatch';
+            if (!dhashOnly) return null;
             if (isMatch) return null;
         }
         const map = {
             'text_match':            { color: 'bg-blue-500/30 text-blue-200',    label: 'テキスト一致' },
             'text_prefix':           { color: 'bg-blue-500/20 text-blue-300',    label: 'テキスト前方一致' },
-            'merge_to_prev_empty':   { color: 'bg-purple-500/30 text-purple-200',label: '直前空+dHash<20' },
-            'merge_to_prev_similar': { color: 'bg-purple-500/20 text-purple-300',label: 'OCR揺れ dHash<5' },
-            'dhash_near':            { color: 'bg-emerald-500/30 text-emerald-200', label: 'dHash<8' },
-            'hist_match':            { color: 'bg-cyan-500/30 text-cyan-200',    label: 'ヒスト類似≥0.5' },
-            'dhash_fallback':        { color: 'bg-gray-500/30 text-gray-200',    label: 'dHash<30' },
+            'merge_to_prev_empty':   { color: 'bg-purple-500/30 text-purple-200',label: '直前空+phash<20' },
+            'merge_to_prev_similar': { color: 'bg-purple-500/20 text-purple-300',label: 'OCR揺れ phash<5' },
+            'phash_near':            { color: 'bg-emerald-500/30 text-emerald-200', label: 'phash<8' },
+            'dhash_match':           { color: 'bg-cyan-500/30 text-cyan-200',    label: 'dHash<25' },
+            'phash_fallback':        { color: 'bg-gray-500/30 text-gray-200',    label: 'phash<30' },
             'new_cluster':           { color: 'bg-blue-700/40 text-blue-300',    label: 'テキスト変化' },
             'revalidate_merge':      { color: 'bg-gray-500/30 text-gray-200',    label: '再検証統合' },
             'revalidate_split':      { color: 'bg-gray-500/20 text-gray-300',    label: '再検証分離' },
@@ -360,9 +359,9 @@
         if (method.startsWith('new:')) {
             const reason = method.substring(4);
             const reasonMap = {
-                'dhash_far':      { color: 'bg-orange-600/40 text-orange-300',   label: 'dHash≥40' },
-                'hist_mismatch':  { color: 'bg-orange-600/40 text-orange-300',   label: 'ヒスト類似<0.5' },
-                'dhash_fallback': { color: 'bg-gray-700/60 text-gray-400',       label: 'dHash≥30' },
+                'phash_far':      { color: 'bg-orange-600/40 text-orange-300',   label: 'phash≥40' },
+                'dhash_mismatch': { color: 'bg-orange-600/40 text-orange-300',   label: 'dHash≥25' },
+                'phash_fallback': { color: 'bg-gray-700/60 text-gray-400',       label: 'phash≥30' },
             };
             return reasonMap[reason] || { color: 'bg-gray-700/60 text-gray-400', label: '新規(' + reason + ')' };
         }
@@ -414,14 +413,14 @@
         const dhashGroups = {};
         const hybridGroups = {};
         for (const s of screens) {
-            const dc = s.cluster_id_dhash;
+            const dc = s.cluster_id_phash_only;
             const hc = s.cluster_id_hybrid !== null && s.cluster_id_hybrid !== undefined ? s.cluster_id_hybrid : s.cluster_id;
             if (dc !== null && dc !== undefined) (dhashGroups[dc] ??= new Set()).add(s.id);
             if (hc !== null && hc !== undefined) (hybridGroups[hc] ??= new Set()).add(s.id);
         }
         const map = {};
         for (const s of screens) {
-            const dc = s.cluster_id_dhash;
+            const dc = s.cluster_id_phash_only;
             const hc = s.cluster_id_hybrid !== null && s.cluster_id_hybrid !== undefined ? s.cluster_id_hybrid : s.cluster_id;
             const dSet = (dc !== null && dc !== undefined) ? dhashGroups[dc] : null;
             const hSet = (hc !== null && hc !== undefined) ? hybridGroups[hc] : null;
@@ -441,8 +440,8 @@
     function diffBadge(kind) {
         const map = {
             'same':   null,
-            'merged': { color: 'bg-emerald-500/30 text-emerald-200', label: '+ヒスト統合' },
-            'split':  { color: 'bg-amber-500/30 text-amber-200',    label: '-ヒスト分離' },
+            'merged': { color: 'bg-emerald-500/30 text-emerald-200', label: '+dHashで統合' },
+            'split':  { color: 'bg-amber-500/30 text-amber-200',    label: '-dHashで分離' },
             'mixed':  { color: 'bg-purple-500/30 text-purple-200',  label: '複合diff' },
         };
         return map[kind] || null;
@@ -466,10 +465,10 @@
         if (!grid) return;
         const _hybridCid = (s) => (s.cluster_id_hybrid !== null && s.cluster_id_hybrid !== undefined ? s.cluster_id_hybrid : s.cluster_id);
         const result = ClusterDiffView.render(grid, screens, {
-            getCidA: (s) => s.cluster_id_dhash,
+            getCidA: (s) => s.cluster_id_phash_only,
             getCidB: _hybridCid,
-            labelA: 'dHash 単独 (ヒスト無し)',
-            labelB: 'dHash + ヒスト (採用版)',
+            labelA: 'phash 単独',
+            labelB: 'phash + dHash',
             colorA: 'text-amber-300',
             colorB: 'text-emerald-300',
             getRepA: (items) => Math.min(...items.map(s => s.id)),
@@ -613,7 +612,7 @@
             const dkind = _diffMap[s.id] || 'same';
             const db = diffBadge(dkind);
             if (db) {
-                const tip = `dhash:#${s.cluster_id_dhash ?? '?'} / hybrid:#${s.cluster_id_hybrid ?? s.cluster_id ?? '?'}`;
+                const tip = `phash単独:#${s.cluster_id_phash_only ?? '?'} / hybrid:#${s.cluster_id_hybrid ?? s.cluster_id ?? '?'}`;
                 dots.push('<span class="px-1 rounded text-[9px] font-bold ' + db.color + '" title="' + escapeHtml(tip) + '">' + escapeHtml(db.label) + '</span>');
             }
         }
@@ -639,20 +638,20 @@
         });
     }
 
-    // Live + dhash 算出モード時に allScreens を再マッピングする (cluster_id を cluster_id_dhash で上書き、代表を再選出)
+    // Live + phash単独モード時に allScreens を再マッピングする (cluster_id を cluster_id_phash_only で上書き、代表を再選出)
     function applyClusterAlgoOverride(screens) {
         if (currentTab !== 'live') return screens;
         if (currentClusterAlgo === 'hybrid') return screens;
         const groupOldestId = {};
         for (const s of screens) {
-            const cid = s.cluster_id_dhash;
+            const cid = s.cluster_id_phash_only;
             if (cid === null || cid === undefined) continue;
             if (!(cid in groupOldestId) || s.id < groupOldestId[cid]) {
                 groupOldestId[cid] = s.id;
             }
         }
         return screens.map(s => {
-            const dhashCid = s.cluster_id_dhash;
+            const dhashCid = s.cluster_id_phash_only;
             if (dhashCid === null || dhashCid === undefined) return s;
             return {
                 ...s,
@@ -2924,13 +2923,13 @@
         promoteBtn.disabled = true;
         promoteBtn.classList.add('hidden');
 
-        // Live タブ + dHashのみモード時は allScreens から cluster_id_dhash でフィルタ
+        // Live タブ + phashのみモード時は allScreens から cluster_id_phash_only でフィルタ
         // (API は cluster_id=hybrid のみ見るため、dhash 仲間は反映されない)
         if (currentTab === 'live' && currentClusterAlgo === 'dhash') {
             const target = allScreens.find(s => s.id === screenId);
-            const dcid = target ? target.cluster_id_dhash : null;
+            const dcid = target ? target.cluster_id_phash_only : null;
             if (dcid !== null && dcid !== undefined) {
-                const sibs = allScreens.filter(s => s.cluster_id_dhash === dcid);
+                const sibs = allScreens.filter(s => s.cluster_id_phash_only === dcid);
                 if (sibs.length > 0) {
                     const oldestId = Math.min(...sibs.map(s => s.id));
                     _clusterSiblings = sibs.map(s => ({ ...s, is_representative: s.id === oldestId ? 1 : 0 }));
