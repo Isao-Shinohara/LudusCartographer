@@ -128,9 +128,15 @@
             c.bCids.add(g.cid);
             c.firstId = Math.min(c.firstId, g.first_id);
         }
+        // cid → first_id マップ (各 cluster 内の最古 screen id)
+        const aFirstIdMap = {};
+        for (const g of aGroups) aFirstIdMap[g.cid] = g.first_id;
+        const bFirstIdMap = {};
+        for (const g of bGroups) bFirstIdMap[g.cid] = g.first_id;
         const rows = Object.values(components).map(c => ({
-            aCids: [...c.aCids].sort((a, b) => a - b),
-            bCids: [...c.bCids].sort((a, b) => a - b),
+            // 行内の cluster は時系列順 (各 cluster の最古 screen id 順)
+            aCids: [...c.aCids].sort((a, b) => (aFirstIdMap[a] ?? 0) - (aFirstIdMap[b] ?? 0)),
+            bCids: [...c.bCids].sort((a, b) => (bFirstIdMap[a] ?? 0) - (bFirstIdMap[b] ?? 0)),
             firstId: c.firstId,
         }));
         rows.sort((x, y) => x.firstId - y.firstId);
