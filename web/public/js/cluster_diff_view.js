@@ -164,9 +164,9 @@
         const arrow = side === 'A' ? '→' : '←';
         const sideColor = side === 'A' ? opts.colorA : opts.colorB;
         const myLabel = cidLabel[`${side}${group.cid}`] || `#${group.cid}`;
-        // dHash 判定が phash の中間域を覆したケースのみを集計して表示
-        //   merge: phash 単独では別 → dHash で同じ cluster に吸収された
-        //   split: phash 単独では同 → dHash で別 cluster に切り離された
+        // Step B (dHash 分離) の効果のみを集計して表示
+        //   split: Step A では同クラスタだったが、Step B (dHash) で別 cluster に切り離された
+        //   merge: 通常は出ないが、再グループ化で隣接した場合に出る
         let mergeCount = 0, splitCount = 0;
         for (const s of group.items) {
             const e = ctx.histEffectByScreenId.get(s.id);
@@ -174,11 +174,11 @@
             else if (e === 'split') splitCount++;
         }
         const reasonParts = [];
-        if (mergeCount > 0) {
-            reasonParts.push(`<span class="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/30 text-emerald-200" title="phash 単独では別クラスタだったが、dHash 判定で統合された screen 数">dHashで統合 ×${mergeCount}</span>`);
-        }
         if (splitCount > 0) {
-            reasonParts.push(`<span class="px-1.5 py-0.5 rounded text-[10px] bg-orange-500/30 text-orange-200" title="phash 単独では同クラスタだったが、dHash 判定で分離された screen 数">dHashで分離 ×${splitCount}</span>`);
+            reasonParts.push(`<span class="px-1.5 py-0.5 rounded text-[10px] bg-orange-500/30 text-orange-200" title="Step A (phash) では同クラスタだったが、Step B (dHash) で分離された screen 数">dHashで分離 ×${splitCount}</span>`);
+        }
+        if (mergeCount > 0) {
+            reasonParts.push(`<span class="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/30 text-emerald-200" title="Step A では別クラスタだったが、Step B 後に再グループ化で同クラスタになった screen 数">dHash再統合 ×${mergeCount}</span>`);
         }
         const reasonHtml = reasonParts.join(' ');
         const repId = side === 'A' ? opts.getRepA(group.items) : opts.getRepB(group.items);

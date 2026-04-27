@@ -143,8 +143,8 @@
 <!-- 比較モード: 2カラム diff ビュー (Live のみ) -->
 <div id="diff-wrap" class="hidden mt-4 pb-10">
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-2">
-        <h3 class="text-sm font-bold text-amber-300 sticky top-0 bg-gray-950/80 backdrop-blur py-1 px-3 rounded">phash 単独 (dHashなし)</h3>
-        <h3 class="text-sm font-bold text-emerald-300 sticky top-0 bg-gray-950/80 backdrop-blur py-1 px-3 rounded">phash + dHash (採用版)</h3>
+        <h3 class="text-sm font-bold text-amber-300 sticky top-0 bg-gray-950/80 backdrop-blur py-1 px-3 rounded">Step A: phash 統合のみ</h3>
+        <h3 class="text-sm font-bold text-emerald-300 sticky top-0 bg-gray-950/80 backdrop-blur py-1 px-3 rounded">Step A + B: dHash 分離後 (採用版)</h3>
     </div>
     <!-- ペア行揃えグリッド: 同じ grid-row のブロック同士は左右で対応 (高さ自動揃え) -->
     <div id="diff-grid" class="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-3"></div>
@@ -329,16 +329,15 @@
     }
 
     // 判定理由 → badge色 + 閾値ベースのラベル
-    // 比較ビュー (side='A' or 'B') では「dHash 判定が phash の中間域を覆した瞬間」だけ表示:
-    //   - dhash_match / new:dhash_mismatch のみ表示
+    // 比較ビュー (side='A' or 'B') では「Step B (dHash 分離) の効果」だけ表示:
+    //   - revalidate_split (Step B で分離されたクラスタ起点) のみ表示
     //   - かつ左右で結果が異なる (isMatch=false) クラスタのみ表示
     // モーダル等 (side=undefined) では現状維持で全 badge を表示。
     function decisionMethodBadge(method, side, isMatch) {
         if (!method) return null;
         if (side === 'A' || side === 'B') {
-            const dhashOnly = method === 'dhash_match'
-                || method === 'new:dhash_mismatch';
-            if (!dhashOnly) return null;
+            const stepBOnly = method === 'revalidate_split' || method === 'revalidate_merge';
+            if (!stepBOnly) return null;
             if (isMatch) return null;
         }
         const map = {
@@ -347,20 +346,19 @@
             'merge_to_prev_empty':   { color: 'bg-purple-500/30 text-purple-200',label: '直前空+phash<20' },
             'merge_to_prev_similar': { color: 'bg-purple-500/20 text-purple-300',label: 'OCR揺れ phash<5' },
             'phash_near':            { color: 'bg-emerald-500/30 text-emerald-200', label: 'phash<8' },
-            'dhash_match':           { color: 'bg-cyan-500/30 text-cyan-200',    label: 'dHash<25' },
+            'phash_mid':             { color: 'bg-cyan-500/30 text-cyan-200',    label: 'phash 中間域' },
             'phash_fallback':        { color: 'bg-gray-500/30 text-gray-200',    label: 'phash<30' },
             'new_cluster':           { color: 'bg-blue-700/40 text-blue-300',    label: 'テキスト変化' },
-            'revalidate_merge':      { color: 'bg-gray-500/30 text-gray-200',    label: '再検証統合' },
-            'revalidate_split':      { color: 'bg-gray-500/20 text-gray-300',    label: '再検証分離' },
+            'revalidate_merge':      { color: 'bg-emerald-500/30 text-emerald-200', label: 'dHash再統合' },
+            'revalidate_split':      { color: 'bg-orange-500/30 text-orange-200',label: 'dHashで分離' },
             'remerge':               { color: 'bg-fuchsia-500/30 text-fuchsia-200', label: 'クラスタ再統合' },
         };
         if (map[method]) return map[method];
-        // new:* (分離理由) — どの閾値が引っかかったか明示
+        // new:* (分離理由)
         if (method.startsWith('new:')) {
             const reason = method.substring(4);
             const reasonMap = {
                 'phash_far':      { color: 'bg-orange-600/40 text-orange-300',   label: 'phash≥40' },
-                'dhash_mismatch': { color: 'bg-orange-600/40 text-orange-300',   label: 'dHash≥25' },
                 'phash_fallback': { color: 'bg-gray-700/60 text-gray-400',       label: 'phash≥30' },
             };
             return reasonMap[reason] || { color: 'bg-gray-700/60 text-gray-400', label: '新規(' + reason + ')' };
@@ -467,8 +465,8 @@
         const result = ClusterDiffView.render(grid, screens, {
             getCidA: (s) => s.cluster_id_phash_only,
             getCidB: _hybridCid,
-            labelA: 'phash 単独',
-            labelB: 'phash + dHash',
+            labelA: 'Step A (phash統合)',
+            labelB: 'Step A+B (dHash分離後)',
             colorA: 'text-amber-300',
             colorB: 'text-emerald-300',
             getRepA: (items) => Math.min(...items.map(s => s.id)),

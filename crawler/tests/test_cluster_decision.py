@@ -1,4 +1,7 @@
-"""cluster_decision のユニットテスト — テキスト空フレームペアの2段階判定 (phash → dHash)。"""
+"""cluster_decision のユニットテスト — Step A: phash 単独判定 (中間域は「同」)。
+
+Step B (dHash 分割) は background_worker._validate_clusters の責務でここではテストしない。
+"""
 from __future__ import annotations
 
 import sys
@@ -58,61 +61,32 @@ def test_phash_far_returns_not_same(gray_image: Path) -> None:
     assert method == "phash_far"
 
 
-# ─── 第2層: dHash 中間域 ──────────────────────────────────────
+# ─── 中間域: phash_mid (Step A は「同」) ──────────────────────
 
 
-def test_dhash_match_returns_same(gray_image: Path) -> None:
-    """phash 中間域 + dHash<25 → 同 (dhash_match)。"""
-    is_same, method = classify_empty_text_pair(
-        prev_path=gray_image,
-        curr_path=gray_image,
-        phash_distance=20,
-        dhash_distance=10,
-        near_threshold=8,
-        far_threshold=40,
-        fallback_threshold=30,
-    )
-    assert is_same is True
-    assert method == "dhash_match"
+def test_phash_mid_returns_same_regardless_of_dhash(gray_image: Path) -> None:
+    """中間域は dHash 値に関係なく「同」(Step A は統合のみ、分割は Step B)。"""
+    for dhash in (0, 10, 25, 50):
+        is_same, method = classify_empty_text_pair(
+            prev_path=gray_image,
+            curr_path=gray_image,
+            phash_distance=20,
+            dhash_distance=dhash,
+            near_threshold=8,
+            far_threshold=40,
+            fallback_threshold=30,
+        )
+        assert is_same is True
+        assert method == "phash_mid"
 
 
-def test_dhash_mismatch_returns_not_same(gray_image: Path) -> None:
-    """phash 中間域 + dHash>=25 → 別 (dhash_mismatch)。"""
-    is_same, method = classify_empty_text_pair(
-        prev_path=gray_image,
-        curr_path=gray_image,
-        phash_distance=20,
-        dhash_distance=30,
-        near_threshold=8,
-        far_threshold=40,
-        fallback_threshold=30,
-    )
-    assert is_same is False
-    assert method == "dhash_mismatch"
-
-
-# ─── prev_path None / dhash None フォールバック ──────────────
+# ─── prev_path None フォールバック ────────────────────────────
 
 
 def test_no_prev_path_within_fallback_returns_same() -> None:
     is_same, method = classify_empty_text_pair(
         prev_path=None,
         curr_path=Path("dummy"),
-        phash_distance=20,
-        dhash_distance=None,
-        near_threshold=8,
-        far_threshold=40,
-        fallback_threshold=30,
-    )
-    assert is_same is True
-    assert method == "phash_fallback"
-
-
-def test_no_dhash_within_fallback_returns_same(gray_image: Path) -> None:
-    """dhash が計算できない場合 (None) はフォールバック (phash 距離 < 30 で同)。"""
-    is_same, method = classify_empty_text_pair(
-        prev_path=gray_image,
-        curr_path=gray_image,
         phash_distance=20,
         dhash_distance=None,
         near_threshold=8,
@@ -146,21 +120,9 @@ def test_metrics_records_phash_and_dhash(gray_image: Path) -> None:
         phash_distance=20, dhash_distance=15,
         near_threshold=8, far_threshold=40, fallback_threshold=30,
     )
-    assert r.method == "dhash_match"
+    assert r.method == "phash_mid"
     assert r.phash_distance == 20
-    assert r.dhash_distance == 15
-
-
-def test_metrics_phash_near_records_distances(gray_image: Path) -> None:
-    """phash 即決時は dhash_distance は計算されないため None で渡された値がそのまま入る (情報量保持目的)。"""
-    r = classify_empty_text_pair_with_metrics(
-        prev_path=gray_image, curr_path=gray_image,
-        phash_distance=3, dhash_distance=None,
-        near_threshold=8, far_threshold=40, fallback_threshold=30,
-    )
-    assert r.method == "phash_near"
-    assert r.phash_distance == 3
-    assert r.dhash_distance is None
+    assert r.dhash_distance == 15  # UI 表示用に保持
 
 
 def test_metrics_brightness_recorded(black_image: Path, gray_image: Path) -> None:

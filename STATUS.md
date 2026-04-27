@@ -19,11 +19,17 @@
 
 ## 直近の主要変更
 
-### テキスト空フレームの 2 段階クラスタ判定
-1. **第1層 phash 即決**: < 8 で同 (phash_near), ≥ 40 で別 (phash_far)
-2. **第2層 dHash 距離**: 中間域 (8-39) で dHash<25 なら同 (dhash_match) / dHash≥25 なら別 (dhash_mismatch)
+### Step A + Step B の 2 段階クラスタ判定
+**Step A (cluster_decision.py)**: phash 単独で同/別を決める。
+- phash<8  → 同 (phash_near)
+- phash≥40 → 別 (phash_far)
+- 中間域 (8-39) → 同 (phash_mid)  ← まず統合し、Step B で分割
 
-(旧 第0層 暗転/ハードカット、ヒスト類似度判定はいずれも廃止)
+**Step B (background_worker._validate_clusters)**: クラスタ内を dHash 距離で分割。
+- 代表との dHash 距離 ≥ 20 → クラスタから分離 (revalidate_split)
+- 分離後の再グループ化: 隣接 dHash 距離 < 15 で統合 (revalidate_merge)
+
+(旧 第0層 暗転/ハードカット、ヒスト類似度判定、dhash_match/mismatch はいずれも廃止)
 
 ### DB スキーマ (lc_screens、Q3=B 厳格刷新)
 - `cluster_id_phash_only` (新): phash 単独シミュレーション

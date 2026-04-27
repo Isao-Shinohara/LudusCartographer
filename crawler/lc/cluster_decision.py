@@ -1,9 +1,14 @@
-"""cluster_decision — テキスト空フレームペアのクラスタ判定。
+"""cluster_decision — テキスト空フレームペアのクラスタ判定 (Step A: phash 単独)。
 
-§16 ルール 3「テキスト空 + phash判定」を以下の2段階で判定する:
+§16 ルール 3「テキスト空 + phash判定」を以下で判定する:
 
-  第1層: phash 即決 (< near_threshold で同, >= far_threshold で別)
-  第2層: dHash 距離で判定 (中間域)
+  Step A 第1層: phash 即決
+    phash < near_threshold       → 同 (phash_near)
+    phash >= far_threshold       → 別 (phash_far)
+    near <= phash < far (中間域) → 同 (phash_mid) ← まず統合し、Step B で分割
+
+  Step B (background_worker._validate_clusters): クラスタ内を dHash 距離で分割
+    代表との dHash 距離 >= 閾値 → クラスタから分離
 
 呼び出し側は判定理由 (decision_method) を `lc_screens.cluster_decision_method`
 に保存し、UI でクラスタの統合根拠を可視化する。
@@ -15,20 +20,16 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 
-# 第2層 dHash 閾値 (中間域内で「同」と判定する上限)
-DHASH_MID_THRESHOLD = 25
-
-
 @dataclass
 class ClassifyResult:
     """テキスト空ペア分類の結果と計算済み数値 (閾値調整用)。"""
 
     is_same: bool
     method: str
-    phash_distance: int                  # 第1層で使った phash 距離
-    dhash_distance: Optional[int]        # 第2層で使った dHash 距離
-    prev_brightness: Optional[float]     # 直前画像の平均輝度 (UI 表示用)
-    curr_brightness: Optional[float]     # 現画像の平均輝度 (UI 表示用)
+    phash_distance: int
+    dhash_distance: Optional[int]        # UI 表示・後段検証用 (Step A 自体は使わない)
+    prev_brightness: Optional[float]
+    curr_brightness: Optional[float]
 
 
 def classify_empty_text_pair(
@@ -41,7 +42,7 @@ def classify_empty_text_pair(
     far_threshold: int,
     fallback_threshold: int,
 ) -> Tuple[bool, str]:
-    """旧 API: 後方互換用、内部で classify_empty_text_pair_with_metrics を呼ぶ。"""
+    """旧 API: 後方互換用。"""
     r = classify_empty_text_pair_with_metrics(
         prev_path=prev_path,
         curr_path=curr_path,
@@ -64,7 +65,7 @@ def classify_empty_text_pair_with_metrics(
     far_threshold: int,
     fallback_threshold: int,
 ) -> ClassifyResult:
-    """2段階分類を行い、判定結果 + 計算済み数値を返す。"""
+    """Step A: phash 単独で同/別を決める。中間域はとりあえず「同」。"""
     import cv2
 
     def _brightness(path: Path | str) -> Optional[float]:
@@ -80,12 +81,8 @@ def classify_empty_text_pair_with_metrics(
     if phash_distance >= far_threshold:
         return ClassifyResult(False, "phash_far", phash_distance, dhash_distance, prev_br, curr_br)
 
-    # 第2層: dHash 距離 (中間域)
-    if dhash_distance is None:
-        # dHash が計算できない場合は phash 距離だけで判定 (フォールバック)
+    # 中間域 (8-39): Step A ではとりあえず「同」とし、Step B (validate) で dHash 分割を行う
+    if prev_path is None:
         same = phash_distance < fallback_threshold
-        return ClassifyResult(same, "phash_fallback", phash_distance, None, prev_br, curr_br)
-
-    if dhash_distance < DHASH_MID_THRESHOLD:
-        return ClassifyResult(True, "dhash_match", phash_distance, dhash_distance, prev_br, curr_br)
-    return ClassifyResult(False, "dhash_mismatch", phash_distance, dhash_distance, prev_br, curr_br)
+        return ClassifyResult(same, "phash_fallback", phash_distance, dhash_distance, prev_br, curr_br)
+    return ClassifyResult(True, "phash_mid", phash_distance, dhash_distance, prev_br, curr_br)

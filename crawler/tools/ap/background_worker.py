@@ -760,7 +760,7 @@ class BackgroundWorker:
                             (next_cid, sid),
                         )
                         rep_map[next_cid] = (ph, dh, title, norm_text)
-                        # 新規クラスタの分離理由を保存 (例: "new:phash_far", "new:dhash_mismatch")
+                        # 新規クラスタの分離理由を保存 (例: "new:phash_far", "new:phash_fallback")
                         self._set_decision(
                             conn, sid, next_cid,
                             f"new:{_decision_method}" if _decision_method != "new_cluster" else "new_cluster",
@@ -796,10 +796,13 @@ class BackgroundWorker:
         """全 screen を時系列順に phash 距離だけでクラスタリングし、
         cluster_id_phash_only に書き込む。
 
-        比較ビュー左ペイン用シミュレーション (phash 単独 vs phash + dHash)。
-        cluster_id_hybrid (= cluster_id) は変更しない。
+        Step A 直後 (dHash 分割前) のシミュレーション。
+        中間域も「同」として統合 (phash<40 で同、>=40 で別)。
+
+        比較ビュー左ペイン: 「Step A だけ」 (大胆統合)。
+        比較ビュー右ペイン: cluster_id_hybrid = Step A + B (dHash で構図違いを分離後)。
         """
-        _PHASH_TH = 20
+        _PHASH_TH = 40
 
         rows = conn.execute(
             "SELECT id, phash FROM lc_screens"
@@ -845,15 +848,18 @@ class BackgroundWorker:
         sid_filter: str,
         sid_params: tuple,
     ) -> None:
-        """クラスタ内バリデーション: 代表とハッシュが離れたテキスト空メンバーを分離する。
+        """Step B: クラスタ内を dHash 距離で分割する。
 
-        テキスト一致で統合されたメンバーは正当なので対象外。
-        テキスト空のメンバーのみ代表とのハッシュ距離を検証し、
-        閾値を超えていれば分離する。
-        分離後、時系列順に隣り合う画像同士をハッシュ距離で再グループ化する。
+        Step A (phash 中間域は「同」) で統合されたクラスタの中から、
+        構図が大きく異なるメンバー (代表との dHash 距離 >= 閾値) を分離する。
+        分離後、時系列順に隣り合うものを dHash 距離で再グループ化する。
+
+        テキスト一致で統合されたメンバーは正当なので対象外
+        (セリフ送り中の連続フレームは構図変化があっても同シーン)。
         """
-        _phash_distance = self._phash_distance
-        _EMPTY_HASH_THRESHOLD = 30
+        _dhash_distance = self._dhash_distance
+        DHASH_VALIDATE_THRESHOLD = 20  # 代表との dHash 距離 >= これで分離
+        DHASH_REGROUP_THRESHOLD = 15   # 再グループ化時の隣接 dHash 閾値
 
         # 2メンバー以上のクラスタを取得
         clusters = conn.execute(
@@ -866,44 +872,42 @@ class BackgroundWorker:
         if not clusters:
             return
 
-        _VALIDATE_THRESHOLD = _EMPTY_HASH_THRESHOLD  # 統合閾値と一致させる
-
         # 分離対象を収集（後で時系列順に再グループ化するため）
-        split_items: list[tuple[int, str]] = []  # (id, phash)
+        split_items: list[tuple[int, str]] = []  # (id, dhash)
 
         for cluster in clusters:
             cid = cluster["cluster_id"]
 
-            # 代表の phash を取得
+            # 代表の dhash を取得
             rep = conn.execute(
-                "SELECT id, phash, COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') as text"
+                "SELECT id, dhash, COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') as text"
                 " FROM lc_screens WHERE cluster_id = ? AND is_representative = 1 LIMIT 1",
                 (cid,),
             ).fetchone()
-            if not rep or not rep["phash"]:
+            if not rep or not rep["dhash"]:
                 continue
-            rep_phash = rep["phash"]
+            rep_dhash = rep["dhash"]
 
             # テキスト空の非代表メンバーを取得
             members = conn.execute(
-                "SELECT id, phash FROM lc_screens"
+                "SELECT id, dhash FROM lc_screens"
                 " WHERE cluster_id = ? AND is_representative = 0"
-                "   AND phash IS NOT NULL AND phash != ''"
+                "   AND dhash IS NOT NULL AND dhash != ''"
                 "   AND COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') = ''",
                 (cid,),
             ).fetchall()
 
             for member in members:
-                d = _phash_distance(rep_phash, member["phash"])
-                if d >= _VALIDATE_THRESHOLD:
+                d = _dhash_distance(rep_dhash, member["dhash"])
+                if d >= DHASH_VALIDATE_THRESHOLD:
                     # クラスタから外す（後で再グループ化）
                     conn.execute(
                         "UPDATE lc_screens SET cluster_id = NULL, is_representative = 0 WHERE id = ?",
                         (member["id"],),
                     )
-                    split_items.append((member["id"], member["phash"]))
+                    split_items.append((member["id"], member["dhash"]))
                     logger.debug(
-                        "[BG_WORKER] cluster_validate: id=%d をクラスタ %d から分離 (phash距離=%d)",
+                        "[BG_WORKER] cluster_validate: id=%d をクラスタ %d から分離 (dHash距離=%d)",
                         member["id"], cid, d,
                     )
 
@@ -914,20 +918,20 @@ class BackgroundWorker:
         split_ids = [s[0] for s in split_items]
         placeholders = ",".join("?" * len(split_ids))
         ordered = conn.execute(
-            f"SELECT id, phash FROM lc_screens WHERE id IN ({placeholders}) ORDER BY discovered_at",
+            f"SELECT id, dhash FROM lc_screens WHERE id IN ({placeholders}) ORDER BY discovered_at",
             split_ids,
         ).fetchall()
 
-        # 時系列順に隣り合う画像同士を phash 距離で統合
+        # 時系列順に隣り合う画像同士を dHash 距離で統合
         prev_cid: Optional[int] = None
         prev_hash: Optional[str] = None
         regroup_count = 0
         for row in ordered:
-            sid, ph = row["id"], row["phash"]
+            sid, ph = row["id"], row["dhash"]
             merged = False
             if prev_cid is not None and prev_hash is not None:
-                d = _phash_distance(prev_hash, ph)
-                if d < _EMPTY_HASH_THRESHOLD:
+                d = _dhash_distance(prev_hash, ph)
+                if d < DHASH_REGROUP_THRESHOLD:
                     # 直前の分離画像と近い → 同じクラスタに統合（非代表）
                     conn.execute(
                         "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
