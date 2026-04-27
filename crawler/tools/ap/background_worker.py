@@ -907,14 +907,16 @@ class BackgroundWorker:
         for cluster in clusters:
             cid = cluster["cluster_id"]
 
-            # cluster 内のテキスト空メンバー (代表含む) を取得
+            # cluster 内の全メンバー (代表含む) を取得
+            # 注: 旧版はテキスト空のみ対象だったが、Step A が LC_TEXT_SEPARATION=off で
+            # テキストを無視している場合に Step B が見ると整合性が崩れるため撤廃。
+            # 将来 LC_TEXT_SEPARATION=on でテキスト一致統合を残す場合は要再検討。
             all_members = [
                 dict(r) for r in conn.execute(
                     "SELECT id, dhash, avg_brightness AS br, is_representative AS rep"
                     " FROM lc_screens"
                     " WHERE cluster_id = ?"
-                    "   AND dhash IS NOT NULL AND dhash != ''"
-                    "   AND COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') = ''",
+                    "   AND dhash IS NOT NULL AND dhash != ''",
                     (cid,),
                 ).fetchall()
             ]
