@@ -709,8 +709,8 @@ class BackgroundWorker:
                     from lc.cluster_decision import classify_empty_text_pair_with_metrics
 
                     _NEAR_TH = 8
-                    _FAR_TH = 35
-                    _FALLBACK_TH = 35
+                    _FAR_TH = 40
+                    _FALLBACK_TH = 40
                     _matched = False
                     _decision_method = "new_cluster"
                     _metric_phash = None       # 直前代表との phash 距離
@@ -747,7 +747,7 @@ class BackgroundWorker:
                         # Step A 直径制限: cluster 内全メンバーとの最大 phash 距離 >= 25 で別 cluster
                         # 代表交代によるドリフト防止 (代表に依存しない判定)
                         if is_same:
-                            MAX_PHASH_DIAMETER = 25
+                            MAX_PHASH_DIAMETER = 30
                             members = cluster_phashes.get(_prev_cid, [])
                             if members and ph:
                                 max_d = max(
@@ -882,7 +882,7 @@ class BackgroundWorker:
         if not target_cluster_ids:
             return
         _dhash_distance = self._dhash_distance
-        DHASH_VALIDATE_THRESHOLD = 22  # cluster の直径 (max pairwise dHash) がこれ以上で分離
+        DHASH_VALIDATE_THRESHOLD = 25  # cluster の直径 (max pairwise dHash) がこれ以上で分離
 
         # LC_TEXT_SEPARATION=on の場合、§16 ルール 1「テキスト一致 → 同クラスタ」を
         # Step B でも尊重する: 代表とテキスト一致 (完全/前方一致) するメンバーは
@@ -991,18 +991,18 @@ class BackgroundWorker:
 
         # ─── 段階 2: 分離 screen の最近傍 cluster 再統合 ───
         # 分離された screen を時系列順 (id 順) に処理し、二段判定で統合可否を決定:
-        #   RULE_A: d(rep, X) < TH_STRICT (=22)        ← 標準: 代表と近い
-        #   RULE_B: d(prev, X) < TH_PREV (=15)
-        #          AND d(rep, X) < TH_LOOSE (=30)      ← bridge: 直前と十分近く
+        #   RULE_A: d(rep, X) < TH_STRICT (=25)        ← 標準: 代表と近い
+        #   RULE_B: d(prev, X) < TH_PREV (=20)
+        #          AND d(rep, X) < TH_LOOSE (=35)      ← bridge: 直前と十分近く
         #                                                ドリフトも上限内
         #   どちらかを満たせば直前 cluster に統合 (revalidate_merge)
         #   どちらも満たさず → 新規独立 cluster (revalidate_split)
-        # TH_LOOSE がドリフト絶対上限。連鎖統合で代表から 30 以上離れたら必ず止まる。
+        # TH_LOOSE がドリフト絶対上限。連鎖統合で代表から 35 以上離れたら必ず止まる。
         # ID_GAP_THRESHOLD: 直前 screen との id 差がこれ以下なら時系列で隣接と判定。
         ID_GAP_THRESHOLD = 30
-        TH_STRICT = DHASH_VALIDATE_THRESHOLD  # 22
-        TH_PREV = 15
-        TH_LOOSE = 30
+        TH_STRICT = DHASH_VALIDATE_THRESHOLD  # 25
+        TH_PREV = 20
+        TH_LOOSE = 35
         split_items.sort(key=lambda x: x[0])
         merged_count = 0
         new_count = 0
@@ -1071,9 +1071,9 @@ class BackgroundWorker:
         # MAX_PASSES は無限ループ防止の安全網 (通常 1〜5 pass で収束する)。
         MAX_PASSES = 50
         # 段階 3 用の B1 hybrid 閾値 (rep + prev)
-        STEP3_TH_STRICT = DHASH_VALIDATE_THRESHOLD  # 22
-        STEP3_TH_PREV = 22
-        STEP3_TH_LOOSE = 30
+        STEP3_TH_STRICT = DHASH_VALIDATE_THRESHOLD  # 25
+        STEP3_TH_PREV = 25
+        STEP3_TH_LOOSE = 35
         total_gap_merged = 0
         total_gap_new = 0
         for _pass in range(MAX_PASSES):
@@ -1647,8 +1647,8 @@ class BackgroundWorker:
         try:
             _phash_distance = self._phash_distance
             _dhash_distance = self._dhash_distance
-            _EMPTY_PHASH_TH = 30  # phash 距離: これ未満で「近い」候補
-            _EMPTY_DHASH_TH = 22  # dhash 距離: これ未満なら統合確定 (Step B と同じ)
+            _EMPTY_PHASH_TH = 35  # phash 距離: これ未満で「近い」候補
+            _EMPTY_DHASH_TH = 25  # dhash 距離: これ未満なら統合確定 (Step B と同じ)
 
             sid_filter = ""
             sid_params: tuple = ()
