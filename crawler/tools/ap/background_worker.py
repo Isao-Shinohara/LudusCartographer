@@ -1015,16 +1015,28 @@ class BackgroundWorker:
         #     D は X から切り離して別 cluster に。
         gap_merged = 0
         gap_new = 0
-        # 影響範囲: 全 cluster の非代表メンバーを時系列順に走査
+        # 1メンバー cluster の cluster_id を特定 (代表が孤立している cluster)
+        single_member_cids = {
+            r["cluster_id"] for r in conn.execute(
+                "SELECT cluster_id FROM lc_screens"
+                " WHERE cluster_id IS NOT NULL" + sid_filter +
+                " GROUP BY cluster_id HAVING COUNT(*) = 1",
+                sid_params,
+            ).fetchall()
+        }
+        # 影響範囲: 非代表メンバー + 1メンバー cluster の代表 を時系列順に走査
+        # (複数メンバー cluster の代表は中心維持のため対象外)
         all_members = conn.execute(
-            "SELECT id, cluster_id, dhash FROM lc_screens"
-            " WHERE cluster_id IS NOT NULL AND is_representative = 0"
+            "SELECT id, cluster_id, dhash, is_representative AS rep FROM lc_screens"
+            " WHERE cluster_id IS NOT NULL"
             "   AND dhash IS NOT NULL AND dhash != ''"
             + sid_filter +
             " ORDER BY id",
             sid_params,
         ).fetchall()
         for m in all_members:
+            if m["rep"] and m["cluster_id"] not in single_member_cids:
+                continue  # 複数メンバー cluster の代表 → 対象外
             mid = m["id"]
             mcid = m["cluster_id"]
             mdh = m["dhash"]
