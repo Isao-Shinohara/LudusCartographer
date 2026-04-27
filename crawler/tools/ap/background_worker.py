@@ -807,70 +807,23 @@ class BackgroundWorker:
                 self.clustering_count += processed
                 logger.info("[BG_WORKER] clustering: %d 枚処理 (合計 %d)", processed, self.clustering_count)
 
-            # クラスタ内バリデーション: テキスト空メンバーが代表から離れすぎていたら分離
-            self._validate_clusters(conn, next_cid, _sid_filter, _sid_params)
-
-            # phash 単体シミュレーション: 比較ビュー左ペイン用 cluster_id_phash_only を計算
+            # Step A 直後の cluster_id を cluster_id_phash_only にスナップショット保存
+            # (Step B 適用前の実態。比較ビュー左ペイン用)
             if processed > 0:
-                self._run_phash_only_simulation(conn, _sid_filter, _sid_params)
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_id_phash_only = cluster_id"
+                    " WHERE cluster_id IS NOT NULL AND cluster_id_phash_only IS NULL"
+                    + _sid_filter,
+                    _sid_params,
+                )
+                conn.commit()
+
+            # クラスタ内バリデーション: Step B (dHash 分割) を実行
+            # cluster_id を更新するが cluster_id_phash_only は変えない
+            self._validate_clusters(conn, next_cid, _sid_filter, _sid_params)
 
         finally:
             conn.close()
-
-    def _run_phash_only_simulation(
-        self,
-        conn: sqlite3.Connection,
-        sid_filter: str,
-        sid_params: tuple,
-    ) -> None:
-        """全 screen を時系列順に phash 距離だけでクラスタリングし、
-        cluster_id_phash_only に書き込む。
-
-        Step A 直後 (dHash 分割前) のシミュレーション。
-        中間域も「同」として統合 (phash<25 で同、>=25 で別)。
-        far_threshold (25) と一致させる。
-
-        比較ビュー左ペイン: 「Step A だけ」 (中間域も統合)。
-        比較ビュー右ペイン: cluster_id_hybrid = Step A + B (dHash で構図違いを分離後)。
-        """
-        _PHASH_TH = 25
-
-        rows = conn.execute(
-            "SELECT id, phash FROM lc_screens"
-            f" WHERE cluster_id IS NOT NULL{sid_filter}"
-            " ORDER BY discovered_at, id",
-            sid_params,
-        ).fetchall()
-
-        if not rows:
-            return
-
-        next_id = 0
-        current_id = -1
-        prev_hash: Optional[str] = None
-
-        for r in rows:
-            sid = r["id"]
-            h = r["phash"]
-
-            same = False
-            if current_id >= 0 and prev_hash is not None and h:
-                d = self._phash_distance(prev_hash, h)
-                if d < _PHASH_TH:
-                    same = True
-
-            if not same:
-                current_id = next_id
-                next_id += 1
-
-            conn.execute(
-                "UPDATE lc_screens SET cluster_id_phash_only = ?,"
-                " cluster_id_hybrid = COALESCE(cluster_id_hybrid, cluster_id)"
-                " WHERE id = ?",
-                (current_id, sid),
-            )
-            prev_hash = h if h else prev_hash
-        conn.commit()
 
     def _validate_clusters(
         self,
