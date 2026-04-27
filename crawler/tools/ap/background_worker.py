@@ -859,6 +859,11 @@ class BackgroundWorker:
         _dhash_distance = self._dhash_distance
         DHASH_VALIDATE_THRESHOLD = 22  # cluster の直径 (max pairwise dHash) がこれ以上で分離
 
+        # LC_TEXT_SEPARATION=on の場合、§16 ルール 1「テキスト一致 → 同クラスタ」を
+        # Step B でも尊重する: 代表とテキスト一致 (完全/前方一致) するメンバーは
+        # dHash 距離が大きくても分離しない。
+        text_sep_enabled = os.environ.get("LC_TEXT_SEPARATION", "on").lower() != "off"
+
         target_placeholders = ",".join("?" * len(target_cluster_ids))
         target_params = list(target_cluster_ids)
 
@@ -880,12 +885,10 @@ class BackgroundWorker:
             cid = cluster["cluster_id"]
 
             # cluster 内の全メンバー (代表含む) を取得
-            # 注: 旧版はテキスト空のみ対象だったが、Step A が LC_TEXT_SEPARATION=off で
-            # テキストを無視している場合に Step B が見ると整合性が崩れるため撤廃。
-            # 将来 LC_TEXT_SEPARATION=on でテキスト一致統合を残す場合は要再検討。
             all_members = [
                 dict(r) for r in conn.execute(
-                    "SELECT id, dhash, avg_brightness AS br, is_representative AS rep"
+                    "SELECT id, dhash, avg_brightness AS br, is_representative AS rep,"
+                    "       ocr_text_hq, ocr_text"
                     " FROM lc_screens"
                     " WHERE cluster_id = ?"
                     "   AND dhash IS NOT NULL AND dhash != ''",
@@ -895,14 +898,39 @@ class BackgroundWorker:
             if len(all_members) < 2:
                 continue
 
+            # LC_TEXT_SEPARATION=on のとき、代表のテキストを正規化して保持
+            rep_norm_text = ""
+            if text_sep_enabled:
+                for m in all_members:
+                    if m.get("rep"):
+                        raw = m.get("ocr_text_hq") or m.get("ocr_text") or ""
+                        rep_norm_text = _normalize_text(raw)
+                        break
+
+            def _matches_rep_text(member: dict) -> bool:
+                """LC_TEXT_SEPARATION=on かつ代表とテキスト一致 (完全/前方一致) なら True。"""
+                if not text_sep_enabled or not rep_norm_text:
+                    return False
+                raw = member.get("ocr_text_hq") or member.get("ocr_text") or ""
+                m_norm = _normalize_text(raw)
+                if not m_norm:
+                    return False
+                return (
+                    m_norm == rep_norm_text
+                    or m_norm.startswith(rep_norm_text)
+                    or rep_norm_text.startswith(m_norm)
+                )
+
             # 反復分離: 「他メンバーとの最大 dHash 距離」が一番大きいメンバーから分離
-            # 直径 < 閾値 になるまで繰り返し (代表は分離対象外)
+            # 直径 < 閾値 になるまで繰り返し (代表 + 代表とテキスト一致は分離対象外)
             while len(all_members) > 1:
                 # 非代表メンバーの最大距離を計算
                 max_dists = []
                 for m in all_members:
                     if m.get("rep"):
                         continue  # 代表は分離対象外
+                    if _matches_rep_text(m):
+                        continue  # 代表とテキスト一致 → §16 ルール 1 で分離対象外
                     max_d = max(
                         (_dhash_distance(m["dhash"], o["dhash"])
                          for o in all_members if o["id"] != m["id"]),
