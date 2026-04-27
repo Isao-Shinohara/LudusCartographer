@@ -524,6 +524,17 @@ class BackgroundWorker:
                 for r in existing_reps
             }
 
+            # cluster_phashes: cluster_id → 全メンバーの phash リスト (Step A 直径制限用)
+            # 代表交代によるドリフトを防ぐため、新 screen 追加時に全メンバーとの最大距離をチェックする
+            cluster_phashes: dict[int, list[str]] = {}
+            for r in conn.execute(
+                "SELECT cluster_id, phash FROM lc_screens"
+                " WHERE cluster_id IS NOT NULL AND phash IS NOT NULL AND phash != ''"
+                + _sid_filter,
+                _sid_params,
+            ).fetchall():
+                cluster_phashes.setdefault(r["cluster_id"], []).append(r["phash"])
+
             # cluster_id はグローバルに一意 (セッション横断で重複しない)
             max_cid = conn.execute(
                 "SELECT COALESCE(MAX(cluster_id), -1) FROM lc_screens"
@@ -603,6 +614,7 @@ class BackgroundWorker:
                         )
                         logger.debug("[REP_TRACE] id=%d rep=0 (text_match非代表統合, cid=%d)", sid, text_match_cid)
                     self._set_decision(conn, sid, text_match_cid, _text_match_method)
+                    cluster_phashes.setdefault(text_match_cid, []).append(ph)
                     _prev_cid = text_match_cid
                 elif _is_meaningful:
                     # 2a) 直前テキスト空 + phash 近い → 統合 (テキストあり側が代表に)
@@ -666,6 +678,7 @@ class BackgroundWorker:
                                 logger.debug("[REP_TRACE] id=%d rep=0 (prev_mergeテキスト類似非代表, cid=%d)", sid, _prev_cid)
                     if _merge_to_prev:
                         self._set_decision(conn, sid, _prev_cid, _merge_method)
+                        cluster_phashes.setdefault(_prev_cid, []).append(ph)
                     else:
                         conn.execute(
                             "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
@@ -673,6 +686,7 @@ class BackgroundWorker:
                         )
                         rep_map[next_cid] = (ph, dh, title, norm_text)
                         self._set_decision(conn, sid, next_cid, "new_cluster")
+                        cluster_phashes[next_cid] = [ph] if ph else []
                         _prev_cid = next_cid
                         next_cid += 1
                 else:
@@ -709,6 +723,20 @@ class BackgroundWorker:
                         _metric_phash = _result.phash_distance
                         _metric_dhash = _result.dhash_distance
                         _metric_brightness = _result.curr_brightness
+
+                        # Step A 直径制限: cluster 内全メンバーとの最大 phash 距離 >= 25 で別 cluster
+                        # 代表交代によるドリフト防止 (代表に依存しない判定)
+                        if is_same:
+                            MAX_PHASH_DIAMETER = 25
+                            members = cluster_phashes.get(_prev_cid, [])
+                            if members and ph:
+                                max_d = max(
+                                    (self._phash_distance(m, ph) for m in members if m),
+                                    default=0,
+                                )
+                                if max_d >= MAX_PHASH_DIAMETER:
+                                    is_same = False
+                                    _decision_method = "phash_diameter"
 
                         if is_same:
                             # 代表交代判定: テキストあり > テキスト空 > 顔面積
@@ -753,6 +781,7 @@ class BackgroundWorker:
                                 phash_dist=_metric_phash, dhash_dist=_metric_dhash,
                                 avg_brightness=_metric_brightness,
                             )
+                            cluster_phashes.setdefault(_prev_cid, []).append(ph)
                             _matched = True
                     if not _matched:
                         conn.execute(
@@ -760,13 +789,14 @@ class BackgroundWorker:
                             (next_cid, sid),
                         )
                         rep_map[next_cid] = (ph, dh, title, norm_text)
-                        # 新規クラスタの分離理由を保存 (例: "new:phash_far", "new:phash_fallback")
+                        # 新規クラスタの分離理由を保存 (例: "new:phash_far", "new:phash_diameter")
                         self._set_decision(
                             conn, sid, next_cid,
                             f"new:{_decision_method}" if _decision_method != "new_cluster" else "new_cluster",
                             phash_dist=_metric_phash, dhash_dist=_metric_dhash,
                             avg_brightness=_metric_brightness,
                         )
+                        cluster_phashes[next_cid] = [ph] if ph else []
                         _prev_cid = next_cid
                         next_cid += 1
 
