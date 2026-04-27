@@ -485,8 +485,9 @@
             diffFilter: _diffFilter,
             imgUrl: imgUrl,
             screenName: (s) => s.name || '',
-            onScreenClick: (s) => {
+            onScreenClick: (s, side) => {
                 filteredScreens = allScreens.slice();
+                _compareSide = side || null;
                 const idx = filteredScreens.findIndex(x => x.id === s.id);
                 if (idx >= 0) showModal(idx);
             },
@@ -2726,6 +2727,9 @@
     // filteredScreens はソート済み配列。
     // ← = 前へ (idx-1)、→ = 次へ (idx+1)。グリッド表示順に一致。
     let modalIdx = -1;
+    // 比較モード: モーダルを開いたペインを記憶 ('A' or 'B')。
+    // ←/→ 押下時、そのペインのクラスタを移動する。null なら通常ナビ。
+    let _compareSide = null;
 
     function renderOcrSources(s) {
         const area = document.getElementById('modal-ocr-sources');
@@ -3193,6 +3197,47 @@
         document.getElementById('modal-anchor-compare').classList.remove('flex');
         modalIdx = -1;
         _previewModalIdx = -1;
+        _compareSide = null;
+    }
+
+    // 比較モードのクラスタ間ナビゲーション
+    // direction: -1 = 前のクラスタ、+1 = 次のクラスタ
+    // side: 'A' or 'B' (どちらのペインのクラスタを辿るか)
+    // 戻り値: filteredScreens 内の index、見つからなければ -1
+    function _compareClusterNav(side, direction) {
+        if (modalIdx < 0 || !filteredScreens[modalIdx]) return -1;
+        const getCid = side === 'A' ? _getCompareCidA : _getCompareCidB;
+        const curScreen = filteredScreens[modalIdx];
+        const curCid = getCid(curScreen);
+        if (curCid === null || curCid === undefined) return -1;
+        // 全 screens を時系列順に並べて、cluster ごとの最古 screen (= 代表候補) を抽出
+        const sorted = [...allScreens].sort((a, b) => a.id - b.id);
+        const seen = new Set();
+        const clusterReps = []; // [{cid, repScreen, firstId}]
+        for (const s of sorted) {
+            const cid = getCid(s);
+            if (cid === null || cid === undefined) continue;
+            if (seen.has(cid)) continue;
+            seen.add(cid);
+            // cluster 内の代表を選ぶ: A 側は最古 id、B 側は is_representative=1 (なければ最古)
+            const members = sorted.filter(x => getCid(x) === cid);
+            let rep;
+            if (side === 'A') {
+                rep = members[0]; // 既にソート済み = 最古
+            } else {
+                rep = members.find(m => m.is_representative) || members[0];
+            }
+            clusterReps.push({ cid, rep, firstId: members[0].id });
+        }
+        // first_id 順にソート
+        clusterReps.sort((a, b) => a.firstId - b.firstId);
+        // 現在のクラスタ位置を見つける
+        const curIdx = clusterReps.findIndex(c => c.cid === curCid);
+        if (curIdx < 0) return -1;
+        const targetIdx = curIdx + direction;
+        if (targetIdx < 0 || targetIdx >= clusterReps.length) return -1;
+        const targetRep = clusterReps[targetIdx].rep;
+        return filteredScreens.findIndex(x => x.id === targetRep.id);
     }
 
     // --- 除外トグル (ペンディング方式) ---
@@ -3545,15 +3590,32 @@
         showModal(parseInt(card.dataset.idx, 10));
     });
 
-    // ← 古い方向
+    // 比較モードかつ _compareSide が設定済みなら、クラスタ単位でナビゲート
+    function _navPrev() {
+        if (currentClusterAlgo === 'compare' && _compareSide) {
+            const idx = _compareClusterNav(_compareSide, -1);
+            if (idx >= 0) showModal(idx);
+            return;
+        }
+        if (canGoOlder()) showModal(olderIdx());
+    }
+    function _navNext() {
+        if (currentClusterAlgo === 'compare' && _compareSide) {
+            const idx = _compareClusterNav(_compareSide, +1);
+            if (idx >= 0) showModal(idx);
+            return;
+        }
+        if (canGoNewer()) showModal(newerIdx());
+    }
+    // ← 古い方向 (比較モード時はクラスタを 1 つ戻る)
     document.getElementById('modal-prev').addEventListener('click', function(e) {
         e.stopPropagation();
-        if (canGoOlder()) showModal(olderIdx());
+        _navPrev();
     });
-    // → 新しい方向
+    // → 新しい方向 (比較モード時はクラスタを 1 つ進む)
     document.getElementById('modal-next').addEventListener('click', function(e) {
         e.stopPropagation();
-        if (canGoNewer()) showModal(newerIdx());
+        _navNext();
     });
 
     modal.addEventListener('click', function(e) {
@@ -3573,8 +3635,8 @@
                 if (e.key === 'ArrowLeft' && _previewModalIdx > 0) _previewModalShow(_previewModalIdx - 1);
                 if (e.key === 'ArrowRight' && _previewModalIdx < _previewModalItems.length - 1) _previewModalShow(_previewModalIdx + 1);
             } else {
-                if (e.key === 'ArrowLeft' && canGoOlder()) showModal(olderIdx());
-                if (e.key === 'ArrowRight' && canGoNewer()) showModal(newerIdx());
+                if (e.key === 'ArrowLeft') _navPrev();
+                if (e.key === 'ArrowRight') _navNext();
             }
             // ↑↓ で同一クラスタ画像を選択
             if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && _clusterSiblings.length > 1) {
