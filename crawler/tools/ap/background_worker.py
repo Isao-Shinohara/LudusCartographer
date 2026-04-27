@@ -694,7 +694,7 @@ class BackgroundWorker:
                     from lc.cluster_decision import classify_empty_text_pair_with_metrics
 
                     _NEAR_TH = 8
-                    _FAR_TH = 25
+                    _FAR_TH = 30
                     _FALLBACK_TH = 30
                     _matched = False
                     _decision_method = "new_cluster"
