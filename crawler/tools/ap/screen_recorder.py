@@ -635,18 +635,6 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: cluster_id_phash_only カラム追加")
-        if "orb_descriptors" not in cols:
-            self._conn.execute(
-                "ALTER TABLE lc_screens ADD COLUMN orb_descriptors BLOB"
-            )
-            self._conn.commit()
-            logger.info("[ScreenRecorder] migrate: orb_descriptors カラム追加")
-        if "cluster_id_orb" not in cols:
-            self._conn.execute(
-                "ALTER TABLE lc_screens ADD COLUMN cluster_id_orb INTEGER"
-            )
-            self._conn.commit()
-            logger.info("[ScreenRecorder] migrate: cluster_id_orb カラム追加")
         # 旧カラム cluster_id_dhash は廃止 (Q3=B)
         if "cluster_id_dhash" in cols:
             try:
@@ -948,16 +936,10 @@ class ScreenRecorder:
         import sqlite3
         # dhash を計算（screenshot_path から）
         dhash_val = None
-        orb_blob: bytes = b''
         if screenshot_path and Path(screenshot_path).exists():
             try:
                 from lc.utils import compute_dhash
                 dhash_val = compute_dhash(Path(screenshot_path))
-            except Exception:
-                pass
-            try:
-                from lc.orb_matcher import compute_descriptors as _orb_compute
-                orb_blob = _orb_compute(screenshot_path)
             except Exception:
                 pass
         for attempt in range(self._DB_RETRY_MAX):
@@ -965,8 +947,8 @@ class ScreenRecorder:
                 cur = self._conn.execute(
                     "INSERT INTO lc_screens"
                     " (session_id, fingerprint, title, depth, parent_fp,"
-                    "  phash, dhash, orb_descriptors, screenshot_path, thumbnail_path, ocr_text, scene, discovered_at)"
-                    " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "  phash, dhash, screenshot_path, thumbnail_path, ocr_text, scene, discovered_at)"
+                    " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         self._session_id,
                         fingerprint,
@@ -974,7 +956,6 @@ class ScreenRecorder:
                         parent_fp,
                         phash,
                         dhash_val,
-                        orb_blob if orb_blob else None,
                         screenshot_path,
                         thumbnail_path,
                         ocr_text,

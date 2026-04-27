@@ -78,7 +78,6 @@
         <button id="cluster-algo-hybrid" class="px-2 py-1 text-xs bg-brand/80 text-white" onclick="setClusterAlgo('hybrid')">phash+dHash</button>
         <button id="cluster-algo-dhash" class="px-2 py-1 text-xs bg-gray-800 text-gray-400 hover:text-gray-200" onclick="setClusterAlgo('dhash')">phashのみ</button>
         <button id="cluster-algo-compare" class="px-2 py-1 text-xs bg-gray-800 text-gray-400 hover:text-gray-200" onclick="setClusterAlgo('compare')" title="phash 単独 vs phash+dHash の差分を比較">比較</button>
-        <button id="cluster-algo-compare-orb" class="px-2 py-1 text-xs bg-gray-800 text-gray-400 hover:text-gray-200" onclick="setClusterAlgo('compare-orb')" title="phash+dHash vs phash+ORB の差分を比較">比較ORB</button>
     </div>
     <select id="diff-filter" class="bg-gray-800 text-gray-300 text-xs px-2 py-1 rounded border border-gray-700 disabled:opacity-40 disabled:cursor-not-allowed" disabled title="比較モード時のみ使用可能">
         <option value="all">全表示</option>
@@ -369,7 +368,7 @@
     }
 
     window.setClusterAlgo = function(algo) {
-        if (algo !== 'dhash' && algo !== 'hybrid' && algo !== 'compare' && algo !== 'compare-orb') return;
+        if (algo !== 'dhash' && algo !== 'hybrid' && algo !== 'compare') return;
         currentClusterAlgo = algo;
         const url = new URL(window.location);
         url.searchParams.set('algo', algo);
@@ -379,7 +378,6 @@
             hybrid:  document.getElementById('cluster-algo-hybrid'),
             dhash:   document.getElementById('cluster-algo-dhash'),
             compare: document.getElementById('cluster-algo-compare'),
-            'compare-orb': document.getElementById('cluster-algo-compare-orb'),
         };
         const activeCls = ['bg-brand/80', 'text-white'];
         const inactiveCls = ['bg-gray-800', 'text-gray-400'];
@@ -392,7 +390,7 @@
             }
         }
         // 比較モード時のみ diff フィルタとサマリを表示、グリッドを切替
-        const isCompare = (algo === 'compare' || algo === 'compare-orb');
+        const isCompare = (algo === 'compare');
         const diffFilter = document.getElementById('diff-filter');
         const diffSummary = document.getElementById('diff-summary');
         const diffWrap = document.getElementById('diff-wrap');
@@ -412,17 +410,10 @@
 
     // 比較モード用: 左ペイン/右ペインの cluster_id 取得関数
     // - 'compare': 左 = phash 単独 (cluster_id_phash_only)、右 = phash+dHash (cluster_id_hybrid)
-    // - 'compare-orb': 左 = phash+dHash (cluster_id_hybrid)、右 = phash+ORB (cluster_id_orb)
     function _getCompareCidA(s) {
-        if (currentClusterAlgo === 'compare-orb') {
-            return s.cluster_id_hybrid !== null && s.cluster_id_hybrid !== undefined ? s.cluster_id_hybrid : s.cluster_id;
-        }
         return s.cluster_id_phash_only;
     }
     function _getCompareCidB(s) {
-        if (currentClusterAlgo === 'compare-orb') {
-            return s.cluster_id_orb;
-        }
         return s.cluster_id_hybrid !== null && s.cluster_id_hybrid !== undefined ? s.cluster_id_hybrid : s.cluster_id;
     }
 
@@ -480,9 +471,8 @@
     function renderDiffGrid(screens) {
         const grid = document.getElementById('diff-grid');
         if (!grid) return;
-        const isOrbMode = (currentClusterAlgo === 'compare-orb');
-        const labelA = isOrbMode ? 'Step A+B (dHash 採用版)' : 'Step A (phash統合)';
-        const labelB = isOrbMode ? 'Step A+ORB (シミュレーション)' : 'Step A+B (dHash分離後)';
+        const labelA = 'Step A (phash統合)';
+        const labelB = 'Step A+B (dHash分離後)';
         const result = ClusterDiffView.render(grid, screens, {
             getCidA: _getCompareCidA,
             getCidB: _getCompareCidB,
@@ -504,7 +494,7 @@
             shouldHandleKey: () => {
                 const modalEl = document.getElementById('modal');
                 if (modalEl && !modalEl.classList.contains('hidden')) return false;
-                return currentTab === 'live' && (currentClusterAlgo === 'compare' || currentClusterAlgo === 'compare-orb');
+                return currentTab === 'live' && currentClusterAlgo === 'compare';
             },
             decisionLabel: decisionMethodBadge,
         });
@@ -681,7 +671,7 @@
     function renderAll() {
         const filter = filterSelect.value;
         // 比較モード時は diff 計算 + 2カラム diff ビュー描画
-        const isCompareMode = (currentTab === 'live' && (currentClusterAlgo === 'compare' || currentClusterAlgo === 'compare-orb'));
+        const isCompareMode = (currentTab === 'live' && currentClusterAlgo === 'compare');
         if (isCompareMode) {
             _diffMap = computeDiffMap(allScreens);
             updateDiffSummary(allScreens);
