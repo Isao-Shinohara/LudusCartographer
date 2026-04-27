@@ -1,4 +1,4 @@
-"""cluster_decision のユニットテスト — テキスト空フレームペアの4段階判定。"""
+"""cluster_decision のユニットテスト — テキスト空フレームペアの2段階判定。"""
 from __future__ import annotations
 
 import sys
@@ -50,36 +50,6 @@ def gradient_image_v2(tmp_path: Path) -> Path:
     return p
 
 
-# ─── 第0層: 境界判定 ──────────────────────────────────────────
-
-
-def test_blackout_returns_not_same(black_image: Path, gray_image: Path) -> None:
-    is_same, method = classify_empty_text_pair(
-        prev_path=black_image,
-        curr_path=gray_image,
-        hash_distance=0,
-        near_threshold=8,
-        far_threshold=40,
-        fallback_threshold=30,
-    )
-    assert is_same is False
-    assert method == "blackout"
-
-
-def test_hard_cut_returns_not_same(gray_image: Path, bright_image: Path) -> None:
-    """暗転を含まないヒスト差大ペアは hard_cut で強制別。"""
-    is_same, method = classify_empty_text_pair(
-        prev_path=gray_image,
-        curr_path=bright_image,
-        hash_distance=15,
-        near_threshold=8,
-        far_threshold=40,
-        fallback_threshold=30,
-    )
-    assert is_same is False
-    assert method == "hard_cut"
-
-
 # ─── 第1層: dHash 即決 ────────────────────────────────────────
 
 
@@ -127,12 +97,12 @@ def test_dhash_mid_with_similar_histogram_returns_same(
     assert method == "hist_match"
 
 
-def test_very_different_images_returns_boundary(
-    gray_image: Path, bright_image: Path
+def test_dhash_mid_with_different_histogram_returns_not_same(
+    black_image: Path, bright_image: Path
 ) -> None:
-    """ヒスト差が大きい画像ペアは境界判定 (hard_cut) で強制別。"""
+    """中間域 + ヒスト類似低 → hist_mismatch で別。"""
     is_same, method = classify_empty_text_pair(
-        prev_path=gray_image,
+        prev_path=black_image,
         curr_path=bright_image,
         hash_distance=20,
         near_threshold=8,
@@ -140,7 +110,7 @@ def test_very_different_images_returns_boundary(
         fallback_threshold=30,
     )
     assert is_same is False
-    assert method in ("blackout", "hard_cut")
+    assert method == "hist_mismatch"
 
 
 # ─── prev_path None フォールバック ────────────────────────────
@@ -172,34 +142,7 @@ def test_no_prev_path_beyond_fallback_returns_not_same() -> None:
     assert method == "dhash_fallback"
 
 
-# ─── 境界優先 ─────────────────────────────────────────────────
-
-
-def test_blackout_overrides_dhash_near(black_image: Path, gray_image: Path) -> None:
-    """暗転検出は dHash 距離が近くても強制別クラスタ。"""
-    is_same, method = classify_empty_text_pair(
-        prev_path=black_image,
-        curr_path=gray_image,
-        hash_distance=2,
-        near_threshold=8,
-        far_threshold=40,
-        fallback_threshold=30,
-    )
-    assert is_same is False
-    assert method == "blackout"
-
-
-# ─── 新 API: classify_empty_text_pair_with_metrics ─────────────
-
-
-def test_metrics_includes_brightness(black_image: Path, gray_image: Path) -> None:
-    r = classify_empty_text_pair_with_metrics(
-        prev_path=black_image, curr_path=gray_image,
-        hash_distance=10, near_threshold=8, far_threshold=40, fallback_threshold=30,
-    )
-    assert r.method == "blackout"
-    assert r.prev_brightness is not None and r.prev_brightness < 20
-    assert r.curr_brightness is not None and 100 < r.curr_brightness < 150
+# ─── metrics API ─────────────────────────────────────────────
 
 
 def test_metrics_includes_hist_distance(
@@ -214,16 +157,15 @@ def test_metrics_includes_hist_distance(
     assert 0.0 <= r.hist_distance <= 1.0
 
 
-def test_metrics_dhash_near_skip_hist(gray_image: Path) -> None:
-    """dhash_near は中間域に到達しないが、第0層で hist_dist が計算済みになる。"""
+def test_metrics_dhash_near_skips_hist(gray_image: Path) -> None:
+    """dHash 即決 (近) では中間域に到達しないので hist_distance は計算されない。"""
     r = classify_empty_text_pair_with_metrics(
         prev_path=gray_image, curr_path=gray_image,
         hash_distance=3, near_threshold=8, far_threshold=40, fallback_threshold=30,
     )
     assert r.method == "dhash_near"
     assert r.hash_distance == 3
-    # 同一画像なので hist_distance は 0 近辺
-    assert r.hist_distance is not None and r.hist_distance < 0.01
+    assert r.hist_distance is None
 
 
 def test_metrics_no_prev_path() -> None:
@@ -231,7 +173,16 @@ def test_metrics_no_prev_path() -> None:
         prev_path=None, curr_path=Path("dummy"),
         hash_distance=10, near_threshold=8, far_threshold=40, fallback_threshold=30,
     )
-    # curr_path 読めないので curr_brightness=None でも OK
     assert r.method == "dhash_fallback"
     assert r.prev_brightness is None
     assert r.hist_distance is None
+
+
+def test_metrics_brightness_recorded(black_image: Path, gray_image: Path) -> None:
+    """輝度は判定とは独立に UI 表示用として常に記録される。"""
+    r = classify_empty_text_pair_with_metrics(
+        prev_path=black_image, curr_path=gray_image,
+        hash_distance=20, near_threshold=8, far_threshold=40, fallback_threshold=30,
+    )
+    assert r.prev_brightness is not None and r.prev_brightness < 5
+    assert r.curr_brightness is not None and 100 < r.curr_brightness < 150

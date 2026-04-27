@@ -817,33 +817,16 @@ class BackgroundWorker:
         if not rows:
             return
 
-        from lc.scene_boundary_detector import detect_blackout
-
         next_dhash_id = 0
         current_dhash_id = -1
         prev_hash: Optional[str] = None
-        prev_blackout = False
 
         for r in rows:
             sid = r["id"]
             h = r["hash_val"]
-            path = r["screenshot_path"]
-
-            is_blackout = False
-            if path:
-                try:
-                    is_blackout = detect_blackout(path)
-                except Exception:
-                    pass
 
             same = False
-            if (
-                current_dhash_id >= 0
-                and prev_hash is not None
-                and h
-                and not is_blackout
-                and not prev_blackout
-            ):
+            if current_dhash_id >= 0 and prev_hash is not None and h:
                 d = self._hash_distance(prev_hash, h)
                 if d < _DHASH_TH:
                     same = True
@@ -859,7 +842,6 @@ class BackgroundWorker:
                 (current_dhash_id, sid),
             )
             prev_hash = h if h else prev_hash
-            prev_blackout = is_blackout
         conn.commit()
 
     def _validate_clusters(

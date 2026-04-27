@@ -329,8 +329,19 @@
     }
 
     // 判定理由 → badge色 + 閾値ベースのラベル (閾値調整時にどの閾値が効いたか分かる)
-    function decisionMethodBadge(method) {
+    // 比較ビュー (side='A' or 'B') では「ヒスト判定の効果」だけが見えるよう厳格フィルタ:
+    //   - ヒスト関連 (hist_match/hist_mismatch/hard_cut) のみ表示
+    //   - かつ左右で結果が異なる (isMatch=false) クラスタのみ表示
+    // モーダル等 (side=undefined) では現状維持で全 badge を表示。
+    function decisionMethodBadge(method, side, isMatch) {
         if (!method) return null;
+        if (side === 'A' || side === 'B') {
+            const histOnly = method === 'hist_match'
+                || method === 'new:hist_mismatch'
+                || method === 'new:hard_cut';
+            if (!histOnly) return null;
+            if (isMatch) return null;
+        }
         const map = {
             'text_match':            { color: 'bg-blue-500/30 text-blue-200',    label: 'テキスト一致' },
             'text_prefix':           { color: 'bg-blue-500/20 text-blue-300',    label: 'テキスト前方一致' },
@@ -349,8 +360,6 @@
         if (method.startsWith('new:')) {
             const reason = method.substring(4);
             const reasonMap = {
-                'blackout':       { color: 'bg-red-700/40 text-red-300',         label: '暗転 br<20' },
-                'hard_cut':       { color: 'bg-red-700/40 text-red-300',         label: 'ヒスト差>0.7' },
                 'dhash_far':      { color: 'bg-orange-600/40 text-orange-300',   label: 'dHash≥40' },
                 'hist_mismatch':  { color: 'bg-orange-600/40 text-orange-300',   label: 'ヒスト類似<0.5' },
                 'dhash_fallback': { color: 'bg-gray-700/60 text-gray-400',       label: 'dHash≥30' },

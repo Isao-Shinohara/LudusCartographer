@@ -164,19 +164,23 @@
         const arrow = side === 'A' ? '→' : '←';
         const sideColor = side === 'A' ? opts.colorA : opts.colorB;
         const myLabel = cidLabel[`${side}${group.cid}`] || `#${group.cid}`;
-        // 判定理由 (先頭 screen の cluster_decision_method = このクラスタが前から分かれた理由)
-        // 代表は「テキストあり等で交代」した結果なので、代表ではなく先頭 (時系列最古) を使う
-        let reasonHtml = '';
-        const firstItem = group.items[0];  // group.items は既に id 昇順ソート済み
-        const method = firstItem ? firstItem.cluster_decision_method : null;
-        if (method && typeof opts.decisionLabel === 'function') {
-            const lbl = opts.decisionLabel(method);
-            if (lbl) {
-                reasonHtml = `<span class="px-1.5 py-0.5 rounded text-[10px] ${lbl.color}" title="${escapeHtml(method)}">${escapeHtml(lbl.label)}</span>`;
-            }
-        } else if (method) {
-            reasonHtml = `<span class="text-[10px] text-gray-400">${escapeHtml(method)}</span>`;
+        // ヒスト判定が dHash の結論を覆したケースのみを集計して表示
+        //   merge: dHash 単独では別 → ヒストで同じ cluster に吸収された
+        //   split: dHash 単独では同 → ヒストで別 cluster に切り離された
+        let mergeCount = 0, splitCount = 0;
+        for (const s of group.items) {
+            const e = ctx.histEffectByScreenId.get(s.id);
+            if (e === 'merge') mergeCount++;
+            else if (e === 'split') splitCount++;
         }
+        const reasonParts = [];
+        if (mergeCount > 0) {
+            reasonParts.push(`<span class="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/30 text-emerald-200" title="dHash 単独では別クラスタだったが、ヒスト判定で統合された screen 数">ヒストで統合 ×${mergeCount}</span>`);
+        }
+        if (splitCount > 0) {
+            reasonParts.push(`<span class="px-1.5 py-0.5 rounded text-[10px] bg-orange-500/30 text-orange-200" title="dHash 単独では同クラスタだったが、ヒスト判定で分離された screen 数">ヒストで分離 ×${splitCount}</span>`);
+        }
+        const reasonHtml = reasonParts.join(' ');
         const repId = side === 'A' ? opts.getRepA(group.items) : opts.getRepB(group.items);
         const repItem = group.items.find(s => s.id === repId);
         const repDhash = repItem ? repItem.dhash : null;
@@ -276,7 +280,25 @@
             });
         });
 
-        const ctx = { aByCid, bByCid, cidLabel, screens: filtered, diffMap };
+        // 各 screen について「直前 screen と比較してヒスト判定が dHash の結論を覆したか」を計算
+        //   左:別 → 右:同  = ヒスト統合 ('merge')
+        //   左:同 → 右:別  = ヒスト分離 ('split')
+        //   それ以外       = null (覆っていない)
+        const sortedAll = [...screens].sort((a, b) => a.id - b.id);
+        const prevMap = new Map();
+        for (let i = 1; i < sortedAll.length; i++) {
+            prevMap.set(sortedAll[i].id, sortedAll[i - 1]);
+        }
+        const histEffectByScreenId = new Map();
+        for (const s of sortedAll) {
+            const prev = prevMap.get(s.id);
+            if (!prev) continue;
+            const aSame = opts.getCidA(s) === opts.getCidA(prev);
+            const bSame = opts.getCidB(s) === opts.getCidB(prev);
+            if (aSame && !bSame) histEffectByScreenId.set(s.id, 'split');
+            else if (!aSame && bSame) histEffectByScreenId.set(s.id, 'merge');
+        }
+        const ctx = { aByCid, bByCid, cidLabel, screens: filtered, diffMap, histEffectByScreenId };
 
         // CSS Grid セル生成
         const cells = [];

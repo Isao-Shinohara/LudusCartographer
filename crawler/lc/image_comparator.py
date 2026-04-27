@@ -221,12 +221,12 @@ def is_similar_by_histogram(
     image_path2: Path,
     similarity_threshold: float = HIST_SIMILARITY_THRESHOLD,
 ) -> bool:
-    """2画像のグレースケールヒストグラム類似度が threshold 以上なら True。"""
+    """2画像のカラーヒストグラム類似度が threshold 以上なら True。"""
     from lc.scene_boundary_detector import (
-        compute_grayscale_histogram,
+        compute_color_histogram,
         histogram_similarity,
     )
 
-    h1 = compute_grayscale_histogram(image_path1)
-    h2 = compute_grayscale_histogram(image_path2)
+    h1 = compute_color_histogram(image_path1)
+    h2 = compute_color_histogram(image_path2)
     return histogram_similarity(h1, h2) >= similarity_threshold

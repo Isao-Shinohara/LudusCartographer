@@ -1,53 +1,59 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-04-23
+最終更新: 2026-04-26
 
 ## 現在のブランチ
 - `feature/screen-recorder` (main 未マージ)
 
-## 最終セッション (2026-04-23 午後)
-- 主な作業: Gemini artifact判定改善・remerge強化・startup_phase修正・各種バグ修正
-- コミット: ee728cd, e7f7031, 423e410, 97906a4, e81eda2
+## 最終セッション (2026-04-26)
+- 主な作業: Phase 1 (4段階クラスタ判定) + 比較ビュー (ClusterDiffView 部品化) + 用語統一 + UI 設計ルール永続化
+- コミット: da3e243 〜 5449c4b (約 35 コミット)
 
 ## 現在の状態
-- **DB**: セッション5件（周回3回完了 + 周回#4進行中）、OCR修正ルール15,205件保護
-- **マスター**: 空（未マージ）
-- **自動マージ**: 廃止済み
+- **Python**: 3.11.8 + OpenSSL 3.6.2
+- **クラスタリングアルゴリズム**: dhash (LC_HASH_ALGO=dhash がデフォルト)
+- **テキスト分離**: `.env` に `LC_TEXT_SEPARATION=off` 追記済み (再起動で反映)
+- **Gemini OCR**: コメントアウトで無効化中 (PaddleOCR HQ で動作)
+- **DB**: 空 (前回クリーンアップ済み) → ただし auto_pilot 起動後の新規データあり
+- **マスター**: 空 (未マージ)
 
-## 直近の変更
+## 直近の主要変更
 
-### Gemini artifact判定プロンプト改善
-- ステップ型判定フロー（残す→除外の順）
-- 「人物の本体」と「顔アイコン」区別
-- 70%エフェクト基準、バッチ独立判定宣言
-- corrections.reason削除、response_mime_type指定、バッチサイズ8→4
+### テキスト空フレームの 2 段階クラスタ判定
+1. **第1層 dHash 即決**: < 8 で同, ≥ 40 で別
+2. **第2層 ヒスト類似度**: 中間域でヒスト類似度 ≥ 0.5 で同 / 未満で別
 
-### remerge強化
-- _normalize_for_comparison + _text_similarity 導入（ノイズ除去+類似度≥0.85）
-- 代表重複バグ修正（統合先クラスタの既存代表リセット漏れ）
+(旧 第0層 暗転/ハードカットは廃止 — 起動ロゴ画面が過剰分離される副作用のため)
 
-### startup_phase修正
-- CycleStateに正式定義、全参照を state.cycle.startup_phase に統一
-- startup_phase中のWFC_ESCAPE無効化
-- record_startupの暗画面スキップ削除
+### DB 新カラム (lc_screens)
+- `cluster_id_dhash` / `cluster_id_hybrid` / `cluster_decision_method`
+- `avg_brightness` / `dhash_dist_to_prev_rep` / `hist_dist_to_prev_rep`
 
-### その他
-- テキスト空phash閾値 20→30（動画フレーム統合改善）
-- 見切れ検出（黒ピクセル50%以上→自動artifact）
-- 白画面判定に黒帯除外ロジック追加
-- エッジtap/auto別表示
-- scrcpyアスペクト比許容誤差 0.15→0.01
-- noise_words Noneバグ修正、REP_TRACEログDEBUG化
+### HQ OCR フロー統一
+- 「クラスタリング → 代表のみ HQ OCR」に統一 (PaddleOCR/Gemini 共通)
+- 間引き判定は Vision OCR で行う
+
+### 比較ビュー (Live タブ「比較」モード)
+- GitHub diff 風 2 カラム並列表示
+- `web/public/js/cluster_diff_view.js` に部品化
+- 閾値ベース badge ラベルで閾値調整に直結
+
+### 用語統一
+- 「間引き/dedup」→「クラスタリング」(CLAUDE.md §13 厳格化)
+
+### UI 設計ルール (§20 新規)
+- 表示/非表示でなく `disabled` 属性で UI 切替
 
 ## 未解決の課題
-1. **Gemini 503/JSONパース失敗**: API側の一時的高負荷で断続的に発生
-2. **scrcpyキャプチャ黒の頻発**: ADBフォールバックで操縦継続、原因未特定
-3. **Pokelaboロゴ撮影**: startup_phase修正+WFC_ESCAPE無効化で対策済み、次回検証
-4. **DB locked散発**: BGワーカーとメインループの競合
-5. **DL完了ダイアログのOK押下失敗**: 動画ループの根本原因（未調査）
-6. **anchor_matcher Phase 1の候補複数問題**: 同一テキストのマスターノードが複数ある場合にスキップ
-7. **エッジtap/auto別カウント**: 既存セッションはグラフ再構築で更新必要
+1. **auto_pilot の LC_TEXT_SEPARATION 反映**: 現プロセスは OFF が反映されていない (.env 修正が起動後だったため)。停止+クリーンアップ+再起動で OFF データを生成する必要
+2. **dHash/ヒスト閾値の実データチューニング**: 比較ビューでデータ収集後に調整
+3. **GeminiOCR vs PaddleOCR の比較ビュー**: ClusterDiffView を再利用して別用途で実装 (別タスク)
+4. **batch_processor.py の `--deduplicate` CLI**: 後方互換のため残置、次回別タスクで `--cluster` にリネーム検討
+5. **Gemini 503 / scrcpy黒キャプチャ / DB locked散発**: 過去から継続
 
 ## 設計ドキュメント
 - `docs/merge_sort_algorithm.md` — SafeInsert 仕様
 - `docs/anchor_matching_design.md` — 段階的 Phase 設計
+- `docs/cross_session_merge.md` — クロスセッションマージ
+- CLAUDE.md §16 — クラスタリング採用/不採用判定 (4段階拡張済み)
+- CLAUDE.md §20 — UI 設計ルール (新規)
