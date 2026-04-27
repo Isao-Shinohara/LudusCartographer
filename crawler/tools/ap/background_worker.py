@@ -680,7 +680,7 @@ class BackgroundWorker:
                     from lc.cluster_decision import classify_empty_text_pair_with_metrics
 
                     _NEAR_TH = 8
-                    _FAR_TH = 40
+                    _FAR_TH = 25
                     _FALLBACK_TH = 30
                     _matched = False
                     _decision_method = "new_cluster"
@@ -797,12 +797,13 @@ class BackgroundWorker:
         cluster_id_phash_only に書き込む。
 
         Step A 直後 (dHash 分割前) のシミュレーション。
-        中間域も「同」として統合 (phash<40 で同、>=40 で別)。
+        中間域も「同」として統合 (phash<25 で同、>=25 で別)。
+        far_threshold (25) と一致させる。
 
-        比較ビュー左ペイン: 「Step A だけ」 (大胆統合)。
+        比較ビュー左ペイン: 「Step A だけ」 (中間域も統合)。
         比較ビュー右ペイン: cluster_id_hybrid = Step A + B (dHash で構図違いを分離後)。
         """
-        _PHASH_TH = 40
+        _PHASH_TH = 25
 
         rows = conn.execute(
             "SELECT id, phash FROM lc_screens"

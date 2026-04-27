@@ -358,7 +358,7 @@
         if (method.startsWith('new:')) {
             const reason = method.substring(4);
             const reasonMap = {
-                'phash_far':      { color: 'bg-orange-600/40 text-orange-300',   label: 'phash≥40' },
+                'phash_far':      { color: 'bg-orange-600/40 text-orange-300',   label: 'phash≥25' },
                 'phash_fallback': { color: 'bg-gray-700/60 text-gray-400',       label: 'phash≥30' },
             };
             return reasonMap[reason] || { color: 'bg-gray-700/60 text-gray-400', label: '新規(' + reason + ')' };
