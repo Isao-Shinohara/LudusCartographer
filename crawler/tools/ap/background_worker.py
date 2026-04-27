@@ -1015,7 +1015,27 @@ class BackgroundWorker:
         #     D は X から切り離して別 cluster に。
         gap_merged = 0
         gap_new = 0
-        # 1メンバー cluster の cluster_id を特定 (代表が孤立している cluster)
+        # 必要なデータを 3 つの SELECT で一括取得 (パフォーマンス最適化)
+        # 1) 全 screen (id, cluster_id, dhash, rep) を時系列順
+        all_data = conn.execute(
+            "SELECT id, cluster_id, dhash, is_representative AS rep FROM lc_screens"
+            " WHERE cluster_id IS NOT NULL"
+            "   AND dhash IS NOT NULL AND dhash != ''"
+            + sid_filter +
+            " ORDER BY id",
+            sid_params,
+        ).fetchall()
+        # 2) 各 cluster の代表 dhash
+        rep_dhash_map: dict[int, str] = {
+            r["cluster_id"]: r["dhash"] for r in conn.execute(
+                "SELECT cluster_id, dhash FROM lc_screens"
+                " WHERE is_representative = 1"
+                "   AND dhash IS NOT NULL AND dhash != ''"
+                + sid_filter,
+                sid_params,
+            ).fetchall()
+        }
+        # 3) 1メンバー cluster の cluster_id (代表が孤立している cluster)
         single_member_cids = {
             r["cluster_id"] for r in conn.execute(
                 "SELECT cluster_id FROM lc_screens"
@@ -1024,43 +1044,29 @@ class BackgroundWorker:
                 sid_params,
             ).fetchall()
         }
-        # 影響範囲: 非代表メンバー + 1メンバー cluster の代表 を時系列順に走査
-        # (複数メンバー cluster の代表は中心維持のため対象外)
-        all_members = conn.execute(
-            "SELECT id, cluster_id, dhash, is_representative AS rep FROM lc_screens"
-            " WHERE cluster_id IS NOT NULL"
-            "   AND dhash IS NOT NULL AND dhash != ''"
-            + sid_filter +
-            " ORDER BY id",
-            sid_params,
-        ).fetchall()
-        for m in all_members:
+        # 各 screen の「直前 screen の cluster_id」をメモリで計算
+        prev_cid_map: dict[int, int] = {}
+        _prev_cid_so_far: Optional[int] = None
+        for m in all_data:
+            if _prev_cid_so_far is not None:
+                prev_cid_map[m["id"]] = _prev_cid_so_far
+            _prev_cid_so_far = m["cluster_id"]
+        # 走査して必要な変更のみ DB に適用
+        for m in all_data:
             if m["rep"] and m["cluster_id"] not in single_member_cids:
                 continue  # 複数メンバー cluster の代表 → 対象外
             mid = m["id"]
             mcid = m["cluster_id"]
             mdh = m["dhash"]
-            # 直前 screen の cluster_id を取得
-            prev_screen = conn.execute(
-                "SELECT cluster_id FROM lc_screens"
-                " WHERE id < ? AND cluster_id IS NOT NULL"
-                " ORDER BY id DESC LIMIT 1",
-                (mid,),
-            ).fetchone()
-            if not prev_screen or prev_screen["cluster_id"] == mcid:
+            prev_for_m = prev_cid_map.get(mid)
+            if prev_for_m is None or prev_for_m == mcid:
                 continue  # 直前も同じ cluster → 連続性 OK
-            # 時系列で切り離されている → 再分配
-            prev_cid = prev_screen["cluster_id"]
-            rep = conn.execute(
-                "SELECT dhash FROM lc_screens"
-                " WHERE cluster_id = ? AND is_representative = 1 LIMIT 1",
-                (prev_cid,),
-            ).fetchone()
+            rep_dh = rep_dhash_map.get(prev_for_m)
             target_cid: Optional[int] = None
-            if rep and rep["dhash"]:
-                d = _dhash_distance(rep["dhash"], mdh)
+            if rep_dh:
+                d = _dhash_distance(rep_dh, mdh)
                 if d < DHASH_VALIDATE_THRESHOLD:
-                    target_cid = prev_cid
+                    target_cid = prev_for_m
             if target_cid is not None and target_cid != mcid:
                 conn.execute(
                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
@@ -1074,6 +1080,8 @@ class BackgroundWorker:
                     (next_cid, mid),
                 )
                 self._set_decision(conn, mid, next_cid, "revalidate_split")
+                # 新規 cluster の代表 dhash を map に追加 (連鎖判定用)
+                rep_dhash_map[next_cid] = mdh
                 next_cid += 1
                 gap_new += 1
         conn.commit()
