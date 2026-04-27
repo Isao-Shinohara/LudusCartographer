@@ -856,6 +856,7 @@ class BackgroundWorker:
             return
         from lc.orb_matcher import match_rate
         ORB_MATCH_MIN = 0.3  # マッチ率がこれ未満なら別シーン
+        ID_GAP_THRESHOLD = 30  # 段階 2 再統合: id 差がこれ以下なら時系列で隣接 (dHash 版と同じ)
 
         target_placeholders = ",".join("?" * len(target_cluster_ids))
         target_params = list(target_cluster_ids)
@@ -887,6 +888,9 @@ class BackgroundWorker:
             " GROUP BY cluster_id_phash_only HAVING COUNT(*) > 1",
             target_params + list(sid_params),
         ).fetchall()
+
+        # 段階 1: 反復分離 (split-off は cluster_id_orb=NULL に置き、段階 2 で再判定)
+        split_items: list[tuple[int, bytes]] = []  # (id, orb_descriptors)
 
         for pc in pho_clusters:
             pho = pc["pho"]
@@ -932,13 +936,48 @@ class BackgroundWorker:
                 )
                 if min_rate >= ORB_MATCH_MIN:
                     break  # 全員 OK
-                # 分離: cluster_id_orb を新規番号に
+                # 分離: cluster_id_orb を NULL に置く (段階 2 で再判定)
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_id_orb = NULL WHERE id = ?",
+                    (most_isolated["id"],),
+                )
+                split_items.append((most_isolated["id"], most_isolated["orb"]))
+                members = [m for m in members if m["id"] != most_isolated["id"]]
+
+        # 段階 1 完了 → commit
+        conn.commit()
+
+        # 段階 2: 分離 screen の最近傍 cluster 再統合 (dHash 版と同等)
+        # 直前 screen (cluster_id_orb IS NOT NULL) との id 差 <= ID_GAP_THRESHOLD かつ
+        # ORB マッチ率 >= ORB_MATCH_MIN なら直前の cluster_id_orb に再統合。
+        # それ以外は新規独立 cluster (next_orb_cid)。
+        if not split_items:
+            return
+        split_items.sort(key=lambda x: x[0])
+        for sid, orb_blob in split_items:
+            prev = conn.execute(
+                "SELECT id, cluster_id_orb, orb_descriptors FROM lc_screens"
+                " WHERE id < ? AND cluster_id_orb IS NOT NULL"
+                " ORDER BY id DESC LIMIT 1",
+                (sid,),
+            ).fetchone()
+            target_cid: Optional[int] = None
+            if prev and prev["cluster_id_orb"] is not None:
+                if sid - prev["id"] <= ID_GAP_THRESHOLD:
+                    rate = match_rate(orb_blob, prev["orb_descriptors"])
+                    if rate >= ORB_MATCH_MIN:
+                        target_cid = prev["cluster_id_orb"]
+            if target_cid is not None:
                 conn.execute(
                     "UPDATE lc_screens SET cluster_id_orb = ? WHERE id = ?",
-                    (next_orb_cid, most_isolated["id"]),
+                    (target_cid, sid),
+                )
+            else:
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_id_orb = ? WHERE id = ?",
+                    (next_orb_cid, sid),
                 )
                 next_orb_cid += 1
-                members = [m for m in members if m["id"] != most_isolated["id"]]
         conn.commit()
 
     def _validate_clusters(
