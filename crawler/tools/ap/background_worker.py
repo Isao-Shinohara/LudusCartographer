@@ -1578,7 +1578,9 @@ class BackgroundWorker:
         """
         try:
             _phash_distance = self._phash_distance
-            _EMPTY_HASH_THRESHOLD = 30
+            _dhash_distance = self._dhash_distance
+            _EMPTY_PHASH_TH = 30  # phash 距離: これ未満で「近い」候補
+            _EMPTY_DHASH_TH = 22  # dhash 距離: これ未満なら統合確定 (Step B と同じ)
 
             sid_filter = ""
             sid_params: tuple = ()
@@ -1594,7 +1596,7 @@ class BackgroundWorker:
             # 代表画面の補正テキストを discovered_at 順に取得
             # Gemini → HQ → Vision の優先順で fallback
             reps = conn.execute(
-                "SELECT id, cluster_id, phash,"
+                "SELECT id, cluster_id, phash, dhash,"
                 " COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS gemini_text"
                 " FROM lc_screens"
                 " WHERE is_representative = 1"
@@ -1614,6 +1616,7 @@ class BackgroundWorker:
             # 直前クラスタの情報を追跡
             prev_cid: Optional[int] = None
             prev_ph: Optional[str] = None
+            prev_dh: Optional[str] = None
             prev_norm: Optional[str] = None
             prev_orig: Optional[str] = None
 
@@ -1622,6 +1625,7 @@ class BackgroundWorker:
                 if cid in merged_clusters:
                     continue
                 ph = r["phash"]
+                dh = r["dhash"]
                 orig = _normalize_text(r["gemini_text"])
                 norm = _normalize_for_comparison(orig, conn)
 
@@ -1646,8 +1650,14 @@ class BackgroundWorker:
                             if _is_degenerate_phash(ph) or _is_degenerate_phash(prev_ph):
                                 pass  # 統合しない
                             else:
-                                d = _phash_distance(ph, prev_ph) if ph and prev_ph else 999
-                                if d < _EMPTY_HASH_THRESHOLD:
+                                # phash + dhash の両方が近い場合のみ統合
+                                # (phash が偶然近くても dhash で構造の違いを検知)
+                                d_ph = _phash_distance(ph, prev_ph) if ph and prev_ph else 999
+                                d_dh = (
+                                    _dhash_distance(dh, prev_dh)
+                                    if dh and prev_dh else 999
+                                )
+                                if d_ph < _EMPTY_PHASH_TH and d_dh < _EMPTY_DHASH_TH:
                                     should_merge = True
 
                 if should_merge:
@@ -1682,21 +1692,24 @@ class BackgroundWorker:
                     merged_clusters.add(cid)
                     merged += 1
                     # prev_cid はそのまま（統合先を維持）
-                    # prev の norm/orig/ph は代表が変わった可能性があるので更新
+                    # prev の norm/orig/ph/dh は代表が変わった可能性があるので更新
                     if rep:
                         _new_rep = conn.execute(
-                            "SELECT phash, COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS gemini_text"
+                            "SELECT phash, dhash,"
+                            " COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS gemini_text"
                             " FROM lc_screens WHERE id = ?",
                             (rep["id"],),
                         ).fetchone()
                         if _new_rep:
                             prev_ph = _new_rep["phash"]
+                            prev_dh = _new_rep["dhash"]
                             prev_orig = _normalize_text(_new_rep["gemini_text"])
                             prev_norm = _normalize_for_comparison(prev_orig, conn)
                 else:
                     # 統合しない → 直前クラスタを更新
                     prev_cid = cid
                     prev_ph = ph
+                    prev_dh = dh
                     prev_norm = norm
                     prev_orig = orig
 
