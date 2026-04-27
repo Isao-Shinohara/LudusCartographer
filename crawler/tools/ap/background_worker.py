@@ -1007,9 +1007,69 @@ class BackgroundWorker:
                 new_count += 1
 
         conn.commit()
+
+        # 時系列連続性チェック: cluster 内のメンバーで「直前 screen の cluster_id」が
+        # 当該 cluster と違う場合、§16「直前クラスタとのみ比較」ルール違反になるので
+        # メンバーを切り離して再分配する。
+        # 例: A(X) → B(X) → C(Y, 分離) → D(X) で、D の直前 C が X じゃない →
+        #     D は X から切り離して別 cluster に。
+        gap_merged = 0
+        gap_new = 0
+        # 影響範囲: 全 cluster の非代表メンバーを時系列順に走査
+        all_members = conn.execute(
+            "SELECT id, cluster_id, dhash FROM lc_screens"
+            " WHERE cluster_id IS NOT NULL AND is_representative = 0"
+            "   AND dhash IS NOT NULL AND dhash != ''"
+            + sid_filter +
+            " ORDER BY id",
+            sid_params,
+        ).fetchall()
+        for m in all_members:
+            mid = m["id"]
+            mcid = m["cluster_id"]
+            mdh = m["dhash"]
+            # 直前 screen の cluster_id を取得
+            prev_screen = conn.execute(
+                "SELECT cluster_id FROM lc_screens"
+                " WHERE id < ? AND cluster_id IS NOT NULL"
+                " ORDER BY id DESC LIMIT 1",
+                (mid,),
+            ).fetchone()
+            if not prev_screen or prev_screen["cluster_id"] == mcid:
+                continue  # 直前も同じ cluster → 連続性 OK
+            # 時系列で切り離されている → 再分配
+            prev_cid = prev_screen["cluster_id"]
+            rep = conn.execute(
+                "SELECT dhash FROM lc_screens"
+                " WHERE cluster_id = ? AND is_representative = 1 LIMIT 1",
+                (prev_cid,),
+            ).fetchone()
+            target_cid: Optional[int] = None
+            if rep and rep["dhash"]:
+                d = _dhash_distance(rep["dhash"], mdh)
+                if d < DHASH_VALIDATE_THRESHOLD:
+                    target_cid = prev_cid
+            if target_cid is not None and target_cid != mcid:
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
+                    (target_cid, mid),
+                )
+                self._set_decision(conn, mid, target_cid, "revalidate_merge")
+                gap_merged += 1
+            elif target_cid is None:
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                    (next_cid, mid),
+                )
+                self._set_decision(conn, mid, next_cid, "revalidate_split")
+                next_cid += 1
+                gap_new += 1
+        conn.commit()
+
         logger.debug(
-            "[BG_WORKER] cluster_validate: %d 件分離 (再統合 %d / 新クラスタ %d)",
-            len(split_items), merged_count, new_count,
+            "[BG_WORKER] cluster_validate: %d 件分離 (再統合 %d / 新クラスタ %d) "
+            "+ 時系列ギャップ %d 件 (再統合 %d / 新クラスタ %d)",
+            len(split_items), merged_count, new_count, gap_merged + gap_new, gap_merged, gap_new,
         )
 
     @staticmethod
