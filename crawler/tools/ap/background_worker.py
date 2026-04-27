@@ -961,17 +961,24 @@ class BackgroundWorker:
         if not split_items:
             return
 
+        # ─── 段階 1 完了: 反復分離 → commit (DB 安定化) ───
+        conn.commit()
+
+        # ─── 段階 2: 分離 screen の最近傍 cluster 再統合 ───
         # 分離された screen を時系列順 (id 順) に処理し、
         # 直前 screen の cluster の代表との dHash 距離を比較:
-        #   距離 < 閾値 → その cluster に再統合 (revalidate_merge)
-        #   距離 ≥ 閾値 → 新規独立 cluster (revalidate_split)
+        #   距離 < 閾値 + id 差 <= ID_GAP_THRESHOLD → その cluster に再統合 (revalidate_merge)
+        #   それ以外 → 新規独立 cluster (revalidate_split)
+        # ID_GAP_THRESHOLD: 直前 screen との id 差がこれ以下なら時系列で隣接と判定。
+        #   (極端に大きいと「過去の遠い cluster」に飛んで時系列が崩れる)
+        ID_GAP_THRESHOLD = 30
         split_items.sort(key=lambda x: x[0])
         merged_count = 0
         new_count = 0
         for sid, dhash in split_items:
-            # 直前 screen (cluster_id IS NOT NULL) の cluster_id を取得
+            # 直前 screen (cluster_id IS NOT NULL) の id と cluster_id を取得
             prev_screen = conn.execute(
-                "SELECT cluster_id FROM lc_screens"
+                "SELECT id, cluster_id FROM lc_screens"
                 " WHERE id < ? AND cluster_id IS NOT NULL"
                 " ORDER BY id DESC LIMIT 1",
                 (sid,),
@@ -979,16 +986,18 @@ class BackgroundWorker:
 
             target_cid: Optional[int] = None
             if prev_screen and prev_screen["cluster_id"] is not None:
-                prev_cid = prev_screen["cluster_id"]
-                rep = conn.execute(
-                    "SELECT dhash FROM lc_screens"
-                    " WHERE cluster_id = ? AND is_representative = 1 LIMIT 1",
-                    (prev_cid,),
-                ).fetchone()
-                if rep and rep["dhash"]:
-                    d = _dhash_distance(rep["dhash"], dhash)
-                    if d < DHASH_VALIDATE_THRESHOLD:
-                        target_cid = prev_cid
+                # 時系列で隣接していることを id 差で確認
+                if sid - prev_screen["id"] <= ID_GAP_THRESHOLD:
+                    prev_cid = prev_screen["cluster_id"]
+                    rep = conn.execute(
+                        "SELECT dhash FROM lc_screens"
+                        " WHERE cluster_id = ? AND is_representative = 1 LIMIT 1",
+                        (prev_cid,),
+                    ).fetchone()
+                    if rep and rep["dhash"]:
+                        d = _dhash_distance(rep["dhash"], dhash)
+                        if d < DHASH_VALIDATE_THRESHOLD:
+                            target_cid = prev_cid
 
             if target_cid is not None:
                 conn.execute(
@@ -1006,7 +1015,10 @@ class BackgroundWorker:
                 next_cid += 1
                 new_count += 1
 
+        # ─── 段階 2 完了: 再統合 → commit (DB 安定化) ───
         conn.commit()
+
+        # ─── 段階 3: 時系列連続性チェック ───
 
         # 時系列連続性チェック: cluster 内のメンバーで「直前 screen の cluster_id」が
         # 当該 cluster と違う場合、§16「直前クラスタとのみ比較」ルール違反になるので
@@ -1044,13 +1056,17 @@ class BackgroundWorker:
                 sid_params,
             ).fetchall()
         }
-        # 各 screen の「直前 screen の cluster_id」をメモリで計算
+        # 各 screen の「直前 screen の id と cluster_id」をメモリで計算
         prev_cid_map: dict[int, int] = {}
+        prev_id_map: dict[int, int] = {}
         _prev_cid_so_far: Optional[int] = None
+        _prev_id_so_far: Optional[int] = None
         for m in all_data:
-            if _prev_cid_so_far is not None:
+            if _prev_cid_so_far is not None and _prev_id_so_far is not None:
                 prev_cid_map[m["id"]] = _prev_cid_so_far
+                prev_id_map[m["id"]] = _prev_id_so_far
             _prev_cid_so_far = m["cluster_id"]
+            _prev_id_so_far = m["id"]
         # 走査して必要な変更のみ DB に適用
         for m in all_data:
             if m["rep"] and m["cluster_id"] not in single_member_cids:
@@ -1059,14 +1075,17 @@ class BackgroundWorker:
             mcid = m["cluster_id"]
             mdh = m["dhash"]
             prev_for_m = prev_cid_map.get(mid)
+            prev_id_for_m = prev_id_map.get(mid)
             if prev_for_m is None or prev_for_m == mcid:
                 continue  # 直前も同じ cluster → 連続性 OK
-            rep_dh = rep_dhash_map.get(prev_for_m)
             target_cid: Optional[int] = None
-            if rep_dh:
-                d = _dhash_distance(rep_dh, mdh)
-                if d < DHASH_VALIDATE_THRESHOLD:
-                    target_cid = prev_for_m
+            # id 差が大きい場合は統合先候補から除外 (時系列で離れた古い cluster は除外)
+            if prev_id_for_m is not None and mid - prev_id_for_m <= ID_GAP_THRESHOLD:
+                rep_dh = rep_dhash_map.get(prev_for_m)
+                if rep_dh:
+                    d = _dhash_distance(rep_dh, mdh)
+                    if d < DHASH_VALIDATE_THRESHOLD:
+                        target_cid = prev_for_m
             if target_cid is not None and target_cid != mcid:
                 conn.execute(
                     "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
