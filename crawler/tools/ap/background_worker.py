@@ -889,7 +889,7 @@ class BackgroundWorker:
         (セリフ送り中の連続フレームは構図変化があっても同シーン)。
         """
         _dhash_distance = self._dhash_distance
-        DHASH_VALIDATE_THRESHOLD = 22  # 代表との dHash 距離 >= これで分離
+        DHASH_VALIDATE_THRESHOLD = 22  # cluster の直径 (max pairwise dHash) がこれ以上で分離
 
         # 2メンバー以上のクラスタを取得
         clusters = conn.execute(
@@ -902,44 +902,59 @@ class BackgroundWorker:
         if not clusters:
             return
 
-        # 分離対象を収集（後で時系列順に再グループ化するため）
         split_items: list[tuple[int, str]] = []  # (id, dhash)
 
         for cluster in clusters:
             cid = cluster["cluster_id"]
 
-            # 代表の dhash を取得
-            rep = conn.execute(
-                "SELECT id, dhash, COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') as text"
-                " FROM lc_screens WHERE cluster_id = ? AND is_representative = 1 LIMIT 1",
-                (cid,),
-            ).fetchone()
-            if not rep or not rep["dhash"]:
+            # cluster 内のテキスト空メンバー (代表含む) を取得
+            all_members = [
+                dict(r) for r in conn.execute(
+                    "SELECT id, dhash, avg_brightness AS br, is_representative AS rep"
+                    " FROM lc_screens"
+                    " WHERE cluster_id = ?"
+                    "   AND dhash IS NOT NULL AND dhash != ''"
+                    "   AND COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') = ''",
+                    (cid,),
+                ).fetchall()
+            ]
+            if len(all_members) < 2:
                 continue
-            rep_dhash = rep["dhash"]
 
-            # テキスト空の非代表メンバーを取得
-            members = conn.execute(
-                "SELECT id, dhash FROM lc_screens"
-                " WHERE cluster_id = ? AND is_representative = 0"
-                "   AND dhash IS NOT NULL AND dhash != ''"
-                "   AND COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') = ''",
-                (cid,),
-            ).fetchall()
-
-            for member in members:
-                d = _dhash_distance(rep_dhash, member["dhash"])
-                if d >= DHASH_VALIDATE_THRESHOLD:
-                    # クラスタから外す（後で再グループ化）
-                    conn.execute(
-                        "UPDATE lc_screens SET cluster_id = NULL, is_representative = 0 WHERE id = ?",
-                        (member["id"],),
+            # 反復分離: 「他メンバーとの最大 dHash 距離」が一番大きいメンバーから分離
+            # 直径 < 閾値 になるまで繰り返し (代表は分離対象外)
+            while len(all_members) > 1:
+                # 非代表メンバーの最大距離を計算
+                max_dists = []
+                for m in all_members:
+                    if m.get("rep"):
+                        continue  # 代表は分離対象外
+                    max_d = max(
+                        (_dhash_distance(m["dhash"], o["dhash"])
+                         for o in all_members if o["id"] != m["id"]),
+                        default=0,
                     )
-                    split_items.append((member["id"], member["dhash"]))
-                    logger.debug(
-                        "[BG_WORKER] cluster_validate: id=%d をクラスタ %d から分離 (dHash距離=%d)",
-                        member["id"], cid, d,
-                    )
+                    max_dists.append((m, max_d))
+                if not max_dists:
+                    break  # 代表のみ残る
+                # 最遠メンバー (タイ時は br 低い方を分離)
+                most_isolated, max_d = max(
+                    max_dists,
+                    key=lambda x: (x[1], -(x[0].get("br") or 0.0)),
+                )
+                if max_d < DHASH_VALIDATE_THRESHOLD:
+                    break  # 直径 OK
+                # 分離
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_id = NULL, is_representative = 0 WHERE id = ?",
+                    (most_isolated["id"],),
+                )
+                split_items.append((most_isolated["id"], most_isolated["dhash"]))
+                all_members = [m for m in all_members if m["id"] != most_isolated["id"]]
+                logger.debug(
+                    "[BG_WORKER] cluster_validate: id=%d をクラスタ %d から分離 (最大dHash=%d)",
+                    most_isolated["id"], cid, max_d,
+                )
 
         if not split_items:
             return
