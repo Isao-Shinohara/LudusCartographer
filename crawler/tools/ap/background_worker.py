@@ -890,7 +890,6 @@ class BackgroundWorker:
         """
         _dhash_distance = self._dhash_distance
         DHASH_VALIDATE_THRESHOLD = 20  # 代表との dHash 距離 >= これで分離
-        DHASH_REGROUP_THRESHOLD = 15   # 再グループ化時の隣接 dHash 閾値
 
         # 2メンバー以上のクラスタを取得
         clusters = conn.execute(
@@ -945,48 +944,21 @@ class BackgroundWorker:
         if not split_items:
             return
 
-        # 分離された画像を discovered_at 順に取得して再グループ化
-        split_ids = [s[0] for s in split_items]
-        placeholders = ",".join("?" * len(split_ids))
-        ordered = conn.execute(
-            f"SELECT id, dhash FROM lc_screens WHERE id IN ({placeholders}) ORDER BY discovered_at",
-            split_ids,
-        ).fetchall()
-
-        # 時系列順に隣り合う画像同士を dHash 距離で統合
-        prev_cid: Optional[int] = None
-        prev_hash: Optional[str] = None
-        regroup_count = 0
-        for row in ordered:
-            sid, ph = row["id"], row["dhash"]
-            merged = False
-            if prev_cid is not None and prev_hash is not None:
-                d = _dhash_distance(prev_hash, ph)
-                if d < DHASH_REGROUP_THRESHOLD:
-                    # 直前の分離画像と近い → 同じクラスタに統合（非代表）
-                    conn.execute(
-                        "UPDATE lc_screens SET cluster_id = ?, is_representative = 0 WHERE id = ?",
-                        (prev_cid, sid),
-                    )
-                    self._set_decision(conn, sid, prev_cid, "revalidate_merge")
-                    merged = True
-                    regroup_count += 1
-
-            if not merged:
-                # 新規クラスタ
-                conn.execute(
-                    "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
-                    (next_cid, sid),
-                )
-                self._set_decision(conn, sid, next_cid, "revalidate_split")
-                prev_cid = next_cid
-                prev_hash = ph
-                next_cid += 1
+        # 分離された画像を各々独立した新規 cluster に割り当てる
+        # (dHash は「分割のみ」目的、再統合 = revalidate_merge は廃止)
+        # 後続フレームが phash で近ければ Step A の通常処理で統合される
+        for sid, _dhash in split_items:
+            conn.execute(
+                "UPDATE lc_screens SET cluster_id = ?, is_representative = 1 WHERE id = ?",
+                (next_cid, sid),
+            )
+            self._set_decision(conn, sid, next_cid, "revalidate_split")
+            next_cid += 1
 
         conn.commit()
         logger.debug(
-            "[BG_WORKER] cluster_validate: %d 件分離, %d 件再グループ化 → %d 新クラスタ",
-            len(split_items), regroup_count, len(split_items) - regroup_count,
+            "[BG_WORKER] cluster_validate: %d 件分離 → %d 新クラスタ",
+            len(split_items), len(split_items),
         )
 
     @staticmethod
