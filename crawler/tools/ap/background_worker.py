@@ -721,6 +721,9 @@ class BackgroundWorker:
                         _rep_ph, _rep_dh, _rep_title, _rep_norm = rep_map[_prev_cid]
                         p_d = _phash_distance(_rep_ph, ph) if _rep_ph else 999
                         d_d = _dhash_distance(_rep_dh, dh) if _rep_dh and dh else None
+                        # Jaccard 類似度: 中間域で疎な phash ペアの誤統合を防止
+                        from lc.image_comparator import phash_jaccard_similarity
+                        jac = phash_jaccard_similarity(_rep_ph, ph) if _rep_ph and ph else None
                         prev_path = self._get_rep_screenshot_path(conn, _prev_cid)
                         curr_path = row["screenshot_path"]
 
@@ -732,6 +735,8 @@ class BackgroundWorker:
                             near_threshold=_NEAR_TH,
                             far_threshold=_FAR_TH,
                             fallback_threshold=_FALLBACK_TH,
+                            jaccard_similarity=jac,
+                            min_jaccard=0.3,
                         )
                         is_same = _result.is_same
                         _decision_method = _result.method

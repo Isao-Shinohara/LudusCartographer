@@ -49,6 +49,21 @@ def phash_distance(h1: str, h2: str) -> int:
     return bin(a ^ b).count("1")
 
 
+def phash_jaccard_similarity(h1: str, h2: str) -> float:
+    """phash 同士の Jaccard 類似度: intersection / union。
+
+    set bit ベースで比較するため、両方が疎な phash (set bit が少ない明るい画像)
+    でも適切に類似度を判定できる。Hamming 距離は「両方 0」を「同じ」と数えるが、
+    Jaccard は「両方 set」のみを共通として扱うので、形状の重なり度を測れる。
+
+    返り値: 0.0〜1.0。両方とも set bit ゼロの場合は 1.0。
+    """
+    a, b = int(h1, 16), int(h2, 16)
+    intersection = bin(a & b).count("1")
+    union = bin(a | b).count("1")
+    return intersection / union if union > 0 else 1.0
+
+
 # ─── DHash (勾配ベース) ──────────────────────────────────
 
 
