@@ -834,6 +834,11 @@ class BackgroundWorker:
             if target_cluster_ids:
                 self._validate_clusters(conn, next_cid, _sid_filter, _sid_params, target_cluster_ids)
 
+            # HQ OCR 後のクラスタ再統合: Vision OCR が空で phash 任せだった screen が
+            # 後から HQ/Gemini OCR でテキストを獲得した場合、同セリフのクラスタを統合する。
+            # _remerge_text_clusters は ocr_text_gemini OR ocr_text_hq IS NOT NULL の代表が対象。
+            self._remerge_text_clusters(conn)
+
         finally:
             conn.close()
 
@@ -1527,14 +1532,17 @@ class BackgroundWorker:
                 logger.info("[BG_WORKER] gemini: %d/%d 件修正 (並列%dワーカー)",
                             updated, total, _GEMINI_PARALLEL_WORKERS)
             if total > 0:
-                self._remerge_after_gemini(conn)
+                self._remerge_text_clusters(conn)
         finally:
             conn.close()
 
-    def _remerge_after_gemini(self, conn) -> None:
-        """Gemini 補正後、修正されたテキストで直前クラスタと再照合する。
+    def _remerge_text_clusters(self, conn) -> None:
+        """OCR (Gemini または PaddleOCR HQ) で得られた良質テキストで直前クラスタと再照合する。
 
-        対象: ocr_text_gemini が設定済みの代表画面。
+        対象: ocr_text_gemini または ocr_text_hq が設定済みの代表画面。
+        Step A クラスタリング時点では Vision OCR (ocr_text) が空で phash 任せだった
+        画面が、後から HQ/Gemini OCR で text を獲得した場合に同セリフで統合する。
+
         discovered_at 順に走査し、直前クラスタとのみ比較する（§16 厳格ルール）。
         - テキスト一致/前方一致/類似 → 直前クラスタに統合 (長い方が代表)
         - テキスト空同士 → phash < 30 で直前クラスタに統合
@@ -1554,13 +1562,14 @@ class BackgroundWorker:
                 _normalize_for_comparison, _text_similarity,
             )
 
-            # 代表画面の Gemini 補正テキストを discovered_at 順に取得
+            # 代表画面の補正テキストを discovered_at 順に取得
+            # Gemini → HQ → Vision の優先順で fallback
             reps = conn.execute(
                 "SELECT id, cluster_id, phash,"
                 " COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS gemini_text"
                 " FROM lc_screens"
                 " WHERE is_representative = 1"
-                " AND ocr_text_gemini IS NOT NULL"
+                " AND (ocr_text_gemini IS NOT NULL OR ocr_text_hq IS NOT NULL)"
                 " AND phash IS NOT NULL AND phash != ''"
                 + sid_filter +
                 " ORDER BY discovered_at",
@@ -1658,9 +1667,9 @@ class BackgroundWorker:
                     prev_orig = orig
 
             if merged > 0:
-                logger.info("[BG_WORKER] gemini remerge: %d クラスタ統合", merged)
+                logger.info("[BG_WORKER] text remerge: %d クラスタ統合", merged)
         except Exception as e:
-            logger.warning("[BG_WORKER] gemini remerge 例外: %s", e)
+            logger.warning("[BG_WORKER] text remerge 例外: %s", e)
 
     # ─── 合成エッジ ─────────────────────────────────────
 
