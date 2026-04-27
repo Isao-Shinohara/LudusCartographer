@@ -198,6 +198,7 @@
             const br = (typeof s.avg_brightness === 'number') ? s.avg_brightness.toFixed(0) : null;
             const dDist = (!isRep && repDhash && s.dhash) ? hammingDistance(repDhash, s.dhash) : null;
             const metaParts = [];
+            metaParts.push(`<span class="text-gray-500" title="screen id">id:${s.id}</span>`);
             if (br !== null) metaParts.push(`<span>br:${escapeHtml(br)}</span>`);
             if (dDist !== null) metaParts.push(`<span class="text-amber-300" title="代表との dHash Hamming distance">dist:${dDist}</span>`);
             const metaHtml = metaParts.length > 0
