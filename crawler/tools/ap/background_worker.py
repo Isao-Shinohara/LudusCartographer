@@ -985,20 +985,26 @@ class BackgroundWorker:
         conn.commit()
 
         # ─── 段階 2: 分離 screen の最近傍 cluster 再統合 ───
-        # 分離された screen を時系列順 (id 順) に処理し、
-        # 直前 screen の cluster の代表との dHash 距離を比較:
-        #   距離 < 閾値 + id 差 <= ID_GAP_THRESHOLD → その cluster に再統合 (revalidate_merge)
-        #   それ以外 → 新規独立 cluster (revalidate_split)
+        # 分離された screen を時系列順 (id 順) に処理し、二段判定で統合可否を決定:
+        #   RULE_A: d(rep, X) < TH_STRICT (=22)        ← 標準: 代表と近い
+        #   RULE_B: d(prev, X) < TH_PREV (=15)
+        #          AND d(rep, X) < TH_LOOSE (=30)      ← bridge: 直前と十分近く
+        #                                                ドリフトも上限内
+        #   どちらかを満たせば直前 cluster に統合 (revalidate_merge)
+        #   どちらも満たさず → 新規独立 cluster (revalidate_split)
+        # TH_LOOSE がドリフト絶対上限。連鎖統合で代表から 30 以上離れたら必ず止まる。
         # ID_GAP_THRESHOLD: 直前 screen との id 差がこれ以下なら時系列で隣接と判定。
-        #   (極端に大きいと「過去の遠い cluster」に飛んで時系列が崩れる)
         ID_GAP_THRESHOLD = 30
+        TH_STRICT = DHASH_VALIDATE_THRESHOLD  # 22
+        TH_PREV = 15
+        TH_LOOSE = 30
         split_items.sort(key=lambda x: x[0])
         merged_count = 0
         new_count = 0
         for sid, dhash in split_items:
-            # 直前 screen (cluster_id IS NOT NULL) の id と cluster_id を取得
+            # 直前 screen (cluster_id IS NOT NULL) の id, cluster_id, dhash を取得
             prev_screen = conn.execute(
-                "SELECT id, cluster_id FROM lc_screens"
+                "SELECT id, cluster_id, dhash FROM lc_screens"
                 " WHERE id < ? AND cluster_id IS NOT NULL"
                 " ORDER BY id DESC LIMIT 1",
                 (sid,),
@@ -1015,8 +1021,16 @@ class BackgroundWorker:
                         (prev_cid,),
                     ).fetchone()
                     if rep and rep["dhash"]:
-                        d = _dhash_distance(rep["dhash"], dhash)
-                        if d < DHASH_VALIDATE_THRESHOLD:
+                        d_rep = _dhash_distance(rep["dhash"], dhash)
+                        d_prev = (
+                            _dhash_distance(prev_screen["dhash"], dhash)
+                            if prev_screen["dhash"] else 999
+                        )
+                        # RULE_A: 代表と十分近い
+                        # RULE_B: bridge — 直前と近く、かつ代表とドリフト上限内
+                        if d_rep < TH_STRICT:
+                            target_cid = prev_cid
+                        elif d_prev < TH_PREV and d_rep < TH_LOOSE:
                             target_cid = prev_cid
 
             if target_cid is not None:
