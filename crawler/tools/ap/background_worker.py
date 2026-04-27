@@ -860,17 +860,24 @@ class BackgroundWorker:
         target_placeholders = ",".join("?" * len(target_cluster_ids))
         target_params = list(target_cluster_ids)
 
-        # cluster_id_orb を cluster_id_phash_only で初期化 (target 内のみ)
-        conn.execute(
-            f"UPDATE lc_screens SET cluster_id_orb = cluster_id_phash_only"
-            f" WHERE cluster_id_phash_only IN ({target_placeholders})"
-            + sid_filter,
-            target_params + list(sid_params),
-        )
-
-        # 新規 cluster_id_orb の開始番号
+        # C案: pho_only 流用を廃止し、cluster_id_orb を独立採番にする。
+        # mapping[pho] = 新規 orb_id (MAX+1 から連続採番) を作り、target 内 screen に適用。
+        # 分離側も同じ next_orb_cid から採番するので、mapping 値とも分離値とも絶対衝突しない。
         max_cid_row = conn.execute("SELECT COALESCE(MAX(cluster_id_orb), 0) FROM lc_screens").fetchone()
         next_orb_cid = (max_cid_row[0] or 0) + 1
+
+        pho_to_orb: dict[int, int] = {}
+        for pho in target_cluster_ids:
+            pho_to_orb[pho] = next_orb_cid
+            next_orb_cid += 1
+
+        for pho, new_orb in pho_to_orb.items():
+            conn.execute(
+                "UPDATE lc_screens SET cluster_id_orb = ?"
+                " WHERE cluster_id_phash_only = ?"
+                + sid_filter,
+                [new_orb, pho] + list(sid_params),
+            )
 
         # cluster_id_phash_only ごとに反復分離 (target 内のみ)
         pho_clusters = conn.execute(
