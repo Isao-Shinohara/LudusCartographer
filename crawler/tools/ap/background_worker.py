@@ -889,7 +889,7 @@ class BackgroundWorker:
         (セリフ送り中の連続フレームは構図変化があっても同シーン)。
         """
         _dhash_distance = self._dhash_distance
-        DHASH_VALIDATE_THRESHOLD = 20  # 代表との dHash 距離 >= これで分離
+        DHASH_VALIDATE_THRESHOLD = 22  # 代表との dHash 距離 >= これで分離
 
         # 2メンバー以上のクラスタを取得
         clusters = conn.execute(
