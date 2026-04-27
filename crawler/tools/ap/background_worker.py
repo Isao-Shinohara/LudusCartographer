@@ -833,9 +833,101 @@ class BackgroundWorker:
             # cluster_id を更新するが cluster_id_phash_only は変えない
             if target_cluster_ids:
                 self._validate_clusters(conn, next_cid, _sid_filter, _sid_params, target_cluster_ids)
+                # ORB ベース Step B シミュレーション (比較用、cluster_id_orb に書き込み)
+                self._run_orb_validation(conn, _sid_filter, _sid_params, target_cluster_ids)
 
         finally:
             conn.close()
+
+    def _run_orb_validation(
+        self,
+        conn: sqlite3.Connection,
+        sid_filter: str,
+        sid_params: tuple,
+        target_cluster_ids: set,
+    ) -> None:
+        """ORB マッチ率ベースの Step B シミュレーション (cluster_id_orb に保存)。
+
+        cluster_id_phash_only ベースに、cluster 内で ORB マッチ率が低い
+        メンバーを順次分離する反復分離のみ実装 (簡易版)。
+        dHash 版との比較用。
+        """
+        if not target_cluster_ids:
+            return
+        from lc.orb_matcher import match_rate
+        ORB_MATCH_MIN = 0.3  # マッチ率がこれ未満なら別シーン
+
+        target_placeholders = ",".join("?" * len(target_cluster_ids))
+        target_params = list(target_cluster_ids)
+
+        # cluster_id_orb を cluster_id_phash_only で初期化 (target 内のみ)
+        conn.execute(
+            f"UPDATE lc_screens SET cluster_id_orb = cluster_id_phash_only"
+            f" WHERE cluster_id_phash_only IN ({target_placeholders})"
+            + sid_filter,
+            target_params + list(sid_params),
+        )
+
+        # 新規 cluster_id_orb の開始番号
+        max_cid_row = conn.execute("SELECT COALESCE(MAX(cluster_id_orb), 0) FROM lc_screens").fetchone()
+        next_orb_cid = (max_cid_row[0] or 0) + 1
+
+        # cluster_id_phash_only ごとに反復分離 (target 内のみ)
+        pho_clusters = conn.execute(
+            f"SELECT cluster_id_phash_only AS pho FROM lc_screens"
+            f" WHERE cluster_id_phash_only IN ({target_placeholders})"
+            + sid_filter +
+            " GROUP BY cluster_id_phash_only HAVING COUNT(*) > 1",
+            target_params + list(sid_params),
+        ).fetchall()
+
+        for pc in pho_clusters:
+            pho = pc["pho"]
+            members = [dict(r) for r in conn.execute(
+                "SELECT id, orb_descriptors AS orb, avg_brightness AS br, is_representative AS rep"
+                " FROM lc_screens WHERE cluster_id_phash_only = ?"
+                " ORDER BY id",
+                (pho,),
+            ).fetchall()]
+            if len(members) < 2:
+                continue
+
+            # pairwise match_rate を 1 度だけ計算してキャッシュ
+            match_cache: dict = {}
+            def _rate(a, b) -> float:
+                key = (min(a["id"], b["id"]), max(a["id"], b["id"]))
+                if key not in match_cache:
+                    match_cache[key] = match_rate(a["orb"], b["orb"])
+                return match_cache[key]
+
+            # 反復分離: 「他メンバーとの最小マッチ率」が ORB_MATCH_MIN 未満のメンバーを分離
+            while len(members) > 1:
+                worst_list = []
+                for m in members:
+                    if m.get("rep"):
+                        continue  # 代表は分離対象外
+                    min_rate = min(
+                        (_rate(m, o) for o in members if o["id"] != m["id"]),
+                        default=1.0,
+                    )
+                    worst_list.append((m, min_rate))
+                if not worst_list:
+                    break
+                # 最も孤立しているメンバー (min_rate 最小、タイ時 br 低い方)
+                most_isolated, min_rate = min(
+                    worst_list,
+                    key=lambda x: (x[1], (x[0].get("br") or 0.0)),
+                )
+                if min_rate >= ORB_MATCH_MIN:
+                    break  # 全員 OK
+                # 分離: cluster_id_orb を新規番号に
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_id_orb = ? WHERE id = ?",
+                    (next_orb_cid, most_isolated["id"]),
+                )
+                next_orb_cid += 1
+                members = [m for m in members if m["id"] != most_isolated["id"]]
+        conn.commit()
 
     def _validate_clusters(
         self,

@@ -445,7 +445,7 @@ class EvidenceRepository
                    s.discovered_at, s.session_id,
                    s.fingerprint, s.scene,
                    s.is_representative, s.cluster_id,
-                   s.cluster_id_phash_only, s.cluster_id_hybrid, s.cluster_decision_method,
+                   s.cluster_id_phash_only, s.cluster_id_hybrid, s.cluster_id_orb, s.cluster_decision_method,
                    s.dhash, s.phash,
                    s.avg_brightness, s.phash_dist_to_prev_rep, s.dhash_dist_to_prev_rep,
                    COALESCE(sess.game_title, 'Unknown Game') AS game_title
@@ -591,6 +591,7 @@ class EvidenceRepository
             'cluster_id'      => $raw['cluster_id'] ?? null,
             'cluster_id_phash_only' => $raw['cluster_id_phash_only'] ?? null,
             'cluster_id_hybrid' => $raw['cluster_id_hybrid'] ?? null,
+            'cluster_id_orb' => $raw['cluster_id_orb'] ?? null,
             'cluster_decision_method' => $raw['cluster_decision_method'] ?? null,
             'dhash'             => $raw['dhash'] ?? null,
             'phash'             => $raw['phash'] ?? null,
