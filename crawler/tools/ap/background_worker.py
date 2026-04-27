@@ -891,13 +891,18 @@ class BackgroundWorker:
         for pc in pho_clusters:
             pho = pc["pho"]
             members = [dict(r) for r in conn.execute(
-                "SELECT id, orb_descriptors AS orb, avg_brightness AS br, is_representative AS rep"
+                "SELECT id, orb_descriptors AS orb, avg_brightness AS br,"
+                "       is_representative AS rep_raw, cluster_id"
                 " FROM lc_screens WHERE cluster_id_phash_only = ?"
                 " ORDER BY id",
                 (pho,),
             ).fetchall()]
             if len(members) < 2:
                 continue
+            # dHash と同じ「Step A 代表」を使う: cluster_id==pho AND is_representative=1
+            # (cluster_id_hybrid で分割されて発生した複数の rep を流用しないこと)
+            for m in members:
+                m["rep"] = (m["cluster_id"] == pho and m["rep_raw"])
 
             # pairwise match_rate を 1 度だけ計算してキャッシュ
             match_cache: dict = {}
