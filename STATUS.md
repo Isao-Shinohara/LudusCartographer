@@ -6,8 +6,10 @@
 - `feature/screen-recorder` (main 未マージ)
 
 ## 最終セッション (2026-04-28 午前)
-- 主な作業: Step B 段階2/3 に **phash AND dHash** 判定を導入 (設計意図復元)
-- 背景: 暗い画像同士・ダウンロード進捗画面で dHash 単独では誤統合を起こしていた
+- 主な作業:
+  1. Step B 段階2/3 に **phash AND dHash** 判定を導入 (設計意図復元)
+  2. テキスト空クラスタの代表選択を **情報量スコア** に置き換え (白フラッシュが代表になる問題を解消)
+- 背景: 暗い画像同士・ダウンロード進捗画面で dHash 単独では誤統合 / 白フラッシュ等の情報のないフレームが代表に選ばれていた
 - 詳細: `docs/history/2026-04-28_morning.md`
 
 ## ひとつ前のセッション (2026-04-28 深夜〜早朝)
@@ -24,6 +26,33 @@
 - **auto_pilot プロセス**: 停止中
 
 ## 直近の主要変更 (2026-04-28 午前)
+
+### 代表選択を情報量スコアに置き換え (白フラッシュ問題)
+
+**問題**:
+- ID128133 (白フラッシュ, br=184) が ID128134 (破片シーン, br=76) より先に rep 化 → 永遠に居座る
+- 旧ロジックは `両方暗い (<80) → brightness 高い方 / それ以外 → 顔面積` の分岐
+- 動画フレームでは顔検出 0 で両方 0 → 入力順最初の rep が変わらない
+
+**修正**: `crawler/tools/ap/background_worker.py`
+- 新規メソッド (4 つ + 集約 1 つ):
+  - `_edge_density(gray)` — Canny エッジ密度
+  - `_laplacian_variance(gray)` — シャープさ
+  - `_saturation_mean(img_bgr)` — HSV 彩度平均
+  - `_shannon_entropy(gray)` — 階調分布エントロピー
+  - `_info_score(conn, screen_id)` — 4 指標を 0-10 スケールに正規化合算
+- 代表昇格判定を `if new_score > old_score: _should_promote = True` に統一
+
+**実測検証**:
+| ケース | rep | 候補 | 旧結果 | 新結果 |
+|---|---|---|---|---|
+| 白フラッシュ vs 破片シーン | 6.14 | 9.45 | 白フラッシュ rep | ✅ 破片 rep |
+| MENU vs ADV暗 | 22.75 | 4.19 | MENU rep | ✅ MENU rep 維持 |
+
+**触らなかったもの**:
+- `_get_brightness`, `_max_face_area` メソッド本体 (他の use site あり)
+- 「テキストあり > 空」の優先順位
+- Step A / Step B のクラスタリング判定
 
 ### Step B 段階2/3 に phash 距離チェックを追加 (設計意図復元)
 

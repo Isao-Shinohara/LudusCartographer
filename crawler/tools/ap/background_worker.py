@@ -759,25 +759,21 @@ class BackgroundWorker:
                                     _decision_method = "phash_diameter"
 
                         if is_same:
-                            # 代表交代判定: テキストあり > テキスト空 > 顔面積
+                            # 代表交代判定: テキストあり > テキスト空 (std 大)
                             old_rep_id = self._get_rep_id(conn, _prev_cid)
                             _should_promote = False
                             if _is_meaningful and not _rep_norm:
                                 _should_promote = True
                             elif not _is_meaningful and not _rep_norm:
-                                # 暗い画像群: brightness が高い方を代表に (ロゴのフェードイン/アウト対策)
-                                new_br = self._get_brightness(conn, sid)
-                                old_br = self._get_brightness(conn, old_rep_id) if old_rep_id else 0
-                                if new_br < 80 and old_br < 80:
-                                    # 両方暗い → brightness が高い方を採用
-                                    if new_br > old_br:
-                                        _should_promote = True
-                                else:
-                                    # 明るい画像群 → 顔面積で判定
-                                    new_face = self._max_face_area(conn, sid)
-                                    old_face = self._max_face_area(conn, old_rep_id) if old_rep_id else 0
-                                    if new_face > old_face:
-                                        _should_promote = True
+                                # 両方 text 空 → 情報量スコア (edge + lap + sat + entropy)
+                                # で「より情報量の多いフレーム」を代表に。
+                                # 白フラッシュ・暗転は低スコア、構造/色/階調多様性のある
+                                # シーンは高スコア。ロゴフェード・MENU 優先・破片シーン
+                                # 優先を一括で実現する。
+                                new_score = self._info_score(conn, sid)
+                                old_score = self._info_score(conn, old_rep_id) if old_rep_id else 0.0
+                                if new_score > old_score:
+                                    _should_promote = True
                             if _should_promote and old_rep_id:
                                 # クラスタ内の全代表をリセットしてから新代表を設定
                                 conn.execute(
@@ -1274,6 +1270,76 @@ class BackgroundWorker:
         except Exception:
             pass
         return 0.0
+
+    @staticmethod
+    def _edge_density(gray) -> float:
+        """Canny エッジ密度: 画面のどの程度がエッジか (0-1)。
+        構造のあるシーンは高、一面ベタの白/黒は低。
+        """
+        import cv2
+        import numpy as np
+        return float(np.mean(cv2.Canny(gray, 50, 150) > 0))
+
+    @staticmethod
+    def _laplacian_variance(gray) -> float:
+        """Laplacian 分散: シャープさ (フォーカス測定値)。
+        ボケた画像は低、シャープなディテールがある画像は高。
+        """
+        import cv2
+        return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+    @staticmethod
+    def _saturation_mean(img_bgr) -> float:
+        """HSV 彩度平均 (0-255): 色の鮮やかさ。
+        グレースケール的シーンは低、カラフルなシーンは高。
+        """
+        import cv2
+        import numpy as np
+        hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+        return float(np.mean(hsv[:, :, 1]))
+
+    @staticmethod
+    def _shannon_entropy(gray) -> float:
+        """階調分布の Shannon エントロピー (0-8): 明るさの多様性。
+        単調な画像 (一面同色) は低、ヒストグラムが広い画像は高。
+        """
+        import cv2
+        import numpy as np
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+        p = hist[hist > 0] / hist.sum()
+        if p.size == 0:
+            return 0.0
+        return float(-np.sum(p * np.log2(p)))
+
+    @classmethod
+    def _info_score(cls, conn: sqlite3.Connection, screen_id: int) -> float:
+        """情報量スコア (代表選びの判定用)。
+        4 つの指標を合算し、値が大きいほど代表として相応しい:
+          - edge_density (構造)
+          - laplacian_variance (シャープさ)
+          - saturation_mean (色)
+          - shannon_entropy (階調多様性)
+        各指標を概ね 0-10 スケールに正規化して足し合わせる。
+        """
+        try:
+            row = conn.execute(
+                "SELECT screenshot_path FROM lc_screens WHERE id = ?", (screen_id,)
+            ).fetchone()
+            if not row or not row["screenshot_path"]:
+                return 0.0
+            import cv2
+            img = cv2.imread(row["screenshot_path"])
+            if img is None:
+                return 0.0
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            return (
+                cls._edge_density(gray) * 100
+                + cls._laplacian_variance(gray) / 20
+                + cls._saturation_mean(img) / 25.5
+                + cls._shannon_entropy(gray)
+            )
+        except Exception:
+            return 0.0
 
     @staticmethod
     def _is_dark_phash(phash: str) -> bool:
