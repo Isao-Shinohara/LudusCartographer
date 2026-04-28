@@ -882,6 +882,7 @@ class BackgroundWorker:
         if not target_cluster_ids:
             return
         _dhash_distance = self._dhash_distance
+        _phash_distance = self._phash_distance
         DHASH_VALIDATE_THRESHOLD = 25  # cluster の直径 (max pairwise dHash) がこれ以上で分離
 
         # LC_TEXT_SEPARATION=on の場合、§16 ルール 1「テキスト一致 → 同クラスタ」を
@@ -904,7 +905,7 @@ class BackgroundWorker:
         if not clusters:
             return
 
-        split_items: list[tuple[int, str]] = []  # (id, dhash)
+        split_items: list[tuple[int, str, str]] = []  # (id, phash, dhash)
 
         for cluster in clusters:
             cid = cluster["cluster_id"]
@@ -912,7 +913,7 @@ class BackgroundWorker:
             # cluster 内の全メンバー (代表含む) を取得
             all_members = [
                 dict(r) for r in conn.execute(
-                    "SELECT id, dhash, avg_brightness AS br, is_representative AS rep,"
+                    "SELECT id, phash, dhash, avg_brightness AS br, is_representative AS rep,"
                     "       ocr_text_hq, ocr_text"
                     " FROM lc_screens"
                     " WHERE cluster_id = ?"
@@ -976,7 +977,11 @@ class BackgroundWorker:
                     "UPDATE lc_screens SET cluster_id = NULL, is_representative = 0 WHERE id = ?",
                     (most_isolated["id"],),
                 )
-                split_items.append((most_isolated["id"], most_isolated["dhash"]))
+                split_items.append((
+                    most_isolated["id"],
+                    most_isolated.get("phash") or "",
+                    most_isolated["dhash"],
+                ))
                 all_members = [m for m in all_members if m["id"] != most_isolated["id"]]
                 logger.debug(
                     "[BG_WORKER] cluster_validate: id=%d をクラスタ %d から分離 (最大dHash=%d)",
@@ -1003,13 +1008,17 @@ class BackgroundWorker:
         TH_STRICT = DHASH_VALIDATE_THRESHOLD  # 25
         TH_PREV = 20
         TH_LOOSE = 35
+        # phash AND dHash: 設計意図 (phash クラスタ内で dHash 細分化) を Step B に強制
+        # Step A の MAX_PHASH_DIAMETER=30 と整合させる安全側設定
+        PHASH_TH_STRICT = 25
+        PHASH_TH_LOOSE = 30
         split_items.sort(key=lambda x: x[0])
         merged_count = 0
         new_count = 0
-        for sid, dhash in split_items:
-            # 直前 screen (cluster_id IS NOT NULL) の id, cluster_id, dhash を取得
+        for sid, phash, dhash in split_items:
+            # 直前 screen (cluster_id IS NOT NULL) の id, cluster_id, phash, dhash を取得
             prev_screen = conn.execute(
-                "SELECT id, cluster_id, dhash FROM lc_screens"
+                "SELECT id, cluster_id, phash, dhash FROM lc_screens"
                 " WHERE id < ? AND cluster_id IS NOT NULL"
                 " ORDER BY id DESC LIMIT 1",
                 (sid,),
@@ -1021,21 +1030,30 @@ class BackgroundWorker:
                 if sid - prev_screen["id"] <= ID_GAP_THRESHOLD:
                     prev_cid = prev_screen["cluster_id"]
                     rep = conn.execute(
-                        "SELECT dhash FROM lc_screens"
+                        "SELECT phash, dhash FROM lc_screens"
                         " WHERE cluster_id = ? AND is_representative = 1 LIMIT 1",
                         (prev_cid,),
                     ).fetchone()
                     if rep and rep["dhash"]:
                         d_rep = _dhash_distance(rep["dhash"], dhash)
+                        d_rep_p = (
+                            _phash_distance(rep["phash"], phash)
+                            if rep["phash"] and phash else 999
+                        )
                         d_prev = (
                             _dhash_distance(prev_screen["dhash"], dhash)
                             if prev_screen["dhash"] else 999
                         )
-                        # RULE_A: 代表と十分近い
-                        # RULE_B: bridge — 直前と近く、かつ代表とドリフト上限内
-                        if d_rep < TH_STRICT:
+                        # phash AND dHash:
+                        # RULE_A: 代表と十分近い (dHash STRICT かつ phash STRICT)
+                        # RULE_B: bridge — 直前と近く、代表とドリフト上限内 (dHash + phash)
+                        if d_rep < TH_STRICT and d_rep_p < PHASH_TH_STRICT:
                             target_cid = prev_cid
-                        elif d_prev < TH_PREV and d_rep < TH_LOOSE:
+                        elif (
+                            d_prev < TH_PREV
+                            and d_rep < TH_LOOSE
+                            and d_rep_p < PHASH_TH_LOOSE
+                        ):
                             target_cid = prev_cid
 
             if target_cid is not None:
@@ -1074,6 +1092,9 @@ class BackgroundWorker:
         STEP3_TH_STRICT = DHASH_VALIDATE_THRESHOLD  # 25
         STEP3_TH_PREV = 25
         STEP3_TH_LOOSE = 35
+        # phash AND dHash: 段階 2 と同じ意図 (phash クラスタ内で dHash) を強制
+        STEP3_PHASH_TH_STRICT = 25
+        STEP3_PHASH_TH_LOOSE = 30
         total_gap_merged = 0
         total_gap_new = 0
         for _pass in range(MAX_PASSES):
@@ -1082,7 +1103,7 @@ class BackgroundWorker:
             # 各 pass で最新状態を取得
             # 1) 走査対象は target_cluster_ids 内の screen (text も取得)
             all_data = conn.execute(
-                f"SELECT id, cluster_id, dhash, is_representative AS rep,"
+                f"SELECT id, cluster_id, phash, dhash, is_representative AS rep,"
                 f"       ocr_text_hq, ocr_text"
                 f" FROM lc_screens"
                 f" WHERE cluster_id IN ({target_placeholders})"
@@ -1091,19 +1112,23 @@ class BackgroundWorker:
                 " ORDER BY id",
                 target_params + list(sid_params),
             ).fetchall()
-            # 2) 各 cluster の代表の dhash と text
-            rep_info_map: dict[int, tuple[str, str]] = {}
+            # 2) 各 cluster の代表の phash, dhash, text
+            rep_info_map: dict[int, tuple[str, str, str]] = {}
             for r in conn.execute(
-                "SELECT cluster_id, dhash, ocr_text_hq, ocr_text FROM lc_screens"
+                "SELECT cluster_id, phash, dhash, ocr_text_hq, ocr_text FROM lc_screens"
                 " WHERE is_representative = 1"
                 "   AND dhash IS NOT NULL AND dhash != ''"
                 + sid_filter,
                 sid_params,
             ).fetchall():
                 raw_text = r["ocr_text_hq"] or r["ocr_text"] or ""
-                rep_info_map[r["cluster_id"]] = (r["dhash"], _normalize_text(raw_text))
+                rep_info_map[r["cluster_id"]] = (
+                    r["dhash"],
+                    r["phash"] or "",
+                    _normalize_text(raw_text),
+                )
             rep_dhash_map: dict[int, str] = {
-                cid: dh for cid, (dh, _) in rep_info_map.items()
+                cid: dh for cid, (dh, _ph, _) in rep_info_map.items()
             }
             # 3) 1メンバー cluster の cluster_id
             single_member_cids = {
@@ -1156,6 +1181,7 @@ class BackgroundWorker:
                 mid = m["id"]
                 mcid = m["cluster_id"]
                 mdh = m["dhash"]
+                mph = m["phash"] or ""
                 m_text = m["ocr_text_hq"] or m["ocr_text"] or ""
                 m_norm = _normalize_text(m_text)
                 prev_for_m = prev_cid_map.get(mid)
@@ -1167,20 +1193,33 @@ class BackgroundWorker:
                 if prev_id_for_m is not None and mid - prev_id_for_m <= ID_GAP_THRESHOLD:
                     rep_info = rep_info_map.get(prev_for_m)
                     if rep_info:
-                        rep_dh, rep_norm = rep_info
+                        rep_dh, rep_ph, rep_norm = rep_info
                         # text-mismatch ブロック: 両方 text あり かつ 不一致 → 統合しない
                         if not _text_mismatch(m_norm, rep_norm):
                             d_rep = _dhash_distance(rep_dh, mdh)
+                            d_rep_p = (
+                                _phash_distance(rep_ph, mph)
+                                if rep_ph and mph else 999
+                            )
                             d_prev = (
                                 _dhash_distance(prev_dh_for_m, mdh)
                                 if prev_dh_for_m else 999
                             )
-                            # B1 hybrid:
-                            # RULE_A: d(rep, X) < TH_STRICT
-                            # RULE_B: d(prev, X) < TH_PREV AND d(rep, X) < TH_LOOSE
-                            if d_rep < STEP3_TH_STRICT:
+                            # B1 hybrid + phash AND:
+                            # RULE_A: d_dhash(rep, X) < TH_STRICT AND d_phash(rep, X) < PHASH_STRICT
+                            # RULE_B: d_dhash(prev, X) < TH_PREV
+                            #         AND d_dhash(rep, X) < TH_LOOSE
+                            #         AND d_phash(rep, X) < PHASH_LOOSE
+                            if (
+                                d_rep < STEP3_TH_STRICT
+                                and d_rep_p < STEP3_PHASH_TH_STRICT
+                            ):
                                 target_cid = prev_for_m
-                            elif d_prev < STEP3_TH_PREV and d_rep < STEP3_TH_LOOSE:
+                            elif (
+                                d_prev < STEP3_TH_PREV
+                                and d_rep < STEP3_TH_LOOSE
+                                and d_rep_p < STEP3_PHASH_TH_LOOSE
+                            ):
                                 target_cid = prev_for_m
                 if target_cid is not None and target_cid != mcid:
                     conn.execute(
@@ -1196,7 +1235,7 @@ class BackgroundWorker:
                     )
                     self._set_decision(conn, mid, next_cid, "revalidate_split")
                     rep_dhash_map[next_cid] = mdh
-                    rep_info_map[next_cid] = (mdh, m_norm)
+                    rep_info_map[next_cid] = (mdh, mph, m_norm)
                     next_cid += 1
                     gap_new += 1
             conn.commit()

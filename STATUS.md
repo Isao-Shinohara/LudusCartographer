@@ -1,11 +1,16 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-04-28
+最終更新: 2026-04-28 (午前)
 
 ## 現在のブランチ
 - `feature/screen-recorder` (main 未マージ)
 
-## 最終セッション (2026-04-28 深夜〜早朝)
+## 最終セッション (2026-04-28 午前)
+- 主な作業: Step B 段階2/3 に **phash AND dHash** 判定を導入 (設計意図復元)
+- 背景: 暗い画像同士・ダウンロード進捗画面で dHash 単独では誤統合を起こしていた
+- 詳細: `docs/history/2026-04-28_morning.md`
+
+## ひとつ前のセッション (2026-04-28 深夜〜早朝)
 - 主な作業: ORB 完全削除、Step B 二段判定強化、_remerge_text_clusters 拡張、Step A Jaccard 追加、閾値緩和、UI 改善
 - コミット: `5511e2d` 〜 `e99fc7f` (約 25 コミット)
 
@@ -18,7 +23,32 @@
 - **マスター**: 空 (未マージ)
 - **auto_pilot プロセス**: 停止中
 
-## 直近の主要変更 (2026-04-28)
+## 直近の主要変更 (2026-04-28 午前)
+
+### Step B 段階2/3 に phash 距離チェックを追加 (設計意図復元)
+
+**問題**:
+- ID126218 ほむら (br:55) が ID126212 爆発+キャラ (br:53) と同じクラスタに統合 — dHash=21 で STRICT 25 未満
+- ID126271 ダウンロード+TVシーン と ID126272 ダウンロード+夕暮れシーン が統合 — phash=30 だが dHash=34 で LOOSE 35 未満
+- 設計意図: 「dHash は phash で形成されたクラスタ内で動く」だったが Step B 段階2/3 が **phash を見ずに dHash 単独** で再統合していた
+
+**修正**: `crawler/tools/ap/background_worker.py`
+- 段階2 `RULE_A`: `d_dhash < 25` → `d_dhash < 25 AND d_phash < 25`
+- 段階2 `RULE_B`: `d_prev_dhash < 20 AND d_rep_dhash < 35` → 同条件 AND `d_rep_phash < 30`
+- 段階3 同様に phash チェック追加 (`STEP3_PHASH_TH_STRICT=25`, `STEP3_PHASH_TH_LOOSE=30`)
+- SQL 拡張: rep info / split_items / all_data の SELECT に phash カラムを追加
+
+**効果**:
+- ダウンロード画面 (phash=30) → STRICT で分離 ✓
+- 爆発+破片 vs 爆発+キャラ (phash 28-29) → STRICT で分離 ✓
+- ほむら (phash=23) → 救えない (Gemini within-session の領域)
+
+**触らなかったもの**:
+- Step A (既に phash 整合)
+- Step B 段階1 (split, クラスタ内動作で phash 不要)
+- 既存 dHash 閾値、Option 1 (brightness ガード)、テキスト正規化
+
+## 直近の主要変更 (2026-04-28 深夜〜早朝)
 
 ### 1. ORB 完全削除 (`8294d23`)
 - `crawler/lc/orb_matcher.py`、`crawler/tests/test_orb_matcher.py` を削除
@@ -74,18 +104,22 @@ TH_LOOSE がドリフト絶対上限。連鎖統合で代表から TH_LOOSE 以�
 | | `min_jaccard` / `MAX_PHASH_DIAMETER` | 0.3 / 30 |
 | Step B 段階1 | `DHASH_VALIDATE_THRESHOLD` | 25 |
 | Step B 段階2 | `TH_STRICT` / `TH_PREV` / `TH_LOOSE` | 25 / 20 / 35 |
+| Step B 段階2 (phash) | `PHASH_TH_STRICT` / `PHASH_TH_LOOSE` | **25 / 30 (新規)** |
 | Step B 段階3 | `STEP3_TH_STRICT` / `STEP3_TH_PREV` / `STEP3_TH_LOOSE` | 25 / 25 / 35 |
+| Step B 段階3 (phash) | `STEP3_PHASH_TH_STRICT` / `STEP3_PHASH_TH_LOOSE` | **25 / 30 (新規)** |
 | remerge 空 text | `_EMPTY_PHASH_TH` / `_EMPTY_DHASH_TH` | 35 / 25 |
 | 共通 | `ID_GAP_THRESHOLD` | 30 |
 
 ## 未解決の課題
-1. **実データでの新閾値検証**: クリーンアップ済み、再起動して動画/ADV/バトル各シーンで挙動確認
-2. **段階 3 の収束性能監視**: 通常 1〜5 pass で収束想定。MAX_PASSES (50) 警告ログをチェック
-3. **Jaccard `phash_low_jaccard` の頻度**: 新閾値で発火状況をダッシュボードで観察
-4. **テキストありフレームと空フレームの統合品質**: 663/664 ケースの実機動作確認
-5. **Gemini API 設定**: 未設定のまま運用継続。設定する場合は `crawler/config/.env` に `GEMINI_API_KEY` 追記
-6. **batch_processor.py の `--deduplicate` CLI**: 後方互換、次回別タスクで `--cluster` にリネーム検討
-7. **Gemini 503 / scrcpy黒キャプチャ / DB locked散発**: 過去から継続
+1. **実データでの phash AND dHash 検証**: クリーンアップ済み、再起動して動画/ADV/バトルで挙動確認
+2. **暗い画像同士の偽合致 (ほむら問題)**: phash=23 / dHash=21 のように両方近いケースは現状救えない。Option 4 (Gemini within-session 判定) の設計検討が将来課題
+3. **数値主体テキストの正規化挙動**: "Download 668.71 MB" のように数値除去後ほぼ空になるテキストが偶然一致してしまう問題。今回は phash AND dHash で副次的に救えるが、本質的な見直しは別タスク
+4. **段階 3 の収束性能監視**: 通常 1〜5 pass で収束想定。MAX_PASSES (50) 警告ログをチェック
+5. **Jaccard `phash_low_jaccard` の頻度**: 新閾値で発火状況をダッシュボードで観察
+6. **テキストありフレームと空フレームの統合品質**: 663/664 ケースの実機動作確認
+7. **Gemini API 設定**: 未設定のまま運用継続。設定する場合は `crawler/config/.env` に `GEMINI_API_KEY` 追記
+8. **batch_processor.py の `--deduplicate` CLI**: 後方互換、次回別タスクで `--cluster` にリネーム検討
+9. **Gemini 503 / scrcpy黒キャプチャ / DB locked散発**: 過去から継続
 
 ## 設計ドキュメント
 - `docs/merge_sort_algorithm.md` — SafeInsert 仕様
