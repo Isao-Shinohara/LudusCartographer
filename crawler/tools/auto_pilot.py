@@ -1139,6 +1139,16 @@ def detect_scene_early(img_path: Path, state: PilotState, dist: int) -> str:
         logger.info("[SCENE_EARLY] MOVIE(SKIP)+ガチャ直後(TTL=%d)+非ガチャ演出 → ガチャ結果画面、MOVIE棄却",
                     _gacha_ttl)
         return "UNKNOWN"
+    # ログインボーナス誤判定ガード: ⏭ あり MOVIE 候補で大型矩形+blur+close_btn が
+    # 揃えばログインボーナスポップアップ。MOVIE と誤判定されると「動画自動終了待機」
+    # のループに陥るため UNKNOWN に戻して dialog_phase の LOGIN_BONUS_CLOSE に委譲する
+    if _movie.is_movie and _movie.has_skip_btn:
+        from tools.ap.image_proc import detect_login_bonus_popup as _detect_lbp
+        _lbp_check = _detect_lbp(img_path)
+        if _lbp_check is not None:
+            logger.info("[SCENE_EARLY] MOVIE(SKIP)候補だがログインボーナス検出 → MOVIE棄却 (面積比=%.1f%%)",
+                        _lbp_check["screen_ratio"] * 100)
+            return "UNKNOWN"
     if _movie.is_movie:
         # ADV→MOVIE 誤遷移防止: ADV テンプレが見えている間は MOVIE 遷移しない
         # current_scene に依存しない (UNKNOWN 状態でも ADV テンプレがあれば防止)
