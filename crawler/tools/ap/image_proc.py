@@ -3491,35 +3491,41 @@ def detect_login_bonus_popup(
         logger.debug("[LOGIN_BONUS] 背景ぼかし未検出 → 棄却")
         return None
 
-    # ── close_btn テンプレマッチ (必須) ──
+    # ── close_btn / icon_skip テンプレマッチ (必須) ──
     # × ボタンは矩形の右上角付近にある → 位置制約で誤検出を排除
     # 許容範囲: 矩形右端から rect_w*0.15 以内、矩形上端から rect_h*0.15 以内
     # (ボタンは矩形の角ギリギリか少し外側に配置される)
-    _close_match = ASSET_MANAGER.match_single("close_btn", img_path)
+    # ログインボーナス画面によっては × の代わりに ▶| (skip) アイコンが使われる
+    # ため、両方マッチして高スコアの方を採用する。
+    _margin_x = max(_rect_w * 0.15, 40)  # 最低40px
+    _margin_y = max(_rect_h * 0.15, 40)
     _close_info = None
-    if _close_match and _close_match[2] >= 0.50:
-        _cx, _cy = _close_match[0], _close_match[1]
-        _margin_x = max(_rect_w * 0.15, 40)  # 最低40px
-        _margin_y = max(_rect_h * 0.15, 40)
+    _matched_tmpl = None
+    for _tmpl_name in ("close_btn", "icon_skip"):
+        _m = ASSET_MANAGER.match_single(_tmpl_name, img_path)
+        if _m is None or _m[2] < 0.50:
+            continue
+        _cx, _cy = _m[0], _m[1]
         _x_ok = _cx >= _right - _margin_x
-        # × は矩形上端の近傍 (上端から ±margin_y) にある
         _y_ok = abs(_cy - _top) <= _margin_y
-        if _x_ok and _y_ok:
-            _close_info = (_cx, _cy, _close_match[2])
-        else:
-            logger.debug("[LOGIN_BONUS] close_btn (%d,%d) が右上角にない → 棄却 "
+        if not (_x_ok and _y_ok):
+            logger.debug("[LOGIN_BONUS] %s (%d,%d) が右上角にない → 棄却 "
                          "(rect右上=(%d,%d) margin=%.0f,%.0f)",
-                         _cx, _cy, _right, _top, _margin_x, _margin_y)
+                         _tmpl_name, _cx, _cy, _right, _top, _margin_x, _margin_y)
+            continue
+        if _close_info is None or _m[2] > _close_info[2]:
+            _close_info = (_cx, _cy, _m[2])
+            _matched_tmpl = _tmpl_name
 
     if _close_info is None:
-        logger.debug("[LOGIN_BONUS] close_btn 未検出 → 棄却 (面積比=%.1f%%)",
+        logger.debug("[LOGIN_BONUS] close_btn/icon_skip 未検出 → 棄却 (面積比=%.1f%%)",
                      _screen_ratio * 100)
         return None
 
     logger.info(
-        "[LOGIN_BONUS] 検出: rect=(%d,%d)-(%d,%d) 面積比=%.1f%% close_btn=(%d,%d score=%.2f)",
+        "[LOGIN_BONUS] 検出: rect=(%d,%d)-(%d,%d) 面積比=%.1f%% %s=(%d,%d score=%.2f)",
         _left, _top, _right, _bottom,
-        _screen_ratio * 100,
+        _screen_ratio * 100, _matched_tmpl,
         _close_info[0], _close_info[1], _close_info[2],
     )
 
