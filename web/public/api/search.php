@@ -105,6 +105,18 @@ if ($action === 'rename_version') {
     exit;
 }
 
+// --- finalize_session アクション (paused → completed; マージタブに移動) ---
+if ($action === 'finalize_session') {
+    $sessionId = trim($_GET['session_id'] ?? '');
+    if ($sessionId === '' || !($useDb && $repository instanceof EvidenceRepository)) {
+        echo json_encode(['error' => 'session_id required']);
+        exit;
+    }
+    $result = $repository->finalizeSession($sessionId);
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    exit;
+}
+
 // --- delete_version アクション ---
 if ($action === 'delete_version') {
     $versionId = (int)($_GET['version_id'] ?? 0);

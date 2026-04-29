@@ -70,12 +70,12 @@ class EvidenceRepository
      */
     public function activateVersion(int $versionId): array
     {
-        // 旧アクティブバージョンの running セッションを強制完了
+        // 旧アクティブバージョンの running/paused セッションを強制完了
         $oldVersionId = $this->getActiveVersionId();
         if ($oldVersionId !== $versionId) {
             $this->db->prepare(
                 "UPDATE lc_sessions SET status = 'completed', completion_type = 'version_switch'"
-                . " WHERE status = 'running' AND version_id = :old_vid"
+                . " WHERE status IN ('running', 'paused') AND version_id = :old_vid"
             )->execute([':old_vid' => $oldVersionId]);
         }
 
@@ -731,13 +731,14 @@ class EvidenceRepository
     public function getRunningSessions(?int $versionId = null): array
     {
         $versionId ??= $this->getActiveVersionId();
-        // 進行中セッション: status='running' のみ
+        // 進行中セッション: status='running' (動作中) + 'paused' (Ctrl+C で一時停止、resume 可)
+        // paused は resume 可能 / マージ前にユーザーが「完了として確定」する必要あり
         $sql = <<<SQL
             SELECT s.session_id, s.started_at, s.screens_found, s.status, s.completion_type,
                    COALESCE(s.game_title, 'Unknown Game') AS game_title,
                    (SELECT COUNT(*) FROM lc_screens WHERE session_id = s.session_id) AS actual_screens
             FROM lc_sessions s
-            WHERE s.status = 'running'
+            WHERE s.status IN ('running', 'paused')
               AND s.version_id = :vid
             ORDER BY s.started_at DESC
         SQL;
@@ -745,6 +746,43 @@ class EvidenceRepository
         $stmt->bindValue(':vid', $versionId, \PDO::PARAM_INT);
         $stmt->execute();
         return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * paused セッションを 'completed' に確定する (マージタブに移動)。
+     * 安全のため、auto_pilot プロセスが生きている場合は拒否する。
+     */
+    public function finalizeSession(string $sessionId): array
+    {
+        $row = $this->db->prepare("SELECT status, completion_type FROM lc_sessions WHERE session_id = ?");
+        $row->execute([$sessionId]);
+        $current = $row->fetch(\PDO::FETCH_ASSOC);
+        if (!$current) {
+            return ['ok' => false, 'error' => 'session_not_found'];
+        }
+        if ($current['status'] !== 'paused') {
+            return ['ok' => false, 'error' => 'not_paused', 'current_status' => $current['status']];
+        }
+        // 防御: auto_pilot プロセスが生きていたら resume 中の可能性 → 拒否
+        $pgrepOutput = [];
+        $exitCode = 0;
+        @exec('pgrep -f auto_pilot.py 2>/dev/null', $pgrepOutput, $exitCode);
+        if (!empty($pgrepOutput)) {
+            return [
+                'ok' => false,
+                'error' => 'auto_pilot_alive',
+                'pids' => $pgrepOutput,
+            ];
+        }
+        $this->db->prepare(
+            "UPDATE lc_sessions SET status = 'completed' WHERE session_id = ?"
+        )->execute([$sessionId]);
+        return [
+            'ok' => true,
+            'session_id' => $sessionId,
+            'previous_status' => $current['status'],
+            'previous_completion_type' => $current['completion_type'],
+        ];
     }
 
     public function getBgPendingSessions(?int $versionId = null): array
@@ -1201,8 +1239,8 @@ class EvidenceRepository
         $stmt->execute([$sessionId]);
         $hasMappings = (int)$stmt->fetchColumn() > 0;
 
-        // running → discarded に変更
-        if ($status === 'running') {
+        // running/paused → discarded に変更 (paused も「進行中扱い」として discard 経路へ)
+        if ($status === 'running' || $status === 'paused') {
             $this->db->prepare(
                 "UPDATE lc_sessions SET status = 'discarded' WHERE session_id = ?"
             )->execute([$sessionId]);
@@ -1285,13 +1323,13 @@ class EvidenceRepository
             }
         }
 
-        // 7. セッション status 更新 (running以外は archived に)
-        if ($status !== 'running') {
+        // 7. セッション status 更新 (running/paused 以外は archived に)
+        if ($status !== 'running' && $status !== 'paused') {
             $this->db->prepare(
                 "UPDATE lc_sessions SET status = 'archived' WHERE session_id = ?"
             )->execute([$sessionId]);
         }
-        // running は既に discarded に更新済み
+        // running/paused は既に discarded に更新済み
 
         // 代表で残った画面数
         $keptStmt = $this->db->prepare(
@@ -1304,7 +1342,7 @@ class EvidenceRepository
             'ok' => true,
             'session_id' => $sessionId,
             'original_status' => $status,
-            'new_status' => $status === 'running' ? 'discarded' : 'archived',
+            'new_status' => ($status === 'running' || $status === 'paused') ? 'discarded' : 'archived',
             'delete_mode' => $deleteAll ? 'all' : 'non_representative',
             'deleted_screens' => $deletedScreens,
             'deleted_files' => $deletedFiles,

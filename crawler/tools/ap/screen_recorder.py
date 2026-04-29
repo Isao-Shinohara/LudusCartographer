@@ -90,16 +90,17 @@ CREATE TABLE IF NOT EXISTS lc_sessions (
 );
 
 CREATE TABLE IF NOT EXISTS lc_screens (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id      TEXT    NOT NULL,
-    fingerprint     TEXT    NOT NULL,
-    title           TEXT    NOT NULL,
-    depth           INTEGER DEFAULT 0,
-    parent_fp       TEXT,
-    phash           TEXT,
-    screenshot_path TEXT,
-    ocr_text        TEXT,
-    discovered_at   TEXT
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id        TEXT    NOT NULL,
+    fingerprint       TEXT    NOT NULL,
+    title             TEXT    NOT NULL,
+    depth             INTEGER DEFAULT 0,
+    parent_fp         TEXT,
+    phash             TEXT,
+    screenshot_path   TEXT,
+    ocr_text          TEXT,
+    discovered_at     TEXT,
+    is_representative INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS lc_tappable_items (
@@ -513,28 +514,33 @@ class ScreenRecorder:
         return best_text
 
     def close(self, goal_reached: bool = False) -> None:
-        """セッションを完了状態にして DB 接続を閉じる。
+        """セッションを停止して DB 接続を閉じる。
 
         Args:
-            goal_reached: True なら 'goal_reached' (ホーム到達/周回完了),
-                          False なら 'manual_stop' (Ctrl+C 等の途中停止)
+            goal_reached: True なら 'completed' + 'goal_reached' (ホーム到達/周回完了, マージ可能),
+                          False なら 'paused' + 'manual_stop' (Ctrl+C 等、resume 可能、マージ前にユーザーの確定が必要)
         """
-        completion_type = 'goal_reached' if goal_reached else 'manual_stop'
+        if goal_reached:
+            new_status = 'completed'
+            completion_type = 'goal_reached'
+        else:
+            new_status = 'paused'
+            completion_type = 'manual_stop'
         try:
             # pending transition をフラッシュ (to=NULL)
             if self._pending_transition is not None:
                 self._insert_transition(self._pending_transition)
                 self._pending_transition = None
             self._conn.execute(
-                "UPDATE lc_sessions SET status = 'completed',"
+                "UPDATE lc_sessions SET status = ?,"
                 " completion_type = ?,"
                 " screens_found = ? WHERE session_id = ?",
-                (completion_type, self._recorded_count, self._session_id),
+                (new_status, completion_type, self._recorded_count, self._session_id),
             )
             self._conn.commit()
             logger.info(
-                "[ScreenRecorder] セッション完了 (%s): %d 画面記録",
-                completion_type, self._recorded_count,
+                "[ScreenRecorder] セッション %s (%s): %d 画面記録",
+                new_status, completion_type, self._recorded_count,
             )
         except Exception as e:
             logger.warning("[ScreenRecorder] close エラー: %s", e)

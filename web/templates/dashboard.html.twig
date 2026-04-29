@@ -1497,24 +1497,39 @@
                 });
             }
             html += '</div>';
-            // 4. 進行中セッション
+            // 4. 進行中セッション (running + paused)
             html += '<div><h3 class="text-lg font-bold text-violet-400 mb-3">進行中セッション</h3>';
             if (running.length === 0) {
                 html += '<p class="text-gray-600 text-sm">実行中のセッションはありません</p>';
             } else {
-                html += '<p class="text-xs text-gray-500 mb-2">auto_pilot 実行中のセッション。完了するとマージ待ちに移動。</p>';
-                html += _renderMergeSection('running', running, (s) => `<div class="bg-gray-900/50 border border-violet-900/30 rounded-lg p-3 flex items-center justify-between">
+                html += '<p class="text-xs text-gray-500 mb-2">auto_pilot 動作中 (running) または Ctrl+C で一時停止 (paused) のセッション。一時停止中は「完了として確定」でマージ待ちに移動できます。</p>';
+                html += _renderMergeSection('running', running, (s) => {
+                    const isPaused = s.status === 'paused';
+                    const indicator = isPaused
+                        ? '<span class="inline-block w-2 h-2 rounded-full bg-amber-400" title="一時停止中 (resume 可能)"></span>'
+                        : '<span class="inline-block w-2 h-2 rounded-full bg-violet-400 animate-pulse" title="実行中"></span>';
+                    const statusBadge = isPaused
+                        ? '<span class="text-xs text-amber-400 ml-2 px-1.5 py-0.5 bg-amber-900/30 rounded">⏸ 一時停止 (manual_stop)</span>'
+                        : '<span class="text-xs text-violet-400 ml-2 px-1.5 py-0.5 bg-violet-900/30 rounded">▶ 実行中</span>';
+                    const finalizeBtn = isPaused
+                        ? `<button class="finalize-session-btn px-3 py-1 bg-green-900/50 hover:bg-green-800/60 text-green-300 text-xs rounded transition-colors"
+                                    data-session-id="${escapeHtml(s.session_id)}" title="paused → completed に確定 (マージ待ちに移動)">完了として確定</button>`
+                        : '';
+                    return `<div class="bg-gray-900/50 border border-violet-900/30 rounded-lg p-3 flex items-center justify-between">
                         <div>
                             <a href="#" class="text-sm font-mono text-violet-300 hover:text-blue-300 transition-colors cursor-pointer" onclick="navigateToLiveSession('${escapeHtml(s.session_id)}');return false;">${_currentVersionName ? escapeHtml(_currentVersionName) + ' ' : ''}${escapeHtml(s.session_id)}</a>
+                            ${statusBadge}
                             <span class="text-xs text-gray-500 ml-3">画面 ${s.actual_screens} 件</span>
                             <span class="text-xs text-gray-600 ml-3">${escapeHtml(s.started_at || '')}</span>
                         </div>
                         <div class="flex items-center gap-2">
-                            <span class="inline-block w-2 h-2 rounded-full bg-violet-400 animate-pulse" title="実行中"></span>
+                            ${indicator}
+                            ${finalizeBtn}
                             <button class="delete-session-btn px-2 py-1 bg-red-900/50 hover:bg-red-800 text-red-400 text-xs rounded transition-colors"
-                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="0" data-status="running">${TRASH_ICON}</button>
+                                    data-session-id="${escapeHtml(s.session_id)}" data-node-count="0" data-status="${escapeHtml(s.status)}">${TRASH_ICON}</button>
                         </div>
-                    </div>`);
+                    </div>`;
+                });
             }
             html += '</div>';
             // 5. 遷移データなし
@@ -1554,6 +1569,10 @@
             // 後処理実行ボタン (バックグラウンド未完了)
             mc.querySelectorAll('.bg-process-btn').forEach(btn => {
                 btn.addEventListener('click', () => processSessionBg(btn.dataset.sessionId));
+            });
+            // paused → completed 確定ボタン
+            mc.querySelectorAll('.finalize-session-btn').forEach(btn => {
+                btn.addEventListener('click', () => finalizeSession(btn.dataset.sessionId));
             });
             // ページ切り替えリンク
             mc.querySelectorAll('.merge-page-btn').forEach(btn => {
@@ -2652,6 +2671,36 @@
                 showToast(`後処理エラー: ${e.message}`, 'error');
             }
         });
+    }
+
+    // --- paused → completed 確定 ---
+    async function finalizeSession(sessionId) {
+        const html = `
+            <p class="text-sm text-gray-300 mb-2">セッション <code class="text-brand-light">${escapeHtml(sessionId)}</code> を「完了」として確定しますか？</p>
+            <ul class="text-xs text-gray-400 space-y-1 ml-4 list-disc">
+                <li>paused → completed に変わり、マージ待ちタブに移動します</li>
+                <li>確定後はマージ可能になりますが、resume はできなくなります</li>
+                <li>auto_pilot プロセスが動いている間は確定できません</li>
+            </ul>`;
+        showConfirmDialog(html, async function() {
+            hideConfirmDialog();
+            try {
+                const r = await fetch(API_BASE + '?action=finalize_session&session_id=' + encodeURIComponent(sessionId));
+                const d = await r.json();
+                if (d.ok) {
+                    showToast(`確定: ${sessionId} → マージ待ちへ移動`, 'success');
+                    fetchMergeTab();
+                } else if (d.error === 'auto_pilot_alive') {
+                    showToast(`auto_pilot 実行中のため確定できません (PID: ${(d.pids || []).join(', ')})`, 'warning');
+                } else if (d.error === 'not_paused') {
+                    showToast(`このセッションは paused ではありません (現在: ${d.current_status})`, 'warning');
+                } else {
+                    showToast(`確定失敗: ${d.error || '不明'}`, 'error');
+                }
+            } catch (e) {
+                showToast(`確定エラー: ${e.message}`, 'error');
+            }
+        }, { okLabel: '確定', danger: false });
     }
 
     async function buildSessionGraph(sessionId) {

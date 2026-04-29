@@ -526,8 +526,8 @@ class TestDbWrite:
         finally:
             rec.close()
 
-    def test_session_status_completed_on_close(self, tmp_path):
-        """close() でセッション status が 'completed' になる。"""
+    def test_session_status_paused_on_manual_close(self, tmp_path):
+        """close() デフォルト (goal_reached=False) でセッション status が 'paused' になる (resume 可能)。"""
         rec = _make_recorder(tmp_path)
         img = _make_test_image(tmp_path)
         rec.maybe_record(img, [_make_ocr("画面")], "MENU", "abc")
@@ -539,7 +539,7 @@ class TestDbWrite:
             ("test_session",),
         ).fetchone()
         conn.close()
-        assert row[0] == "completed"
+        assert row[0] == "paused"
 
 
 # ─── Phase 2: 画像保存テスト ──────────────────────────
@@ -659,4 +659,54 @@ class TestScreenshotSave:
         finally:
             rec.close()
 
+
+
+# ─── セッションライフサイクル: paused 状態のテスト ─────────
+
+class TestSessionLifecycle:
+    """close() / __init__ の status 遷移テスト。"""
+
+    def test_close_manual_stop_sets_paused(self, tmp_path):
+        """close(goal_reached=False) で status='paused', completion_type='manual_stop'。"""
+        rec = _make_recorder(tmp_path, session_id='paused_session')
+        rec.close(goal_reached=False)
+        conn = sqlite3.connect(str(tmp_path / 'test.db'))
+        row = conn.execute(
+            "SELECT status, completion_type FROM lc_sessions WHERE session_id = ?",
+            ('paused_session',),
+        ).fetchone()
+        conn.close()
+        assert row[0] == 'paused', f'expected paused, got {row[0]}'
+        assert row[1] == 'manual_stop', f'expected manual_stop, got {row[1]}'
+
+    def test_close_goal_reached_sets_completed(self, tmp_path):
+        """close(goal_reached=True) で status='completed', completion_type='goal_reached'。"""
+        rec = _make_recorder(tmp_path, session_id='goal_session')
+        rec.close(goal_reached=True)
+        conn = sqlite3.connect(str(tmp_path / 'test.db'))
+        row = conn.execute(
+            "SELECT status, completion_type FROM lc_sessions WHERE session_id = ?",
+            ('goal_session',),
+        ).fetchone()
+        conn.close()
+        assert row[0] == 'completed'
+        assert row[1] == 'goal_reached'
+
+    def test_resume_from_paused_sets_running(self, tmp_path):
+        """paused のセッションを再オープンすると status='running' / completion_type=NULL に戻る。"""
+        rec1 = _make_recorder(tmp_path, session_id='resume_test')
+        rec1.close(goal_reached=False)
+        # 再オープン (= resume)
+        rec2 = _make_recorder(tmp_path, session_id='resume_test')
+        try:
+            conn = sqlite3.connect(str(tmp_path / 'test.db'))
+            row = conn.execute(
+                "SELECT status, completion_type FROM lc_sessions WHERE session_id = ?",
+                ('resume_test',),
+            ).fetchone()
+            conn.close()
+            assert row[0] == 'running', f'expected running, got {row[0]}'
+            assert row[1] is None, f'expected NULL, got {row[1]}'
+        finally:
+            rec2.close(goal_reached=False)  # cleanup
 
