@@ -384,6 +384,42 @@ class TestCrossSessionMergerIntegration:
         assert len(node_mapping) == 0
         assert len(session_reps) == 1
 
+    def test_preview_merge_seed_marks_all_insertable(self, full_db):
+        """seed (master 空) のプレビューでは全 new_nodes が insertable=True になる。
+
+        SafeInsert は通常アンカーが必要だが、seed 時は _seed_master が全代表を
+        無条件に INSERT する。プレビュー UI もそれに合わせて全件 insertable で表示する。
+        """
+        from unittest.mock import patch
+        from tools.cross_session_merger import CrossSessionMerger
+
+        _add_session_screen(full_db, "s1", "a", 1, text="hello",  phash="aa00aa00aa00aa00")
+        _add_session_screen(full_db, "s1", "b", 2, text="world",  phash="bb00bb00bb00bb00")
+        _add_session_screen(full_db, "s1", "c", 3, text="screen", phash="cc00cc00cc00cc00")
+        full_db.commit()
+
+        with patch.object(CrossSessionMerger, '__init__', lambda self, **kw: None):
+            merger = CrossSessionMerger.__new__(CrossSessionMerger)
+            merger._conn = full_db
+            from tools.merge_sort_strategy import SafeInsertStrategy
+            merger._sort_strategy = SafeInsertStrategy()
+            merger._anchor_matcher = AnchorMatcher()
+            merger._version_id = 1
+
+            result = merger.preview_merge("s1")
+
+        assert result["is_seed"] is True
+        assert result["master_nodes_before"] == 0
+        assert result["session_screens"] == 3
+        # 全 new_nodes が insertable=True であること
+        new_nodes = result["new_nodes"]
+        assert len(new_nodes) == 3, f"expected 3 new nodes, got {len(new_nodes)}"
+        for n in new_nodes:
+            assert n["insertable"] is True, f"seed では全件 insertable のはず: {n}"
+        assert result["summary"]["new"] == 3
+        assert result["summary"]["insertable"] == 3
+        assert result["summary"]["skipped"] == 0
+
 
 # ─── P4 テキスト Gemini テスト ───────────────────────
 

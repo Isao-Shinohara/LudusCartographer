@@ -245,9 +245,15 @@ class CrossSessionMerger:
                             and r["fingerprint"] not in excluded_mapping]
 
         # SafeInsert 判定: 実際に挿入されるノードを特定
-        insertable_fps, skipped_fps = self._sort_strategy.preview_insertable(
-            self._conn, session_id, adjusted_mapping
-        )
+        # seed (master 空) は _seed_master が全代表を無条件に INSERT するため、
+        # SafeInsert を呼ばず全 new_fps を insertable として返す。
+        if is_seed:
+            insertable_fps = list(adjusted_new_fps if (exclude_fps or include_fps) else new_fps)
+            skipped_fps: list[str] = []
+        else:
+            insertable_fps, skipped_fps = self._sort_strategy.preview_insertable(
+                self._conn, session_id, adjusted_mapping
+            )
         insertable_set = set(insertable_fps)
         summary["insertable"] = len(insertable_fps)
         summary["skipped"] = len(skipped_fps)
