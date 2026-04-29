@@ -721,8 +721,10 @@ def _pending():
     c.close()
     return total, g, d
 def _update_progress(phase, total, done, remaining_g, remaining_d):
+    # PHP merge_progress action は 'merge_phase' キーを参照する。
+    # 既存の adopt_rebuild と同じキーを使い、ダッシュボードに進捗を確実に届ける。
     c = sqlite3.connect(str(DB))
-    c.execute("INSERT OR REPLACE INTO auto_pilot_state (key, value) VALUES ('merge_progress', ?)",
+    c.execute("INSERT OR REPLACE INTO auto_pilot_state (key, value) VALUES ('merge_phase', ?)",
               (json.dumps({"phase": phase, "total": total, "ocr_done": total - remaining_g, "ocr_total": total, "clustering_remaining": remaining_d}),))
     c.commit()
     c.close()
@@ -744,7 +746,9 @@ _set_lock_phase("starting")
 try:
     w = BackgroundWorker(db_path=DB, session_id=SID)
     MAX_ITERATIONS = 100
-    NO_PROGRESS_LIMIT = 3
+    # 2 iter 連続で g が減らなければ sentinel で打ち切り (= 3 iter 目で発動)。
+    # Gemini API 障害時の待ち時間を最小化。
+    NO_PROGRESS_LIMIT = 2
     iters = 0
     total, g, d = _pending()
     prev_g = None
@@ -774,10 +778,12 @@ try:
         else:
             no_progress = 0
         prev_g = g
-    _set_lock_phase("graph")
+    _set_lock_phase("synthesizing_edges")
+    _update_progress("synthesizing_edges", total, total, 0, 0)
     w._run_incremental_clustering()
     w._synthesize_auto_edges()
-    _update_progress("graph", total, total, 0, 0)
+    _set_lock_phase("building_graph")
+    _update_progress("building_graph", total, total, 0, 0)
     bp = BatchProcessor(db_path=DB)
     sccs = bp.build_graph(session_id=SID)
     bp.close()

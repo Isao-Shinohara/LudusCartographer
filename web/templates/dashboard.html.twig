@@ -2584,50 +2584,70 @@
         await withOperationLock('後処理実行', async () => {
             const sticky = showToast(`後処理実行中: ${sessionId} (Gemini OCR + クラスタリング + グラフ構築)`, 'info', { sticky: true });
             const startTime = Date.now();
-            const elapsedTimer = setInterval(async () => {
-                const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                try {
-                    const pr = await fetch(API_BASE + '?action=merge_progress');
-                    const pd = await pr.json();
-                    if (pd.progress) {
-                        const p = pd.progress;
-                        const phase = p.phase || 'OCR';
-                        if (phase === 'graph') {
-                            sticky.update(`グラフ構築中: ${sessionId} (${elapsed}秒経過)`);
-                        } else {
-                            sticky.update(`後処理実行中: ${sessionId} — OCR ${p.ocr_done || 0}/${p.ocr_total || '?'} (${elapsed}秒経過)`);
-                        }
-                    } else {
-                        sticky.update(`後処理実行中: ${sessionId} (${elapsed}秒経過)`);
-                    }
-                } catch (e) {
-                    sticky.update(`後処理実行中: ${sessionId} (${elapsed}秒経過)`);
-                }
-            }, 2000);
+            const PHASE_LABELS = {
+                'starting': '起動中',
+                'OCR': 'Gemini OCR',
+                'synthesizing_edges': '遷移エッジ統合',
+                'building_graph': 'グラフ構築',
+                'graph': 'グラフ構築',
+            };
             try {
-                await fetch(API_BASE + '?action=process_session_bg&session_id=' + encodeURIComponent(sessionId));
+                const startResp = await fetch(API_BASE + '?action=process_session_bg&session_id=' + encodeURIComponent(sessionId));
+                const startData = await startResp.json().catch(() => ({}));
+                if (startData.error === 'already_running') {
+                    sticky.remove();
+                    showToast(`後処理は既に実行中: pid=${startData.pid}, ${startData.age_sec}秒経過 (session=${startData.session_id || '?'})`, 'warning');
+                    return;
+                }
+                if (startData.error) {
+                    sticky.remove();
+                    showToast(`後処理開始失敗: ${startData.error}${startData.message ? ' — ' + startData.message : ''}`, 'error');
+                    return;
+                }
+                // 単一ポーリング: 進捗表示 + 完了判定を 1 ループで処理
                 const result = await new Promise((resolve) => {
                     const timer = setInterval(async () => {
+                        const elapsed = Math.floor((Date.now() - startTime) / 1000);
                         try {
                             const r = await fetch(API_BASE + '?action=merge_progress');
                             const d = await r.json();
                             if (d.done) {
                                 clearInterval(timer);
                                 resolve(d.result);
+                                return;
                             }
-                        } catch (e) {}
+                            const p = d.progress || {};
+                            const phase = p.phase || 'starting';
+                            const label = PHASE_LABELS[phase] || phase;
+                            let msg;
+                            if (phase === 'OCR') {
+                                msg = `${label}中: ${sessionId} — ${p.ocr_done || 0}/${p.ocr_total || '?'} (${elapsed}秒経過)`;
+                            } else {
+                                msg = `${label}中: ${sessionId} (${elapsed}秒経過)`;
+                            }
+                            if (elapsed >= 180 && phase === 'OCR') {
+                                msg += ' ⚠ Gemini API 遅延の可能性';
+                            } else if (elapsed >= 300) {
+                                msg += ' ⚠ 想定より時間がかかっています';
+                            }
+                            sticky.update(msg);
+                        } catch (e) {
+                            sticky.update(`後処理実行中: ${sessionId} (${elapsed}秒経過, polling error)`);
+                        }
                     }, 2000);
                 });
-                clearInterval(elapsedTimer);
                 if (sticky) sticky.remove();
                 if (result && result.ok) {
-                    showToast(`後処理完了: ${sessionId} (${result.sccs} SCC) → マージ待ちへ移動`, 'success');
+                    let msg = `後処理完了: ${sessionId} (${result.sccs} SCC) → マージ待ちへ移動`;
+                    if (result.aborted_unrecoverable && result.aborted_unrecoverable > 0) {
+                        msg += ` (Gemini 失敗 ${result.aborted_unrecoverable} 件は空文字 sentinel)`;
+                    }
+                    showToast(msg, 'success');
                     fetchMergeTab();
                 } else {
                     showToast(`後処理失敗: ${result?.error || '不明'}`, 'error');
                 }
             } catch (e) {
-                clearInterval(elapsedTimer);
                 if (sticky) sticky.remove();
                 showToast(`後処理エラー: ${e.message}`, 'error');
             }
