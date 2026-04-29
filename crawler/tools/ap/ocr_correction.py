@@ -433,6 +433,7 @@ result オブジェクトに以下を追加:
 
 
 _GEMINI_TIMEOUT = 60  # API リクエストタイムアウト (秒)
+_GEMINI_JSON_RETRIES = 2  # JSON パース失敗時の追加リトライ回数 (truncated レスポンス対策、合計 1+N 回)
 
 
 def _init_gemini_client():
@@ -502,50 +503,72 @@ def gemini_correct_single(
             },
         }).encode()
 
-        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=_GEMINI_TIMEOUT) as resp:
-            resp_data = json.loads(resp.read())
+        # JSON parse 失敗 (= truncated レスポンス) は同一リクエストでリトライ。
+        # HTTP / その他の例外は永続的な可能性があるためリトライしない。
+        last_json_err: Optional[json.JSONDecodeError] = None
+        for attempt in range(_GEMINI_JSON_RETRIES + 1):
+            req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=_GEMINI_TIMEOUT) as resp:
+                raw = resp.read()
+            try:
+                resp_data = json.loads(raw)
+            except json.JSONDecodeError as e:
+                last_json_err = e
+                if attempt < _GEMINI_JSON_RETRIES:
+                    _time.sleep(0.3 + _random.uniform(0, 0.4) + attempt * 0.5)
+                    continue
+                logger.warning("[GEMINI] JSON パース失敗 (リトライ%d回後): %s",
+                               _GEMINI_JSON_RETRIES, e)
+                return None
 
-        # API 使用量記録
-        usage = resp_data.get("usageMetadata", {})
-        in_tok = usage.get("promptTokenCount", 0)
-        out_tok = usage.get("candidatesTokenCount", 0)
-        from tools.ap.api_usage import record_api_usage
-        record_api_usage(_GEMINI_MODEL, "hq_ocr", in_tok, out_tok)
+            # API 使用量記録
+            usage = resp_data.get("usageMetadata", {})
+            in_tok = usage.get("promptTokenCount", 0)
+            out_tok = usage.get("candidatesTokenCount", 0)
+            from tools.ap.api_usage import record_api_usage
+            record_api_usage(_GEMINI_MODEL, "hq_ocr", in_tok, out_tok)
 
-        # レスポンス解析
-        candidates = resp_data.get("candidates", [])
-        if not candidates:
-            logger.warning("[GEMINI] 応答なし (safety filter?)")
-            return None
-        parts = candidates[0].get("content", {}).get("parts", [])
-        if not parts:
-            logger.warning("[GEMINI] 応答パーツなし")
-            return None
-        text = parts[0].get("text", "").strip()
+            # レスポンス解析
+            candidates = resp_data.get("candidates", [])
+            if not candidates:
+                logger.warning("[GEMINI] 応答なし (safety filter?)")
+                return None
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if not parts:
+                logger.warning("[GEMINI] 応答パーツなし")
+                return None
+            text = parts[0].get("text", "").strip()
 
-        # ```json ... ``` を除去
-        if text.startswith("```"):
-            text = re.sub(r'^```\w*\n?', '', text)
-            text = re.sub(r'\n?```$', '', text)
+            # ```json ... ``` を除去
+            if text.startswith("```"):
+                text = re.sub(r'^```\w*\n?', '', text)
+                text = re.sub(r'\n?```$', '', text)
 
-        result = json.loads(text)
+            try:
+                result = json.loads(text)
+            except json.JSONDecodeError as e:
+                last_json_err = e
+                if attempt < _GEMINI_JSON_RETRIES:
+                    _time.sleep(0.3 + _random.uniform(0, 0.4) + attempt * 0.5)
+                    continue
+                logger.warning("[GEMINI] 内側 JSON パース失敗 (リトライ%d回後): %s",
+                               _GEMINI_JSON_RETRIES, e)
+                return None
 
-        # パターン学習
-        corrected = result.get("corrected_text", "")
-        if corrected and corrected != ocr_text:
-            for c in result.get("corrections", []):
-                if c.get("before") and c.get("after"):
-                    learn_from_correction(c["before"], c["after"])
+            # パターン学習
+            corrected = result.get("corrected_text", "")
+            if corrected and corrected != ocr_text:
+                for c in result.get("corrections", []):
+                    if c.get("before") and c.get("after"):
+                        learn_from_correction(c["before"], c["after"])
 
-        # id を付与して返却
-        if item_id is not None:
-            result["id"] = item_id
-        return result
+            if item_id is not None:
+                result["id"] = item_id
+            return result
 
-    except json.JSONDecodeError as e:
-        logger.warning("[GEMINI] JSON パース失敗: %s", e)
+        # ループ脱出は到達しないはず (return か continue のみ)
         return None
+
     except Exception as e:
         logger.warning("[GEMINI] API エラー: %s", e)
         return None

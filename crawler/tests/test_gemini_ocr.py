@@ -49,22 +49,110 @@ class TestGeminiCorrectSingle:
 
     def test_json_parse_with_markdown(self, tmp_path, monkeypatch):
         """```json ... ``` で囲まれたレスポンスをパースできる。"""
+        import json as _json
         monkeypatch.setenv("GEMINI_API_KEY", "dummy")
         img = tmp_path / "test.png"
-        img.write_bytes(b"\x89PNG\r\n\x1a\n")  # 最小のPNGヘッダ
+        img.write_bytes(b"\x89PNG\r\n\x1a\n")
 
-        mock_response = MagicMock()
-        mock_response.text = '```json\n{"corrected_text": "テスト", "corrections": []}\n```'
+        inner = '```json\n{"corrected_text": "テスト", "corrections": []}\n```'
+        outer = _json.dumps({
+            "candidates": [{"content": {"parts": [{"text": inner}]}}],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1, "totalTokenCount": 2},
+        }).encode()
 
-        with patch("tools.ap.ocr_correction._init_gemini_client") as mock_init:
-            mock_client = MagicMock()
-            mock_client.models.generate_content.return_value = mock_response
-            mock_init.return_value = mock_client
+        class FakeResp:
+            def __init__(self, data): self._data = data
+            def read(self): return self._data
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
 
-            result = gemini_correct_single(str(img), "test")
-            assert result is not None
-            assert result["corrected_text"] == "テスト"
-            assert result["corrections"] == []
+        monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=None: FakeResp(outer))
+        monkeypatch.setattr("tools.ap.api_usage.record_api_usage", lambda *a, **k: None)
+
+        result = gemini_correct_single(str(img), "test")
+        assert result is not None
+        assert result["corrected_text"] == "テスト"
+        assert result["corrections"] == []
+
+
+class TestGeminiRetryOnJsonError:
+    """JSON パース失敗時に同一リクエストをリトライする (Gemini の稀な truncated レスポンス対策)。"""
+
+    @staticmethod
+    def _build_outer(inner_text: str) -> bytes:
+        import json as _json
+        return _json.dumps({
+            "candidates": [{"content": {"parts": [{"text": inner_text}]}}],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1, "totalTokenCount": 2},
+        }).encode()
+
+    @staticmethod
+    def _fake_urlopen_factory(responses, call_count):
+        class FakeResp:
+            def __init__(self, data): self._data = data
+            def read(self): return self._data
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        def fake(req, timeout=None):
+            data = responses[min(call_count[0], len(responses) - 1)]
+            call_count[0] += 1
+            return FakeResp(data)
+        return fake
+
+    def test_retry_succeeds_after_two_truncations(self, tmp_path, monkeypatch):
+        """2回 JSON 失敗 → 3回目で成功すれば結果を返す。"""
+        monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+        img = tmp_path / "test.webp"
+        img.write_bytes(b"webp")
+
+        # 内側 text が途中で切れている (実際の障害と同じ "char 22" パターン)
+        truncated = self._build_outer('{"corrected')
+        valid = self._build_outer('{"corrected_text":"OK","corrections":[],"is_artifact":false,"screen_type":"MENU","noise_words":[]}')
+        call_count = [0]
+        monkeypatch.setattr("urllib.request.urlopen",
+                            self._fake_urlopen_factory([truncated, truncated, valid], call_count))
+        monkeypatch.setattr("tools.ap.api_usage.record_api_usage", lambda *a, **k: None)
+
+        result = gemini_correct_single(str(img), "test_input")
+        assert result is not None
+        assert result["corrected_text"] == "OK"
+        assert call_count[0] == 3, f"3回呼ばれるはず (1+2リトライ): {call_count[0]}"
+
+    def test_returns_none_after_all_retries_fail(self, tmp_path, monkeypatch):
+        """全リトライ失敗で None を返し、無限ループに入らない。"""
+        monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+        img = tmp_path / "test.webp"
+        img.write_bytes(b"webp")
+
+        truncated = self._build_outer('{"corrected')
+        call_count = [0]
+        monkeypatch.setattr("urllib.request.urlopen",
+                            self._fake_urlopen_factory([truncated], call_count))
+        monkeypatch.setattr("tools.ap.api_usage.record_api_usage", lambda *a, **k: None)
+
+        result = gemini_correct_single(str(img), "test_input")
+        assert result is None
+        assert call_count[0] == 3, f"3回試行で打ち切るはず: {call_count[0]}"
+
+    def test_no_retry_on_http_error(self, tmp_path, monkeypatch):
+        """HTTP エラーはリトライ対象外 (auth 等の永続エラーで API クォータを浪費しない)。"""
+        import urllib.error
+        monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+        img = tmp_path / "test.webp"
+        img.write_bytes(b"webp")
+
+        call_count = [0]
+        def fake_urlopen(req, timeout=None):
+            call_count[0] += 1
+            raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, None)
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        monkeypatch.setattr("tools.ap.api_usage.record_api_usage", lambda *a, **k: None)
+
+        result = gemini_correct_single(str(img), "test")
+        assert result is None
+        assert call_count[0] == 1, f"HTTP エラーは1回のみ: {call_count[0]}"
 
 
 class TestLearnFromCorrection:

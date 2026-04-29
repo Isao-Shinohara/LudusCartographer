@@ -644,11 +644,60 @@ if ($action === 'process_session_bg') {
         echo json_encode(['error' => 'session_id required']);
         exit;
     }
-    $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
-    $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
+    $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
+    $crawlerDir = escapeshellarg($crawlerDirRaw);
+    $resultFile = $crawlerDirRaw . '/storage/merge_result.json';
+    $dbPath = $crawlerDirRaw . '/storage/ludus.db';
+
+    // ❶ ロックチェック: 二重起動防止 (DB 同時書き込み回避)
+    try {
+        $lockDb = new PDO('sqlite:' . $dbPath);
+        $lockDb->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $stmt = $lockDb->prepare("SELECT value, updated_at FROM auto_pilot_state WHERE key = 'process_session_bg_lock'");
+        $stmt->execute();
+        $lockRow = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($lockRow) {
+            $lockData = json_decode($lockRow['value'] ?? '', true) ?: [];
+            $lockPid = (int)($lockData['pid'] ?? 0);
+            $lockAge = max(0, time() - strtotime(($lockRow['updated_at'] ?? '') . ' UTC'));
+            $isBusy = false;
+            if ($lockPid > 0) {
+                if (function_exists('posix_kill')) {
+                    $isBusy = @posix_kill($lockPid, 0);
+                } else {
+                    $isBusy = $lockAge < 600;
+                }
+            } elseif ($lockAge < 30) {
+                $isBusy = true;
+            }
+            if ($isBusy) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'error' => 'already_running',
+                    'pid' => $lockPid,
+                    'age_sec' => $lockAge,
+                    'session_id' => $lockData['session_id'] ?? null,
+                ]);
+                exit;
+            }
+        }
+        $stmt = $lockDb->prepare(
+            "INSERT INTO auto_pilot_state (key, value, updated_at) VALUES ('process_session_bg_lock', ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP"
+        );
+        $stmt->execute([json_encode([
+            'pid' => 0,
+            'session_id' => $sessionId,
+            'phase' => 'starting',
+        ])]);
+        $lockDb = null;
+    } catch (\Throwable $e) {
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'lock_failed', 'message' => $e->getMessage()]);
+        exit;
+    }
+
     @unlink($resultFile);
-    // Gemini OCR + クラスタリング + graph build をフルパイプライン実行
-    // 内部的にループして全件完了させる (1クリックで完了)
     $sidEsc = addslashes($sessionId);
     $script = <<<PYTHON
 import json, sqlite3, os
@@ -677,26 +726,69 @@ def _update_progress(phase, total, done, remaining_g, remaining_d):
               (json.dumps({"phase": phase, "total": total, "ocr_done": total - remaining_g, "ocr_total": total, "clustering_remaining": remaining_d}),))
     c.commit()
     c.close()
-w = BackgroundWorker(db_path=DB, session_id=SID)
-MAX_ITERATIONS = 100
-iters = 0
-total, g, d = _pending()
-while iters < MAX_ITERATIONS:
-    iters += 1
-    w._run_incremental_clustering()
-    w._run_gemini_batch_correction()
+def _set_lock_phase(phase):
+    c = sqlite3.connect(str(DB))
+    c.execute("INSERT OR REPLACE INTO auto_pilot_state(key, value, updated_at) VALUES('process_session_bg_lock', ?, CURRENT_TIMESTAMP)",
+              (json.dumps({"pid": os.getpid(), "session_id": SID, "phase": phase}),))
+    c.commit()
+    c.close()
+def _release_lock():
+    try:
+        c = sqlite3.connect(str(DB))
+        c.execute("DELETE FROM auto_pilot_state WHERE key = 'process_session_bg_lock'")
+        c.commit()
+        c.close()
+    except Exception:
+        pass
+_set_lock_phase("starting")
+try:
+    w = BackgroundWorker(db_path=DB, session_id=SID)
+    MAX_ITERATIONS = 100
+    NO_PROGRESS_LIMIT = 3
+    iters = 0
     total, g, d = _pending()
-    _update_progress("OCR", total, total - g, g, d)
-    if g == 0 and d == 0:
-        break
-w._run_incremental_clustering()
-w._synthesize_auto_edges()
-_update_progress("graph", total, total, 0, 0)
-bp = BatchProcessor(db_path=DB)
-sccs = bp.build_graph(session_id=SID)
-bp.close()
-total, g, d = _pending()
-print(json.dumps({"ok": True, "sccs": sccs, "iterations": iters, "remaining_gemini": g, "remaining_clustering": d}, ensure_ascii=False))
+    prev_g = None
+    no_progress = 0
+    aborted_unrecoverable = 0
+    while iters < MAX_ITERATIONS:
+        iters += 1
+        w._run_incremental_clustering()
+        w._run_gemini_batch_correction()
+        total, g, d = _pending()
+        _update_progress("OCR", total, total - g, g, d)
+        if g == 0 and d == 0:
+            break
+        if prev_g is not None and g == prev_g and g > 0:
+            no_progress += 1
+            if no_progress >= NO_PROGRESS_LIMIT:
+                _c = sqlite3.connect(str(DB))
+                _cur = _c.execute(
+                    "UPDATE lc_screens SET ocr_text_gemini = ''"
+                    " WHERE session_id = ? AND is_representative = 1 AND ocr_text_gemini IS NULL",
+                    (SID,))
+                aborted_unrecoverable = _cur.rowcount
+                _c.commit()
+                _c.close()
+                total, g, d = _pending()
+                break
+        else:
+            no_progress = 0
+        prev_g = g
+    _set_lock_phase("graph")
+    w._run_incremental_clustering()
+    w._synthesize_auto_edges()
+    _update_progress("graph", total, total, 0, 0)
+    bp = BatchProcessor(db_path=DB)
+    sccs = bp.build_graph(session_id=SID)
+    bp.close()
+    total, g, d = _pending()
+    print(json.dumps({
+        "ok": True, "sccs": sccs, "iterations": iters,
+        "remaining_gemini": g, "remaining_clustering": d,
+        "aborted_unrecoverable": aborted_unrecoverable,
+    }, ensure_ascii=False))
+finally:
+    _release_lock()
 PYTHON;
     $cmd = sprintf(
         'cd %s && exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- && ./venv/bin/python -B -W ignore -c %s > %s 2>>storage/process_session_bg.err.log </dev/null &',
@@ -704,7 +796,7 @@ PYTHON;
         escapeshellarg($script),
         escapeshellarg($resultFile),
     );
-    exec($cmd);
+    pclose(popen($cmd, 'r'));
     header('Content-Type: application/json');
     echo json_encode(['started' => true]);
     exit;
