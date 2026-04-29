@@ -310,7 +310,10 @@ class EvidenceRepository
      */
     public function getSessions(int $limit = 20, string $gameTitle = '', ?int $versionId = null): array
     {
-        $conditions = ["status != 'archived'"];
+        // Live タブのセッション一覧。
+        // 'archived' (ユーザー削除済み・通常 cleanup 経由) と 'discarded' (削除済み・進行中由来) を除外。
+        // → 削除直後に Live タブが自動的に次の最新セッションへフォールバックする。
+        $conditions = ["status NOT IN ('archived', 'discarded')"];
         $bindings   = [':limit' => $limit];
 
         if ($gameTitle !== '') {
