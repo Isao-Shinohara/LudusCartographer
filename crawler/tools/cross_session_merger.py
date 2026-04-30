@@ -77,9 +77,12 @@ class CrossSessionMerger:
             (self._version_id,),
         ).fetchone()[0]
 
+        # is_artifact > 0 (Live でユーザー不採用 = 2 / Gemini 不採用 = 1) は除外。
+        # _seed_master と AnchorMatcher も同条件で除外しているのでプレビューと一致させる。
         session_reps = self._conn.execute(
             "SELECT fingerprint FROM lc_screens"
-            " WHERE session_id = ? AND is_representative = 1",
+            " WHERE session_id = ? AND is_representative = 1"
+            " AND COALESCE(is_artifact, 0) = 0",
             (session_id,),
         ).fetchall()
 

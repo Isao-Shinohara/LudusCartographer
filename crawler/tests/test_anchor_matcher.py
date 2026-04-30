@@ -384,6 +384,44 @@ class TestCrossSessionMergerIntegration:
         assert len(node_mapping) == 0
         assert len(session_reps) == 1
 
+    def test_preview_merge_excludes_artifact_screens(self, full_db):
+        """is_artifact > 0 (Live で不採用) は new_nodes / matches に含まれない。
+
+        ユーザーが Live で不採用にした画像 (is_artifact=2) や Gemini が
+        artifact 判定した画像 (is_artifact=1) は merge プレビューでも
+        対象外として扱う。実 merge_to_master の _seed_master が
+        is_artifact > 0 を除外するのでプレビューと一致させる。
+        """
+        from unittest.mock import patch
+        from tools.cross_session_merger import CrossSessionMerger
+
+        _add_session_screen(full_db, "s1", "a", 1, text="hello",  phash="aa00aa00aa00aa00")
+        _add_session_screen(full_db, "s1", "b", 2, text="world",  phash="bb00bb00bb00bb00")
+        _add_session_screen(full_db, "s1", "c", 3, text="screen", phash="cc00cc00cc00cc00")
+        # b をユーザー不採用に、c を Gemini 不採用に
+        full_db.execute("UPDATE lc_screens SET is_artifact = 2 WHERE fingerprint = 'b'")
+        full_db.execute("UPDATE lc_screens SET is_artifact = 1 WHERE fingerprint = 'c'")
+        full_db.commit()
+
+        with patch.object(CrossSessionMerger, '__init__', lambda self, **kw: None):
+            merger = CrossSessionMerger.__new__(CrossSessionMerger)
+            merger._conn = full_db
+            from tools.merge_sort_strategy import SafeInsertStrategy
+            merger._sort_strategy = SafeInsertStrategy()
+            merger._anchor_matcher = AnchorMatcher()
+            merger._version_id = 1
+
+            result = merger.preview_merge("s1")
+
+        # session_screens は実際にマージされる候補数 (artifact 除外)
+        assert result["session_screens"] == 1, \
+            f"artifact を除いた代表は a のみ: got {result['session_screens']}"
+        new_fps = {n["fp"] for n in result["new_nodes"]}
+        assert "a" in new_fps, "通常の代表 a は new_nodes に含まれる"
+        assert "b" not in new_fps, "ユーザー不採用 b は new_nodes に含まれない"
+        assert "c" not in new_fps, "Gemini 不採用 c は new_nodes に含まれない"
+        assert result["summary"]["new"] == 1
+
     def test_preview_merge_seed_marks_all_insertable(self, full_db):
         """seed (master 空) のプレビューでは全 new_nodes が insertable=True になる。
 
