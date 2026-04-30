@@ -1874,7 +1874,7 @@
                     }
                 });
             }
-            // Shift+クリックでアンカー選択
+            // Shift+クリックでアンカー / 新規ノード選択
             mc.addEventListener('click', (e) => {
                 if (!e.shiftKey) return;
                 const card = e.target.closest('[data-preview-idx]');
@@ -1882,7 +1882,9 @@
                 e.preventDefault();
                 const idx = parseInt(card.dataset.previewIdx, 10);
                 const item = previewItems[idx];
-                if (!item || !item.master_fp) return; // アンカーのみ対象
+                if (!item) return;
+                // 不採用ノード一致 (excluded_match) は対象外
+                if (item.excluded_match) return;
                 if (selectedPreviewFps.has(item.fp)) {
                     selectedPreviewFps.delete(item.fp);
                 } else {
@@ -1891,24 +1893,52 @@
                 renderPreviewSelection();
                 updatePreviewActionBar();
             });
-            // 除外ボタン
+            // 除外ボタン (アンカー: excludedGeminiFps へ追加、新規ノード: toggle_screen_artifact で is_artifact=2)
             document.getElementById('preview-exclude-btn').addEventListener('click', () => {
                 const fps = [...selectedPreviewFps];
                 const items = fps.map(fp => previewItems.find(i => i.fp === fp)).filter(Boolean);
-                let body = `<p class="text-sm text-gray-300 mb-3">${items.length} 件のアンカーを不採用にします。</p>`;
+                const anchorItems = items.filter(i => i.master_fp);
+                const newNodeItems = items.filter(i => !i.master_fp && i.screen_id);
+                if (anchorItems.length === 0 && newNodeItems.length === 0) return;
+                let body = '<p class="text-sm text-gray-300 mb-3">';
+                const parts = [];
+                if (anchorItems.length > 0) parts.push(`アンカー ${anchorItems.length} 件`);
+                if (newNodeItems.length > 0) parts.push(`新規ノード ${newNodeItems.length} 件`);
+                body += parts.join(' + ') + ' を不採用にします。</p>';
+                if (newNodeItems.length > 0) {
+                    body += '<p class="text-[10px] text-amber-400 mb-3">⚠ 新規ノードの不採用は永続化されます (Live タブでも「ユーザー不採用」に。取り消しは Live タブから)</p>';
+                }
                 body += '<div class="flex flex-wrap gap-2 max-h-48 overflow-y-auto">';
                 for (const item of items) {
                     body += `<div class="w-28"><img src="${item.thumb ? imgUrl(item.thumb) : ''}" class="w-full rounded" /><p class="text-[9px] text-gray-500 truncate mt-1">${escapeHtml(item.title || '')}</p></div>`;
                 }
                 body += '</div>';
-                showConfirmDialog(body, () => {
-                    for (const fp of fps) excludedGeminiFps.add(fp);
-                    selectedPreviewFps.clear();
-                    renderPreviewSelection();
-                    updatePreviewActionBar();
+                showConfirmDialog(body, async () => {
                     document.getElementById('confirm-popup').classList.add('hidden');
                     document.getElementById('confirm-popup').classList.remove('flex');
-                    if (typeof showRecalcIfNeeded === 'function') showRecalcIfNeeded();
+                    // 1. アンカー: excludedGeminiFps へ追加 (一時的、再計算可能)
+                    for (const item of anchorItems) excludedGeminiFps.add(item.fp);
+                    // 2. 新規ノード: toggle_screen_artifact を並列呼び出し (永続的)
+                    if (newNodeItems.length > 0) {
+                        try {
+                            await Promise.all(newNodeItems.map(item =>
+                                fetch(API_BASE + '?action=toggle_screen_artifact&screen_id=' + encodeURIComponent(item.screen_id))
+                            ));
+                            showToast(`不採用設定: アンカー ${anchorItems.length} / 新規ノード ${newNodeItems.length}`, 'success');
+                        } catch (e) {
+                            showToast(`不採用エラー: ${e.message}`, 'error');
+                            return;
+                        }
+                    }
+                    selectedPreviewFps.clear();
+                    // 新規ノードを不採用にした場合はプレビュー再取得 (DB が変わったので再計算が必要)
+                    if (newNodeItems.length > 0 && _previewSessionId) {
+                        showMergePreview(_previewSessionId);
+                    } else {
+                        renderPreviewSelection();
+                        updatePreviewActionBar();
+                        if (typeof showRecalcIfNeeded === 'function') showRecalcIfNeeded();
+                    }
                 }, { okLabel: '不採用', danger: true });
             });
             // 復帰ボタン (除外済み or 棄却ノード)
