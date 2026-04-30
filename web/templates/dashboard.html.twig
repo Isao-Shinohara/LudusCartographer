@@ -236,6 +236,7 @@
                         <button id="modal-edit-btn" class="px-2 py-0.5 text-xs bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 rounded transition-colors">✎ 編集</button>
                         <button id="modal-adopt-btn" class="hidden px-2 py-0.5 text-xs bg-emerald-900/70 hover:bg-emerald-800 text-emerald-200 rounded transition-colors">✓ 採用する</button>
                         <button id="modal-exclude-btn" class="hidden px-2 py-0.5 text-xs bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 rounded transition-colors">✕ 不採用にする</button>
+                        <button id="preview-new-exclude-btn" class="hidden px-2 py-0.5 text-xs bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 rounded transition-colors">✕ 不採用にする (この新規ノードを除外)</button>
                     </div>
                     <div class="mt-3 flex gap-4 text-xs text-gray-600 items-center flex-wrap">
                         <span id="modal-scene"></span>
@@ -1636,7 +1637,9 @@
             return await _showMergePreview(sessionId);
         });
     }
+    let _previewSessionId = null;
     async function _showMergePreview(sessionId) {
+        _previewSessionId = sessionId;
         const mc = document.getElementById('merge-container');
         const toastHandle = showToast('プレビュー計算中...', 'info', { sticky: true });
         try {
@@ -1687,7 +1690,8 @@
                 for (const n of insertableNodes) {
                     const item = { thumb: n.thumb, title: n.title, scene: n.scene,
                                    discovered_at: n.discovered_at, ocr_text: n.ocr_text,
-                                   screenshot: n.screenshot, fp: n.fp };
+                                   screenshot: n.screenshot, fp: n.fp,
+                                   screen_id: n.screen_id };
                     html += buildCard({
                         thumb: item.thumb ? imgUrl(item.thumb) : '', title: item.title,
                         ocrPreview: (item.ocr_text || '').substring(0, 80),
@@ -1962,6 +1966,45 @@
                 document.getElementById('modal-edit-area').classList.add('hidden');
                 document.getElementById('modal-edit-btn').style.display = 'none';
                 document.getElementById('modal-cluster').classList.add('hidden');
+                // 新規ノード用の不採用ボタン (master_fp がない & screen_id がある = 新規追加候補)
+                const previewNewExcludeBtn = document.getElementById('preview-new-exclude-btn');
+                const isNewNode = !item.master_fp && !item.excluded_match && item.screen_id;
+                if (isNewNode) {
+                    previewNewExcludeBtn.classList.remove('hidden');
+                    previewNewExcludeBtn.onclick = async () => {
+                        const thumb = item.thumb ? imgUrl(item.thumb) : '';
+                        showConfirmDialog(
+                            `<p class="text-sm text-gray-300 mb-3">この新規ノードを不採用にしますか？</p>
+                             <p class="text-xs text-gray-500 mb-3">マスターには追加されず、Live タブでも「ユーザー不採用」として表示されます。Live タブから取り消し可能。</p>
+                             <div class="w-32"><img src="${thumb}" class="w-full rounded" /><p class="text-[9px] text-gray-500 truncate mt-1">${escapeHtml(item.title || '')}</p></div>`,
+                            async () => {
+                                document.getElementById('confirm-popup').classList.add('hidden');
+                                document.getElementById('confirm-popup').classList.remove('flex');
+                                try {
+                                    const r = await fetch(API_BASE + '?action=toggle_screen_artifact&screen_id=' + encodeURIComponent(item.screen_id));
+                                    const d = await r.json();
+                                    if (d.error) {
+                                        showToast(`不採用失敗: ${d.error}`, 'error');
+                                        return;
+                                    }
+                                    showToast(`不採用に設定: ${item.title || item.fp}`, 'success');
+                                    closeModal();
+                                    // プレビューを再取得して反映
+                                    if (typeof showRecalcIfNeeded === 'function') showRecalcIfNeeded();
+                                    // 即座に再描画したい場合は再フェッチ
+                                    if (typeof showMergePreview === 'function' && _previewSessionId) {
+                                        showMergePreview(_previewSessionId);
+                                    }
+                                } catch (e) {
+                                    showToast(`不採用エラー: ${e.message}`, 'error');
+                                }
+                            }, { okLabel: '不採用', danger: true }
+                        );
+                    };
+                } else {
+                    previewNewExcludeBtn.classList.add('hidden');
+                    previewNewExcludeBtn.onclick = null;
+                }
                 // アンカー比較パネル
                 const anchorPanel = document.getElementById('modal-anchor-compare');
                 if (item.master_fp) {

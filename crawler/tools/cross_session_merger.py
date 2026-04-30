@@ -268,6 +268,7 @@ class CrossSessionMerger:
             s_info = self._get_screen_info(fp, session_id)
             new_nodes.append({
                 "fp": fp,
+                "screen_id": s_info.get("id") if s_info else None,
                 "title": s_info.get("title", "") if s_info else "",
                 "thumb": s_info.get("thumbnail_path", "") if s_info else "",
                 "scene": s_info.get("scene", "") if s_info else "",
@@ -1159,7 +1160,7 @@ class CrossSessionMerger:
     def _get_screen_info(self, fp: str, session_id: str) -> Optional[dict]:
         """セッション画面の表示用情報を取得。"""
         row = self._conn.execute(
-            "SELECT title, thumbnail_path, screenshot_path, scene,"
+            "SELECT id, title, thumbnail_path, screenshot_path, scene,"
             " discovered_at, COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS ocr_text"
             " FROM lc_screens"
             " WHERE fingerprint = ? AND session_id = ? AND is_representative = 1",
@@ -1167,7 +1168,7 @@ class CrossSessionMerger:
         ).fetchone()
         if not row:
             row = self._conn.execute(
-                "SELECT title, thumbnail_path, screenshot_path, scene,"
+                "SELECT id, title, thumbnail_path, screenshot_path, scene,"
                 " discovered_at, COALESCE(ocr_text_gemini, ocr_text_hq, ocr_text, '') AS ocr_text"
                 " FROM lc_screens WHERE fingerprint = ? AND session_id = ?",
                 (fp, session_id),

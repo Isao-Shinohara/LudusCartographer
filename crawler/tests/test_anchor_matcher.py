@@ -384,6 +384,32 @@ class TestCrossSessionMergerIntegration:
         assert len(node_mapping) == 0
         assert len(session_reps) == 1
 
+    def test_preview_merge_new_nodes_include_screen_id(self, full_db):
+        """new_nodes は screen_id を含む (UI から不採用トグルするため)。"""
+        from unittest.mock import patch
+        from tools.cross_session_merger import CrossSessionMerger
+
+        _add_session_screen(full_db, "s1", "a", 1, text="hello",  phash="aa00aa00aa00aa00")
+        _add_session_screen(full_db, "s1", "b", 2, text="world",  phash="bb00bb00bb00bb00")
+        full_db.commit()
+
+        with patch.object(CrossSessionMerger, '__init__', lambda self, **kw: None):
+            merger = CrossSessionMerger.__new__(CrossSessionMerger)
+            merger._conn = full_db
+            from tools.merge_sort_strategy import SafeInsertStrategy
+            merger._sort_strategy = SafeInsertStrategy()
+            merger._anchor_matcher = AnchorMatcher()
+            merger._version_id = 1
+
+            result = merger.preview_merge("s1")
+
+        new_nodes = result["new_nodes"]
+        assert len(new_nodes) == 2
+        for n in new_nodes:
+            assert "screen_id" in n, f"new_nodes に screen_id が必要: {n.keys()}"
+            assert isinstance(n["screen_id"], int) and n["screen_id"] > 0, \
+                f"screen_id は正の整数: {n['screen_id']}"
+
     def test_preview_merge_excludes_artifact_screens(self, full_db):
         """is_artifact > 0 (Live で不採用) は new_nodes / matches に含まれない。
 
