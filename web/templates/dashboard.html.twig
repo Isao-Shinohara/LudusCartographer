@@ -1353,9 +1353,13 @@
     const _MERGE_PAGE_SIZE = 5;
     const _mergePages = {};
     function _renderMergeSection(id, items, renderFn) {
-        const page = _mergePages[id] || 0;
         const total = items.length;
         const totalPages = Math.ceil(total / _MERGE_PAGE_SIZE);
+        // 件数が減って現在ページが範囲外になった場合は最終ページにクランプ
+        // (例: マージ実行で件数 6→5 になった時に page=1 のまま空表示する不具合の対策)
+        const storedPage = _mergePages[id] || 0;
+        const page = Math.min(storedPage, Math.max(0, totalPages - 1));
+        if (page !== storedPage) _mergePages[id] = page;
         const start = page * _MERGE_PAGE_SIZE;
         const pageItems = items.slice(start, start + _MERGE_PAGE_SIZE);
         // ページングが発生する場合のみ高さ固定 (カード約48px + gap 8px = 56px/件)
