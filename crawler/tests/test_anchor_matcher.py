@@ -288,6 +288,7 @@ class TestCrossSessionMergerIntegration:
                 count INTEGER DEFAULT 1,
                 avg_duration REAL, min_duration REAL,
                 first_seen_at TEXT, last_seen_at TEXT,
+                version_id INTEGER DEFAULT 1,
                 UNIQUE(from_master_fp, to_master_fp, tap_label)
             );
             CREATE TABLE lc_screens (
@@ -310,7 +311,8 @@ class TestCrossSessionMergerIntegration:
             );
             CREATE TABLE lc_node_mappings (
                 session_id TEXT, session_fp TEXT, master_fp TEXT,
-                match_method TEXT, match_score REAL
+                match_method TEXT, match_score REAL,
+                version_id INTEGER DEFAULT 1
             );
             CREATE TABLE lc_session_graphs (
                 session_id TEXT PRIMARY KEY,
@@ -383,6 +385,58 @@ class TestCrossSessionMergerIntegration:
         assert is_seed is True
         assert len(node_mapping) == 0
         assert len(session_reps) == 1
+
+    def test_merge_to_master_direct_fp_match(self, full_db):
+        """merge_to_master で session_fp が既存 master_fp と一致したら
+        'direct_fp_match' として扱い、'new' にしない (= SafeInsert で削除されない)。
+
+        旧 bug: 同 fp が存在しても AnchorMatcher が見逃すと 'new' 分類 →
+        SafeInsert が配置不能と判断 → master 削除 → seed nodes 消失。
+        """
+        from unittest.mock import patch
+        from tools.cross_session_merger import CrossSessionMerger
+
+        # seed セッション
+        _add_session_screen(full_db, "s1", "shared_fp", 1, text="hello", phash="aa00aa00aa00aa00")
+        # 別セッションで同じ fingerprint だが OCR テキストは異なる
+        # (= AnchorMatcher は text 一致しないので match しないが、fp は同じ)
+        # → 旧バグ: 'new' 分類 → SafeInsert 削除 → seed master 消失
+        # → 新動作: 直接 fp 一致を検出 → 'direct_fp_match' で保護
+        _add_session_screen(full_db, "s2", "shared_fp", 1, text="completely different",
+                            phash="bb00bb00bb00bb00")
+        # _check_ocr_complete が通るよう ocr_text_gemini を設定
+        full_db.execute("UPDATE lc_screens SET ocr_text_gemini = ocr_text")
+        full_db.commit()
+
+        with patch.object(CrossSessionMerger, '__init__', lambda self, **kw: None):
+            merger = CrossSessionMerger.__new__(CrossSessionMerger)
+            merger._conn = full_db
+            from tools.merge_sort_strategy import SafeInsertStrategy
+            merger._sort_strategy = SafeInsertStrategy()
+            merger._anchor_matcher = AnchorMatcher()
+            merger._version_id = 1
+
+            # まず seed をマージ (s1 → master)
+            merger.merge_to_master("s1")
+
+            # master に shared_fp が存在することを確認
+            r = full_db.execute("SELECT master_fp FROM lc_master_nodes WHERE master_fp = 'shared_fp'").fetchone()
+            assert r is not None, "seed merge で shared_fp が master に入るはず"
+
+            # s2 をマージ (同 fp が既存)
+            merger.merge_to_master("s2")
+
+            # s2 のマッピングが 'direct_fp_match' であること
+            r = full_db.execute(
+                "SELECT match_method FROM lc_node_mappings WHERE session_id='s2' AND session_fp='shared_fp'"
+            ).fetchone()
+            assert r is not None, "s2 のマッピングが存在するはず"
+            assert r[0] == 'direct_fp_match', f"'direct_fp_match' であるべき: {r[0]}"
+
+            # master の shared_fp は依然存在 (削除されていない)
+            r = full_db.execute("SELECT visit_count FROM lc_master_nodes WHERE master_fp = 'shared_fp'").fetchone()
+            assert r is not None, "削除されてはならない"
+            assert r[0] >= 2, f"visit_count が増加するはず: {r[0]}"
 
     def test_preview_merge_new_nodes_include_screen_id(self, full_db):
         """new_nodes は screen_id を含む (UI から不採用トグルするため)。"""

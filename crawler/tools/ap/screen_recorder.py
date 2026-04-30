@@ -871,6 +871,9 @@ class ScreenRecorder:
         - confidence >= 0.3 のみ
         - 日本語/英単語を含むトークンのみ
         - 純粋数字・時刻パターンを除外
+        - 数字混じりトークン (例: 'Download 1083 MB', 'Ver.3.4.0', 'Turn 5')
+          は数字を**保持**してそのままハッシュに含める。これにより本来別画面の
+          進捗・バージョン違いを別 fingerprint として正しく区別する。
         - (center_y // 50, center_x) でソート
         - テキストのみ | 結合 (座標はハッシュに含めない)
         """
@@ -887,10 +890,6 @@ class ScreenRecorder:
                 continue
             # 純粋数字・時刻パターンは除外
             if _PURE_NUMBER_RE.match(text) or _TIME_PATTERN_RE.match(text):
-                continue
-            # テキスト内の数字を除去 (例: "Turn 3" → "Turn")
-            text = re.sub(r"\d+", "", text).strip()
-            if not text:
                 continue
             # ソート用座標
             center = item.get("center", [0, 0])

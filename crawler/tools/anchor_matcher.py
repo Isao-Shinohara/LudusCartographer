@@ -143,6 +143,13 @@ class AnchorMatch:
 # label: UI 表示名
 # color_bg / color_text: Tailwind CSS クラス
 PHASE_DEFS: dict[str, dict] = {
+    "direct_fp_match": {
+        "order": 0,
+        "label": "FP",
+        "description": "直接 fp 一致 (同 fingerprint)",
+        "color_bg": "bg-green-900/50",
+        "color_text": "text-green-300",
+    },
     "phase1_tap_text": {
         "order": 1,
         "label": "P1",

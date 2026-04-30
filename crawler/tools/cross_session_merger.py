@@ -397,6 +397,27 @@ class CrossSessionMerger:
             elif s_fp in excluded_mapping:
                 continue  # 不採用ノード一致は既に処理済み
             else:
+                # 直接 fp 一致チェック: AnchorMatcher が見逃したが、s_fp が
+                # 既存 master_fp と一致する場合は同一画面 (= アンカー扱い)。
+                # 'new' 分類すると SafeInsert で削除されてしまう既存バグの対策。
+                existing = self._conn.execute(
+                    "SELECT 1 FROM lc_master_nodes WHERE master_fp = ? AND version_id = ?",
+                    (s_fp, self._version_id),
+                ).fetchone()
+                if existing:
+                    self._conn.execute(
+                        "UPDATE lc_master_nodes SET visit_count = visit_count + 1,"
+                        " last_seen_at = ? WHERE master_fp = ? AND version_id = ?",
+                        (now, s_fp, self._version_id),
+                    )
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO lc_node_mappings"
+                        " (session_id, session_fp, master_fp, match_method, match_score, version_id)"
+                        " VALUES (?, ?, ?, 'direct_fp_match', 1.0, ?)",
+                        (session_id, s_fp, s_fp, self._version_id),
+                    )
+                    continue
+
                 s_info = self._get_node_info(s_fp, session_id)
                 if not s_info:
                     continue
@@ -804,7 +825,12 @@ class CrossSessionMerger:
         return len(reps)
 
     def _add_all_as_new(self, session_id: str) -> int:
-        """全ノードを新規としてマスターに追加。"""
+        """全ノードを新規としてマスターに追加。
+
+        既存 master_fp と一致する fp は 'direct_fp_match' として扱い、
+        master ノードは保護する (visit_count++ のみ)。AnchorMatcher が
+        match を見つけられなかったが fp が同じケースに対応する。
+        """
         now = datetime.now().isoformat()
         reps = self._conn.execute(
             "SELECT id, fingerprint, title, scene, phash,"
@@ -814,7 +840,27 @@ class CrossSessionMerger:
             (session_id,),
         ).fetchall()
 
+        new_count = 0
         for r in reps:
+            existing = self._conn.execute(
+                "SELECT 1 FROM lc_master_nodes WHERE master_fp = ? AND version_id = ?",
+                (r["fingerprint"], self._version_id),
+            ).fetchone()
+            if existing:
+                # 直接 fp 一致 → アンカー扱い
+                self._conn.execute(
+                    "UPDATE lc_master_nodes SET visit_count = visit_count + 1,"
+                    " last_seen_at = ? WHERE master_fp = ? AND version_id = ?",
+                    (now, r["fingerprint"], self._version_id),
+                )
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO lc_node_mappings"
+                    " (session_id, session_fp, master_fp, match_method, match_score, version_id)"
+                    " VALUES (?, ?, ?, 'direct_fp_match', 1.0, ?)",
+                    (session_id, r["fingerprint"], r["fingerprint"], self._version_id),
+                )
+                continue
+
             self._conn.execute(
                 "INSERT OR IGNORE INTO lc_master_nodes"
                 " (master_fp, representative_screen_id, title, scene, phash,"
@@ -830,11 +876,12 @@ class CrossSessionMerger:
                 " VALUES (?, ?, ?, 'new', 1.0, ?)",
                 (session_id, r["fingerprint"], r["fingerprint"], self._version_id),
             )
+            new_count += 1
 
         self._merge_edges(session_id, {})
         self._recalculate_master_graph()
         self._conn.commit()
-        return len(reps)
+        return new_count
 
     def _resolve_fp_to_master(self, fp: str, session_id: str,
                               fp_map: dict[str, str]) -> Optional[str]:

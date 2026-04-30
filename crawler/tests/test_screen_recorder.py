@@ -136,27 +136,84 @@ class TestNormalizeOcr:
         ]
         assert ScreenRecorder._normalize_ocr(ocr) == ""
 
-    def test_battle_number_variation_same_fingerprint(self):
-        """バトル中: ダメージ数値・ターン数が変わっても同じ fingerprint。"""
+    def test_battle_pure_number_tokens_excluded(self):
+        """バトル中: 純数字トークン (ダメージ値等) は除外されて同 fingerprint。
+
+        例: ['1234'] や ['5678'] は _PURE_NUMBER_RE で除外されるので、
+        テキスト部分が同じなら同 fingerprint になる。
+        """
         ocr_turn1 = [
             _make_ocr("ATTACKER", cx=100, cy=100),
             _make_ocr("BUFFER", cx=200, cy=100),
             _make_ocr("AUTO", cx=300, cy=50),
-            _make_ocr("1234", cx=400, cy=200),   # ダメージ
-            _make_ocr("Turn 3", cx=500, cy=50),   # ←「Turn 3」は数字じゃないので残る
+            _make_ocr("1234", cx=400, cy=200),   # 純数字 → 除外
         ]
         ocr_turn2 = [
             _make_ocr("ATTACKER", cx=100, cy=100),
             _make_ocr("BUFFER", cx=200, cy=100),
             _make_ocr("AUTO", cx=300, cy=50),
-            _make_ocr("5678", cx=400, cy=200),   # ダメージ変化
-            _make_ocr("Turn 5", cx=500, cy=50),   # ←同じ「Turn」を含む
+            _make_ocr("5678", cx=400, cy=200),   # 純数字 → 除外
         ]
         norm1 = ScreenRecorder._normalize_ocr(ocr_turn1)
         norm2 = ScreenRecorder._normalize_ocr(ocr_turn2)
         fp1 = ScreenRecorder._content_fingerprint(norm1)
         fp2 = ScreenRecorder._content_fingerprint(norm2)
-        assert fp1 == fp2, f"バトルターン数値変化で fingerprint が変わってしまう: {norm1} vs {norm2}"
+        assert fp1 == fp2, f"純数字除外でも fingerprint が変わる: {norm1!r} vs {norm2!r}"
+
+    def test_battle_mixed_token_with_number_different_fingerprint(self):
+        """バトル中: 数字混じりトークン (例: 'Turn 3') が変わると別 fingerprint。
+
+        実 OCR は 'Turn 3' を 1 トークンで返すことがある。これを 'Turn' に
+        正規化していたのが Download 進捗等の bug 衝突の原因だった。
+        数字保持により別画面として正しく区別される。クラスタリングは phash
+        ベースで動くため、Turn 別画面が冗長化することはない (= 異なる
+        Turn は phash も異なるので元から別 cluster)。
+        """
+        ocr_turn3 = [
+            _make_ocr("ATTACKER", cx=100, cy=100),
+            _make_ocr("AUTO", cx=300, cy=50),
+            _make_ocr("Turn 3", cx=500, cy=50),
+        ]
+        ocr_turn5 = [
+            _make_ocr("ATTACKER", cx=100, cy=100),
+            _make_ocr("AUTO", cx=300, cy=50),
+            _make_ocr("Turn 5", cx=500, cy=50),
+        ]
+        fp1 = ScreenRecorder._content_fingerprint(ScreenRecorder._normalize_ocr(ocr_turn3))
+        fp2 = ScreenRecorder._content_fingerprint(ScreenRecorder._normalize_ocr(ocr_turn5))
+        assert fp1 != fp2, "Turn N の N が変わったら別 fingerprint であるべき"
+
+    def test_download_progress_different_fingerprint(self):
+        """Download 進捗が違えば別 fingerprint (旧バグの解消検証)。
+
+        旧: 'Download 1083.64MB / 3665.99 MB' → 数字除去 → 'Download MB MB' → 同 fp
+        新: 数字保持 → 別 fp
+        """
+        ocr_a = [_make_ocr("Download 1083.64MB / 3665.99 MB", cx=400, cy=400)]
+        ocr_b = [_make_ocr("Download 2046.34MB / 3665.99 MB", cx=400, cy=400)]
+        ocr_c = [_make_ocr("Download 3202.68MB / 3665.99 MB", cx=400, cy=400)]
+        fp_a = ScreenRecorder._content_fingerprint(ScreenRecorder._normalize_ocr(ocr_a))
+        fp_b = ScreenRecorder._content_fingerprint(ScreenRecorder._normalize_ocr(ocr_b))
+        fp_c = ScreenRecorder._content_fingerprint(ScreenRecorder._normalize_ocr(ocr_c))
+        assert len({fp_a, fp_b, fp_c}) == 3, \
+            f"進捗違いで全て別 fingerprint であるべき: {fp_a} {fp_b} {fp_c}"
+
+    def test_version_string_different_fingerprint(self):
+        """バージョン文字列が違えば別 fingerprint。"""
+        ocr_v34 = [_make_ocr("Ver.3.4.0", cx=400, cy=400)]
+        ocr_v35 = [_make_ocr("Ver.3.5.0", cx=400, cy=400)]
+        fp_34 = ScreenRecorder._content_fingerprint(ScreenRecorder._normalize_ocr(ocr_v34))
+        fp_35 = ScreenRecorder._content_fingerprint(ScreenRecorder._normalize_ocr(ocr_v35))
+        assert fp_34 != fp_35, "バージョン違いで別 fingerprint であるべき"
+
+    def test_same_dialog_same_fingerprint(self):
+        """同一 dialog (数字なし) は同 fingerprint (正しい衝突を維持)。"""
+        text = "それだけは覚えていたし、それだけしか覚えていない"
+        ocr_a = [_make_ocr(text, cx=400, cy=600)]
+        ocr_b = [_make_ocr(text, cx=400, cy=600)]
+        fp_a = ScreenRecorder._content_fingerprint(ScreenRecorder._normalize_ocr(ocr_a))
+        fp_b = ScreenRecorder._content_fingerprint(ScreenRecorder._normalize_ocr(ocr_b))
+        assert fp_a == fp_b, "同一テキストは同 fingerprint"
 
     def test_battle_skill_change_different_fingerprint(self):
         """バトル中: 右下アイコン（スキル名）が変わったら別 fingerprint。"""
