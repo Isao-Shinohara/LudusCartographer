@@ -1,28 +1,48 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-04-28 (午前)
+最終更新: 2026-04-30
 
 ## 現在のブランチ
-- `feature/screen-recorder` (main 未マージ)
+- `feature/screen-recorder` (main 未マージ、HEAD ~614 コミット先行)
 
-## 最終セッション (2026-04-28 午前)
-- 主な作業:
-  1. Step B 段階2/3 に **phash AND dHash** 判定を導入 (設計意図復元)
-  2. テキスト空クラスタの代表選択を **情報量スコア** に置き換え (白フラッシュが代表になる問題を解消)
-- 背景: 暗い画像同士・ダウンロード進捗画面で dHash 単独では誤統合 / 白フラッシュ等の情報のないフレームが代表に選ばれていた
+## 最終セッション (2026-04-30) — スクリーン記録機能の最終仕上げ
+
+12 コミット。`process_session_bg` の堅牢化、`paused` 状態の導入、マージプレビューの不具合修正・機能追加を中心に実装。テスト 102 件全 PASS。
+
+詳細: `docs/history/2026-04-30.md`
+
+### 主な実装
+
+| カテゴリ | 内容 | コミット |
+|---|---|---|
+| process_session_bg 堅牢化 | 二重起動防止 / Gemini retry / sentinel / popen/pclose / 進捗キー統一 / Live タブ自動フォールバック | `de7f282` `20cf431` `e12febe` |
+| ライフサイクル | paused 状態を導入 (Ctrl+C → paused → 「完了として確定」 → completed) | `5bdb478` |
+| マージプレビュー | seed 0 件誤表示 / 不採用画像混入 / OCR 編集時キャッシュ削除 / 新規ノードに不採用操作 / shift 一括不採用 / 空ページ問題 | `518071a` `42b93ea` `59d95c1` `62b4753` `5f8c864` `7aa52a2` |
+| 整理 | 4/24-26 欠落要約 / OCR 学習パターン共有 | `5683c94` `6fcf19c` |
+
+### ユーザーとの主要対話
+
+- 「P4-P6 は元々自動操縦時に実行していなかった？」 → 元からマージ専用 (BG 側は OCR 補正で別物)
+- 「マスターが変わるとキャッシュは使われない？」 → 新ノード追加では自動再リクエスト、OCR 手動編集では従来効いていた → `59d95c1` で修正
+- 「マージ時に Gemini が動くのはなぜ？」 → P4-P6 は master 依存なので merge 時以外では動けない設計
+
+## ひとつ前のセッション (2026-04-28 午前)
+- Step B 段階2/3 に **phash AND dHash** 判定追加 (設計意図復元)
+- テキスト空クラスタの代表選択を **情報量スコア** (Canny + Laplacian + Saturation + Shannon Entropy) に置き換え
 - 詳細: `docs/history/2026-04-28_morning.md`
 
-## ひとつ前のセッション (2026-04-28 深夜〜早朝)
-- 主な作業: ORB 完全削除、Step B 二段判定強化、_remerge_text_clusters 拡張、Step A Jaccard 追加、閾値緩和、UI 改善
+## さらに前のセッション (2026-04-28 深夜〜早朝)
+- ORB 完全削除、Step B 二段判定強化、_remerge_text_clusters 拡張、Step A Jaccard 追加、閾値緩和、UI 改善
 - コミット: `5511e2d` 〜 `e99fc7f` (約 25 コミット)
+- 詳細: `docs/history/2026-04-28.md`
 
 ## 現在の状態
 - **Python**: 3.11.8 + OpenSSL 3.6.2
 - **クラスタリングアルゴリズム**: phash + dHash + Jaccard。ORB は完全削除済み
 - **テキスト分離**: `crawler/config/.env` で `LC_TEXT_SEPARATION=on` (本番モード)
-- **Gemini OCR**: 未設定 (PaddleOCR HQ で動作、`_remerge_text_clusters` が HQ で発火)
-- **DB**: クリーンアップ済み (3.7M、`lc_ocr_corrections` 21,720 件のみ保護)
-- **マスター**: 空 (未マージ)
+- **Gemini API**: 設定済み・稼働中 (P4-P6 アンカー判定キャッシュ累計 1,667 ペア)
+- **DB**: ap_20260428_122410 〜 ap_20260429_044603 の 10 セッション (1 archived / 1 discarded)
+- **マスター**: 1,034 ノード、8 セッションがマージ済み (4/28 12:24 〜 4/29 03:07)
 - **auto_pilot プロセス**: 停止中
 
 ## 直近の主要変更 (2026-04-28 午前)
@@ -139,27 +159,38 @@ TH_LOOSE がドリフト絶対上限。連鎖統合で代表から TH_LOOSE 以�
 | remerge 空 text | `_EMPTY_PHASH_TH` / `_EMPTY_DHASH_TH` | 35 / 25 |
 | 共通 | `ID_GAP_THRESHOLD` | 30 |
 
-## 未解決の課題
-1. **実データでの phash AND dHash 検証**: クリーンアップ済み、再起動して動画/ADV/バトルで挙動確認
-2. **暗い画像同士の偽合致 (ほむら問題)**: phash=23 / dHash=21 のように両方近いケースは現状救えない。Option 4 (Gemini within-session 判定) の設計検討が将来課題
-3. **数値主体テキストの正規化挙動**: "Download 668.71 MB" のように数値除去後ほぼ空になるテキストが偶然一致してしまう問題。今回は phash AND dHash で副次的に救えるが、本質的な見直しは別タスク
-4. **段階 3 の収束性能監視**: 通常 1〜5 pass で収束想定。MAX_PASSES (50) 警告ログをチェック
-5. **Jaccard `phash_low_jaccard` の頻度**: 新閾値で発火状況をダッシュボードで観察
-6. **テキストありフレームと空フレームの統合品質**: 663/664 ケースの実機動作確認
-7. **Gemini API 設定**: 未設定のまま運用継続。設定する場合は `crawler/config/.env` に `GEMINI_API_KEY` 追記
-8. **batch_processor.py の `--deduplicate` CLI**: 後方互換、次回別タスクで `--cluster` にリネーム検討
-9. **Gemini 503 / scrcpy黒キャプチャ / DB locked散発**: 過去から継続
+## 未解決の課題 (観察項目・将来検討、急ぎなし)
+
+### 4/30 セッションで持ち越し
+- **P4-P6 prefetch 設計**: マージボタンを押したときの 1〜数分待機を BG 化する案 (CLAUDE.md §17 参照)。マスター成長との整合性が課題、現状は同期実行
+- **paused 状態の運用検証**: 新規導入。Ctrl+C → paused → 「完了として確定」→ completed の流れを実機で確認
+
+### クラスタリング系 (4/28 から継続観察)
+- **暗い画像同士の偽合致 (ほむら問題)**: phash=23 / dHash=21 のように両方近いケース。Option 4 (Gemini within-session 判定) の設計検討が将来課題
+- **数値主体テキストの正規化挙動**: "Download 668.71 MB" のように数値除去後ほぼ空になるテキストの偶然一致。phash AND dHash で副次的に救えるが本質的な見直しは別タスク
+- **段階 3 の収束性能監視**: 通常 1〜5 pass で収束想定。MAX_PASSES (50) 警告ログをチェック
+- **Jaccard `phash_low_jaccard` の頻度**: 新閾値で発火状況をダッシュボードで観察
+- **テキストありフレームと空フレームの統合品質**: 663/664 ケースの実機動作確認
+
+### 環境・運用
+- **batch_processor.py の `--deduplicate` CLI**: 後方互換、次回別タスクで `--cluster` にリネーム検討
+- **Gemini 503 / scrcpy 黒キャプチャ / DB locked 散発**: 過去から継続
 
 ## 設計ドキュメント
 - `docs/merge_sort_algorithm.md` — SafeInsert 仕様
 - `docs/anchor_matching_design.md` — 段階的 Phase 設計
 - `docs/cross_session_merge.md` — クロスセッションマージ
 - CLAUDE.md §16 — クラスタリング採用/不採用判定
+- CLAUDE.md §17 — アンカーマッチング Phase 1〜6
+- CLAUDE.md §19 — SafeInsert
 - CLAUDE.md §20 — UI 設計ルール
 
 ## 次セッション開始時の推奨手順
-1. `git log --oneline -10` で直近変更を再確認
-2. STATUS.md と `docs/history/2026-04-28.md` を読む
-3. クリーンアップ済みなので `./crawler/tools/run_autopilot.sh -S -s -r` で新規スタート可能
-4. ダッシュボード (`http://localhost:8080/dashboard.php`) で比較ビュー確認
-5. 課題 1〜4 のいずれかから着手
+
+スクリーン記録機能はひと段落 (`feature/screen-recorder` ブランチ、614 コミット先行)。次の機能着手前に:
+
+1. `git log --oneline -15` で直近 4/30 セッションの変更を再確認
+2. STATUS.md と `docs/history/2026-04-30.md` を読む
+3. 必要なら main へのマージ計画 (大規模なので慎重に)
+4. ダッシュボード (`http://localhost:8080/dashboard.php`) で paused 状態 + 新規ノード不採用の動作確認
+5. 次の機能テーマをユーザーと相談
