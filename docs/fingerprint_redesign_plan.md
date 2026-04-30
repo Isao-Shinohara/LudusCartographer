@@ -4,6 +4,21 @@
 対象ブランチ: `feature/screen-recorder`
 推定作業時間: **8〜15 時間** (慎重実装 + 検証込み)
 
+## 🟢 実施済み (2026-04-30)
+
+ユーザー方針「既存データの修復はなくてよい」に従い、Phase 0/1/2 を完了。
+
+- **Phase 0** (事前検証): A 案 (数字保持) で OK と判断
+- **Phase 1** (コード修正): コミット `322b2b0` で実施
+  - `screen_recorder._normalize_ocr` から数字除去を削除
+  - `cross_session_merger.merge_to_master` / `_add_all_as_new` に直接 fp 一致チェック追加
+  - `PHASE_DEFS` に `direct_fp_match` 追加
+  - 新規テスト 6 件、全 109 件 PASS
+- **Phase 2** (シミュレーション): 合成 3 セッションで動的検証 — master 削除 0 件、`direct_fp_match` 6 件記録 ✓
+- **Phase 3** (ドキュメント): STATUS.md / docs/history/2026-04-30.md / CLAUDE.md §16 更新 (本コミット)
+
+既存データのマイグレーションは省略 (Big Bang 再構築なし)。新規セッションから新ロジック適用。
+
 ## 1. 背景と目的
 
 ### 観測された不具合

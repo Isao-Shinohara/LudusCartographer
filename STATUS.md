@@ -5,7 +5,26 @@
 ## 現在のブランチ
 - `feature/screen-recorder` (main 未マージ、HEAD ~614 コミット先行)
 
-## 最終セッション (2026-04-30) — スクリーン記録機能の最終仕上げ
+## 最終セッション (2026-04-30 後半) — マージ時系列バグ修正 (fingerprint 再設計)
+
+ユーザー報告「マージ後の master でダウンロードゲージが巻き戻る」の根本対策。
+3 つの絡み合う原因 (fingerprint 数字除去 / merge 直接 fp 未チェック / SafeInsert 削除) を Phase 1 で解消。1 コミット (`322b2b0`)、109 件テスト PASS。
+
+### 修正内容
+- ❶ `_normalize_ocr` から数字除去削除 → 進捗違いが別 fp に (Download / Ver. / Lv. 等)
+- ❷ `merge_to_master` + `_add_all_as_new` に直接 fp 一致チェック → 'direct_fp_match' で seed 保護
+- ❸ `PHASE_DEFS` に `direct_fp_match` 追加 (UI ラベル "FP" 緑)
+
+### 検証
+- Phase 0 (事前検証): 数字保持 → 進捗違い別 fp / 同 dialog 同 fp / Turn 系は cluster で吸収可
+- Phase 1 (実装): 単体テスト 6 件追加・全 109 件 PASS
+- Phase 2 (シミュレーション): 合成 3 セッション merge → master 削除 0 件、`direct_fp_match` 6 件記録 ✓
+
+### 既存データの扱い
+既存 16K screens/1K master nodes はそのまま放置。新規セッションから新ロジック適用。
+詳細: `docs/history/2026-04-30.md` / `docs/fingerprint_redesign_plan.md`
+
+## ひとつ前のセッション (2026-04-30 前半) — スクリーン記録機能の最終仕上げ
 
 12 コミット。`process_session_bg` の堅牢化、`paused` 状態の導入、マージプレビューの不具合修正・機能追加を中心に実装。テスト 102 件全 PASS。
 

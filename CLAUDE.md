@@ -612,6 +612,26 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 - **挿入は隣接アンカー条件を満たす場合のみ**: 条件を満たさないノードは挿入しない（次の周回に委ねる）
 - 詳細は `docs/merge_sort_algorithm.md` 参照
 
+### Fingerprint 設計ルール（厳格）
+
+`screen_recorder._normalize_ocr` での fingerprint 生成方針:
+
+- **数字を保持する** — `re.sub(r"\d+", "")` 等で数字を除去してはならない
+  - 「Download 1083 MB」「Download 2046 MB」を同 fp に collapse すると、進捗違いの画面が同一画面として扱われ master 時系列が崩壊する
+  - 「Lv.5 まどか」「Lv.10 まどか」「Ver.3.4.0」「STEP 1 / STEP 2」も同様
+- **純数字トークンは除外** — `_PURE_NUMBER_RE` で単独の数字 (HP "1234"、ダメージ "5678" 等) は除外する。これは自然な変動を吸収するため
+- **同一 dialog (数字なし) は同 fp** — クロスセッションで同じセリフは集約される (= 正しい衝突)
+- **「Turn 3」「Turn 5」は別 fp になるが許容** — 既存クラスタリング (phash + dHash + Jaccard) が異なる Turn を別 cluster 化するため、master ノード増は cluster 増と同等で問題なし
+
+### Cross-Session Merge での直接 fp 一致ルール（厳格）
+
+`cross_session_merger.merge_to_master` / `_add_all_as_new` の挙動:
+
+- session_fp と既存 master_fp が**直接一致**する場合、AnchorMatcher の結果に関わらず `'direct_fp_match'` として記録する
+- これを 'new' 分類すると SafeInsert が「配置不能」と判定して既存 master ノードを削除してしまう (= seed nodes 消失バグの原因)
+- `PHASE_DEFS` に `direct_fp_match` (order=0, label='FP', 緑色) を定義済み
+- 直接 fp 一致は AnchorMatcher の Phase 1〜6 より優先される (= 同 fp は同一画面として扱う)
+
 ---
 
 ## 17. アンカーマッチング設計ルール
