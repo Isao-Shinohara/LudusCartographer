@@ -1031,11 +1031,14 @@ if ($action === 'update_manual_text') {
         $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
         // 編集前の値を取得（修正ルール抽出用）
+        // ocr_text_gemini は lc_master_nodes ではなく lc_screens にあるため JOIN で取得。
         $stmt = $db->prepare(
-            "SELECT COALESCE(ocr_text_manual, '') AS prev_text, "
-            . "COALESCE(ocr_text_gemini, ocr_text, '') AS auto_text, "
-            . "COALESCE(title_manual, title, '') AS prev_title "
-            . "FROM lc_master_nodes WHERE master_fp = ?"
+            "SELECT COALESCE(m.ocr_text_manual, '') AS prev_text, "
+            . "COALESCE(s.ocr_text_gemini, s.ocr_text_hq, s.ocr_text, m.ocr_text, '') AS auto_text, "
+            . "COALESCE(m.title_manual, m.title, '') AS prev_title "
+            . "FROM lc_master_nodes m "
+            . "LEFT JOIN lc_screens s ON s.id = m.representative_screen_id "
+            . "WHERE m.master_fp = ?"
         );
         $stmt->execute([$masterFp]);
         $prev = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -1056,6 +1059,16 @@ if ($action === 'update_manual_text') {
         if ($newTitle !== null) $params[] = $newTitle;
         $params[] = $masterFp;
         $stmt->execute($params);
+
+        // 編集された master_fp に紐づく Gemini 判定キャッシュを削除。
+        // master_fp 不変だが OCR テキストが変わったので、過去の判定 (古いテキストで出した結果) は無効。
+        // 次回マージで新テキストに基づいて再判定される。
+        try {
+            $db->prepare("DELETE FROM lc_anchor_judgments WHERE master_fp = ?")
+               ->execute([$masterFp]);
+        } catch (\Throwable $e) {
+            // テーブル未作成等の場合はサイレントスキップ
+        }
 
         // Phase 2: 自動 OCR 結果と手動編集の diff から修正ルールを抽出
         $autoText = $prev['auto_text'] ?? '';
@@ -1171,11 +1184,24 @@ if ($action === 'apply_correction_rule') {
             "UPDATE lc_master_nodes SET ocr_text_manual = ?, "
             . "manual_edited_at = datetime('now') WHERE master_fp = ?"
         );
+        $updatedFps = [];
         foreach ($rows as $row) {
             $newText = str_replace($rule['before_text'], $rule['after_text'], $row['auto_text']);
             if ($newText !== $row['auto_text']) {
                 $updateStmt->execute([$newText, $row['master_fp']]);
+                $updatedFps[] = $row['master_fp'];
                 $applied++;
+            }
+        }
+
+        // 実際にテキストが変わった master_fp の Gemini 判定キャッシュのみを削除。
+        if ($updatedFps) {
+            try {
+                $delPlaceholders = implode(',', array_fill(0, count($updatedFps), '?'));
+                $db->prepare("DELETE FROM lc_anchor_judgments WHERE master_fp IN ($delPlaceholders)")
+                   ->execute($updatedFps);
+            } catch (\Throwable $e) {
+                // サイレントスキップ
             }
         }
 
