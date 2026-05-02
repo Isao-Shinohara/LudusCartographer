@@ -34,7 +34,7 @@ from tools.ap.image_proc import (
     imread_cached,
 )
 from lc.ocr import run_ocr
-from lc.utils import compute_phash, phash_distance
+from lc.image_comparator import compute_phash, phash_distance  # re-export
 
 logger = logging.getLogger("auto_pilot")
 
@@ -102,7 +102,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     from tools.auto_pilot import _is_walk_swipe_ready
     _walk_ap = analysis_path is not None
     _walk_texts = len(texts) <= 2
-    _walk_scene = state.current_scene != "MOVIE"
+    _walk_scene = state.cycle.current_scene != "MOVIE"
     _walk_check = _is_walk_swipe_ready(analysis_path, state) if (_walk_ap and _walk_texts and _walk_scene) else False
     if _walk_ap and _walk_texts and _walk_scene and _walk_check:
         _sx = int(ANALYSIS_W * 0.5)
@@ -142,13 +142,13 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
             _gs_analysis = prepare_analysis_image(_gs_path, _gs_w, _gs_h) if _gs_path else None
             if _gs_analysis:
                 _gs_movie = detect_movie_scene(_gs_analysis, adv_result=None, phash_dist=99)
-                _gs_adv = detect_adv_scene(_gs_analysis, roi=state.game_roi)
+                _gs_adv = detect_adv_scene(_gs_analysis, roi=state.cycle.game_roi)
                 if _gs_movie.is_movie:
                     logger.info(">>> [GoldSwipe] スワイプ後 MOVIE 検出 → スワイプ完了")
-                    state.current_scene = "MOVIE"
+                    state.cycle.current_scene = "MOVIE"
                 elif _gs_adv.is_adv:
                     logger.info(">>> [GoldSwipe] スワイプ後 ADV 検出 → スワイプ完了")
-                    state.current_scene = "ADV"
+                    state.cycle.current_scene = "ADV"
                 else:
                     # OCR でテキスト増加チェック (UI出現)
                     _gs_ocr = run_ocr(_gs_analysis)
@@ -166,7 +166,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
     _battle_tut_kws = ["隣接攻撃", "必殺技", "巫殺技", "ATTACKER", "通常攻撃"]
     _is_battle_tut_context = any(kw in joined for kw in _battle_tut_kws)
     # バトルUI確認済みの場合はフッター外GoldBtnをスキップ → Glow SM (フッター) に委ねる
-    if analysis_path is not None and _is_battle_tut_context and not ctx.in_battle_ctx and not state.download_active:
+    if analysis_path is not None and _is_battle_tut_context and not ctx.in_battle_ctx and not state.cycle.download_active:
         _gold_btn = find_gold_button(analysis_path)
         if _gold_btn:
             _bx, _by = _gold_btn[0], _gold_btn[1]
@@ -241,7 +241,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
         if asset_hit:
             # DIALOG_NEXT 以外のアセットが検出された場合、スタックカウンタリセット
             if asset_hit[2] != "ASSET_TUTORIAL_DIALOG_NEXT":
-                state._dialog_next_stall_count = 0
+                state.cycle._dialog_next_stall_count = 0
             cx, cy, action, _asset_region = asset_hit
             # スワイプ系アクションの処理
             if action == "SWIPE_UP":
@@ -268,7 +268,7 @@ def handle_tutorial(ctx: DetectContext, state: PilotState) -> Optional[tuple[str
                     ey = int(H * _sw_ty_r)
                     dur = tmpl_meta.get("swipe_duration_ms", 10000)
                     # チェッカー柄シーンが終わるまで繰り返しスワイプ
-                    state._in_checker_walk = True
+                    state.cycle._in_checker_walk = True
                     _max_repeat = tmpl_meta.get("max_repeat", 10)
                     _sw_prev_ph = compute_phash(analysis_path) if analysis_path else ""
                     for _sw_i in range(_max_repeat):

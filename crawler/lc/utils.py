@@ -675,3 +675,36 @@ def phash_distance(h1: str, h2: str) -> int:
     """
     a, b = int(h1, 16), int(h2, 16)
     return bin(a ^ b).count("1")
+
+
+def compute_dhash(image_path: "Path", hash_size: int = 8) -> str:
+    """
+    勾配ベースの差分ハッシュ (dHash) を計算して 16 文字 hex 文字列で返す。
+
+    隣接ピクセルの水平勾配を比較するため、構図・エッジ方向に敏感。
+    phash では検出できない構図の違い（クローズアップ vs 引き画面等）を検出可能。
+
+    Args:
+        image_path: 画像ファイルパス
+        hash_size:  ハッシュサイズ (デフォルト 8 → 64bit)
+
+    Returns:
+        16 文字の hex 文字列
+
+    Raises:
+        ValueError: 画像を読み込めない場合
+    """
+    import cv2
+
+    img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise ValueError(f"画像を読み込めません: {image_path}")
+    resized = cv2.resize(img, (hash_size + 1, hash_size))
+    diff = resized[:, 1:] > resized[:, :-1]
+    return format(int("".join("1" if b else "0" for b in diff.flatten()), 2), "016x")
+
+
+def dhash_distance(h1: str, h2: str) -> int:
+    """2 つの dHash 文字列のハミング距離を返す。"""
+    a, b = int(h1, 16), int(h2, 16)
+    return bin(a ^ b).count("1")

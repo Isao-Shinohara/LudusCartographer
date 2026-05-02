@@ -4,11 +4,18 @@
 # SIGBUS クラッシュするため、nohup でバックグラウンド実行する。
 #
 # 使い方:
-#   ./tools/run_autopilot.sh                  # 途中再開
-#   ./tools/run_autopilot.sh -r               # 新規アカウント (--reinstall)
-#   ./tools/run_autopilot.sh -c 3             # 3周回 (--cycles)
-#   ./tools/run_autopilot.sh -c 0             # 無限周回
+#   ./tools/run_autopilot.sh -S -s            # 途中再開 (スクリーン記録有効)
+#   ./tools/run_autopilot.sh -S -s -r         # 新規アカウント (--reinstall)
+#   ./tools/run_autopilot.sh -S -s -c 3       # 3周回 (--cycles)
+#   ./tools/run_autopilot.sh -S -s -c 0       # 無限周回
 #   ./tools/run_autopilot.sh --help           # ヘルプ表示
+#
+# オプション:
+#   -S, --screenshot   スクリーン記録を有効化（UI地図の構築に必須）
+#   -s, --stop-on-home ホーム画面到達で停止
+#   -r, --reinstall    アプリを再インストールして新規アカウントで開始
+#   -c N, --cycles N   N周回実行 (0 = 無限)
+#   -V N, --version N  バージョンID指定 (未指定=Activeバージョン)
 #
 # Ctrl+C で自動操縦も停止します。
 #
@@ -46,10 +53,24 @@ PID=$!
 cleanup() {
     echo ""
     echo "🛑 自動操縦を停止します (PID: $PID)..."
+    echo "   詳細はログ参照: tail -f $LOG_FILE"
     kill "$PID" 2>/dev/null
     [ -n "${TAIL_PID:-}" ] && kill "$TAIL_PID" 2>/dev/null
-    wait "$PID" 2>/dev/null
-    echo "   停止完了"
+    # 停止待ち (定期的に進捗を表示)
+    _wait_secs=0
+    while kill -0 "$PID" 2>/dev/null; do
+        sleep 2
+        _wait_secs=$((_wait_secs + 2))
+        if [ $((_wait_secs % 10)) -eq 0 ]; then
+            echo "   停止待機中... (${_wait_secs}秒経過 / 最終ログ: $(tail -1 "$LOG_FILE" 2>/dev/null | head -c 100))"
+        fi
+        if [ "$_wait_secs" -ge 120 ]; then
+            echo "   ⚠️ 120秒経過 → 強制終了"
+            kill -9 "$PID" 2>/dev/null
+            break
+        fi
+    done
+    echo "   停止完了 (${_wait_secs}秒)"
     exit 0
 }
 trap cleanup INT TERM EXIT

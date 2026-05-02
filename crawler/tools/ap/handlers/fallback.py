@@ -12,14 +12,14 @@ import re
 import time
 from typing import Optional
 
-from lc.utils import compute_phash, phash_distance
+from lc.image_comparator import compute_phash, phash_distance  # re-export
 from tools.ap.constants import _CLOSE_BTN_OFFSET, _MENU_SCREEN_KWS, PHASH_THRESHOLD
 from tools.ap.context import DetectContext
 from tools.ap.device import adb, tap_device, swipe_device, take_screenshot
 from tools.ap.helpers import has_any, has_text, log_milestone
 from tools.ap.image_proc import (
     smart_tap_button, roi_to_device, ASSET_MANAGER,
-    detect_dialog_corners,
+    detect_dialog_corners, find_gold_button_by_edges,
 )
 from tools.ap.state import PilotState
 
@@ -117,7 +117,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     _gacha_limit = has_text(ocr, "限界突破", min_conf=0.2)
     _gacha_kakutei = has_text(ocr, "確定", min_conf=0.2) or has_text(ocr, "獲得", min_conf=0.2)
     if _gacha_limit and _gacha_kakutei:
-        _ok_x, _ok_y = roi_to_device(int(W * 0.41), int(H * 0.89), state.game_roi)
+        _ok_x, _ok_y = roi_to_device(int(W * 0.41), int(H * 0.89), state.cycle.game_roi)
         logger.info(">>> 【ガチャ結果確認】 限界突破+確定/獲得 検出 → OK想定位置 (%d,%d) タップ", _ok_x, _ok_y)
         tap_device(_ok_x, _ok_y, state, "GACHA_RESULT_OK")
         return "GACHA_RESULT_OK", 1.5
@@ -133,14 +133,14 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
                     _close_popup["text"][:10])
         _close_popup = None
     if _close_popup:
-        if state.pre_popup_tap_count >= 8:
+        if state.cycle.pre_popup_tap_count >= 8:
             logger.warning(">>> 【%s ポップアップ】 × が8回空振り → BACK キーで脱出",
                            _close_popup["text"][:6])
             try:
                 adb("shell input keyevent KEYCODE_BACK")
             except Exception as _e:
                 logger.debug("[CLOSE_POPUP] BACK キー送信例外: %s", _e)
-            state.pre_popup_tap_count = 0
+            state.cycle.pre_popup_tap_count = 0
             return "CLOSE_POPUP_BACK", 1.0
         _close_match = ASSET_MANAGER.match_single("close_btn", analysis_path) if analysis_path else None
         if _close_match and _close_match[2] >= 0.60:
@@ -152,7 +152,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             _cpy = _CLOSE_BTN_OFFSET
             logger.info(">>> 【%s ポップアップ】 → × 固定座標 (%d,%d) タップ",
                         _close_popup["text"][:6], _cpx, _cpy)
-        state.pre_popup_tap_count += 1
+        state.cycle.pre_popup_tap_count += 1
         tap_device(_cpx, _cpy, state, f"CLOSE_POPUP_{_close_popup['text'][:6]}")
         return "CLOSE_POPUP", 1.0
 
@@ -194,7 +194,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             if _ft_next and _ft_next[2] >= 0.70:
                 _has_auto_template = True
     _has_adv_evidence = ctx.adv_result.is_adv or ctx.is_mini_conv or _has_auto_template
-    if lower_texts and len(ocr) <= 15 and not state.download_active and _has_adv_evidence:
+    if lower_texts and len(ocr) <= 15 and not state.cycle.download_active and _has_adv_evidence:
         target = lower_texts[-1]
         cx, cy = target["center"]
         logger.info(">>> ADV会話送り '%s' (%d,%d)", target["text"][:10], cx, cy)
@@ -213,7 +213,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
 
     # ─── サブ画面脱出: 左上にメニュー画面名 → 戻るボタンタップ ───
     # ガチャ/交換所等のサブ画面からの脱出 (チュートリアル中は誤動作するため home_reached 後のみ)
-    if state.home_reached and not ctx.in_battle_ctx:
+    if state.cycle.home_reached and not ctx.in_battle_ctx:
         for item in ocr:
             _t = item.get("text", "")
             _c = item.get("center", (0, 0))
@@ -232,7 +232,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
                     return "SUB_SCREEN_BACK", 1.5
 
     # ─── メニュースタック救済: 左上メニューKW + icon_back テンプレ → 戻る ───
-    if state.ineffective_tap_count >= 5 and not ctx.in_battle_ctx:
+    if state.cycle.ineffective_tap_count >= 5 and not ctx.in_battle_ctx:
         _menu_text = None
         for item in ocr:
             _t = item.get("text", "")
@@ -248,7 +248,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
                 _bx, _by = _back_match[0], _back_match[1]
                 logger.warning(
                     ">>> 【メニュースタック救済】 '%s' + icon_back(%.2f) → 戻る (%d,%d) (ineffective=%d)",
-                    _menu_text, _back_match[2], _bx, _by, state.ineffective_tap_count,
+                    _menu_text, _back_match[2], _bx, _by, state.cycle.ineffective_tap_count,
                 )
                 tap_device(_bx, _by, state, "MENU_STALL_BACK")
                 return "MENU_STALL_BACK", 1.5
@@ -271,7 +271,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             return "PRESENT_BOX_BACK", 1.0
 
     # ─── チュートリアルガイドスタック: blob_same_count≥5 + 「してみましょう」→ × で閉じ ───
-    if state.blob_same_count >= 5:
+    if state.cycle.blob_same_count >= 5:
         _tutorial_guide = (has_text(ocr, "てみましょう", min_conf=0.3) or
                            has_text(ocr, "しましょう", min_conf=0.3))
         if _tutorial_guide and not ctx.in_battle_ctx:
@@ -280,7 +280,7 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             logger.info(">>> 【チュートリアルガイド スタック】 '%s' → × (%d,%d) タップ",
                         _tutorial_guide["text"][:10], _tg_x, _tg_y)
             tap_device(_tg_x, _tg_y, state, "TUTORIAL_GUIDE_CLOSE")
-            state.blob_same_count = 0
+            state.cycle.blob_same_count = 0
             return "CLOSE_POPUP", 1.0
 
     # ─── 「ご注意」画面 (初回起動時) → 同意ボタンタップ + phash リトライ ───
@@ -290,22 +290,38 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
             has_text(ocr, "基本無料", min_conf=0.3) and has_text(ocr, "未成年", min_conf=0.3)
         )
     ):
-        agree_btn = (has_text(ocr, "同意してゲーム", min_conf=0.2) or
-                     has_text(ocr, "同意して", min_conf=0.2) or
-                     has_text(ocr, "ゲームを始める", min_conf=0.2))
-        if agree_btn:
-            cx, cy = agree_btn["center"]
-            logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d)", cx, cy)
-        else:
-            cx, cy = roi_to_device(int(W * 0.66), int(H * 0.79), state.game_roi)
-            logger.info(">>> 【ご注意画面】 同意ボタン未検出 → ROI補正フォールバック (%d,%d)", cx, cy)
+        # 優先順位: 1) gold_btn_edge_r テンプレマッチ → 2) OCR テキスト → 3) 固定 ROI
+        cx, cy = None, None
+        _detect_method = "FB"
+        if analysis_path:
+            # 画面下半分で gold_btn_edge_r を検索
+            _btn = find_gold_button_by_edges(
+                analysis_path,
+                search_roi=(0, int(H * 0.5), W, H),
+            )
+            if _btn:
+                cx, cy = _btn[0], _btn[1]
+                _detect_method = "TMPL"
+                logger.info(">>> 【ご注意画面】 同意ボタン検出 TMPL(%d,%d)", cx, cy)
+        agree_btn = None
+        if cx is None:
+            agree_btn = (has_text(ocr, "同意してゲーム", min_conf=0.2) or
+                         has_text(ocr, "同意して", min_conf=0.2) or
+                         has_text(ocr, "ゲームを始める", min_conf=0.2))
+            if agree_btn:
+                cx, cy = agree_btn["center"]
+                _detect_method = "OCR"
+                logger.info(">>> 【ご注意画面】 同意ボタン検出 OCR(%d,%d)", cx, cy)
+            else:
+                cx, cy = roi_to_device(int(W * 0.66), int(H * 0.79), state.cycle.game_roi)
+                logger.info(">>> 【ご注意画面】 同意ボタン未検出 → ROI補正フォールバック (%d,%d)", cx, cy)
         _base_ph = compute_phash(analysis_path) if analysis_path else ""
         _agree_changed = False
         for _retry_i in range(5):
             _tap_x = cx + _retry_i * 20
             _tap_y = cy
             tap_device(_tap_x, _tap_y, state,
-                       f"GO_CHUI_AGREE_R{_retry_i}({'OCR' if agree_btn else 'FB'})")
+                       f"GO_CHUI_AGREE_R{_retry_i}({_detect_method})")
             logger.info(">>> 【ご注意→phash監視】 #%d タップ(%d,%d) → 待機",
                         _retry_i + 1, _tap_x, _tap_y)
             time.sleep(0.3)
@@ -348,9 +364,54 @@ def handle_fallback(ctx: DetectContext, state: PilotState) -> tuple[str, float]:
     if _is_title_screen:
         logger.info("  タイトル画面検出 → TAP TO START タップ")
         log_milestone(state, "TITLE_TAP")
-        _tt_x, _tt_y = roi_to_device(int(W * 0.5), int(H * 0.87), state.game_roi)
+        # TAP TO START タップ → startup_phase 終了
+        # (タイトル以降のストーリー動画等を STARTUP ではなく通常シーンとして記録する)
+        if state.cycle.startup_phase:
+            state.cycle.startup_phase = False
+            logger.info("[STARTUP] TAP TO START タップ → 起動シーン記録モード終了")
+        _tt_x, _tt_y = roi_to_device(int(W * 0.5), int(H * 0.87), state.cycle.game_roi)
         tap_device(_tt_x, _tt_y, state, "TITLE_TAP_START")
         return "TITLE_TAP", 2.0
+
+    # ─── チュートリアル復帰: サブ画面から戻る ───
+    # ホーム未到達 + 指アイコン/金枠/チュートリアルダイアログなし + 画面安定
+    # → icon_back + header_info_icon + 間にテキストがあるサブ画面なら戻る
+    _tut_back_count = getattr(state.cycle, "_tutorial_no_guide_count", 0)
+    if not state.cycle.home_reached and state.cycle.same_phash_count >= 2 and ctx.analysis_path:
+        _header_roi = (0, 0, int(W * 0.35), int(H * 0.12))
+        _back_m = ASSET_MANAGER.match_single("icon_back", str(ctx.analysis_path), roi=_header_roi)
+        _info_m = ASSET_MANAGER.match_single("header_info_icon", str(ctx.analysis_path), roi=_header_roi)
+        if _back_m and _back_m[2] >= 0.60 and _info_m and _info_m[2] >= 0.60:
+            # icon_back と header_info_icon の間にテキストがあるか確認
+            _back_x = _back_m[0]
+            _info_x = _info_m[0]
+            _header_text = any(
+                _back_x < item.get("center", [0])[0] < _info_x
+                and item.get("center", [0, 0])[1] < H * 0.12
+                for item in ocr
+            )
+            if _header_text:
+                _tut_back_count += 1
+                state.cycle._tutorial_no_guide_count = _tut_back_count
+                if _tut_back_count >= 3:
+                    _bx, _by = roi_to_device(_back_m[0], _back_m[1], state.cycle.game_roi)
+                    logger.info(
+                        "[TUTORIAL_BACK] ガイドなしサブ画面 %d回検出 → 戻る (%d,%d)"
+                        " [back=%.2f, info=%.2f]",
+                        _tut_back_count, _bx, _by, _back_m[2], _info_m[2])
+                    tap_device(_bx, _by, state, "TUTORIAL_BACK_TO_HOME")
+                    state.cycle._tutorial_no_guide_count = 0
+                    return "TUTORIAL_BACK_TO_HOME", 1.0
+                else:
+                    logger.info(
+                        "[TUTORIAL_BACK] ガイドなしサブ画面検出 (%d/3) — 様子見",
+                        _tut_back_count)
+            else:
+                state.cycle._tutorial_no_guide_count = 0
+        else:
+            state.cycle._tutorial_no_guide_count = 0
+    else:
+        state.cycle._tutorial_no_guide_count = 0
 
     # ─── フォールバック: 何も見つからない ───
     logger.info(">>> 画面が安定するまで待機 (OCR %d件)", len(ocr))

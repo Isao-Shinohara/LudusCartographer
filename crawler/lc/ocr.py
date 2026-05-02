@@ -72,6 +72,9 @@ def _get_paddle(lang: str) -> "_PaddleOCR":
             use_textline_orientation=True,
             lang=lang,
             device="cpu",
+            text_det_limit_side_len=1280,   # 高解像度処理で精度向上
+            text_det_box_thresh=0.7,        # テキスト領域の確信度閾値を上げてノイズ除去
+            text_rec_score_thresh=0.5,       # 認識スコア閾値で低確信度の誤検出を除外
         )
     return _ocr_instances[lang]
 

@@ -284,6 +284,11 @@ export ANDROID_SERIAL=f6b8cef7
 - `.env` や認証情報ファイルをコミットすること
 - セッション終了時に `STATUS.md` を更新しないこと
 - ユーザーの確認なしに実機で連続操作を実行すること
+- **ユーザーの明示的な指示なしにデータを削除・変更しないこと（厳格・最重要）**
+  - DB のレコード削除（DELETE, VACUUM）、スクリーンショットファイルの削除、セッションのクリーンアップ等のデータ操作は **ユーザーが「クリーンアップして」「削除して」等と明示的に指示した場合のみ** 実行する
+  - 「新規で開始して」は `-r` フラグの付与を意味するが、**既存データの削除は含まない**。クリーンアップが必要な場合はユーザーに確認してから実行する
+  - コード修正と同様に「調査→報告→承認→実行」の順を厳守する
+  - 一度削除したデータは復元不可能であり、ユーザーの作業成果を毀損するリスクがある
 
 ---
 
@@ -296,14 +301,14 @@ macOS 26 の Vision framework が Terminal フォアグラウンドプロセス�
 SIGBUS クラッシュするため、スクリプト内部で `nohup` バックグラウンド実行する。
 
 ```bash
-# 途中再開
-./crawler/tools/run_autopilot.sh
+# 途中再開 (スクリーン記録有効)
+./crawler/tools/run_autopilot.sh -S -s
 
 # 新規アカウント
-./crawler/tools/run_autopilot.sh -r
+./crawler/tools/run_autopilot.sh -S -s -r
 
 # 3周回
-./crawler/tools/run_autopilot.sh -c 3
+./crawler/tools/run_autopilot.sh -S -s -c 3
 
 # 停止
 pkill -f auto_pilot.py
@@ -329,6 +334,28 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 - `--reinstall` (`-r`) は **ユーザーが明示的に指示した場合のみ** 付与（§11 参照）
 - ログは `/tmp/auto_pilot.log` に出力される
 
+### クラスタリング環境変数
+
+| 変数 | 値 | 効果 |
+|------|---|------|
+| `LC_TEXT_SEPARATION` | `on`(default) / `off` | OFF時は §16 ルール1〜2 のテキスト判定を完全スキップし、全 screen をハッシュ判定（phash 即決 → dHash 中間域）で分類（視認用デバッグモード、本番は ON） |
+
+クラスタリングは常に **phash 即決 + dHash 中間域判定** の2段構え (旧 `LC_HASH_ALGO` 切替は廃止)。
+
+- `LC_TEXT_SEPARATION=off` は **デバッグモード**。テキスト分離なしのクラスタを目視確認するため。本番運用では使わない
+- フラグを変えると同 DB 内で挙動が混在するため、**切替時は再起動 + クリーンアップ推奨**
+
+### 起動コマンドの厳格ルール
+
+| ユーザーの指示 | 実行内容 |
+|---------------|---------|
+| **「再起動して」** | `-S -s` で起動（`-r` は付けない） |
+| **「クリーンアップして新規スタート」** | §14 の DB・スクショクリーンアップ → `-S -s -r` で起動 |
+| **「新規アカウントで」** | `-S -s -r` で起動（クリーンアップはユーザー確認後） |
+
+- **「再起動」に `-r` は絶対に付けない** — `-r` はアプリの再インストールを伴い、アカウントデータが消失する
+- PHPサーバーが既に起動中の場合はそのまま残す（二重起動しない）
+
 ### scrcpy ウィンドウサイズについて
 - scrcpy は `--max-size=1440 --window-width=1440` で起動される（1440x720）
 - **テンプレートマッチの精度を維持するため、ウィンドウサイズはリサイズしないことを推奨**
@@ -344,8 +371,12 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 - プロセス再起動（クラッシュ、修正後再開等）では絶対に付けない
 - プロセスが動いているなら kill せずログ監視方法だけ変える
 
-### コード修正前のユーザー確認（厳格）
+### コード修正前のユーザー確認（厳格・最重要）
 - **調査・分析は自由に行ってよい** — ログ、ソースコード、スクショから丁寧に調査する。調査にユーザー確認は不要
+- **修正は必ず「調査結果の報告 → ユーザー承認 → 実装」の順を厳守**する
+- 調査結果には **原因・影響範囲・修正案** を含めること
+- ユーザーが「修正して」「おねがい」等と明示的に承認するまでコードを変更しない
+- 「〜しますか？」で確認して承認を待つ。承認なしに実装を始めない
 - **解決は速度より不具合のない解決を優先**する
 - **閾値による変更は他機能に影響を与えるため最後の手段**。まず論理的解決（検出ロジックの改善、テンプレート再作成等）を検討する
 - コードの修正・コミットは **ユーザーの明示的な承認後** にのみ実行する
@@ -407,6 +438,21 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 - ルールは **CLAUDE.md に記述** する（memory ではなく）
 - プロジェクト共通で他の人が利用した際にも理解できる場所に置く
 
+### PilotState / CycleState の分離ルール（厳格）
+
+操縦状態は2つのクラスに分離されている（`ap/state.py`）：
+
+| クラス | ライフサイクル | 用途 |
+|--------|-------------|------|
+| **PilotState** | プロセス全体 | 周回をまたいで引き継ぐ（grind_*, device_*, launch_time） |
+| **CycleState** | 周回ごとに再作成 | 周回ごとにリセットされる全状態 |
+
+- **新しい状態変数は CycleState に追加する**（周回をまたいで引き継ぐ必要がない限り）
+- CycleState へのアクセスは `state.cycle.xxx` で行う（`state.xxx` ではない）
+- 動的属性（`state.cycle._from_movie_ttl` 等）も CycleState に設定する
+- 周回リセットは `state.reset_for_new_cycle()` → `CycleState()` 再作成で自動的に全リセット
+- 周回リセット後に再設定が必要なもの（recorder, game_foreground 等）は `auto_pilot.py` の周回リセットブロックに記載（コメントで明示）
+
 ### 指アイコン+金枠タップのルール（厳格）
 
 チュートリアル中に表示される指アイコン（tutorial_finger_*）+ 金枠ハイライトの処理:
@@ -435,9 +481,69 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 - 特に §0（チュートリアル自律操縦マニュアル）と §13（行動ルール）を確認し、ルールに矛盾する変更を行わない
 - 「知っている」と思っても省略しない — 会話が長くなるとルール認識が薄まるため、毎回明示的に確認する
 
+### 用語統一: 「間引き」ではなく「クラスタリング」（厳格）
+- 画像をクラスタに分類する処理は **「クラスタリング」** と呼ぶ（コード/ログ/UI/ドキュメント全てで統一）
+- 「間引き」「dedup」「deduplicate」は新規コード・コメント・ログ・UI に書かない
+- 既存の CLI 引数 `batch_processor.py --deduplicate` は後方互換のため残置（次回別タスクで対応）
+- `cluster_id`, `cluster_decision_method` 等の DB スキーマは既に「cluster」で統一されている
+
 ---
 
-## 14. 設計哲学
+## 14. DB・スクショのクリーンアップ手順
+
+ユーザーが「クリーンアップして」と指示した場合、**セッション・画面データのみ**をクリアする。
+**OCR 修正ルール・学習パターンは絶対に削除しない（厳格）。**
+
+### 削除対象（セッション関連データのみ）
+
+1. **crawler/storage/ludus.db**: 以下のテーブルのみ DELETE → VACUUM（スキーマは保持）
+   ```sql
+   DELETE FROM lc_node_mappings;
+   DELETE FROM lc_master_edges;
+   DELETE FROM lc_master_nodes;
+   DELETE FROM lc_session_graphs;
+   DELETE FROM lc_scc_groups;
+   DELETE FROM lc_transitions;
+   DELETE FROM lc_tappable_items;
+   DELETE FROM lc_screen_groups;
+   DELETE FROM lc_screens;
+   DELETE FROM lc_sessions;
+   DELETE FROM lc_projects;
+   DELETE FROM auto_pilot_state;
+   VACUUM;
+   ```
+   ※ `crawler/ludus.db` は未使用。本体は `crawler/storage/ludus.db`
+2. **crawler/storage/screenshots/**: 中身を全削除（ディレクトリは残す）
+3. **crawler/storage/reinstall/**: 中身を全削除（ディレクトリは残す）
+4. **crawler/storage/evidence/**: 中身を全削除（ディレクトリは残す）
+5. **crawler/evidence/**: 中身を全削除（ディレクトリは残す）
+6. **crawler/screenshots/**: 中身を全削除（ディレクトリは残す）
+7. クリーンアップ後に行数とディスク使用量を確認して報告する
+
+### 保護対象（絶対に削除しない）
+
+| リソース | 内容 | 理由 |
+|---------|------|------|
+| `lc_ocr_corrections` テーブル | OCR 修正ルール (手動編集から自動抽出) | 周回を重ねて蓄積した学習資産 |
+| `crawler/storage/ocr_learned_patterns.json` | OCR 学習パターン | 同上 |
+
+- 「クリーンアップして」は上記の削除対象のみを実行する
+- OCR ルールの削除が必要な場合は「OCR ルールも含めてクリーンアップして」等の**明示的な指示が必要**
+- 迷った場合は確認してから実行する
+
+### 起動コマンドの使い分け（厳格）
+
+| ユーザー指示 | 操作 |
+|-------------|------|
+| **「再起動して」** | `-S -s` で起動（`-r` は付けない、クリーンアップしない） |
+| **「クリーンアップして新規スタート」** | §14 のクリーンアップ実行 → `-S -s -r` で起動 |
+
+- `-r` は **ユーザーが「新規」「-r」「クリーンアップして新規スタート」と明示的に指示した場合のみ** 付与する
+- 「再起動」「起動して」だけの場合は絶対に `-r` を付けない（§13「--fresh-install は指示直後の1回のみ」参照）
+
+---
+
+## 15. 設計哲学
 
 1. **Text-Center > ピクセル補正** — テンプレート画像品質確認が最優先
 2. **StallCounter > アドホックカウンタ** — 宣言的 tick/stalled/reset
@@ -449,3 +555,225 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
    - **検出関数の判定条件に本質的な特徴を含める**。例: ガチャ演出 = SKIP+暗背景+**光の玉**。光の玉なしで GACHA 判定してはならない
    - **誤検出は検出関数内で棄却する**。呼び出し側でシーンやアクション履歴で抑制するのではなく、検出関数自体が偽陽性を返さないよう改善する
    - **重複ロジックは共通関数に抽出する**。同じ判定を複数箇所にコピペしない
+
+---
+
+## 16. スクリーン記録・クラスタリングルール
+
+### 採用/不採用の判定ロジック（厳格）
+
+| 優先度 | 条件 | 判定 |
+|--------|------|------|
+| **1. テキスト一致/前方一致** | OCR テキストが既存採用画像と同一、または前方一致（セリフ途中） | **不採用**（長い方を代表に） |
+| **2. テキスト不一致** | OCR テキストがあり、既存と一致も前方一致もしない | **採用**（phash は見ない） |
+| **3. テキスト空 + phash 近い** | テキスト空同士で直前クラスタと phash 距離 < 20 | **不採用**（顔面積が大きい方を代表に） |
+| **4. テキスト空 + phash 遠い** | テキスト空同士で直前クラスタと phash 距離 >= 20 | **採用** |
+
+- **テキストがある画像同士では phash を判定に使わない** — 背景アニメーションで phash が変わってもセリフが違えば別画面
+- **phash はテキスト空の画像にのみ使用** — 動画フレームや暗転等のテキストなし画像の重複排除用
+- **間引きは直前クラスタとのみ比較（厳格）** — 間に別画面が入った場合は別の場面として扱う。全クラスタを検索して遠い画面同士をマージしてはならない（連鎖マージで暴走するリスクがある）
+- テキスト有無の判定: `ocr_text` が **1文字以上** なら「テキストあり」（1文字でも空扱いしない）
+- **phash 近傍スキップで重複排除してはならない（厳格）** — セリフだけが変わった画面は phash がほぼ同一のため、phash 距離による重複排除を `maybe_record` に入れるとセリフ変化を取りこぼす。重複排除は必ず OCR テキストベースの fingerprint で行うこと
+
+### セッション管理
+
+- `-r` (新規インストール) / 周回2周目以降 → **新セッション**
+- 途中再開 / 再起動 → **前回セッション継続**（DB から最新セッションIDを取得）
+
+### バックグラウンドワーカー処理順序
+
+1. グルーピング (30秒間隔)
+2. PaddleOCR 再処理 (5秒間隔/1枚、全画像対象、タイトルも更新)
+3. クラスタリング (15秒間隔、OCR 完了後の HQ テキストで比較)
+4. 遷移グラフ構築 (120秒間隔、cluster + OCR 全完了後に実行)
+
+**OCR → クラスタリングの順序が重要**: HQ OCR 結果でテキスト比較することで間引き精度が向上する
+
+### 起動シーン撮影制御 (`startup_phase`)
+
+起動時のスクリーンショット撮影は `startup_phase` フラグで制御する。
+
+| 条件 | `startup_phase` | 撮影関数 |
+|------|-----------------|---------|
+| `-r`（新規インストール）初回起動 | `True` | `record_startup` |
+| GRIND 新周回開始 | `True` | `record_startup` |
+| 途中再開・再起動・クラッシュ復帰 | `False`（デフォルト） | `maybe_record`（LOADING/STARTUP シーンはスキップ） |
+
+- **`True` → `False`**: MENU / ADV / BATTLE 到達時のみ（メインループ内、1箇所）
+- **TAP TO START 検出時**: `startup_phase` を変更しない（ロード画面まで `record_startup` の管理下に置く）
+- **クラッシュ復帰（Watchdog / BLACKOUT_RECOVER）**: `startup_phase` を変更しない（True なら起動記録継続、False なら再起動由来のロード画面をスキップ）
+- **再起動時の LOADING/STARTUP シーン**: `maybe_record` のスキップ条件で除外（`scene not in ("LOADING", "STARTUP")`）
+
+### クロスセッションマージのアンカー方針（厳格）
+
+- **確実性 > 数**: アンカー数を無理に増やすより、正確なマッチのみをアンカーにする
+- **周回を重ねれば自然にアンカーは増える** — 同じ経路を通るたびに同じ画面がマッチし、隣接ペアが増えていく。無理にアンカーを選出する必要はない
+- **誤マッチは致命的**: 1つの誤アンカーが多数のノードを間違った位置に挿入する。誤マッチ防止を最優先
+- **挿入は隣接アンカー条件を満たす場合のみ**: 条件を満たさないノードは挿入しない（次の周回に委ねる）
+- 詳細は `docs/merge_sort_algorithm.md` 参照
+
+### Fingerprint 設計ルール（厳格）
+
+`screen_recorder._normalize_ocr` での fingerprint 生成方針:
+
+- **数字を保持する** — `re.sub(r"\d+", "")` 等で数字を除去してはならない
+  - 「Download 1083 MB」「Download 2046 MB」を同 fp に collapse すると、進捗違いの画面が同一画面として扱われ master 時系列が崩壊する
+  - 「Lv.5 まどか」「Lv.10 まどか」「Ver.3.4.0」「STEP 1 / STEP 2」も同様
+- **純数字トークンは除外** — `_PURE_NUMBER_RE` で単独の数字 (HP "1234"、ダメージ "5678" 等) は除外する。これは自然な変動を吸収するため
+- **同一 dialog (数字なし) は同 fp** — クロスセッションで同じセリフは集約される (= 正しい衝突)
+- **「Turn 3」「Turn 5」は別 fp になるが許容** — 既存クラスタリング (phash + dHash + Jaccard) が異なる Turn を別 cluster 化するため、master ノード増は cluster 増と同等で問題なし
+
+### Cross-Session Merge での直接 fp 一致ルール（厳格）
+
+`cross_session_merger.merge_to_master` / `_add_all_as_new` の挙動:
+
+- session_fp と既存 master_fp が**直接一致**する場合、AnchorMatcher の結果に関わらず `'direct_fp_match'` として記録する
+- これを 'new' 分類すると SafeInsert が「配置不能」と判定して既存 master ノードを削除してしまう (= seed nodes 消失バグの原因)
+- `PHASE_DEFS` に `direct_fp_match` (order=0, label='FP', 緑色) を定義済み
+- 直接 fp 一致は AnchorMatcher の Phase 1〜6 より優先される (= 同 fp は同一画面として扱う)
+
+---
+
+## 17. アンカーマッチング設計ルール
+
+### Phase 定義（6段階、順序固定）
+
+| Phase | key | 対象 | マッチ条件 | モデル |
+|-------|-----|------|-----------|--------|
+| **P1** | `phase1_tap_text` | tap + テキストあり | 完全/前方/あいまい一致 + phash | - |
+| **P2** | `phase2_auto_text` | auto + テキストあり | P1 と同手法 + P1 アンカーとの相対位置 | - |
+| **P3** | `phase3_tap_phash` | tap + テキスト空 | phash < 15 + 前後アンカー必須 | - |
+| **P4** | `phase4_gemini_text` | テキスト Gemini | phash < 20 + sim ≥ 0.4 → テキストのみ判定 | flash-lite (テキスト) |
+| **P5** | `phase5_gemini_image` | 画像 Gemini (高確信) | phash < 8 + sim ≥ 0.4 → 画像ペア判定 | flash-lite (画像) |
+| **P6** | `phase6_gemini_flash` | 画像 Gemini (低確信) + P5棄却再審査 | phash 8-20 + sim ≥ 0.3 → 画像ペア判定 | flash (画像) |
+
+- **PHASE_DEFS** (`anchor_matcher.py`) で表示名・色・順序を一元管理。key は DB・API で使用するため変更禁止
+- LIS 順序チェックは廃止済み
+
+### Phase 間のデータフロー（厳格）
+
+```
+P1 → P2 → P3 (ローカル判定)
+  ↓ P1〜P3 全ての未マッチ（候補なし・条件不一致含む）
+P4 テキスト Gemini (テキストのみ送信、画像なし、安価)
+  ↓ P4 確定 → アンカー、P4 棄却 → P5 へ
+P5 画像 Flash-Lite (P3 確定アンカーの検証 + P4 棄却の再検証 + 新規候補)
+  ↓ P5 棄却 → P6 へ
+P6 画像 Flash (P5 棄却の再審査 + 新規候補)
+  ↓ P6 棄却 = 最終棄却
+```
+
+- **P4 の入力**: P1〜P3 全てで未マッチだったノード（P1 で候補複数、P2 で範囲外、P3 で前後アンカーなし等を含む）
+- **P4 確定**: テキストだけで同一画面と判定 → アンカー確定。P5/P6 の画像送信が不要
+- **P4 棄却**: テキストだけでは判断不可 → P5 に画像ペアとして渡し再検証
+- **P5 の検証対象**: P3 確定アンカー（phash のみで確定、テキストなし）の画像検証。P1/P2 は信頼度が高いため検証不要、P4 確定も検証不要
+- **P5 の再検証対象**: P4 が棄却した候補を画像ペアで再判定
+- **P5 の新規候補**: phash < 8 で P1〜P4 未マッチの残りから探索
+- **P6**: P5 棄却を flash で再審査 + phash 8-20 の新規候補
+
+### テキスト類似度計算
+
+- **SequenceMatcher + Bag-of-Words (Jaccard係数)** の高い方を採用
+- **動的閾値** (テキスト長に応じて変動):
+  - < 20字: 0.5（1文字違いで大きく変動するため緩め）
+  - < 50字: 0.65
+  - < 200字: 0.8
+  - 200字+: 0.7（揺れが積み重なるため少し緩め）
+
+### ノイズ除去 (`_normalize_for_comparison`)
+
+比較時のみ適用（元テキストは変更しない）:
+1. 数値トークン除去（ダメージ値、Lv 等）
+2. ノイズ語辞書除去（`lc_ocr_noise_words` テーブル + デフォルト: AUTO, SKIP, MANUAL, NEW, WAVE, Turn, MAX）
+3. Episode + 数字パターン除去
+4. 1文字ノイズ除去（i, !, ※, +, ★ 等）
+5. 英字-日本語境界スペース除去
+
+### Gemini 判定の実装制約（厳格）
+
+- **P4 テキスト判定**: `gemini-2.5-flash-lite` — テキストのみ送信（画像なし、安価）。phash < 20 + sim ≥ 0.4
+- **P5 画像判定**: `gemini-2.5-flash-lite` — phash < 8 の高確信ペア（画像ペア送信）
+- **P6 画像判定**: `gemini-2.5-flash` — phash 8-20 の低確信ペア + P5 棄却の再審査
+- **送信方式**: `Part.from_bytes` インライン（`files.upload` は 5秒/画像で遅すぎる）
+- **並列化**: ThreadPoolExecutor 5並列で 1ペアずつ送信（asyncio はサブプロセスでデッドロック）
+- **レスポンス**: `{"is_same": bool, "prefer": "A"|"B"|""}`（A=セッション, B=マスター）
+- **キャッシュ**: `lc_anchor_judgments` テーブルで `(session_fp, master_fp)` + `model` カラムで永続化。P4(gemini-text)/P5(flash-lite)/P6(flash) は model で区別
+- **エラー時のキャッシュ禁止（厳格）**: Gemini API 呼び出しが失敗した場合、その結果を `is_same=False` としてキャッシュしてはならない。エラー結果には `error: True` フラグを付与し、キャッシュをスキップする。エラーをキャッシュすると誤った棄却が永続化され、再実行しても修復できない
+- **判定ルール**: 迷ったら true（false の誤りは取り返しがつかないが、true は人間が後から修正できる）
+- **別画面判定**: キャラ編成（下部アイコン列）が異なるバトル画面、見切れ/不完全キャプチャ
+- **PHP→Python サブプロセス**: `-B` フラグ + dotenv 読み込み必須（pyc キャッシュ問題対策）
+
+---
+
+## 18. バージョン管理ルール
+
+### スキーマ (`lc_versions`)
+
+```sql
+CREATE TABLE IF NOT EXISTS lc_versions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    UNIQUE NOT NULL,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    is_active  INTEGER DEFAULT 0,
+    is_deleted INTEGER DEFAULT 0
+);
+```
+
+### version_id 必須テーブル（5テーブル）
+
+`lc_sessions`, `lc_master_nodes`, `lc_master_edges`, `lc_node_mappings`, `lc_session_graphs`
+
+### 運用ルール
+
+- **Active バージョン**: `is_active = 1` のバージョンがデフォルト対象
+- **`-V` フラグ**: auto_pilot に `-V <version_name>` で指定。未存在なら自動作成
+- **バージョン切替時**: 前 Active の running セッションを自動完了
+- **論理削除**: `is_deleted = 1`（物理削除なし、復旧可能）
+- **Active 削除時**: 残存バージョンの最新に自動切替
+
+---
+
+## 19. SafeInsert 安全挿入方式
+
+### 原則
+
+1. 挿入されたノードの `sort_order` は **100% 正しい**
+2. 不確実な位置には **挿入しない**
+3. 一度配置されたノードの `sort_order` は **変更しない**
+4. 周回を重ねてアンカーが密になれば挿入可能位置が増える
+
+### 挿入可能条件（隣接アンカー）
+
+| 条件 | 挿入位置 |
+|------|---------|
+| 後のアンカーがマスター先頭 (sort=0) | 先頭に挿入 |
+| 前のアンカーがマスター末尾 (sort=max) | 末尾に追加 |
+| 前後のアンカーが sort_order で隣同士 (差=1) | 間に挿入 |
+| 上記いずれにも該当しない | **挿入しない（破棄）** |
+
+- 挿入しなかったノードは `lc_node_mappings` にも記録しない
+- 詳細は `docs/merge_sort_algorithm.md` 参照
+
+---
+
+## 20. UI 設計ルール（厳格・全 UI 共通）
+
+### 表示/非表示によるレイアウトずれを禁止
+
+UI 要素 (ボタン・セレクト・入力欄・badge 等) のモード切替時、レイアウト幅が変わると周囲の要素がずれて操作性を損なうため:
+
+- **要素は常に DOM に配置する**（`hidden` クラスや `display:none` で着脱しない）
+- **状態切替は `disabled` 属性で行う**（ボタン/セレクト/入力欄等のフォーム要素）
+- 視覚的フィードバックは `disabled:opacity-40 disabled:cursor-not-allowed` 等の Tailwind ユーティリティで表現
+- ホバー時の説明 (`title="..."`) で「いつ使えるか」を明示
+
+### 例外
+
+- モード固有の **大きなパネル/グリッド** (例: 比較モードの 2 カラム diff ビュー) は `hidden` で切替してよい — レイアウト幅に影響しない縦方向の領域なら可
+- モーダル/ポップアップは `hidden` で OK
+- フィルタ・ソート・サマリ等の **ヘッダ/ツールバー領域の要素** は必ず常時表示 + `disabled` 切替
+
+### 既存の例
+
+- `web/templates/dashboard.html.twig` の `#diff-filter` (差分フィルタ) — 比較モード時のみ `disabled=false`
+- `live-adopt-btn` / `live-exclude-btn` / `live-reset-btn` — 選択時のみ `disabled=false`

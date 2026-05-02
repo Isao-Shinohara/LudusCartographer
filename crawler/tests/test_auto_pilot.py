@@ -192,7 +192,7 @@ class TestHandleResultScreen:
     @patch("tools.ap.handlers.result.detect_guide_glow")
     def test_rapid_mode_with_glow(self, mock_glow, mock_tap, state, tmp_path):
         from tools.auto_pilot import handle_result_screen
-        state.last_action = "RESULT_TAP"
+        state.cycle.last_action = "RESULT_TAP"
         mock_glow.return_value = [
             {"cx": 1200, "cy": 600, "area": 5000, "side": "right",
              "bx": 1100, "by": 550, "bw": 200, "bh": 100}
@@ -203,7 +203,7 @@ class TestHandleResultScreen:
         assert result is not None
         assert result[0] == "RESULT_RAPID"
         assert result[1] == 1.0
-        assert state.result_rapid_count == 1
+        assert state.cycle.result_rapid_count == 1
         mock_tap.assert_called_once()
 
     @patch("tools.ap.handlers.result.tap_device")
@@ -247,16 +247,16 @@ class TestHandleResultScreen:
     def test_freeze_recovery_at_30_taps(self, mock_glow, mock_tap,
                                          mock_watchdog, state, tmp_path):
         from tools.auto_pilot import handle_result_screen
-        state.last_action = "RESULT_TAP"
-        state.result_total_taps = 29  # 次で30
+        state.cycle.last_action = "RESULT_TAP"
+        state.cycle.result_total_taps = 29  # 次で30
         analysis = tmp_path / "test.png"
         analysis.touch()
         result = handle_result_screen(state, analysis, [], 5, mode="RAPID")
         assert result is not None
         assert result[0] == "RESULT_FREEZE"
         mock_watchdog.assert_called_once()
-        assert state.result_total_taps == 0
-        assert state.result_rapid_count == 0
+        assert state.cycle.result_total_taps == 0
+        assert state.cycle.result_rapid_count == 0
 
 
 # ─── StallCounter テスト ──────────────────────────────────────
@@ -313,18 +313,18 @@ class TestPilotStateDynamicAttrsRemoved:
 
     def test_gacha_total_is_stall_counter(self, state):
         from tools.auto_pilot import StallCounter
-        assert isinstance(state.gacha_total, StallCounter)
-        assert state.gacha_total.threshold == 15
+        assert isinstance(state.cycle.gacha_total, StallCounter)
+        assert state.cycle.gacha_total.threshold == 15
 
     def test_finger_tap_static_is_stall_counter(self, state):
         from tools.auto_pilot import StallCounter
-        assert isinstance(state.finger_tap_static, StallCounter)
-        assert state.finger_tap_static.threshold == 3
+        assert isinstance(state.cycle.finger_tap_static, StallCounter)
+        assert state.cycle.finger_tap_static.threshold == 3
 
     def test_unity_restart_count_is_typed_field(self, state):
-        assert state.unity_restart_count == 0
-        state.unity_restart_count = 2
-        assert state.unity_restart_count == 2
+        assert state.cycle.unity_restart_count == 0
+        state.cycle.unity_restart_count = 2
+        assert state.cycle.unity_restart_count == 2
 
     def test_gold_swipe_stall_counter_removed(self, state):
         """gold_swipe StallCounter は廃止済み — 属性が存在しないことを確認"""
@@ -332,8 +332,8 @@ class TestPilotStateDynamicAttrsRemoved:
 
     def test_normatk_fallback_is_stall_counter(self, state):
         from tools.auto_pilot import StallCounter
-        assert isinstance(state.normatk_fallback, StallCounter)
-        assert state.normatk_fallback.threshold == 1
+        assert isinstance(state.cycle.normatk_fallback, StallCounter)
+        assert state.cycle.normatk_fallback.threshold == 1
 
 
 # ─── handle_dialog_screen テスト ──────────────────────────────
@@ -438,7 +438,7 @@ class TestHandleDialogScreen:
     def test_escalation_back_at_8_attempts(self, mock_dlg, mock_adb,
                                             state, tmp_path):
         from tools.auto_pilot import handle_dialog_screen
-        state.pre_popup_tap_count = 7  # 次で8
+        state.cycle.pre_popup_tap_count = 7  # 次で8
         analysis = tmp_path / "test.png"
         analysis.touch()
         result = handle_dialog_screen(state, analysis, [], [], False)
@@ -1103,7 +1103,7 @@ class TestCurrencyDialogProtection:
         s = PilotState()
         s.device_w = 1520
         s.device_h = 720
-        s.game_roi = (0, 0, 1520, 720)
+        s.cycle.game_roi = (0, 0, 1520, 720)
         return s
 
     @patch("tools.ap.handlers.dialog_phase.tap_device")
@@ -1156,8 +1156,8 @@ class TestTitleScreenDetection:
         s = PilotState()
         s.device_w = 1520
         s.device_h = 720
-        s.game_roi = (0, 0, 1520, 720)
-        s.home_reached = False
+        s.cycle.game_roi = (0, 0, 1520, 720)
+        s.cycle.home_reached = False
         return s
 
     @patch("tools.ap.handlers.tutorial.detect_tutorial_gold_swipe", return_value=None)
@@ -1200,7 +1200,7 @@ class TestTitleScreenDetection:
         from tools.auto_pilot import detect_and_act
         img = tmp_path / "test.png"
         cv2.imwrite(str(img), np.zeros((720, 1520, 3), dtype=np.uint8))
-        state.home_reached = True
+        state.cycle.home_reached = True
         ocr = [
             {"text": "TAP TO START", "center": (760, 600), "confidence": 0.95},
         ]
@@ -1263,21 +1263,21 @@ class TestAdvSpeedImprovements:
         s = PilotState()
         s.device_w = 1520
         s.device_h = 720
-        s.game_roi = (0, 0, 1520, 720)
+        s.cycle.game_roi = (0, 0, 1520, 720)
         return s
 
     def test_adv_confirmed_widens_phash(self, state):
         """adv_confirmed_count >= 3 → phash 上限 40。"""
         from tools.ap.constants import ADV_RAPID_PHASH_MAX
-        state.adv_confirmed_count = 5
-        _adv_phash_max = 40 if state.adv_confirmed_count >= 3 else ADV_RAPID_PHASH_MAX
+        state.cycle.adv_confirmed_count = 5
+        _adv_phash_max = 40 if state.cycle.adv_confirmed_count >= 3 else ADV_RAPID_PHASH_MAX
         assert _adv_phash_max == 40
 
     def test_adv_default_phash(self, state):
         """adv_confirmed_count < 3 → phash 上限 25 (デフォルト)。"""
         from tools.ap.constants import ADV_RAPID_PHASH_MAX
-        state.adv_confirmed_count = 1
-        _adv_phash_max = 40 if state.adv_confirmed_count >= 3 else ADV_RAPID_PHASH_MAX
+        state.cycle.adv_confirmed_count = 1
+        _adv_phash_max = 40 if state.cycle.adv_confirmed_count >= 3 else ADV_RAPID_PHASH_MAX
         assert _adv_phash_max == ADV_RAPID_PHASH_MAX
 
 

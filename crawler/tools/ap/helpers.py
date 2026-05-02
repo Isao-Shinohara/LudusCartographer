@@ -32,7 +32,7 @@ def classify_scene(texts: list[str], last_action: str,
     - UNKNOWN : 判定不能
 
     adv_detected: True なら ADV シーンを確定で返す (detect_adv_scene 由来)。
-    current_scene: state.current_scene — テンプレートマッチで確定済みのシーン。
+    current_scene: state.cycle.current_scene — テンプレートマッチで確定済みのシーン。
     """
     joined = " ".join(texts)
     if any(kw in joined for kw in ["ダウンロード", "Loading", "Now Loading", "ロード中", "通信中"]):
@@ -96,10 +96,10 @@ def text_core_center(
 def save_evidence(img_path: Path, ocr_results: list, action: str, state) -> None:
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%H%M%S")
-    dest = EVIDENCE_DIR / f"{ts}_iter{state.iteration:03d}_{action}.png"
+    dest = EVIDENCE_DIR / f"{ts}_iter{state.cycle.iteration:03d}_{action}.png"
     try:
         shutil.copy2(str(img_path), str(dest))
-        state.screenshots_saved += 1
+        state.cycle.screenshots_saved += 1
     except Exception as e:
         logger.warning("Evidence save failed: %s", e)
 
@@ -130,19 +130,19 @@ def all_texts(ocr: list) -> list[str]:
 # ─── マイルストーン到達時間ログ ────────────────────────
 def log_milestone(state, milestone: str) -> None:
     """目標到達時の経過時間をログ出力する。同一マイルストーンは初回のみ記録。"""
-    if milestone in state.milestone_logged:
+    if milestone in state.cycle.milestone_logged:
         return
     _now = time.time()
     _elapsed = _now - state.launch_time
     _m, _s = divmod(int(_elapsed), 60)
     _h, _m = divmod(_m, 60)
-    if state.is_fresh_start:
+    if state.cycle.is_fresh_start:
         logger.info("  [TIMER] %s — 起動から %d時間%02d分%02d秒 (新規スタート)",
                     milestone, _h, _m, _s)
     else:
         logger.info("  [TIMER] %s — 起動から %d時間%02d分%02d秒 (途中再開のため総所要時間は計測不可)",
                     milestone, _h, _m, _s)
-    state.milestone_logged[milestone] = _elapsed
+    state.cycle.milestone_logged[milestone] = _elapsed
 
 
 # ─── Watchdog: デッドロック自動復旧 ─────────────────────
@@ -157,20 +157,20 @@ def watchdog_recover(state) -> bool:
     """
     from tools.ap.device import adb  # 遅延 import (循環防止)
 
-    state.watchdog_recovery_count += 1
-    count = state.watchdog_recovery_count
-    elapsed = time.time() - state.last_screen_change_time
+    state.cycle.watchdog_recovery_count += 1
+    count = state.cycle.watchdog_recovery_count
+    elapsed = time.time() - state.cycle.last_screen_change_time
 
     if count > WATCHDOG_MAX_TOTAL_RECOVERIES:
         logger.error(
             "[WATCHDOG] 復旧試行%d回失敗 (last_action=%s, %.0f秒経過) — 人間の介入が必要です。停止します。",
-            count - 1, state.last_action, elapsed
+            count - 1, state.cycle.last_action, elapsed
         )
         return False
 
     logger.warning(
         "[WATCHDOG] デッドロック判定: 画面変化なし %.0f秒 / last_action=%s / 復旧試行 #%d",
-        elapsed, state.last_action, count
+        elapsed, state.cycle.last_action, count
     )
     logger.warning("[WATCHDOG] → am force-stop → am start (ソフト再起動のみ。pm clearは使用しない)")
     adb(f"shell am force-stop {APP_PACKAGE}")
@@ -180,15 +180,15 @@ def watchdog_recover(state) -> bool:
     logger.info("[WATCHDOG] am start 実行 — 15秒待機 (初期化 + ご注意画面の出現を待つ)")
     time.sleep(15)
 
-    state.last_phash = ""
-    state.same_phash_count = 0
-    state.stall_start = 0.0
-    state.stall_corner_tried = False
-    state.home_reached = False
-    state.auto_activated = False
-    state.character_selected = False
-    state.char_just_selected = False
-    state.battle_wait_count = 0
-    state.last_action = "WATCHDOG_RECOVERY"
-    state.last_screen_change_time = time.time()
+    state.cycle.last_phash = ""
+    state.cycle.same_phash_count = 0
+    state.cycle.stall_start = 0.0
+    state.cycle.stall_corner_tried = False
+    state.cycle.home_reached = False
+    state.cycle.auto_activated = False
+    state.cycle.character_selected = False
+    state.cycle.char_just_selected = False
+    state.cycle.battle_wait_count = 0
+    state.cycle.last_action = "WATCHDOG_RECOVERY"
+    state.cycle.last_screen_change_time = time.time()
     return True

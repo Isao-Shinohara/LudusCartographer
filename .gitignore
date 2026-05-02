@@ -84,7 +84,19 @@ logs/
 crawler/evidence/
 crawler/storage/evidence/
 crawler/storage/fresh_install/
+crawler/storage/screenshots/
+crawler/storage/reinstall/
+crawler/storage/ludus.db
+crawler/storage/ludus.db-shm
+crawler/storage/ludus.db-wal
+crawler/storage/auto_pilot_report.md
 crawler/screenshots/*.png
+
+# PHP が動的生成するマージ用一時ファイル (web/public/api/search.php)
+crawler/storage/_execute_merge.py
+crawler/storage/_preview_merge.py
+crawler/storage/merge_result.json
+crawler/storage/merge_result_test.json
 
 # --- AI ツール設定 ---
 .claude/

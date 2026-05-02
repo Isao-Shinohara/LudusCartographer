@@ -54,7 +54,7 @@ def handle_finger_priority(
     if _gold:
         _gx, _gy, _gw, _gh = _gold
         # 金枠中心タップ3回失敗 → 金枠内のボタンを探索してタップ
-        _gold_fail = getattr(state, "_gold_frame_tap_fail", 0)
+        _gold_fail = getattr(state.cycle, "_gold_frame_tap_fail", 0)
         if _gold_fail >= 3:
             _btn = find_button_in_gold_frame(analysis_path, _gold)
             if _btn:
@@ -62,15 +62,15 @@ def handle_finger_priority(
                 logger.info("[FINGER_PRIORITY] 金枠中心%d回失敗 → ボタン検出(%d,%d %dx%d) タップ",
                             _gold_fail, _bx, _by, _bw, _bh)
                 tap_device(_bx, _by, state, "GOLD_BTN_INNER_TAP")
-                state._gold_frame_tap_fail = 0
+                state.cycle._gold_frame_tap_fail = 0
                 return "GOLD_BTN_INNER_TAP", 1.0
         logger.info("[FINGER_PRIORITY] 金枠検出(%d,%d %dx%d) → タップ", _gx, _gy, _gw, _gh)
         tap_device(_gx, _gy, state, "GOLD_FRAME_TAP")
-        state._gold_frame_tap_fail = _gold_fail + 1
+        state.cycle._gold_frame_tap_fail = _gold_fail + 1
         return "GOLD_FRAME_TAP", 1.0
 
     # 金枠未検出 → 失敗カウンタリセット
-    state._gold_frame_tap_fail = 0
+    state.cycle._gold_frame_tap_fail = 0
 
     # 指テンプレ回転マッチ (金枠との共検出が必須)
     # TM_CCORR_NORMED+mask は白い形状に偽陽性が出るため、指テンプレ単独ではタップしない
@@ -87,7 +87,7 @@ def handle_finger_priority(
     if any("プレゼント" in t or "プレセント" in t for t in texts):
         _no_items = any("受け取れるアイテム" in t for t in texts)
         if not _no_items:
-            _bulk_x, _bulk_y = roi_to_device(int(W * 0.89), int(H * 0.92), state.game_roi)
+            _bulk_x, _bulk_y = roi_to_device(int(W * 0.89), int(H * 0.92), state.cycle.game_roi)
             logger.info("[FINGER_PRIORITY] プレゼントボックス → 一括受取 (%d,%d)", _bulk_x, _bulk_y)
             tap_device(_bulk_x, _bulk_y, state, "PRESENT_BULK_RECEIVE")
             return "PRESENT_BULK_RECEIVE", 2.0

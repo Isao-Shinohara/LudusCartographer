@@ -1,7 +1,7 @@
 """
 test_ocr_parsing.py — iOS シミュレータ スクリーンショット OCR 解析テスト
 
-minimal_launch.py で取得した設定アプリの画像に対して PaddleOCR を実行し、
+evidence/ 配下のスクリーンショットに対して PaddleOCR を実行し、
 以下を検証する:
   1. 文字・座標のペアが正しく抽出できること
   2. 設定アプリの主要項目（一般・カメラ・設定 など）が座標付きで検出できること
@@ -47,8 +47,7 @@ LATEST_SCREENSHOT = _find_latest_launch_screenshot()
 
 requires_screenshot = pytest.mark.skipif(
     LATEST_SCREENSHOT is None,
-    reason="シミュレータのスクリーンショットが見つかりません。"
-           "先に minimal_launch.py を実行してください。"
+    reason="スクリーンショットが見つかりません (evidence/ 配下に launch.png が必要)"
 )
 
 # PaddleOCR が利用可能かチェック
@@ -263,7 +262,7 @@ if __name__ == "__main__":
 
     if not args.image or not Path(args.image).exists():
         print(f"ERROR: 画像ファイルが見つかりません: {args.image!r}")
-        print("先に minimal_launch.py を実行してスクリーンショットを取得してください。")
+        print("スクリーンショットを evidence/ 配下に配置してください。")
         sys.exit(1)
 
     print(f"解析対象: {args.image}")

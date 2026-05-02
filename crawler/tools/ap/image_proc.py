@@ -18,7 +18,7 @@ from tools.ap.constants import (
     _CHAR_HEAD_Y1, _CHAR_HEAD_Y2, _SINGLE_ONLY, _CRAWLER_ROOT,
     _DEBUG_SAVE_IMAGES,
 )
-from lc.utils import compute_phash, phash_distance
+from lc.image_comparator import compute_phash, phash_distance  # re-export
 from tools.ap.device import tap_device, take_screenshot
 from tools.ap.helpers import has_any
 
@@ -325,6 +325,24 @@ def is_dark_screen(img_path: Path) -> bool:
     return _is_dark
 
 
+def is_dark_screen_startup(img_path: Path) -> bool:
+    """起動シーン専用の暗転判定 — 全ピクセル同一値 (max==min) で判定。
+
+    起動時はロゴ画面 (ANIPLEX, Pokelabo 等) を暗転と誤判定しないよう、
+    全ピクセルが完全に同一値の場合のみ暗転とみなす。
+    """
+    try:
+        img = cv2.imread(str(img_path))
+        if img is None:
+            return True
+        _is_dark = int(img.max()) == int(img.min())
+        if _is_dark:
+            logger.debug("[DarkScreenStartup] 全ピクセル同一値 (val=%d) → 暗転", int(img.max()))
+        return _is_dark
+    except Exception:
+        return True
+
+
 def prepare_analysis_image(img_path: Path, actual_w: int, actual_h: int) -> Path:
     # actual_w/h (デバイス解像度) ではなく画像ファイルの実サイズで判定する。
     # scrcpy キャプチャは --max-size でリサイズされるためデバイス解像度と異なる。
@@ -496,7 +514,7 @@ def _run_battle_glow_sm(
                     len(right), right[0]["area"] if right else 0)
 
     # P1: 左キャラ発光 (キャラ未選択)
-    if not state.character_selected and left:
+    if not state.cycle.character_selected and left:
         g = max(left, key=lambda g: g["area"])
         # bbox上端 + 高さ2/3 = ボタン視覚中心 (centroidはハロに引かれ上にずれる)
         gx = g["cx"]
@@ -505,14 +523,14 @@ def _run_battle_glow_sm(
                     tag, g["cx"], g["cy"], g["by"], g["bh"], gx, gy)
         tap_device(gx, gy, state, "GLOW_LEFT_CHAR", rapid=True)
         tap_device(gx, gy, state, "GLOW_LEFT_CHAR")  # ダブルタップ
-        state.character_selected = True
-        state.char_just_selected = True
-        state.finger_detections += 1
-        state.phash_moving_count = 0
+        state.cycle.character_selected = True
+        state.cycle.char_just_selected = True
+        state.cycle.finger_detections += 1
+        state.cycle.phash_moving_count = 0
         return "GLOW_LEFT_CHAR", 0.3
 
     # P2: 右スキル発光 (キャラ選択済み)
-    if state.character_selected and (right or True):
+    if state.cycle.character_selected and (right or True):
         # P2-a: テンプレートで battle_skill / battle_normal_attack を探す (精度最優先)
         _p2_tmpl_hit = False
         for _btn in ("battle_skill", "battle_normal_attack"):
@@ -522,10 +540,10 @@ def _run_battle_glow_sm(
                 logger.info("[%s P2] テンプレ %s (%.2f) → tap(%d,%d)",
                             tag, _btn, _bm[2], gx, gy)
                 tap_device(gx, gy, state, f"GLOW_RIGHT_{_btn.upper()}")
-                state.character_selected = False
-                state.char_just_selected = False
-                state.finger_detections += 1
-                state.phash_moving_count = 0
+                state.cycle.character_selected = False
+                state.cycle.char_just_selected = False
+                state.cycle.finger_detections += 1
+                state.cycle.phash_moving_count = 0
                 _p2_tmpl_hit = True
                 return f"GLOW_RIGHT_{_btn.upper()}", 0.3
         # P2-b: テンプレ未検出 → glow フォールバック
@@ -536,15 +554,15 @@ def _run_battle_glow_sm(
             logger.info("[%s P2] 右発光 centroid(%d,%d) bbox_y=%d+%d → tap(%d,%d)",
                         tag, g["cx"], g["cy"], g["by"], g["bh"], gx, gy)
             tap_device(gx, gy, state, "GLOW_RIGHT_SKILL")
-            state.character_selected = False
-            state.char_just_selected = False
-            state.finger_detections += 1
+            state.cycle.character_selected = False
+            state.cycle.char_just_selected = False
+            state.cycle.finger_detections += 1
             # バトルアニメーションで MOVIE 誤昇格しないようリセット
-            state.phash_moving_count = 0
+            state.cycle.phash_moving_count = 0
             return "GLOW_RIGHT_SKILL", 0.3
 
     # P3: キャラ選択済み + 発光なし → 通常攻撃 OCR フォールバック
-    if state.character_selected and not right:
+    if state.cycle.character_selected and not right:
         na = has_any(ocr, ["通常攻撃", "单体攻撃", "単体攻撃"])
         if na:
             nx, ny = na["center"]
@@ -552,10 +570,10 @@ def _run_battle_glow_sm(
                 # OCRテキスト中心 ≈ ボタン視覚中心 (オフセット不要)
                 logger.info("[%s P3] 攻撃ボタンOCR '%s'(%d,%d) → tap", tag, na["text"], nx, ny)
                 tap_device(nx, ny, state, "NORMATK_TAP")
-                state.character_selected = False
-                state.char_just_selected = False
+                state.cycle.character_selected = False
+                state.cycle.char_just_selected = False
                 # バトルアニメーションで MOVIE 誤昇格しないようリセット
-                state.phash_moving_count = 0
+                state.cycle.phash_moving_count = 0
                 return "NORMATK_TAP", 1.0
 
     return None
@@ -2376,7 +2394,7 @@ def process_paging_dialog(
 
     Returns: "DIALOG_CLOSED" | "DIALOG_PAGING_TIMEOUT"
     """
-    _roi = state.game_roi
+    _roi = state.cycle.game_roi
     _prev_phash = compute_phash(analysis_path)
     _no_close_streak = 0  # × ROI bright_pixels=0 の連続回数
     # ページドットで総ページ数を把握
@@ -2402,13 +2420,13 @@ def process_paging_dialog(
                 logger.info("[PAGING] ▷未検出だがドット残(%d/%d) → 固定座標で続行", _page + 1, _total_dots)
             else:
                 logger.info("[PAGING] ダイアログ消失 (page=%d) → 完了", _page)
-                state.dialog_detections += 1
+                state.cycle.dialog_detections += 1
                 return "DIALOG_CLOSED"
         _kind, _dx, _dy = _dlg
         if _kind == "close":
             tap_device(_dx, _dy, state, "PAGING_CLOSE")
             logger.info("[PAGING] ×タップ (page=%d) → クローズ完了", _page + 1)
-            state.dialog_detections += 1
+            state.cycle.dialog_detections += 1
             return "DIALOG_CLOSED"
         # ドット数到達: 最終ページのはず → × を強制探索
         if _total_dots >= 2 and _page >= _total_dots - 1:
@@ -2417,19 +2435,19 @@ def process_paging_dialog(
                 tap_device(_close_asset[0], _close_asset[1], state, "PAGING_CLOSE_DOTS_END")
                 logger.info("[PAGING] ドット%d到達 → ×アセット(%d,%d) クローズ",
                             _total_dots, _close_asset[0], _close_asset[1])
-                state.dialog_detections += 1
+                state.cycle.dialog_detections += 1
                 return "DIALOG_CLOSED"
             # アセットでも見つからない → 右上固定×
             _fx = int(W * 0.975)
             _fy = int(H * 0.055)
             tap_device(_fx, _fy, state, "PAGING_CLOSE_DOTS_FIXED")
             logger.info("[PAGING] ドット%d到達 → 右上固定×(%d,%d) クローズ", _total_dots, _fx, _fy)
-            state.dialog_detections += 1
+            state.cycle.dialog_detections += 1
             return "DIALOG_CLOSED"
         # "next" or "bottom" → ▷ タップして次ページ
         tap_device(_dx, _dy, state, "PAGING_NEXT")
         logger.info("[PAGING] ▷タップ (page=%d/%d, dots=%d)", _page + 1, _max_iter, _total_dots)
-        state.dialog_detections += 1
+        state.cycle.dialog_detections += 1
         time.sleep(0.05)
         # 次ページのスクリーンショットを取得して解析
         _img_path, _aw, _ah, _ = take_screenshot()
@@ -2457,7 +2475,7 @@ def process_paging_dialog(
                     if _fallback_dlg and _fallback_dlg[0] == "close":
                         tap_device(_fallback_dlg[1], _fallback_dlg[2], state, "PAGING_CLOSE_FALLBACK")
                         logger.info("[PAGING] ×フォールバッククローズ成功")
-                        state.dialog_detections += 1
+                        state.cycle.dialog_detections += 1
                         return "DIALOG_CLOSED"
                     # ASSET_MANAGER テンプレートで × を直接探す (枠検出不要)
                     _close_asset = _find_close_by_asset(analysis_path)
@@ -2465,7 +2483,7 @@ def process_paging_dialog(
                         tap_device(_close_asset[0], _close_asset[1], state, "PAGING_CLOSE_ASSET")
                         logger.info("[PAGING] ×アセットテンプレクローズ成功 (%d,%d)",
                                     _close_asset[0], _close_asset[1])
-                        state.dialog_detections += 1
+                        state.cycle.dialog_detections += 1
                         return "DIALOG_CLOSED"
                     # × がまだ出ていない → もう少し▷を叩く (アニメーション遅延など)
                     if _phash_fail_count < _phash_tolerance + 3:
@@ -2488,7 +2506,7 @@ def process_paging_dialog(
     if _final_dlg and _final_dlg[0] == "close":
         tap_device(_final_dlg[1], _final_dlg[2], state, "PAGING_CLOSE_MAXPAGE")
         logger.info("[PAGING] max超過後 ×クローズ成功")
-        state.dialog_detections += 1
+        state.cycle.dialog_detections += 1
         return "DIALOG_CLOSED"
     # ASSET_MANAGER テンプレートで × を直接探す (枠検出不要)
     _close_asset = _find_close_by_asset(analysis_path)
@@ -2496,7 +2514,7 @@ def process_paging_dialog(
         tap_device(_close_asset[0], _close_asset[1], state, "PAGING_CLOSE_ASSET_MAX")
         logger.info("[PAGING] max超過後 ×アセットテンプレクローズ成功 (%d,%d)",
                     _close_asset[0], _close_asset[1])
-        state.dialog_detections += 1
+        state.cycle.dialog_detections += 1
         return "DIALOG_CLOSED"
     return "DIALOG_PAGING_TIMEOUT"
 
@@ -2735,33 +2753,23 @@ def _load_gold_btn_edges():
         _GOLD_BTN_EDGE_L = cv2.flip(_GOLD_BTN_EDGE_R, 1)
 
 
-def find_button_in_gold_frame(
-    img_path: Path,
-    gold_rect: tuple[int, int, int, int],
+def _match_gold_button_edges(
+    gray: np.ndarray,
+    roi_xyxy: tuple[int, int, int, int],
     threshold: float = 0.75,
     y_tolerance: int = 10,
 ) -> Optional[tuple[int, int, int, int]]:
-    """金枠内のボタンを左右エッジテンプレで検出。
+    """共通: 指定 ROI 内で gold_btn_edge_r の左右エッジを検索し、
+    矩形整合性チェック後に画像座標で (cx, cy, w, h) を返す。
 
-    gold_rect: (cx, cy, w, h) — 金枠の中心と幅高さ
-    Returns: (btn_cx, btn_cy, btn_w, btn_h) or None
+    Args:
+        gray: グレースケール画像 (全体)
+        roi_xyxy: 検索範囲 (x1, y1, x2, y2)
     """
     _load_gold_btn_edges()
     if _GOLD_BTN_EDGE_R is None:
         return None
-    img = imread_analysis(img_path)
-    if img is None:
-        return None
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _H, _W = gray.shape
-
-    # 金枠周辺を ROI として検索 (金枠より少し広め)
-    _gcx, _gcy, _gw, _gh = gold_rect
-    _margin = 50
-    _rx1 = max(0, _gcx - _gw // 2 - _margin)
-    _ry1 = max(0, _gcy - _gh // 2 - _margin)
-    _rx2 = min(_W, _gcx + _gw // 2 + _margin)
-    _ry2 = min(_H, _gcy + _gh // 2 + _margin)
+    _rx1, _ry1, _rx2, _ry2 = roi_xyxy
     roi = gray[_ry1:_ry2, _rx1:_rx2]
 
     th, tw = _GOLD_BTN_EDGE_R.shape[:2]
@@ -2771,7 +2779,6 @@ def find_button_in_gold_frame(
     # 右端マッチ
     res_r = cv2.matchTemplate(roi, _GOLD_BTN_EDGE_R, cv2.TM_CCOEFF_NORMED)
     _, max_r, _, loc_r = cv2.minMaxLoc(res_r)
-
     # 左端マッチ
     res_l = cv2.matchTemplate(roi, _GOLD_BTN_EDGE_L, cv2.TM_CCOEFF_NORMED)
     _, max_l, _, loc_l = cv2.minMaxLoc(res_l)
@@ -2801,6 +2808,57 @@ def find_button_in_gold_frame(
     logger.info("[GoldBtnEdge] ボタン検出 (%d,%d) %dx%d scores=R%.2f/L%.2f",
                 btn_cx, btn_cy, btn_w, btn_h, max_r, max_l)
     return btn_cx, btn_cy, btn_w, btn_h
+
+
+def find_button_in_gold_frame(
+    img_path: Path,
+    gold_rect: tuple[int, int, int, int],
+    threshold: float = 0.75,
+    y_tolerance: int = 10,
+) -> Optional[tuple[int, int, int, int]]:
+    """金枠内のボタンを左右エッジテンプレで検出。
+
+    gold_rect: (cx, cy, w, h) — 金枠の中心と幅高さ
+    Returns: (btn_cx, btn_cy, btn_w, btn_h) or None
+    """
+    img = imread_analysis(img_path)
+    if img is None:
+        return None
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _H, _W = gray.shape
+
+    # 金枠周辺を ROI として検索 (金枠より少し広め)
+    _gcx, _gcy, _gw, _gh = gold_rect
+    _margin = 50
+    _rx1 = max(0, _gcx - _gw // 2 - _margin)
+    _ry1 = max(0, _gcy - _gh // 2 - _margin)
+    _rx2 = min(_W, _gcx + _gw // 2 + _margin)
+    _ry2 = min(_H, _gcy + _gh // 2 + _margin)
+    return _match_gold_button_edges(gray, (_rx1, _ry1, _rx2, _ry2),
+                                     threshold, y_tolerance)
+
+
+def find_gold_button_by_edges(
+    img_path: Path,
+    search_roi: Optional[tuple[int, int, int, int]] = None,
+    threshold: float = 0.75,
+    y_tolerance: int = 10,
+) -> Optional[tuple[int, int, int, int]]:
+    """gold_btn_edge_r の左右エッジで金枠ボタンを検出 (金枠位置不要)。
+
+    Args:
+        img_path: 解析対象画像
+        search_roi: (x1, y1, x2, y2) 検索範囲。None なら画面全体。
+    Returns: (btn_cx, btn_cy, btn_w, btn_h) or None
+    """
+    img = imread_analysis(img_path)
+    if img is None:
+        return None
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _H, _W = gray.shape
+    if search_roi is None:
+        search_roi = (0, 0, _W, _H)
+    return _match_gold_button_edges(gray, search_roi, threshold, y_tolerance)
 
 
 # ─── Type B: 金枠ハイライトボタン検出 → 中心タップ ─────────────────────
@@ -3433,35 +3491,41 @@ def detect_login_bonus_popup(
         logger.debug("[LOGIN_BONUS] 背景ぼかし未検出 → 棄却")
         return None
 
-    # ── close_btn テンプレマッチ (必須) ──
+    # ── close_btn / icon_skip テンプレマッチ (必須) ──
     # × ボタンは矩形の右上角付近にある → 位置制約で誤検出を排除
     # 許容範囲: 矩形右端から rect_w*0.15 以内、矩形上端から rect_h*0.15 以内
     # (ボタンは矩形の角ギリギリか少し外側に配置される)
-    _close_match = ASSET_MANAGER.match_single("close_btn", img_path)
+    # ログインボーナス画面によっては × の代わりに ▶| (skip) アイコンが使われる
+    # ため、両方マッチして高スコアの方を採用する。
+    _margin_x = max(_rect_w * 0.15, 40)  # 最低40px
+    _margin_y = max(_rect_h * 0.15, 40)
     _close_info = None
-    if _close_match and _close_match[2] >= 0.50:
-        _cx, _cy = _close_match[0], _close_match[1]
-        _margin_x = max(_rect_w * 0.15, 40)  # 最低40px
-        _margin_y = max(_rect_h * 0.15, 40)
+    _matched_tmpl = None
+    for _tmpl_name in ("close_btn", "icon_skip"):
+        _m = ASSET_MANAGER.match_single(_tmpl_name, img_path)
+        if _m is None or _m[2] < 0.50:
+            continue
+        _cx, _cy = _m[0], _m[1]
         _x_ok = _cx >= _right - _margin_x
-        # × は矩形上端の近傍 (上端から ±margin_y) にある
         _y_ok = abs(_cy - _top) <= _margin_y
-        if _x_ok and _y_ok:
-            _close_info = (_cx, _cy, _close_match[2])
-        else:
-            logger.debug("[LOGIN_BONUS] close_btn (%d,%d) が右上角にない → 棄却 "
+        if not (_x_ok and _y_ok):
+            logger.debug("[LOGIN_BONUS] %s (%d,%d) が右上角にない → 棄却 "
                          "(rect右上=(%d,%d) margin=%.0f,%.0f)",
-                         _cx, _cy, _right, _top, _margin_x, _margin_y)
+                         _tmpl_name, _cx, _cy, _right, _top, _margin_x, _margin_y)
+            continue
+        if _close_info is None or _m[2] > _close_info[2]:
+            _close_info = (_cx, _cy, _m[2])
+            _matched_tmpl = _tmpl_name
 
     if _close_info is None:
-        logger.debug("[LOGIN_BONUS] close_btn 未検出 → 棄却 (面積比=%.1f%%)",
+        logger.debug("[LOGIN_BONUS] close_btn/icon_skip 未検出 → 棄却 (面積比=%.1f%%)",
                      _screen_ratio * 100)
         return None
 
     logger.info(
-        "[LOGIN_BONUS] 検出: rect=(%d,%d)-(%d,%d) 面積比=%.1f%% close_btn=(%d,%d score=%.2f)",
+        "[LOGIN_BONUS] 検出: rect=(%d,%d)-(%d,%d) 面積比=%.1f%% %s=(%d,%d score=%.2f)",
         _left, _top, _right, _bottom,
-        _screen_ratio * 100,
+        _screen_ratio * 100, _matched_tmpl,
         _close_info[0], _close_info[1], _close_info[2],
     )
 

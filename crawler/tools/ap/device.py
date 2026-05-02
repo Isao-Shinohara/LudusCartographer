@@ -12,6 +12,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -294,9 +295,9 @@ def _take_screenshot_scrcpy(path: Path) -> Optional[tuple[Path, int, int]]:
         _find_scrcpy_window_id()
         _LAST_SCRCPY_BGR = None
         return None
-    # 真っ黒チェック: Quartz が映像を取得できていない場合 (別デスクトップ等)
-    if float(bgr.mean()) < 0.5:
-        logger.warning("[SCRCPY] キャプチャが真っ黒 (mean=%.1f) → ADB フォールバック", float(bgr.mean()))
+    # 真っ黒チェック: Quartz が映像を取得できていない場合 (全ピクセル同一値)
+    if bgr.max() == bgr.min():
+        logger.warning("[SCRCPY] キャプチャが全ピクセル同一 (val=%d) → ADB フォールバック", int(bgr.max()))
         _LAST_SCRCPY_BGR = None
         return None
     # 最低サイズチェック: ウィンドウが小さすぎる → ADB フォールバック
@@ -376,6 +377,32 @@ def _take_screenshot_adb(path: Path, retries: int = 3,
     return None, 0, 0, _retried
 
 
+# ── 生画像保持: リサイズ前の実機解像度画像を保存 (スクリーン記録用) ──
+_RAW_SCREENSHOT_PATH = Path(tempfile.gettempdir()) / "ap_raw_screenshot.png"
+
+
+def _save_raw_copy(path: Path) -> None:
+    """リサイズ前のスクショを別パスにコピー (スクリーン記録で高解像度保存するため)。"""
+    try:
+        shutil.copy2(str(path), str(_RAW_SCREENSHOT_PATH))
+    except Exception:
+        pass
+
+
+def get_raw_screenshot_path() -> Optional[Path]:
+    """最新の生画像パスを返す。存在しなければ None。"""
+    return _RAW_SCREENSHOT_PATH if _RAW_SCREENSHOT_PATH.exists() else None
+
+
+# 最後のスクショのソース ("scrcpy" or "adb")
+_last_screenshot_source: list[str] = [""]
+
+
+def is_last_screenshot_from_scrcpy() -> bool:
+    """最後のスクショが scrcpy キャプチャかどうか。"""
+    return _last_screenshot_source[0] == "scrcpy"
+
+
 def _ensure_analysis_size(path: Path) -> None:
     """スクショファイルが ANALYSIS_W x ANALYSIS_H でなければリサイズして上書き。
 
@@ -417,6 +444,8 @@ def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[
     _scrcpy = _take_screenshot_scrcpy(path)
     if _scrcpy is not None:
         _SCRCPY_FAIL_COUNT = 0
+        _last_screenshot_source[0] = "scrcpy"
+        _save_raw_copy(_scrcpy[0])
         _ensure_analysis_size(_scrcpy[0])
         return _scrcpy[0], _scrcpy[1], _scrcpy[2], 0
 
@@ -437,6 +466,8 @@ def take_screenshot(retries: int = 3, min_bytes: int = 5_000) -> tuple[Optional[
     # ── Tier 2: adb screencap フォールバック ──
     _result = _take_screenshot_adb(path, retries=retries, min_bytes=min_bytes)
     if _result[0] is not None:
+        _last_screenshot_source[0] = "adb"
+        _save_raw_copy(_result[0])
         _ensure_analysis_size(_result[0])
     return _result
 
@@ -508,7 +539,7 @@ def manage_scrcpy(force_restart: bool = False) -> Optional[subprocess.Popen]:
     _MIN_W = 720
     _TITLE_BAR_H = 33  # macOS タイトルバー高さ (概算)
     _EXPECTED_RATIO = 2.0  # ゲーム描画領域のアスペクト比 (width / height)
-    _RATIO_TOLERANCE = 0.15  # 許容誤差
+    _RATIO_TOLERANCE = 0.01  # 許容誤差
     win_w, win_h = _get_scrcpy_window_size()
     _need_restart = force_restart
     if win_w >= _MIN_W and not _need_restart:
@@ -634,8 +665,8 @@ def tap_device(x: int, y: int, state, desc: str = "",
                post_wait: float = 0.0,
                rapid: bool = False) -> None:
     # ── 最低タップ間隔の強制 (rapid=True でスキップ: ダブルタップ等) ──
-    if not rapid and state.last_action_time > 0:
-        _elapsed = time.time() - state.last_action_time
+    if not rapid and state.cycle.last_action_time > 0:
+        _elapsed = time.time() - state.cycle.last_action_time
         if _elapsed < MIN_TAP_INTERVAL:
             _wait = MIN_TAP_INTERVAL - _elapsed
             time.sleep(_wait)
@@ -643,8 +674,8 @@ def tap_device(x: int, y: int, state, desc: str = "",
     # ─── デバッグオーバーレイ描画 (--verbose 時のみ) ───
     if _DEBUG_SAVE_IMAGES:
         try:
-            if state.last_screen is not None:
-                _dbg = state.last_screen.copy()
+            if state.cycle.last_screen is not None:
+                _dbg = state.cycle.last_screen.copy()
                 if finger_box is not None:
                     fbx, fby, fbw, fbh = finger_box
                     cv2.rectangle(_dbg, (fbx, fby), (fbx + fbw, fby + fbh),
@@ -659,16 +690,76 @@ def tap_device(x: int, y: int, state, desc: str = "",
                 cv2.imwrite(_out, _dbg)
         except Exception:
             pass
-    if getattr(state, "tap_suppressed", False):
+    if getattr(state.cycle, "tap_suppressed", False):
         logger.info("  [TAP:DENY] (%d,%d) | %s (MOVIE遷移直後タップ抑制)", x, y, desc)
         return
+    # ── スクリーン記録: タップ直前の画面を記録 ──
+    _rec = getattr(state.cycle, "recorder", None)
+    if _rec is not None and getattr(state.cycle, "game_foreground", False):
+        try:
+            # -S モード: セリフ表示完了を待ってからスクショ取得
+            time.sleep(1.0)
+            _tap_img, _tap_w, _tap_h, _ = take_screenshot()
+            if _tap_img is not None:
+                from tools.ap.image_proc import prepare_analysis_image
+                _analysis = prepare_analysis_image(Path(_tap_img), _tap_w, _tap_h)
+            else:
+                _analysis = getattr(state.cycle, "last_analysis_path", None)
+                logger.debug("  [TAP:REC] キャプチャ失敗 → フォールバック画像使用")
+            # 暗転・白飛びスキップ
+            _skip_rec = False
+            if _analysis and Path(str(_analysis)).exists():
+                import numpy as np
+                _chk = cv2.imread(str(_analysis))
+                if _chk is not None:
+                    _br = np.mean(cv2.cvtColor(_chk, cv2.COLOR_BGR2GRAY))
+                    if _br <= 5 or _br >= 240:
+                        _skip_rec = True
+                        logger.debug("  [TAP:REC] 暗転/白飛びスキップ (brightness=%.1f)", _br)
+            if not _skip_rec:
+                _phash = ""
+                if _analysis and Path(str(_analysis)).exists():
+                    from tools.ap.image_proc import compute_phash
+                    _phash = compute_phash(str(_analysis)) or ""
+                # タップ直前の新しい画像で OCR も再実行
+                from lc.ocr import run_ocr
+                _tap_ocr = run_ocr(str(_analysis)) if _analysis else []
+                _recorded = _rec.maybe_record(
+                    _analysis,
+                    _tap_ocr,
+                    getattr(state.cycle, "current_scene", "UNKNOWN"),
+                    _phash,
+                    force=True,
+                )
+                if not _recorded:
+                    logger.debug("  [TAP:REC] maybe_record が False を返した (重複 or 保存失敗)")
+            # タップ後クールダウン開始 (通常記録を2秒間抑制)
+            _rec._last_tap_time = time.time()
+            # 遷移グラフ: from 画面が記録済みなら遷移を登録
+            _last_id = _rec._last_inserted_id
+            _last_fp = _rec._last_recorded_fp
+            if _last_id and _last_fp:
+                _tap_label = _rec._resolve_tap_label(
+                    x, y, getattr(state.cycle, "last_ocr_results", [])
+                )
+                _rec.record_tap(
+                    from_screen_id=_last_id,
+                    from_fp=_last_fp,
+                    tap_x=x, tap_y=y,
+                    tap_label=_tap_label,
+                    action_name=desc,
+                )
+        except Exception as e:
+            logger.warning("  [TAP:REC] 例外: %s", e)
+    elif _rec is not None:
+        logger.debug("  [TAP:REC] ゲーム非フォアグラウンド → スクショスキップ")
     logger.info(
         "  [TAP:OK] (%d,%d) → (%d,%d) | %s",
         x, y, real_x, real_y, desc
     )
     adb(f"shell input tap {real_x} {real_y}")
-    state.total_taps += 1
-    state.last_action_time = time.time()
+    state.cycle.total_taps += 1
+    state.cycle.last_action_time = time.time()
     time.sleep(post_wait)
 
 
