@@ -777,3 +777,93 @@ UI 要素 (ボタン・セレクト・入力欄・badge 等) のモード切替�
 
 - `web/templates/dashboard.html.twig` の `#diff-filter` (差分フィルタ) — 比較モード時のみ `disabled=false`
 - `live-adopt-btn` / `live-exclude-btn` / `live-reset-btn` — 選択時のみ `disabled=false`
+
+---
+
+## 21. タグ機能の運用ルール
+
+詳細設計は `docs/design/master_node_tags.md` を参照。
+
+### 1. 操縦カテゴリの追加 (厳格・最重要)
+
+新しい auto_pilot operation handler を追加する際:
+- `crawler/tools/ap/operation_tags.py` の `OperationTag` IntEnum と
+  `OPERATION_TAG_NAMES` / `OPERATION_TAG_CODE_KEYS` に必ず追加する
+- **既存の ID は変更しない、削除しない** (reserved 扱い)
+- 廃止する操縦カテゴリは `_DEPRECATED` コメントで残し、ID は再利用禁止
+- 起動時に DB upsert されるので、コード追加だけで Tag タブに反映される
+
+例:
+```python
+class OperationTag(IntEnum):
+    TUTORIAL = 1
+    QUEST_GRIND = 2
+    # GACHA_OLD = 3  # _DEPRECATED 2026-XX (do not reuse)
+    GACHA = 4        # 新 ID で再定義
+```
+
+### 2. シーン/詳細タグの管理
+
+- Tag タブから自由に追加/削除/名称変更可能
+- **削除は論理削除のみ** (`is_deleted=1`)、物理削除しない
+  - `lc_master_node_tags` の付与レコードは保持 (履歴保護)
+  - 表示時に JOIN で `is_deleted=0` を絞り込む
+- 名称変更は `tag_id` を維持、付与済みノードは自動的に新名称表示
+- description 変更は Gemini 判定キャッシュを自動破棄 (prompt_hash 変化)
+
+### 3. Gemini 判定のキャッシュ・エラー扱い
+
+- 対象は **マスターノードの代表のみ**
+- キャッシュキー: `(master_fp, tag_type, prompt_hash, model)`
+- `prompt_hash` には プロンプト本文 + 候補タグ (id/name/description) を含める
+  - description / プロンプト編集で自動再判定が走る
+  - color / sort_order 変更ではキャッシュ維持
+- **エラー結果はキャッシュしない** (§17 と同思想、再実行で復旧可能に)
+- 並列化は ThreadPoolExecutor 5 並列 (§17 と統一)
+- API 使用量は `record_api_usage()` で `lc_api_usage` に記録 → Cost タブと統合
+
+### 4. 保護ルール
+
+| `assigned_by` | 「未付与のみ」モード | 「全件再判定」(reset_manual=False) | 「全件再判定」(reset_manual=True) |
+|---|---|---|---|
+| `auto_pilot` | 保護 (skip) | 保護 (skip) | 保護 (skip) |
+| `manual` | 保護 (skip) | 保護 (skip) | **上書き** |
+| `gemini` | (条件次第) | 上書き | 上書き |
+
+- 操縦カテゴリは常に保護 (= ユーザー判断より自動操縦の事実が正)
+- 手動付与はデフォルトで保護 (= ユーザー判断を尊重)、明示的にリセット指示時のみ上書き
+
+### 5. 代表ノード変更時の挙動
+
+- マスターノードの `representative_screen_id` が変更されたタイミングで:
+  1. 現在の付与タグ (auto_pilot 含む全部) を `lc_master_node_tag_history` に記録
+  2. `assigned_by='gemini'` のタグを物理削除
+  3. `assigned_by='auto_pilot'` / `'manual'` は保持 (代表が変わっても操縦履歴/手動判断は残す)
+  4. 次回タグ付け実行で Gemini が未付与状態として再判定
+
+### 6. 検出器の `lc_master_nodes.scene` カラムとの区別 (厳格)
+
+- `lc_master_nodes.scene`: 検出器 (auto_pilot 内) の推定 (操縦制御用、`STARTUP/MENU/ADV/BATTLE` 等)
+- `lc_tags` のシーンタグ: ユーザーが Tag タブで管理する分類タグ
+- **両者は別物**。Gemini プロンプトでは `lc_master_nodes.scene` を「検出器の推定: XXX」として参考情報のみ渡す
+- `lc_master_nodes.scene` の値はタグ機能から書き換えない
+
+### 7. ノード詳細モーダルでの手動編集
+
+- 操縦カテゴリは手動付与/解除できない (`is_system=1` のため UI で × ボタン非表示)
+  - 操縦カテゴリの誤付与はノード自体を削除することで対処 (= 周回履歴の改変はしない)
+- シーンタグの手動付与は既存シーンタグを物理削除して置換 (1 個必須制約)
+- 詳細タグは独立して付与/解除
+
+### 8. プロンプト編集
+
+- ユーザーが編集可能 (`lc_tag_prompts.is_default=0` に変更)
+- プロンプトテンプレートのプレースホルダ: `{tag_candidates}` / `{detected_scene}` / `{ocr_text}`
+- 編集後の保存でキャッシュは即座に無効化されない (prompt_hash で自動的に効く)
+- 「デフォルトに戻す」でコード側 `DEFAULT_PROMPTS` の値で上書き
+
+### 9. タグ機能と検索機能の分離
+
+- 本機能 (Phase 1〜4) は **タグの定義・付与・編集** のみを扱う
+- タグでの検索・絞り込みは別機能として後続実装する
+- API 設計時は将来の検索機能を想定した index を張っておく (`idx_mnt_master`, `idx_mnt_tag`)
