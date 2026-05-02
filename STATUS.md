@@ -1,11 +1,55 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-04-30
+最終更新: 2026-05-03
 
 ## 現在のブランチ
-- `feature/screen-recorder` (main 未マージ、HEAD ~614 コミット先行)
+- `feature/master-node-tags` (main から 1 コミット先行)
+- `feature/screen-recorder` は **PR #1 でマージ済み・削除済み** (2026-05-02、618 コミット取り込み)
 
-## 最終セッション (2026-04-30 後半) — マージ時系列バグ修正 (fingerprint 再設計)
+## 最終セッション (2026-05-03) — マスターノードタグ機能の Phase 0 (設計書作成)
+
+スクリーン記録機能を main にマージ → 次の機能「マスターノードタグ機能」の **計画策定のみ** に集中したセッション。実装には着手せず、Phase 0 (設計書作成) のみを完了。
+
+仕様確定までに **v1〜v6 の計 6 ラウンド** の質疑応答を経て、設計書 1,493 行 + CLAUDE.md §21 (90 行、運用ルール 9 項目) を作成。1 コミット (`3a02303`)。
+
+詳細: `docs/history/2026-05-03.md` / `docs/design/master_node_tags.md`
+
+### 機能の目的
+将来の検索機能でタグによるカテゴリ検索を可能にするため、マスターノードに 3 種別のタグを付与する基盤を構築。
+
+### タグ 3 種別
+
+| 種別 | 個数 | 管理 | 付与方法 |
+|---|---|---|---|
+| 操縦カテゴリ | 0+ | コード `OperationTag` IntEnum + DB 同期 | auto_pilot 起動引数で自動付与 |
+| シーン | 1 個必須 | DB (Tag タブで CRUD) | Gemini AI / 手動 |
+| 詳細 | 0+ シーン横断 | DB (Tag タブで CRUD) | Gemini AI / 手動 |
+
+### Phase 計画
+- ✅ P0: 設計書作成 (本セッション完了)
+- ⏳ P1: スキーマ migration + Tag タブ CRUD + 手動編集
+- ⏳ P2: 操縦カテゴリ自動付与 (`OperationTag` enum + auto_pilot 引数)
+- ⏳ P3: シーンタグ Gemini 判定 + プロンプト編集 (シーンのみ)
+- ⏳ P4: 詳細タグ Gemini 判定 + プロンプト編集 (詳細にも拡張)
+- 🔮 P5+: 前後ノードヒント / 検索統合 / search.php クリーンアップ
+
+PR は全 Phase (P1-P4) 完了後に 1 つ作成 (前回 screen-recorder と同流儀)。
+
+### 設計書の特徴
+- 設計書 + 仕様書の二役 (冒頭ガイダンスで使い分け明示)
+- 5 テーブルの全列定義 + index + 制約
+- 13 API エンドポイントのリクエスト/レスポンス JSON 完備
+- 6+ UI モック (Tag タブ + ノード詳細モーダル + 確認モーダル + プロンプト編集 UI)
+- Phase ごとの pytest + Playwright + 実機確認テストケース概要
+- Cost タブとの統合 (既存 `record_api_usage` + リアルタイム JPY 為替を活用)
+
+### 次セッションへの引き継ぎ手順
+1. CLAUDE.md §0、§13、§21 を読み直す
+2. 設計書 `docs/design/master_node_tags.md` を読む (特に §3.2 / §5 / §6 / §9)
+3. **Phase 1 詳細計画書** `docs/design/master_node_tags_phase1.md` を作成 → 承認
+4. テスト先行で着手 (CLAUDE.md §3)、最小単位で実機確認 (§7) → コミット (§2)
+
+## ひとつ前のセッション (2026-04-30 後半) — マージ時系列バグ修正 (fingerprint 再設計)
 
 ユーザー報告「マージ後の master でダウンロードゲージが巻き戻る」の根本対策。
 3 つの絡み合う原因 (fingerprint 数字除去 / merge 直接 fp 未チェック / SafeInsert 削除) を Phase 1 で解消。1 コミット (`322b2b0`)、109 件テスト PASS。
@@ -206,10 +250,19 @@ TH_LOOSE がドリフト絶対上限。連鎖統合で代表から TH_LOOSE 以�
 
 ## 次セッション開始時の推奨手順
 
-スクリーン記録機能はひと段落 (`feature/screen-recorder` ブランチ、614 コミット先行)。次の機能着手前に:
+マスターノードタグ機能の Phase 1 着手:
 
-1. `git log --oneline -15` で直近 4/30 セッションの変更を再確認
-2. STATUS.md と `docs/history/2026-04-30.md` を読む
-3. 必要なら main へのマージ計画 (大規模なので慎重に)
-4. ダッシュボード (`http://localhost:8080/dashboard.php`) で paused 状態 + 新規ノード不採用の動作確認
-5. 次の機能テーマをユーザーと相談
+1. CLAUDE.md §0 (チュートリアル自律操縦)、§13 (行動ルール)、§21 (タグ機能運用ルール) を読み直す
+2. `docs/design/master_node_tags.md` (設計書 1,493 行) を読む — 特に §3.2 (スキーマ), §5 (API), §6 (UI), §9.1 (Phase 1 テストケース)
+3. `docs/history/2026-05-03.md` (本セッション要約・議論経過) を読む
+4. **Phase 1 詳細計画書** `docs/design/master_node_tags_phase1.md` を作成
+   - 実装ファイル一覧 (新規 / 修正)
+   - pytest テストケース具体形 (関数名 + 内容)
+   - Playwright テストケース具体形
+   - Migration SQL 完全版
+   - API リクエスト/レスポンス JSON サンプル
+5. ユーザー承認 → テスト先行で着手 (CLAUDE.md §3)
+6. 最小単位で実機確認 (CLAUDE.md §7) → コミット (CLAUDE.md §2)
+
+過去セッション (PR マージ済み機能) の確認が必要なら:
+- `git log --oneline 3a41eb3 | head -20` で直近の main 変更を確認
