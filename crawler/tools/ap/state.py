@@ -157,6 +157,9 @@ class PilotState:
     device_w: int = 0
     device_h: int = 0
     launch_time: float = field(default_factory=time.time)
+    # 操縦カテゴリ (Phase 2、起動時に決定、周回をまたいで保持)
+    operation_code_key: str = ""
+    operation_tag_id: int = 0
 
     # ── CycleState（周回ごとに破棄・再作成） ──
     cycle: CycleState = field(default_factory=CycleState)

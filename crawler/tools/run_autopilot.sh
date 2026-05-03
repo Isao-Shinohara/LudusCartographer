@@ -33,6 +33,8 @@ export PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}"
 export PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH"
+# 操縦カテゴリ (Phase 2): --operation 未指定時のフォールバック
+export OPERATION="${OPERATION:-tutorial}"
 
 # 残留 tail プロセスを掃除 (前回の cleanup が不完全だった場合)
 pkill -f "tail -f $LOG_FILE" 2>/dev/null || true

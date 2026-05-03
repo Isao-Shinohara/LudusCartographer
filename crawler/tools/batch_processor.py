@@ -269,6 +269,22 @@ class BatchProcessor:
 
     def _migrate_tags(self) -> None:
         """タグ機能の 5 テーブル + index + 初期データを作成する (冪等)。"""
+        # lc_sessions に Phase 2 用のカラムを追加 (screen_recorder と同期)
+        try:
+            sess_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_sessions)")}
+            if sess_cols and "operation_code_key" not in sess_cols:
+                self._conn.execute(
+                    "ALTER TABLE lc_sessions ADD COLUMN operation_code_key TEXT"
+                )
+            if sess_cols and "operation_tag_id" not in sess_cols:
+                self._conn.execute(
+                    "ALTER TABLE lc_sessions ADD COLUMN operation_tag_id INTEGER"
+                )
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            # lc_sessions が未作成の場合は ScreenRecorder の migration に委ねる
+            pass
+
         # 1. lc_tags — タグ定義
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS lc_tags (

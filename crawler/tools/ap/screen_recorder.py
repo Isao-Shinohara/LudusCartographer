@@ -147,12 +147,16 @@ class ScreenRecorder:
         session_id: str,
         game_title: str = "Unknown Game",
         version_id: int | None = None,
+        operation_code_key: str | None = None,
+        operation_tag_id: int | None = None,
     ) -> None:
         self._db_path = Path(db_path)
         self._storage_dir = Path(storage_dir) / session_id
         self._session_id = session_id
         self._game_title = game_title
         self._explicit_version_id = version_id
+        self._operation_code_key = operation_code_key
+        self._operation_tag_id = operation_tag_id
 
         # ディレクトリ先行作成
         self._storage_dir.mkdir(parents=True, exist_ok=True)
@@ -188,15 +192,22 @@ class ScreenRecorder:
         # セッション登録 (新規) または継続再開時の status 更新
         self._conn.execute(
             "INSERT OR IGNORE INTO lc_sessions"
-            " (session_id, screens_found, started_at, status, game_title, version_id)"
-            " VALUES (?, 0, ?, 'running', ?, ?)",
-            (self._session_id, datetime.now().isoformat(), self._game_title, self._version_id),
+            " (session_id, screens_found, started_at, status, game_title, version_id,"
+            "  operation_code_key, operation_tag_id)"
+            " VALUES (?, 0, ?, 'running', ?, ?, ?, ?)",
+            (
+                self._session_id, datetime.now().isoformat(), self._game_title,
+                self._version_id, self._operation_code_key, self._operation_tag_id,
+            ),
         )
         # 継続再開時は status を 'running' に戻し、completion_type をクリア
+        # 操縦カテゴリ未設定の既存セッションには今回の値を上書き保存する
         self._conn.execute(
-            "UPDATE lc_sessions SET status = 'running', completion_type = NULL"
+            "UPDATE lc_sessions SET status = 'running', completion_type = NULL,"
+            " operation_code_key = COALESCE(operation_code_key, ?),"
+            " operation_tag_id = COALESCE(operation_tag_id, ?)"
             " WHERE session_id = ?",
-            (self._session_id,),
+            (self._operation_code_key, self._operation_tag_id, self._session_id),
         )
         self._conn.commit()
 
@@ -721,6 +732,19 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: lc_sessions.version_id カラム追加")
+        # 操縦カテゴリ (Phase 2)
+        if "operation_code_key" not in sess_cols:
+            self._conn.execute(
+                "ALTER TABLE lc_sessions ADD COLUMN operation_code_key TEXT"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: lc_sessions.operation_code_key カラム追加")
+        if "operation_tag_id" not in sess_cols:
+            self._conn.execute(
+                "ALTER TABLE lc_sessions ADD COLUMN operation_tag_id INTEGER"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: lc_sessions.operation_tag_id カラム追加")
         # lc_versions テーブル + 初期バージョン
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS lc_versions (

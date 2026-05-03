@@ -99,6 +99,51 @@ class CrossSessionMerger:
             (master_fp,),
         )
 
+    def _assign_operation_tags_for_session(self, session_id: str) -> int:
+        """セッションの operation_tag_id を当該セッションが寄与した master_fp 群に
+        ``INSERT OR IGNORE`` で付与する (Phase 2)。
+
+        - lc_sessions.operation_tag_id が NULL のセッションは何もしない
+        - lc_node_mappings から (session_id → master_fp) を引いてバルク INSERT
+        - UNIQUE 制約により再実行は no-op
+
+        Returns: 追加された行数 (既に付与済みは含まない)
+        """
+        row = self._conn.execute(
+            "SELECT operation_tag_id FROM lc_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if not row or row["operation_tag_id"] is None:
+            return 0
+        op_tag_id = int(row["operation_tag_id"])
+
+        # changes() で挿入件数を取得するために事前カウント
+        before = self._conn.execute(
+            "SELECT COUNT(*) FROM lc_master_node_tags WHERE tag_id = ?",
+            (op_tag_id,),
+        ).fetchone()[0]
+
+        self._conn.execute(
+            "INSERT OR IGNORE INTO lc_master_node_tags"
+            " (master_fp, version_id, tag_id, assigned_by, confidence, assigned_at)"
+            " SELECT DISTINCT nm.master_fp, ?, ?, 'auto_pilot', 1.0, datetime('now')"
+            " FROM lc_node_mappings nm"
+            " WHERE nm.session_id = ?",
+            (self._version_id, op_tag_id, session_id),
+        )
+
+        after = self._conn.execute(
+            "SELECT COUNT(*) FROM lc_master_node_tags WHERE tag_id = ?",
+            (op_tag_id,),
+        ).fetchone()[0]
+        added = after - before
+        if added > 0:
+            logger.info(
+                "[OPERATION_TAG] session=%s: %d 件の master_fp に付与",
+                session_id, added,
+            )
+        return added
+
     # ─── メインエントリ ──────────────────────────────
 
     # 進捗報告は削除済み (merge_result.json の出現で完了判定)
@@ -529,6 +574,9 @@ class CrossSessionMerger:
         # sort_order を連番に振り直し
         renumber_sort_orders(self._conn)
 
+        # 操縦カテゴリの自動付与 (Phase 2)
+        self._assign_operation_tags_for_session(session_id)
+
         self._conn.commit()
         logger.info("[Merger] マージ完了: session=%s, matched=%d, new=%d, skipped=%d",
                     session_id, len(node_mapping), new_count, len(result.skipped))
@@ -872,6 +920,8 @@ class CrossSessionMerger:
                 (i, row["master_fp"], self._version_id),
             )
 
+        # 操縦カテゴリの自動付与 (Phase 2)
+        self._assign_operation_tags_for_session(session_id)
         self._conn.commit()
 
         logger.info("[Merger] Seed: session=%s → %d ノード, first_seen_at 順で sort_order 確定",
@@ -934,6 +984,8 @@ class CrossSessionMerger:
 
         self._merge_edges(session_id, {})
         self._recalculate_master_graph()
+        # 操縦カテゴリの自動付与 (Phase 2)
+        self._assign_operation_tags_for_session(session_id)
         self._conn.commit()
         return new_count
 
