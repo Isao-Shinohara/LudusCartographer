@@ -68,11 +68,14 @@ test.describe('Tag タブ Phase 1', () => {
         await expect(page.locator('#tag-add-btn-operation')).toHaveCount(0);
     });
 
-    test('プロンプト編集 / 判定実行ボタンは disabled (P3 で実装予定)', async ({ page }) => {
+    test('プロンプト編集 / 判定実行ボタンが表示される (P3 で有効化)', async ({ page }) => {
         await page.click('#tab-tags');
         await page.click('#tag-subtab-scene');
-        await expect(page.locator('#tag-prompt-edit-scene')).toBeDisabled();
-        await expect(page.locator('#tag-judge-scene')).toBeDisabled();
+        await expect(page.locator('#tag-prompt-edit-scene')).toBeVisible();
+        await expect(page.locator('#tag-prompt-edit-scene')).toBeEnabled();
+        // 判定実行ボタンはモードごとに 2 ボタン (未付与のみ / 全件再判定)
+        const modeButtons = page.locator('#tag-content-scene .tag-judge-mode-btn');
+        await expect(modeButtons).toHaveCount(2);
     });
 
     test('+ 新規タグ追加ボタンでモーダルが開く', async ({ page }) => {

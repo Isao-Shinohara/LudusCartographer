@@ -172,27 +172,37 @@
 
     <!-- シーン サブコンテンツ -->
     <div id="tag-content-scene" class="tag-subtab-content">
-        <div class="flex gap-2 mb-4">
+        <div class="flex gap-2 mb-4 flex-wrap">
             <button id="tag-add-btn-scene" class="px-3 py-1.5 bg-brand/80 hover:bg-brand text-white text-sm rounded transition-colors"
                     onclick="tagOpenEditModal('scene', null)">+ 新規タグ追加</button>
-            <button id="tag-prompt-edit-scene" class="px-3 py-1.5 bg-gray-800 text-gray-500 text-sm rounded cursor-not-allowed"
-                    disabled title="Phase 3 で実装予定">プロンプト編集</button>
-            <button id="tag-judge-scene" class="px-3 py-1.5 bg-gray-800 text-gray-500 text-sm rounded cursor-not-allowed"
-                    disabled title="Phase 3 で実装予定">シーンタグを判定 ▾</button>
+            <button id="tag-prompt-edit-scene" class="px-3 py-1.5 bg-purple-700/70 hover:bg-purple-700 text-white text-sm rounded transition-colors"
+                    onclick="tagOpenPromptEditor('scene')">プロンプト編集</button>
+            <div class="inline-flex rounded overflow-hidden border border-emerald-700">
+                <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-700/70 hover:bg-emerald-700 text-white text-sm transition-colors"
+                        onclick="tagOpenRunConfirm('scene', 'unassigned')">未付与のみ判定</button>
+                <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-900/70 hover:bg-emerald-800 text-white text-sm transition-colors border-l border-emerald-800"
+                        onclick="tagOpenRunConfirm('scene', 'all')">全件再判定</button>
+            </div>
         </div>
+        <div id="tag-progress-scene" class="hidden mb-4 bg-gray-900/60 border border-gray-700 rounded p-3 text-sm"></div>
         <div id="tag-list-scene" class="tag-list space-y-1"></div>
     </div>
 
     <!-- 詳細 サブコンテンツ -->
     <div id="tag-content-sub_scene" class="tag-subtab-content hidden">
-        <div class="flex gap-2 mb-4">
+        <div class="flex gap-2 mb-4 flex-wrap">
             <button id="tag-add-btn-sub_scene" class="px-3 py-1.5 bg-brand/80 hover:bg-brand text-white text-sm rounded transition-colors"
                     onclick="tagOpenEditModal('sub_scene', null)">+ 新規タグ追加</button>
-            <button id="tag-prompt-edit-sub_scene" class="px-3 py-1.5 bg-gray-800 text-gray-500 text-sm rounded cursor-not-allowed"
-                    disabled title="Phase 4 で実装予定">プロンプト編集</button>
-            <button id="tag-judge-sub_scene" class="px-3 py-1.5 bg-gray-800 text-gray-500 text-sm rounded cursor-not-allowed"
-                    disabled title="Phase 4 で実装予定">詳細タグを判定 ▾</button>
+            <button id="tag-prompt-edit-sub_scene" class="px-3 py-1.5 bg-purple-700/70 hover:bg-purple-700 text-white text-sm rounded transition-colors"
+                    onclick="tagOpenPromptEditor('sub_scene')">プロンプト編集</button>
+            <div class="inline-flex rounded overflow-hidden border border-emerald-700">
+                <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-700/70 hover:bg-emerald-700 text-white text-sm transition-colors"
+                        onclick="tagOpenRunConfirm('sub_scene', 'unassigned')">未付与のみ判定</button>
+                <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-900/70 hover:bg-emerald-800 text-white text-sm transition-colors border-l border-emerald-800"
+                        onclick="tagOpenRunConfirm('sub_scene', 'all')">全件再判定</button>
+            </div>
         </div>
+        <div id="tag-progress-sub_scene" class="hidden mb-4 bg-gray-900/60 border border-gray-700 rounded p-3 text-sm"></div>
         <div id="tag-list-sub_scene" class="tag-list space-y-1"></div>
     </div>
 
@@ -247,6 +257,66 @@
             <button id="tag-delete-cancel" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">キャンセル</button>
             <button id="tag-delete-confirm" class="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-sm rounded">削除</button>
         </div>
+    </div>
+</div>
+
+<!-- 判定実行確認モーダル (Phase 3) -->
+<div id="tag-run-confirm-modal" class="fixed inset-0 bg-black/60 z-[60] hidden items-center justify-center">
+    <div class="bg-gray-900 rounded-lg p-6 w-[36rem] max-w-full border border-gray-700">
+        <h3 id="tag-run-confirm-title" class="text-lg font-bold text-emerald-300 mb-3">タグ付け実行確認</h3>
+        <div id="tag-run-confirm-loading" class="text-sm text-gray-500 py-4">推定中...</div>
+        <div id="tag-run-confirm-body" class="hidden text-sm text-gray-300 space-y-2"></div>
+        <div class="mt-4 flex items-center gap-2">
+            <input type="checkbox" id="tag-run-reset-manual" class="cursor-pointer" />
+            <label for="tag-run-reset-manual" class="text-xs text-gray-400 cursor-pointer">手動付与タグも上書きする (完全リセット)</label>
+        </div>
+        <div id="tag-run-confirm-error" class="hidden text-xs text-red-400 mt-2"></div>
+        <div class="flex justify-end gap-2 mt-5">
+            <button id="tag-run-cancel" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">キャンセル</button>
+            <button id="tag-run-confirm" class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-sm rounded" disabled>実行</button>
+        </div>
+    </div>
+</div>
+
+<!-- プロンプト編集モーダル (Phase 3) -->
+<div id="prompt-edit-modal" class="fixed inset-0 bg-black/60 z-[60] hidden items-center justify-center">
+    <div class="bg-gray-900 rounded-lg p-6 w-[44rem] max-w-full max-h-[90vh] flex flex-col border border-gray-700">
+        <h3 id="prompt-edit-title" class="text-lg font-bold text-purple-300 mb-3">シーンタグ プロンプト編集</h3>
+        <div class="flex-1 overflow-auto">
+            <textarea id="prompt-edit-text" class="w-full h-72 bg-gray-800 text-gray-200 text-xs font-mono rounded px-3 py-2 border border-gray-700 focus:border-brand outline-none"></textarea>
+            <div class="text-xs text-gray-500 mt-2">
+                利用可能プレースホルダ:
+                <code class="text-amber-300">{tag_candidates}</code>
+                <code class="text-amber-300">{detected_scene}</code>
+                <code class="text-amber-300">{ocr_text}</code>
+            </div>
+            <div id="prompt-edit-status" class="text-xs text-gray-500 mt-1"></div>
+            <div id="prompt-edit-error" class="hidden text-xs text-red-400 mt-1"></div>
+            <div id="prompt-edit-warn" class="hidden text-xs text-amber-300 mt-1"></div>
+        </div>
+        <div class="flex justify-between gap-2 mt-4 pt-3 border-t border-gray-800">
+            <div class="flex gap-2">
+                <button id="prompt-test-btn" class="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-white text-sm rounded">テスト判定 (5件)</button>
+                <button id="prompt-reset-btn" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">デフォルトに戻す</button>
+            </div>
+            <div class="flex gap-2">
+                <button id="prompt-cancel-btn" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">キャンセル</button>
+                <button id="prompt-save-btn" class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-sm rounded">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- テスト判定結果モーダル -->
+<div id="prompt-test-modal" class="fixed inset-0 bg-black/70 z-[70] hidden items-center justify-center">
+    <div class="bg-gray-900 rounded-lg p-6 w-[48rem] max-w-full max-h-[90vh] flex flex-col border border-gray-700">
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-bold text-cyan-300">テスト判定結果</h3>
+            <button id="prompt-test-close" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+        </div>
+        <div id="prompt-test-loading" class="text-center text-gray-500 py-8 text-sm">判定中...</div>
+        <div id="prompt-test-results" class="hidden flex-1 overflow-auto space-y-3"></div>
+        <div class="text-xs text-gray-700 mt-3 pt-2 border-t border-gray-800">※ DB には保存されません (テスト専用)</div>
     </div>
 </div>
 
@@ -4436,6 +4506,306 @@
             });
         });
     };
+
+    // ─── 判定実行 + プロンプト編集 (Phase 3) ──────────
+
+    const TAGGING_API = 'api/tagging.php';
+    const TAG_PROMPTS_API = 'api/tag_prompts.php';
+    let _tagRunPolling = null;
+    let _tagRunCurrentType = null;
+    let _tagPromptType = 'scene';
+
+    window.tagOpenRunConfirm = async function(tagType, mode) {
+        _tagRunCurrentType = tagType;
+        const modal = document.getElementById('tag-run-confirm-modal');
+        document.getElementById('tag-run-confirm-title').textContent =
+            (tagType === 'scene' ? 'シーンタグ' : '詳細タグ') + ' 判定実行確認 ('
+            + (mode === 'unassigned' ? '未付与のみ' : '全件再判定') + ')';
+        document.getElementById('tag-run-confirm-loading').classList.remove('hidden');
+        document.getElementById('tag-run-confirm-body').classList.add('hidden');
+        document.getElementById('tag-run-confirm-error').classList.add('hidden');
+        document.getElementById('tag-run-reset-manual').checked = false;
+        const confirmBtn = document.getElementById('tag-run-confirm');
+        confirmBtn.disabled = true;
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+
+        // estimate を取得
+        const versionId = _currentVersionId || 1;
+        const params = new URLSearchParams({
+            action: 'estimate',
+            tag_type: tagType,
+            mode,
+            reset_manual: '0',
+            version_id: String(versionId),
+        });
+        try {
+            const res = await fetch(TAGGING_API + '?' + params);
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.message || data.error || 'estimate failed');
+            const est = data.estimate || {};
+            const inTok = est.estimated_input_tokens_total || 0;
+            const outTok = est.estimated_output_tokens_total || 0;
+            const usdRate = (typeof window.COST_PRICING === 'object' && window.COST_PRICING[est.model])
+                ? window.COST_PRICING[est.model] : null;
+            let costStr = '計測情報なし';
+            if (usdRate) {
+                const usd = (inTok / 1_000_000) * usdRate.input + (outTok / 1_000_000) * usdRate.output;
+                const jpyRate = window._exchangeRate || 150;
+                costStr = '$' + usd.toFixed(4) + ' (約 ¥' + Math.ceil(usd * jpyRate) + ')';
+            }
+            const body = document.getElementById('tag-run-confirm-body');
+            body.innerHTML = `
+                <div>対象件数: <span class="text-white font-bold">${est.target_count}</span> 件</div>
+                <div class="ml-4 text-xs text-gray-500">└ キャッシュヒット見込み: ${est.cache_hit_estimate}</div>
+                <div class="ml-4 text-xs text-gray-500">└ API 呼び出し見込み: ${est.api_call_estimate}</div>
+                <div>推定時間: <span class="text-white">約 ${est.estimated_seconds || 0} 秒</span></div>
+                <div>推定トークン: 入力 ${(inTok/1000).toFixed(1)}K / 出力 ${(outTok/1000).toFixed(1)}K</div>
+                <div>推定コスト: ${costStr}</div>
+                <div>モデル: <code class="text-amber-300">${est.model || ''}</code></div>
+            `;
+            body.dataset.tagType = tagType;
+            body.dataset.mode = mode;
+            body.dataset.versionId = String(versionId);
+            document.getElementById('tag-run-confirm-loading').classList.add('hidden');
+            body.classList.remove('hidden');
+            confirmBtn.disabled = (est.target_count === 0);
+        } catch (e) {
+            document.getElementById('tag-run-confirm-loading').classList.add('hidden');
+            const errEl = document.getElementById('tag-run-confirm-error');
+            errEl.textContent = String(e);
+            errEl.classList.remove('hidden');
+        }
+    };
+
+    function tagCloseRunConfirm() {
+        const m = document.getElementById('tag-run-confirm-modal');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
+    }
+
+    async function tagRunConfirmExecute() {
+        const body = document.getElementById('tag-run-confirm-body');
+        const tagType = body.dataset.tagType;
+        const mode = body.dataset.mode;
+        const versionId = parseInt(body.dataset.versionId) || 1;
+        const resetManual = document.getElementById('tag-run-reset-manual').checked;
+        try {
+            const res = await fetch(TAGGING_API + '?action=run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tag_type: tagType, mode, reset_manual: resetManual, version_id: versionId }),
+            });
+            const data = await res.json();
+            if (!data.ok) {
+                const errEl = document.getElementById('tag-run-confirm-error');
+                errEl.textContent = data.message || data.error || '実行失敗';
+                errEl.classList.remove('hidden');
+                return;
+            }
+            tagCloseRunConfirm();
+            tagStartProgressPolling(tagType);
+        } catch (e) {
+            const errEl = document.getElementById('tag-run-confirm-error');
+            errEl.textContent = '通信エラー: ' + e.message;
+            errEl.classList.remove('hidden');
+        }
+    }
+
+    function tagStartProgressPolling(tagType) {
+        if (_tagRunPolling) clearInterval(_tagRunPolling);
+        const progressEl = document.getElementById('tag-progress-' + tagType);
+        progressEl.classList.remove('hidden');
+        progressEl.innerHTML = '<div class="text-gray-400">起動中...</div>';
+
+        const tick = async () => {
+            try {
+                const res = await fetch(TAGGING_API + '?action=progress');
+                const data = await res.json();
+                if (!data.ok) return;
+                const p = data;
+                if (p.summary) {
+                    progressEl.innerHTML = `
+                        <div class="text-emerald-300 font-bold">✓ 完了</div>
+                        <div class="text-xs text-gray-400 mt-1">
+                            ${p.summary.total} 件 / 付与 ${p.summary.assigned} / API ${p.summary.api_calls}
+                            / キャッシュ ${p.summary.cache_hits || 0} / エラー ${p.summary.errors}
+                            / ${p.summary.duration_seconds} 秒
+                        </div>
+                    `;
+                    clearInterval(_tagRunPolling);
+                    _tagRunPolling = null;
+                    setTimeout(() => tagsFetchAndRender(tagType), 500);
+                } else if (p.running === false) {
+                    progressEl.innerHTML = '<div class="text-gray-400">待機中</div>';
+                    clearInterval(_tagRunPolling);
+                    _tagRunPolling = null;
+                } else {
+                    const pct = p.total > 0 ? Math.floor((p.processed / p.total) * 100) : 0;
+                    progressEl.innerHTML = `
+                        <div class="text-cyan-300 font-bold">判定中... ${p.processed || 0} / ${p.total || 0} (${pct}%)</div>
+                        <div class="w-full bg-gray-800 h-1.5 rounded mt-2 overflow-hidden">
+                            <div class="bg-cyan-500 h-full transition-all" style="width:${pct}%"></div>
+                        </div>
+                        <div class="text-xs text-gray-500 mt-1">
+                            キャッシュ ${p.cache_hits || 0} / API ${p.api_calls || 0} / エラー ${p.errors || 0}
+                        </div>
+                    `;
+                }
+            } catch (e) { /* ignore */ }
+        };
+        tick();
+        _tagRunPolling = setInterval(tick, 1500);
+    }
+
+    // プロンプト編集
+    window.tagOpenPromptEditor = async function(tagType) {
+        _tagPromptType = tagType;
+        document.getElementById('prompt-edit-title').textContent =
+            (tagType === 'scene' ? 'シーンタグ' : '詳細タグ') + ' プロンプト編集';
+        document.getElementById('prompt-edit-text').value = '';
+        document.getElementById('prompt-edit-status').textContent = '読み込み中...';
+        document.getElementById('prompt-edit-error').classList.add('hidden');
+        document.getElementById('prompt-edit-warn').classList.add('hidden');
+        const m = document.getElementById('prompt-edit-modal');
+        m.classList.remove('hidden');
+        m.classList.add('flex');
+
+        try {
+            const res = await fetch(TAG_PROMPTS_API + '?type=' + tagType);
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.message || data.error || 'load failed');
+            document.getElementById('prompt-edit-text').value = data.current?.prompt_text || '';
+            const st = data.current?.is_default
+                ? '✓ デフォルトプロンプト'
+                : '✏ ユーザー編集済み (最終更新: ' + (data.current?.updated_at || '?') + ')';
+            document.getElementById('prompt-edit-status').textContent = st;
+            document.getElementById('prompt-edit-modal').dataset.defaultText = data.default?.prompt_text || '';
+        } catch (e) {
+            document.getElementById('prompt-edit-status').textContent = '';
+            const err = document.getElementById('prompt-edit-error');
+            err.textContent = String(e);
+            err.classList.remove('hidden');
+        }
+    };
+
+    function tagClosePromptEditor() {
+        const m = document.getElementById('prompt-edit-modal');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
+    }
+
+    async function tagSavePrompt() {
+        const text = document.getElementById('prompt-edit-text').value;
+        if (!text.trim()) {
+            const err = document.getElementById('prompt-edit-error');
+            err.textContent = 'プロンプトは必須です';
+            err.classList.remove('hidden');
+            return;
+        }
+        try {
+            const res = await fetch(TAG_PROMPTS_API + '?type=' + _tagPromptType, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt_text: text }),
+            });
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.message || data.error || 'save failed');
+            const warn = document.getElementById('prompt-edit-warn');
+            warn.textContent = '✓ ' + (data.warning || '保存しました');
+            warn.classList.remove('hidden');
+            setTimeout(() => tagClosePromptEditor(), 1500);
+        } catch (e) {
+            const err = document.getElementById('prompt-edit-error');
+            err.textContent = String(e);
+            err.classList.remove('hidden');
+        }
+    }
+
+    async function tagResetPrompt() {
+        try {
+            const res = await fetch(TAG_PROMPTS_API + '?type=' + _tagPromptType + '&action=reset', {
+                method: 'POST',
+            });
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.message || data.error || 'reset failed');
+            tagOpenPromptEditor(_tagPromptType);  // 再読込
+        } catch (e) {
+            const err = document.getElementById('prompt-edit-error');
+            err.textContent = String(e);
+            err.classList.remove('hidden');
+        }
+    }
+
+    async function tagTestPrompt() {
+        const text = document.getElementById('prompt-edit-text').value;
+        if (!text.trim()) return;
+        const versionId = _currentVersionId || 1;
+        const m = document.getElementById('prompt-test-modal');
+        document.getElementById('prompt-test-loading').classList.remove('hidden');
+        document.getElementById('prompt-test-results').classList.add('hidden');
+        m.classList.remove('hidden');
+        m.classList.add('flex');
+
+        try {
+            const res = await fetch(TAG_PROMPTS_API + '?type=' + _tagPromptType + '&action=test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt_text: text, sample_size: 5, version_id: versionId }),
+            });
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.message || data.error || 'test failed');
+            document.getElementById('prompt-test-loading').classList.add('hidden');
+            const list = document.getElementById('prompt-test-results');
+            list.classList.remove('hidden');
+            list.innerHTML = (data.samples || []).map((s, i) => {
+                const r = s.result || {};
+                const tagSummary = r.tag_id !== undefined
+                    ? `tag_id=${r.tag_id} (信頼度 ${r.confidence ?? '?'})`
+                    : (r.tag_ids ? `tag_ids=[${r.tag_ids.join(', ')}] (信頼度 ${r.confidence ?? '?'})` : 'パース不可');
+                const reason = r.reasoning || r.error || '(なし)';
+                return `
+                    <div class="bg-gray-800/60 rounded p-3">
+                        <div class="text-sm text-gray-300 mb-1">サンプル ${i+1}: ${escapeHtml(s.title || '(無題)')}</div>
+                        <div class="text-xs text-gray-500 mb-2">scene: ${escapeHtml(s.detected_scene || '?')} | fp: <code>${escapeHtml(s.master_fp || '').slice(0,16)}</code></div>
+                        <div class="text-xs text-gray-400 max-h-16 overflow-auto bg-gray-900 rounded px-2 py-1 mb-2">${escapeHtml(s.ocr_text || '(なし)')}</div>
+                        <div class="text-xs text-cyan-300">→ ${escapeHtml(tagSummary)}</div>
+                        <div class="text-xs text-gray-500 mt-1">理由: ${escapeHtml(String(reason))}</div>
+                    </div>
+                `;
+            }).join('');
+        } catch (e) {
+            document.getElementById('prompt-test-loading').classList.add('hidden');
+            const list = document.getElementById('prompt-test-results');
+            list.classList.remove('hidden');
+            list.innerHTML = `<div class="text-red-400 text-sm">${escapeHtml(String(e))}</div>`;
+        }
+    }
+
+    document.getElementById('tag-run-cancel')?.addEventListener('click', tagCloseRunConfirm);
+    document.getElementById('tag-run-confirm')?.addEventListener('click', tagRunConfirmExecute);
+    document.getElementById('tag-run-confirm-modal')?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) tagCloseRunConfirm();
+    });
+    document.getElementById('prompt-cancel-btn')?.addEventListener('click', tagClosePromptEditor);
+    document.getElementById('prompt-save-btn')?.addEventListener('click', tagSavePrompt);
+    document.getElementById('prompt-reset-btn')?.addEventListener('click', tagResetPrompt);
+    document.getElementById('prompt-test-btn')?.addEventListener('click', tagTestPrompt);
+    document.getElementById('prompt-edit-modal')?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) tagClosePromptEditor();
+    });
+    document.getElementById('prompt-test-close')?.addEventListener('click', () => {
+        const m = document.getElementById('prompt-test-modal');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
+    });
+    document.getElementById('prompt-test-modal')?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) {
+            const m = document.getElementById('prompt-test-modal');
+            m.classList.add('hidden');
+            m.classList.remove('flex');
+        }
+    });
 
     async function tagsAssignNodeTag(masterFp, versionId, tagId) {
         try {
