@@ -1,12 +1,43 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-05-03
+最終更新: 2026-05-04
 
 ## 現在のブランチ
-- `feature/master-node-tags` (main から 1 コミット先行)
-- `feature/screen-recorder` は **PR #1 でマージ済み・削除済み** (2026-05-02、618 コミット取り込み)
+- `feature/master-node-tags` (main から 5 コミット先行、Phase 0 + Phase 1 完了)
+- `feature/screen-recorder` は **PR #1 でマージ済み・削除済み** (2026-05-02)
 
-## 最終セッション (2026-05-03) — マスターノードタグ機能の Phase 0 (設計書作成)
+## 最終セッション (2026-05-04) — マスターノードタグ機能の Phase 1 完了
+
+Phase 1 (スキーマ migration + Tag タブ CRUD + 手動編集 + 代表変更ハンドラ) を 4 コミットで完了。
+pytest 52 件 + Playwright 12 件、全 green。
+
+### Phase 1 コミット
+| Commit | 内容 |
+|---|---|
+| `8f246ea` | DB Migration: 5 テーブル + index + 初期データ (シーン 11 / 詳細 9) |
+| `dc2d652` | 代表変更ハンドラ: orphan 修復で履歴記録 + Gemini タグ削除 |
+| `29aac52` | tags.php API: CRUD + ノードタグ操作 (シーン置換 + 履歴記録) |
+| `a7d42b3` | Tag タブ UI + ノード詳細モーダルのタグチップエリア (Playwright 12 件含む) |
+
+### Phase 1 で確定した方針 (P1 計画書 §1.2)
+- 操縦カテゴリサブタブ: P1 では空 + 説明文表示
+- 代表変更ハンドラ: P1 でスキーマと一緒に実装 (履歴記録 + Gemini タグ削除)
+- 「未付与のみ」モード: prompt_hash 変化時は再判定 (P3 で実装)
+- Gemini シーン置換時の history: 不要 (判定キャッシュで追跡、手動編集のみ history 記録)
+- 初期データ: `INSERT ... WHERE NOT EXISTS` で重複防止 (DB UNIQUE 制約はアプリ側ガードのため)
+
+### 詳細ドキュメント
+- `docs/design/master_node_tags.md` (1,493 行、Phase 0)
+- `docs/design/master_node_tags_phase1.md` (1,321 行、Phase 1 詳細計画)
+- `docs/history/2026-05-04.md` (本セッション要約)
+
+### 次セッション (Phase 2)
+- `OperationTag` IntEnum + `OPERATION_TAG_NAMES` / `OPERATION_TAG_CODE_KEYS` 定義
+- auto_pilot `--operation` 必須引数
+- screen_recorder の操縦カテゴリ自動付与
+- `PilotState.operation_tag_id` 追加 (CycleState ではなく PilotState)
+
+## ひとつ前のセッション (2026-05-03) — マスターノードタグ機能の Phase 0 (設計書作成)
 
 スクリーン記録機能を main にマージ → 次の機能「マスターノードタグ機能」の **計画策定のみ** に集中したセッション。実装には着手せず、Phase 0 (設計書作成) のみを完了。
 
