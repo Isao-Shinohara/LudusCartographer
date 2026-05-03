@@ -12,6 +12,7 @@ cross_session_merger.py — クロスセッションマージ
 """
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from datetime import datetime
@@ -49,6 +50,54 @@ class CrossSessionMerger:
 
     def close(self) -> None:
         self._conn.close()
+
+    # ─── タグ機能フック (Phase 1) ────────────────────
+    # 設計書: docs/design/master_node_tags.md §21 ルール 5
+    # 詳細計画: docs/design/master_node_tags_phase1.md §5
+
+    def _record_rep_change_history(
+        self, master_fp: str, old_screen_id, new_screen_id,
+    ) -> None:
+        """代表変更を lc_master_node_tag_history に記録する。
+
+        現在付与されている全タグ (auto_pilot/manual/gemini) を old_tag_ids に保存。
+        version ごとに 1 行記録 (タグ付与は version_id 単位のため)。
+        付与タグが 0 件のノードでは何も記録しない。
+        """
+        versions = self._conn.execute(
+            "SELECT DISTINCT version_id FROM lc_master_node_tags"
+            " WHERE master_fp = ?",
+            (master_fp,),
+        ).fetchall()
+        for row in versions:
+            vid = row["version_id"] if isinstance(row, sqlite3.Row) else row[0]
+            tag_rows = self._conn.execute(
+                "SELECT tag_id FROM lc_master_node_tags"
+                " WHERE master_fp = ? AND version_id = ?",
+                (master_fp, vid),
+            ).fetchall()
+            old_tag_ids = json.dumps([
+                (r["tag_id"] if isinstance(r, sqlite3.Row) else r[0])
+                for r in tag_rows
+            ])
+            self._conn.execute(
+                "INSERT INTO lc_master_node_tag_history"
+                " (master_fp, version_id, event_type,"
+                "  old_screen_id, new_screen_id, old_tag_ids)"
+                " VALUES (?, ?, 'representative_changed', ?, ?, ?)",
+                (master_fp, vid, old_screen_id, new_screen_id, old_tag_ids),
+            )
+
+    def _cleanup_gemini_tags_on_rep_change(self, master_fp: str) -> None:
+        """代表変更時に assigned_by='gemini' のタグだけ物理削除する。
+
+        auto_pilot / manual は保持 (= ユーザー判断と操縦履歴は代表に依存しない)。
+        """
+        self._conn.execute(
+            "DELETE FROM lc_master_node_tags"
+            " WHERE master_fp = ? AND assigned_by = 'gemini'",
+            (master_fp,),
+        )
 
     # ─── メインエントリ ──────────────────────────────
 
@@ -678,6 +727,11 @@ class CrossSessionMerger:
                     (orph["master_fp"],),
                 ).fetchone()
                 new_id = alt["id"] if alt else None
+                # タグ機能: 代表変更を履歴記録 + Gemini タグ削除 (Phase 1)
+                self._record_rep_change_history(
+                    orph["master_fp"], orph["representative_screen_id"], new_id,
+                )
+                self._cleanup_gemini_tags_on_rep_change(orph["master_fp"])
                 self._conn.execute(
                     "UPDATE lc_master_nodes SET representative_screen_id = ?"
                     " WHERE master_fp = ? AND version_id = ?",
