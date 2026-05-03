@@ -262,6 +262,167 @@ class BatchProcessor:
         )
         self._conn.commit()
 
+        # ── タグ機能 (Phase 1) ─────────────────────────────
+        # 設計書: docs/design/master_node_tags.md
+        # 詳細計画: docs/design/master_node_tags_phase1.md
+        self._migrate_tags()
+
+    def _migrate_tags(self) -> None:
+        """タグ機能の 5 テーブル + index + 初期データを作成する (冪等)。"""
+        # 1. lc_tags — タグ定義
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS lc_tags (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                code_key    TEXT,
+                name        TEXT NOT NULL,
+                tag_type    TEXT NOT NULL CHECK (tag_type IN ('operation', 'scene', 'sub_scene')),
+                description TEXT,
+                color       TEXT,
+                sort_order  INTEGER DEFAULT 0,
+                is_system   INTEGER DEFAULT 0,
+                created_at  TEXT DEFAULT (datetime('now')),
+                updated_at  TEXT,
+                is_deleted  INTEGER DEFAULT 0
+            )
+        """)
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tags_type"
+            " ON lc_tags(tag_type, is_deleted)"
+        )
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_code_key_active"
+            " ON lc_tags(code_key)"
+            " WHERE code_key IS NOT NULL AND is_deleted = 0"
+        )
+
+        # 2. lc_master_node_tags — タグ付与
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS lc_master_node_tags (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                master_fp    TEXT NOT NULL,
+                version_id   INTEGER NOT NULL,
+                tag_id       INTEGER NOT NULL,
+                assigned_by  TEXT NOT NULL CHECK (assigned_by IN ('auto_pilot', 'gemini', 'manual')),
+                confidence   REAL,
+                assigned_at  TEXT DEFAULT (datetime('now')),
+                UNIQUE(master_fp, version_id, tag_id)
+            )
+        """)
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mnt_master"
+            " ON lc_master_node_tags(master_fp, version_id)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mnt_tag"
+            " ON lc_master_node_tags(tag_id)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mnt_assigned_by"
+            " ON lc_master_node_tags(assigned_by)"
+        )
+
+        # 3. lc_tag_judgments — Gemini 判定キャッシュ (P3 で使用)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS lc_tag_judgments (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                master_fp    TEXT NOT NULL,
+                tag_type     TEXT NOT NULL CHECK (tag_type IN ('scene', 'sub_scene')),
+                prompt_hash  TEXT NOT NULL,
+                result_json  TEXT NOT NULL,
+                model        TEXT NOT NULL,
+                judged_at    TEXT DEFAULT (datetime('now')),
+                UNIQUE(master_fp, tag_type, prompt_hash, model)
+            )
+        """)
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tj_master"
+            " ON lc_tag_judgments(master_fp, tag_type)"
+        )
+
+        # 4. lc_master_node_tag_history — 代表変更履歴
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS lc_master_node_tag_history (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                master_fp       TEXT NOT NULL,
+                version_id      INTEGER NOT NULL,
+                event_type      TEXT NOT NULL,
+                old_screen_id   INTEGER,
+                new_screen_id   INTEGER,
+                old_tag_ids     TEXT,
+                new_tag_ids     TEXT,
+                note            TEXT,
+                created_at      TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mnth_master"
+            " ON lc_master_node_tag_history(master_fp, version_id)"
+        )
+
+        # 5. lc_tag_prompts — プロンプトテンプレート (P3 で使用)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS lc_tag_prompts (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                tag_type    TEXT NOT NULL UNIQUE CHECK (tag_type IN ('scene', 'sub_scene')),
+                prompt_text TEXT NOT NULL,
+                is_default  INTEGER DEFAULT 0,
+                updated_at  TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
+        self._conn.commit()
+
+        # ── 初期データ (シーン 11 / 詳細 9) ─────────────────
+        # (name, description, color, sort_order)
+        INITIAL_SCENE_TAGS = [
+            ("ホーム", "メインメニュー画面、各種機能のハブ", "#42A5F5", 0),
+            ("クエスト", "ステージ選択画面、難易度や報酬が表示される", "#66BB6A", 1),
+            ("バトル", "戦闘画面、AUTO/通常攻撃/スキル等の操作 UI が見える", "#EF5350", 2),
+            ("ADV", "キャラクター会話シーン、立ち絵 + テキストウィンドウ", "#AB47BC", 3),
+            ("動画", "プリレンダリングされたムービー再生中", "#7E57C2", 4),
+            ("ガチャ", "ガチャ演出 + 結果画面", "#FFCA28", 5),
+            ("ショップ", "アイテム購入・パック選択画面", "#FF7043", 6),
+            ("ロード", "ローディング画面、進捗バー表示", "#78909C", 7),
+            ("メニュー", "サブメニュー (オプション/設定/プロフィール)", "#26A69A", 8),
+            ("3D 探索", "3D ワールド内の移動・調査", "#5C6BC0", 9),
+            ("その他", "上記いずれにも当てはまらない画面", "#BDBDBD", 99),
+        ]
+        INITIAL_SUB_SCENE_TAGS = [
+            ("ダイアログ", "OK/キャンセル/はい/いいえ等の操作モーダル", "#90A4AE", 0),
+            ("ミニ会話", "短いポップアップ会話 (NPC 等)", "#A1887F", 1),
+            ("ログインボーナス", "毎日のログイン報酬受け取り画面", "#FFD54F", 2),
+            ("リザルト", "バトル/クエスト終了後の報酬一覧", "#81C784", 3),
+            ("お知らせ", "メンテナンス・イベント告知ポップアップ", "#64B5F6", 4),
+            ("チュートリアル説明", "初回プレイ向けの操作ガイド", "#BA68C8", 5),
+            ("メニュー画面", "ハンバーガーメニュー等の補助 UI", "#4DB6AC", 6),
+            ("イベント告知", "新イベント開始のバナー / モーダル", "#F06292", 7),
+            ("ダウンロード", "追加データのダウンロード進捗画面", "#9575CD", 8),
+        ]
+
+        # `(name, tag_type)` の DB UNIQUE はないため WHERE NOT EXISTS で重複防止
+        for name, desc, color, order in INITIAL_SCENE_TAGS:
+            self._conn.execute(
+                "INSERT INTO lc_tags (name, tag_type, description, color, sort_order, is_system)"
+                " SELECT ?, 'scene', ?, ?, ?, 0"
+                " WHERE NOT EXISTS ("
+                "   SELECT 1 FROM lc_tags"
+                "    WHERE name = ? AND tag_type = 'scene' AND is_deleted = 0"
+                " )",
+                (name, desc, color, order, name),
+            )
+        for name, desc, color, order in INITIAL_SUB_SCENE_TAGS:
+            self._conn.execute(
+                "INSERT INTO lc_tags (name, tag_type, description, color, sort_order, is_system)"
+                " SELECT ?, 'sub_scene', ?, ?, ?, 0"
+                " WHERE NOT EXISTS ("
+                "   SELECT 1 FROM lc_tags"
+                "    WHERE name = ? AND tag_type = 'sub_scene' AND is_deleted = 0"
+                " )",
+                (name, desc, color, order, name),
+            )
+        self._conn.commit()
+        logger.info("[BatchProcessor] migrate: tag tables ready (5 tables + initial data)")
+
     # ─── Phase 1: グルーピング + ラベル付け ────────────
 
     def group(self, session_id: Optional[str] = None) -> int:
