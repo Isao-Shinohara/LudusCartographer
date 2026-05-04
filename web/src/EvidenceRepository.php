@@ -8,7 +8,7 @@ use PDO;
 
 /**
  * SQLite evidence DB (crawler/storage/ludus.db) 用リポジトリ。
- * ダッシュボード backend (search.php) で使用。
+ * ダッシュボード backend (api/dashboard.php) で使用。
  */
 class EvidenceRepository
 {
