@@ -28,11 +28,13 @@
 ### 別タスク
 - `web/public/api/search.php` の **ファイル分割 / リネーム** (45 actions のままで稼働中、見通し改善は別 PR で段階的に)
 - 実機検証 (auto_pilot 起動 + 周回 1 回 + Tag タブ確認) ← ユーザー作業
-- `test_graph_build.py` の壊れテスト修復 (graph build ロジックの差分、深い調査が必要)
-- `test_unmerge.py::test_unmerge_edges_recalculated` 修復 (edge recalc ロジックの差分)
 
 ### 完了済 (本セッション内)
 - ✅ 旧 Search 機能の撤去 (top-nav の Search ページ + ScreenRepository + 旧 detail/search action) — PR #4 に同梱
+- ✅ `test_graph_build.py` 4 件修復 (skeletal lc_screens に is_representative + edge_type 追加、_insert_screen で is_representative=1 に)
+- ✅ `test_unmerge_edges_recalculated` 修復 + production バグ修正
+  - `_merge_edges` の fp_map 構築 SQL に `direct_fp_match` を追加
+  - 影響: `_add_all_as_new` 経由のマージで「既存 master fp と直接一致する session fp」を経由するエッジが失われていたバグを解消
 
 ## 最終セッション (2026-05-04) — マスターノードタグ機能 Phase 1〜4 一気通貫完了
 

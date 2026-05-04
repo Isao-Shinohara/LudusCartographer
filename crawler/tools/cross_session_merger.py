@@ -1033,10 +1033,12 @@ class CrossSessionMerger:
         fp_map: dict[str, str] = {}
         for s_fp, (m_fp, _, _) in node_mapping.items():
             fp_map[s_fp] = m_fp
-        # 新規ノード (session_fp == master_fp)
+        # 新規ノード + 直接 fp 一致 (session_fp == master_fp)
+        # direct_fp_match は AnchorMatcher が空でも fp 一致でアンカー扱いになるケース。
+        # fp_map に含めないと当該 fp を経由するエッジが失われる。
         new_nodes = self._conn.execute(
             "SELECT session_fp, master_fp FROM lc_node_mappings"
-            " WHERE session_id = ? AND match_method IN ('new', 'seed')"
+            " WHERE session_id = ? AND match_method IN ('new', 'seed', 'direct_fp_match')"
             " AND version_id = ?",
             (session_id, self._version_id),
         ).fetchall()
