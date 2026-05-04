@@ -45,6 +45,9 @@ try {
     if ($action === 'search') {
         // タグによる master_fp 検索 (Phase 5)
         handle_search($pdo);
+    } elseif ($action === 'bulk_assign') {
+        // タグ一括付与 (Phase 6)
+        handle_bulk_assign($pdo);
     } elseif ($nodeMode) {
         // ノードタグ操作 (Step 4 で実装)
         handle_node_tags($pdo, $method, $masterFp, $versionId);
@@ -470,6 +473,96 @@ function handle_search(PDO $pdo): void
         ],
     ]);
 }
+
+// ─── 一括付与 (Phase 6) ─────────────────────────────
+
+/**
+ * POST /api/tags.php?action=bulk_assign&tag_id=N&version_id=N
+ *   body: {master_fps: [...]}
+ *
+ * 指定タグを複数 master_fp に一括 INSERT OR IGNORE。
+ * シーンタグの場合は既存シーンタグを置換 + 履歴記録。
+ */
+function handle_bulk_assign(PDO $pdo): void
+{
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        tag_error('invalid_request', 405, 'POST required');
+    }
+    $tagId = (int)($_GET['tag_id'] ?? 0);
+    $versionId = (int)($_GET['version_id'] ?? 1);
+    if ($tagId <= 0) {
+        tag_error('validation_error', 400, 'tag_id is required');
+    }
+    $body = tag_read_body();
+    $masterFps = $body['master_fps'] ?? [];
+    if (!is_array($masterFps) || count($masterFps) === 0) {
+        tag_error('validation_error', 400, 'master_fps array is required');
+    }
+    if (count($masterFps) > 10000) {
+        tag_error('validation_error', 400, 'too many master_fps (max 10000)');
+    }
+
+    // タグ存在 + 種別取得
+    $stmt = $pdo->prepare(
+        "SELECT id, tag_type, is_system, is_deleted FROM lc_tags WHERE id = ?"
+    );
+    $stmt->execute([$tagId]);
+    $tag = $stmt->fetch();
+    if (!$tag || (int)$tag['is_deleted'] === 1) {
+        tag_error('not_found', 404, "tag id {$tagId} not found or deleted");
+    }
+    if ((int)$tag['is_system'] === 1) {
+        tag_error('system_tag_modification_forbidden', 403,
+            'is_system=1 tag (operation category) cannot be bulk-assigned');
+    }
+
+    $tagType = $tag['tag_type'];
+    $assigned = 0;
+    $skipped = 0;
+
+    $pdo->beginTransaction();
+    try {
+        foreach ($masterFps as $fp) {
+            if (!is_string($fp) || $fp === '') { $skipped++; continue; }
+
+            // master_fp が実在するか確認
+            $stmt = $pdo->prepare(
+                "SELECT 1 FROM lc_master_nodes WHERE master_fp = ? AND version_id = ?"
+            );
+            $stmt->execute([$fp, $versionId]);
+            if (!$stmt->fetchColumn()) { $skipped++; continue; }
+
+            // シーンタグなら既存を置換
+            if ($tagType === 'scene') {
+                replace_scene_tag($pdo, $fp, $versionId, $tagId);
+            }
+
+            $ins = $pdo->prepare(
+                "INSERT OR IGNORE INTO lc_master_node_tags"
+                . " (master_fp, version_id, tag_id, assigned_by, confidence, assigned_at)"
+                . " VALUES (?, ?, ?, 'manual', 1.0, datetime('now'))"
+            );
+            $ins->execute([$fp, $versionId, $tagId]);
+            if ($ins->rowCount() > 0) {
+                $assigned++;
+            } else {
+                $skipped++;
+            }
+        }
+        $pdo->commit();
+    } catch (\Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+    tag_ok([
+        'assigned' => $assigned,
+        'skipped' => $skipped,
+        'total_requested' => count($masterFps),
+        'tag_id' => $tagId,
+        'tag_type' => $tagType,
+    ]);
+}
+
 
 function parse_id_list(string $raw): array
 {

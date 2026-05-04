@@ -33,7 +33,8 @@ def _setup_db(db_path: Path):
             ocr_text TEXT,
             discovered_at TEXT,
             thumbnail_path TEXT,
-            scene TEXT
+            scene TEXT,
+            is_representative INTEGER DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS lc_tappable_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,6 +53,7 @@ def _setup_db(db_path: Path):
             tap_y INTEGER,
             tap_label TEXT,
             action_name TEXT,
+            edge_type TEXT DEFAULT 'tap',
             discovered_at TEXT
         );
         INSERT INTO lc_sessions (session_id, started_at) VALUES ('s1', '2026-01-01');
@@ -60,10 +62,11 @@ def _setup_db(db_path: Path):
 
 
 def _insert_screen(conn, fp, scene="MENU", phash=None):
-    """テスト用画面を挿入し、ID を返す。"""
+    """テスト用画面を挿入し、ID を返す。build_graph は is_representative=1 のみ対象。"""
     cur = conn.execute(
-        "INSERT INTO lc_screens (session_id, fingerprint, title, scene, phash, discovered_at)"
-        " VALUES ('s1', ?, ?, ?, ?, '2026-01-01')",
+        "INSERT INTO lc_screens"
+        " (session_id, fingerprint, title, scene, phash, discovered_at, is_representative)"
+        " VALUES ('s1', ?, ?, ?, ?, '2026-01-01', 1)",
         (fp, f"Title_{fp}", scene, phash or fp),
     )
     conn.commit()
