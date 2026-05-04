@@ -15,61 +15,22 @@ test.describe('Tag Phase 6 — polish', () => {
         await page.goto('/dashboard.php');
     });
 
-    test('シーン/詳細タグ行に 🔥 一括 ボタンが表示される', async ({ page }) => {
+    test('Tag タブのシーン/詳細/操縦カテゴリ行には 🔥 一括 ボタンを表示しない', async ({ page }) => {
+        // 一括付与は将来 Final タブに移設予定。現状 Tag タブからは撤去。
+        // モーダル / API は残置 (再利用のため)。
         await page.click('#tab-tags');
-        await page.click('#tag-subtab-scene');
-        await page.waitForSelector('#tag-list-scene .tag-bulk-btn', { timeout: 5000 });
-        const bulkBtns = page.locator('#tag-list-scene .tag-bulk-btn');
-        const cnt = await bulkBtns.count();
-        expect(cnt).toBeGreaterThanOrEqual(11);
-
-        await page.click('#tag-subtab-sub_scene');
-        await page.waitForSelector('#tag-list-sub_scene .tag-bulk-btn', { timeout: 5000 });
-        const subBulkBtns = page.locator('#tag-list-sub_scene .tag-bulk-btn');
-        const cnt2 = await subBulkBtns.count();
-        expect(cnt2).toBeGreaterThanOrEqual(9);
+        for (const sub of ['scene', 'sub_scene', 'operation']) {
+            await page.click(`#tag-subtab-${sub}`);
+            const bulkBtns = page.locator(`#tag-list-${sub} .tag-bulk-btn`);
+            await expect(bulkBtns).toHaveCount(0);
+        }
     });
 
-    test('操縦カテゴリタグ行には 🔥 一括 ボタンが表示されない (is_system=1)', async ({ page }) => {
-        await page.click('#tab-tags');
-        await page.click('#tag-subtab-operation');
-        // 操縦カテゴリには bulk 不可なのでボタンなし
-        const bulkBtns = page.locator('#tag-list-operation .tag-bulk-btn');
-        await expect(bulkBtns).toHaveCount(0);
-    });
-
-    test('🔥 一括ボタン押下で確認モーダルが開く', async ({ page }) => {
-        await page.click('#tab-tags');
-        await page.click('#tag-subtab-scene');
-        await page.waitForSelector('#tag-list-scene .tag-bulk-btn', { timeout: 5000 });
-        await page.locator('#tag-list-scene .tag-bulk-btn').first().click();
-        const modal = page.locator('#tag-bulk-modal');
-        await expect(modal).toBeVisible();
-        // 警告文が出る
-        await expect(modal).toContainText('注意');
-        await expect(modal).toContainText('対象');
-        await expect(modal).toContainText('履歴記録');
-    });
-
-    test('一括付与モーダルにキャンセルボタン', async ({ page }) => {
-        await page.click('#tab-tags');
-        await page.click('#tag-subtab-scene');
-        await page.waitForSelector('#tag-list-scene .tag-bulk-btn', { timeout: 5000 });
-        await page.locator('#tag-list-scene .tag-bulk-btn').first().click();
-        await page.click('#tag-bulk-cancel');
-        await expect(page.locator('#tag-bulk-modal')).toBeHidden();
-    });
-
-    test('一括付与モーダル外クリックで閉じる', async ({ page }) => {
-        await page.click('#tab-tags');
-        await page.click('#tag-subtab-scene');
-        await page.waitForSelector('#tag-list-scene .tag-bulk-btn', { timeout: 5000 });
-        await page.locator('#tag-list-scene .tag-bulk-btn').first().click();
-        await expect(page.locator('#tag-bulk-modal')).toBeVisible();
-        // モーダル背景をクリック
-        await page.locator('#tag-bulk-modal').click({ position: { x: 10, y: 10 } });
-        await expect(page.locator('#tag-bulk-modal')).toBeHidden();
-    });
+    // 一括付与モーダルの動作確認テスト群は Final タブ移設時に書き直す。
+    // 現状はトリガーボタンが Tag タブ側にないため skip。
+    test.skip('🔥 一括ボタン押下で確認モーダルが開く', async () => {});
+    test.skip('一括付与モーダルにキャンセルボタン', async () => {});
+    test.skip('一括付与モーダル外クリックで閉じる', async () => {});
 
     test('操縦カテゴリサブタブで is_deleted=1 タグも表示される (deprecated 表示)', async ({ page }) => {
         // include_deleted=1 で fetch される実装を確認するため、

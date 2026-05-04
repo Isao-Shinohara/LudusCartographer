@@ -4583,10 +4583,8 @@
             const delBtn = (isReadOnly || isSystem)
                 ? `<button class="px-2 py-1 text-xs bg-gray-800 text-gray-600 rounded cursor-not-allowed" disabled title="削除不可 (コード定義タグ)">削除</button>`
                 : `<button class="px-2 py-1 text-xs bg-red-900/40 hover:bg-red-800/60 text-red-300 rounded transition-colors tag-del-btn" data-id="${t.id}" data-name="${escapeHtml(t.name)}" data-cnt="${t.assigned_count}">削除</button>`;
-            // Phase 6: 一括付与ボタン (シーン/詳細のみ、is_system は不可)
-            const bulkBtn = (!isReadOnly && !isSystem && !isDeleted)
-                ? `<button class="px-2 py-1 text-xs bg-orange-900/50 hover:bg-orange-800/60 text-orange-300 rounded transition-colors tag-bulk-btn" data-id="${t.id}" data-name="${escapeHtml(t.name)}" data-type="${type}" title="現在の Final タブ表示中ノードに一括付与">🔥 一括</button>`
-                : '';
+            // 一括付与ボタンは Tag タブからは撤去 (将来 Final タブへ移設予定)
+            // モーダル / API は残置: #tag-bulk-modal + tags.php?action=bulk_assign
             const rowOpacity = isDeleted ? 'opacity-40' : '';
             return `
                 <div class="flex items-center gap-3 p-2 bg-gray-900/40 hover:bg-gray-800/60 border border-gray-800 rounded ${rowOpacity}">
@@ -4597,7 +4595,7 @@
                     <span class="text-xs text-gray-500">[${t.assigned_count}] 件</span>
                     ${colorHex}
                     <span class="text-xs text-gray-700 truncate flex-1">${escapeHtml(t.description || '')}</span>
-                    <div class="flex gap-1 flex-shrink-0">${bulkBtn}${editBtn}${delBtn}</div>
+                    <div class="flex gap-1 flex-shrink-0">${editBtn}${delBtn}</div>
                 </div>
             `;
         }).join('');
