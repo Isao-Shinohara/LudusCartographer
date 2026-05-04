@@ -769,6 +769,19 @@ class ScreenRecorder:
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: v1.0.0 初期バージョン作成")
 
+        # OCR ノイズ語辞書 — background_worker の Gemini 補正で INSERT される。
+        # batch_processor の migration は周回完了後にしか走らないため、
+        # 起動時必ず実行される screen_recorder._migrate に置く必要がある。
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS lc_ocr_noise_words (
+                word TEXT PRIMARY KEY,
+                count INTEGER DEFAULT 1,
+                first_seen_at TEXT DEFAULT (datetime('now')),
+                last_seen_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        self._conn.commit()
+
     # ─── 画像保存 ─────────────────────────────────────
 
     _WEBP_QUALITY = 80
