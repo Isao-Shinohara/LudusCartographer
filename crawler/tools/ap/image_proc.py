@@ -3410,10 +3410,11 @@ _LBP_PEAK_MIN_DIST = 80
 # 検出矩形の最小画面占有率
 _LBP_MIN_SCREEN_RATIO = 0.35
 # 検出矩形が画面端から確保すべき最小マージン (px)
-# 本物の login bonus popup は中央配置で四辺に余白がある。
 # 画面端の Sobel エッジ (ROI 境界・キャラのアウトライン等) を矩形と
 # 誤判定するパターンを棄却するためのガード。
-_LBP_MIN_INSET = 40
+# 旧値 40px は本物の LB (上端 34px しかない) を棄却してしまったため
+# 20px に緩和。ADV 誤検出ケース (上端 15px / 下端 2px) は引き続き棄却。
+_LBP_MIN_INSET = 20
 
 
 def _find_projection_peaks(
