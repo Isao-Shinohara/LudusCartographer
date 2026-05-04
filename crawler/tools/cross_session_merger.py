@@ -104,11 +104,16 @@ class CrossSessionMerger:
         ``INSERT OR IGNORE`` で付与する (Phase 2)。
 
         - lc_sessions.operation_tag_id が NULL のセッションは何もしない
+        - lc_sessions に operation_tag_id 列が無い古い DB ではスキップ (no-op)
         - lc_node_mappings から (session_id → master_fp) を引いてバルク INSERT
         - UNIQUE 制約により再実行は no-op
 
         Returns: 追加された行数 (既に付与済みは含まない)
         """
+        # 古い DB スキーマには列が無い可能性があるため防衛的に
+        sess_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(lc_sessions)")}
+        if "operation_tag_id" not in sess_cols:
+            return 0
         row = self._conn.execute(
             "SELECT operation_tag_id FROM lc_sessions WHERE session_id = ?",
             (session_id,),
@@ -1028,10 +1033,12 @@ class CrossSessionMerger:
         fp_map: dict[str, str] = {}
         for s_fp, (m_fp, _, _) in node_mapping.items():
             fp_map[s_fp] = m_fp
-        # 新規ノード (session_fp == master_fp)
+        # 新規ノード + 直接 fp 一致 (session_fp == master_fp)
+        # direct_fp_match は AnchorMatcher が空でも fp 一致でアンカー扱いになるケース。
+        # fp_map に含めないと当該 fp を経由するエッジが失われる。
         new_nodes = self._conn.execute(
             "SELECT session_fp, master_fp FROM lc_node_mappings"
-            " WHERE session_id = ? AND match_method IN ('new', 'seed')"
+            " WHERE session_id = ? AND match_method IN ('new', 'seed', 'direct_fp_match')"
             " AND version_id = ?",
             (session_id, self._version_id),
         ).fetchall()

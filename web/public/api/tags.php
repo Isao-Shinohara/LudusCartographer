@@ -35,13 +35,20 @@ try {
 }
 
 $method   = tag_method();
+$action   = $_GET['action'] ?? null;
 $tagId    = isset($_GET['id']) ? (int)$_GET['id'] : null;
 $masterFp = isset($_GET['master_fp']) ? (string)$_GET['master_fp'] : null;
 $versionId = isset($_GET['version_id']) ? (int)$_GET['version_id'] : null;
 $nodeMode = $masterFp !== null && $versionId !== null;
 
 try {
-    if ($nodeMode) {
+    if ($action === 'search') {
+        // タグによる master_fp 検索 (Phase 5)
+        handle_search($pdo);
+    } elseif ($action === 'bulk_assign') {
+        // タグ一括付与 (Phase 6)
+        handle_bulk_assign($pdo);
+    } elseif ($nodeMode) {
         // ノードタグ操作 (Step 4 で実装)
         handle_node_tags($pdo, $method, $masterFp, $versionId);
     } else {
@@ -379,6 +386,197 @@ function replace_scene_tag(PDO $pdo, string $masterFp, int $versionId, int $newT
     );
     $del->execute([':fp' => $masterFp, ':vid' => $versionId]);
 }
+
+// ─── タグ検索 (Phase 5) ─────────────────────────────
+
+/**
+ * GET /api/tags.php?action=search&version_id=N
+ *   &op_ids=1,2&scene_ids=3,4&sub_ids=12,13
+ *
+ * 種別ごとに OR、種別間で AND の絞り込み。
+ * 各種別が空 (パラメータ未指定) ならその種別の制約なし。
+ */
+function handle_search(PDO $pdo): void
+{
+    $versionId = (int)($_GET['version_id'] ?? 1);
+    $opIds = parse_id_list($_GET['op_ids'] ?? '');
+    $sceneIds = parse_id_list($_GET['scene_ids'] ?? '');
+    $subIds = parse_id_list($_GET['sub_ids'] ?? '');
+
+    // 全種別空 → 全 master_fp
+    $tagsByType = array_filter([
+        'operation' => $opIds,
+        'scene' => $sceneIds,
+        'sub_scene' => $subIds,
+    ], fn($v) => !empty($v));
+
+    if (empty($tagsByType)) {
+        $stmt = $pdo->prepare(
+            "SELECT master_fp FROM lc_master_nodes WHERE version_id = ?"
+            . " ORDER BY sort_order, master_fp"
+        );
+        $stmt->execute([$versionId]);
+        $fps = array_column($stmt->fetchAll(), 'master_fp');
+        tag_ok([
+            'master_fps' => $fps,
+            'count' => count($fps),
+            'filter' => [
+                'op_ids' => $opIds, 'scene_ids' => $sceneIds, 'sub_ids' => $subIds,
+            ],
+        ]);
+    }
+
+    // 種別ごとに master_fp 集合を取得 → 共通集合
+    $sets = [];
+    foreach ($tagsByType as $tagType => $ids) {
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $sql = "SELECT DISTINCT mnt.master_fp FROM lc_master_node_tags mnt"
+            . " JOIN lc_tags t ON t.id = mnt.tag_id"
+            . " WHERE mnt.version_id = ?"
+            . "   AND mnt.tag_id IN ({$placeholders})"
+            . "   AND t.tag_type = ?"
+            . "   AND t.is_deleted = 0";
+        $params = array_merge([$versionId], $ids, [$tagType]);
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $set = [];
+        foreach ($stmt->fetchAll() as $row) $set[$row['master_fp']] = true;
+        $sets[] = $set;
+    }
+
+    // 共通集合を取る
+    $matched = $sets[0] ?? [];
+    for ($i = 1; $i < count($sets); $i++) {
+        $matched = array_intersect_key($matched, $sets[$i]);
+    }
+
+    if (empty($matched)) {
+        tag_ok(['master_fps' => [], 'count' => 0]);
+    }
+
+    // sort_order 順に並べ替え
+    $fps = array_keys($matched);
+    $placeholders = implode(',', array_fill(0, count($fps), '?'));
+    $stmt = $pdo->prepare(
+        "SELECT master_fp FROM lc_master_nodes"
+        . " WHERE master_fp IN ({$placeholders}) AND version_id = ?"
+        . " ORDER BY sort_order, master_fp"
+    );
+    $stmt->execute(array_merge($fps, [$versionId]));
+    $sorted = array_column($stmt->fetchAll(), 'master_fp');
+
+    tag_ok([
+        'master_fps' => $sorted,
+        'count' => count($sorted),
+        'filter' => [
+            'op_ids' => $opIds, 'scene_ids' => $sceneIds, 'sub_ids' => $subIds,
+        ],
+    ]);
+}
+
+// ─── 一括付与 (Phase 6) ─────────────────────────────
+
+/**
+ * POST /api/tags.php?action=bulk_assign&tag_id=N&version_id=N
+ *   body: {master_fps: [...]}
+ *
+ * 指定タグを複数 master_fp に一括 INSERT OR IGNORE。
+ * シーンタグの場合は既存シーンタグを置換 + 履歴記録。
+ */
+function handle_bulk_assign(PDO $pdo): void
+{
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        tag_error('invalid_request', 405, 'POST required');
+    }
+    $tagId = (int)($_GET['tag_id'] ?? 0);
+    $versionId = (int)($_GET['version_id'] ?? 1);
+    if ($tagId <= 0) {
+        tag_error('validation_error', 400, 'tag_id is required');
+    }
+    $body = tag_read_body();
+    $masterFps = $body['master_fps'] ?? [];
+    if (!is_array($masterFps) || count($masterFps) === 0) {
+        tag_error('validation_error', 400, 'master_fps array is required');
+    }
+    if (count($masterFps) > 10000) {
+        tag_error('validation_error', 400, 'too many master_fps (max 10000)');
+    }
+
+    // タグ存在 + 種別取得
+    $stmt = $pdo->prepare(
+        "SELECT id, tag_type, is_system, is_deleted FROM lc_tags WHERE id = ?"
+    );
+    $stmt->execute([$tagId]);
+    $tag = $stmt->fetch();
+    if (!$tag || (int)$tag['is_deleted'] === 1) {
+        tag_error('not_found', 404, "tag id {$tagId} not found or deleted");
+    }
+    if ((int)$tag['is_system'] === 1) {
+        tag_error('system_tag_modification_forbidden', 403,
+            'is_system=1 tag (operation category) cannot be bulk-assigned');
+    }
+
+    $tagType = $tag['tag_type'];
+    $assigned = 0;
+    $skipped = 0;
+
+    $pdo->beginTransaction();
+    try {
+        foreach ($masterFps as $fp) {
+            if (!is_string($fp) || $fp === '') { $skipped++; continue; }
+
+            // master_fp が実在するか確認
+            $stmt = $pdo->prepare(
+                "SELECT 1 FROM lc_master_nodes WHERE master_fp = ? AND version_id = ?"
+            );
+            $stmt->execute([$fp, $versionId]);
+            if (!$stmt->fetchColumn()) { $skipped++; continue; }
+
+            // シーンタグなら既存を置換
+            if ($tagType === 'scene') {
+                replace_scene_tag($pdo, $fp, $versionId, $tagId);
+            }
+
+            $ins = $pdo->prepare(
+                "INSERT OR IGNORE INTO lc_master_node_tags"
+                . " (master_fp, version_id, tag_id, assigned_by, confidence, assigned_at)"
+                . " VALUES (?, ?, ?, 'manual', 1.0, datetime('now'))"
+            );
+            $ins->execute([$fp, $versionId, $tagId]);
+            if ($ins->rowCount() > 0) {
+                $assigned++;
+            } else {
+                $skipped++;
+            }
+        }
+        $pdo->commit();
+    } catch (\Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+    tag_ok([
+        'assigned' => $assigned,
+        'skipped' => $skipped,
+        'total_requested' => count($masterFps),
+        'tag_id' => $tagId,
+        'tag_type' => $tagType,
+    ]);
+}
+
+
+function parse_id_list(string $raw): array
+{
+    if (trim($raw) === '') return [];
+    $out = [];
+    foreach (explode(',', $raw) as $part) {
+        $part = trim($part);
+        if ($part !== '' && ctype_digit($part)) {
+            $out[] = (int)$part;
+        }
+    }
+    return $out;
+}
+
 
 function unassign_node_tag(PDO $pdo, string $masterFp, int $versionId, int $tagId): void
 {

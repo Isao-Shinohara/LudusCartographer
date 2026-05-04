@@ -1,10 +1,43 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-05-04 (Phase 4 完了時点で更新)
+最終更新: 2026-05-04 (Phase 6 + Search 機能撤去)
 
 ## 現在のブランチ
-- `feature/master-node-tags` (main から 8 コミット先行、Phase 0〜4 全完了)
+- `feature/master-node-tags` (main から 11 コミット先行、Phase 0〜4 完了 → **PR #2**)
+- `feature/tag-search` (`feature/master-node-tags` から 2 コミット先行、Phase 5 + doc 更新 → **PR #3 chained**)
+- `feature/tag-polish` (`feature/tag-search` から 1 コミット先行、Phase 6 polish → **PR #4 chained**)
 - `feature/screen-recorder` は **PR #1 でマージ済み・削除済み** (2026-05-02)
+
+## オープン中の PR
+
+| # | URL | 内容 | 依存 |
+|---|---|---|---|
+| #2 | https://github.com/Isao-Shinohara/LudusCartographer/pull/2 | Phases 1-4: タグ機能基盤 (定義・付与・編集・Gemini 判定) | なし → main |
+| #3 | https://github.com/Isao-Shinohara/LudusCartographer/pull/3 | Phase 5: タグによる Master ノード絞り込み検索 | #2 が base |
+| #4 | TBD | Phase 6 polish: 一括付与 / deprecated 表示 / 確信度 UI / 事前壊れテスト修復 | #3 が base |
+
+マージ順序: #2 → #3 → #4 (上流をマージするごとに下流の base が自動的に main に更新される)。
+
+## まだ残っているタスク (本セッション完了後)
+
+### Phase 7+ (将来)
+- 前後ノード情報の Gemini ヒント (案 A: タグテキスト → 案 B: 画像、§11)
+- 新タグ追加時の差分判定モード (Gemini API 料金次第、§11)
+- 一括手動付与の操縦カテゴリ対応 (現状は scene/sub_scene のみ、§11 で「将来拡張」)
+
+### 別タスク
+- 実機検証 (auto_pilot 起動 + 周回 1 回 + Tag タブ確認) ← ユーザー作業
+
+### 完了済 (本セッション内)
+- ✅ 旧 Search 機能の撤去 (top-nav の Search ページ + ScreenRepository + 旧 detail/search action) — PR #4 に同梱
+- ✅ `test_graph_build.py` 4 件修復 (skeletal lc_screens に is_representative + edge_type 追加、_insert_screen で is_representative=1 に)
+- ✅ `test_unmerge_edges_recalculated` 修復 + production バグ修正
+  - `_merge_edges` の fp_map 構築 SQL に `direct_fp_match` を追加
+  - 影響: `_add_all_as_new` 経由のマージで「既存 master fp と直接一致する session fp」を経由するエッジが失われていたバグを解消
+- ✅ `api/search.php` を `api/dashboard.php` (ルーター) + `_common.php` (共通初期化) + 9 個の category handlers にリファクタ
+  - handlers/: system / versions / games / sessions / screens / merge / ocr / api_usage / graph
+  - dashboard.html.twig + graph.html.twig の API_BASE/API を `api/dashboard.php` に更新
+  - 既存 actions の挙動は完全互換 (Playwright 46 件全 pass)
 
 ## 最終セッション (2026-05-04) — マスターノードタグ機能 Phase 1〜4 一気通貫完了
 

@@ -77,7 +77,8 @@ def _setup_db(db_path: Path) -> sqlite3.Connection:
             is_group_representative BOOLEAN DEFAULT 0,
             ocr_text_manual TEXT,
             title_manual TEXT,
-            manual_edited_at TEXT
+            manual_edited_at TEXT,
+            version_id INTEGER DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS lc_master_edges (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,6 +90,7 @@ def _setup_db(db_path: Path) -> sqlite3.Connection:
             count INTEGER DEFAULT 1,
             first_seen_at TEXT,
             last_seen_at TEXT,
+            version_id INTEGER DEFAULT 1,
             UNIQUE(from_master_fp, to_master_fp, tap_label)
         );
         CREATE TABLE IF NOT EXISTS lc_node_mappings (
@@ -98,6 +100,7 @@ def _setup_db(db_path: Path) -> sqlite3.Connection:
             master_fp TEXT NOT NULL,
             match_method TEXT,
             match_score REAL,
+            version_id INTEGER DEFAULT 1,
             UNIQUE(session_id, session_fp)
         );
         CREATE TABLE IF NOT EXISTS lc_session_graphs (
@@ -107,7 +110,8 @@ def _setup_db(db_path: Path) -> sqlite3.Connection:
             edge_count INTEGER DEFAULT 0,
             scc_count INTEGER DEFAULT 0,
             home_fp TEXT,
-            built_at TEXT
+            built_at TEXT,
+            version_id INTEGER DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS lc_scc_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,7 +124,18 @@ def _setup_db(db_path: Path) -> sqlite3.Connection:
             value TEXT,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS lc_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            is_active INTEGER DEFAULT 0,
+            is_deleted INTEGER DEFAULT 0
+        );
     """)
+    # 必須: アクティブバージョンを 1 件作成 (CrossSessionMerger.__init__ が依存)
+    conn.execute(
+        "INSERT OR IGNORE INTO lc_versions (id, name, is_active) VALUES (1, 'v1.0.0', 1)"
+    )
     conn.commit()
     return conn
 

@@ -68,6 +68,10 @@
 </div>
 <!-- Final 採用/不採用アクションバー (2段目) -->
 <div id="final-actions" class="hidden flex items-center justify-end gap-2 pb-2">
+    <button id="tag-filter-btn" class="px-3 py-1 bg-purple-900/60 hover:bg-purple-800/70 text-purple-200 text-xs rounded transition-colors flex items-center gap-1" title="タグで絞り込み">
+        <span>🏷</span><span>タグ絞り込み</span>
+        <span id="tag-filter-badge" class="hidden ml-1 px-1.5 py-0.5 bg-purple-600 text-white text-[10px] rounded-full">0</span>
+    </button>
     <span id="final-select-hint" class="text-xs text-gray-500">Shift+クリックで選択</span>
     <button id="final-merge-group-btn" class="px-3 py-1 bg-violet-900/60 hover:bg-violet-800/70 text-violet-200 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>⊕ 統合</button>
     <button id="final-adopt-btn" class="px-3 py-1 bg-emerald-900/70 hover:bg-emerald-800/80 text-emerald-200 text-xs rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled>✓ 採用</button>
@@ -307,6 +311,63 @@
     </div>
 </div>
 
+<!-- 一括付与モーダル (Phase 6) -->
+<div id="tag-bulk-modal" class="fixed inset-0 bg-black/60 z-[60] hidden items-center justify-center">
+    <div class="bg-gray-900 rounded-lg p-6 w-[32rem] max-w-full border border-gray-700">
+        <h3 class="text-lg font-bold text-orange-300 mb-3">🔥 タグ一括付与</h3>
+        <div id="tag-bulk-summary" class="text-sm text-gray-300 mb-3"></div>
+        <div class="bg-gray-800/60 border border-gray-700 rounded p-3 mb-4 text-xs text-gray-400">
+            <div class="font-bold text-amber-300 mb-1">⚠ 注意</div>
+            <ul class="list-disc list-inside space-y-1">
+                <li>対象は <span id="tag-bulk-target-count" class="text-white">0</span> 件のマスターノード</li>
+                <li>シーンタグの場合、既存のシーンタグは置換されます (履歴記録あり)</li>
+                <li>詳細タグの場合、既存タグに追加されます</li>
+                <li><code>assigned_by='manual'</code> として付与 (Gemini 再判定で保護)</li>
+            </ul>
+        </div>
+        <div id="tag-bulk-error" class="hidden text-xs text-red-400 mb-2"></div>
+        <div class="flex justify-end gap-2">
+            <button id="tag-bulk-cancel" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">キャンセル</button>
+            <button id="tag-bulk-execute" class="px-3 py-1.5 bg-orange-700 hover:bg-orange-600 text-white text-sm rounded">付与実行</button>
+        </div>
+    </div>
+</div>
+
+<!-- タグ絞り込みモーダル (Phase 5) -->
+<div id="tag-filter-modal" class="fixed inset-0 bg-black/60 z-[60] hidden items-center justify-center">
+    <div class="bg-gray-900 rounded-lg p-6 w-[44rem] max-w-full max-h-[90vh] flex flex-col border border-gray-700">
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-bold text-purple-300">🏷 タグで絞り込み</h3>
+            <button id="tag-filter-close" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+        </div>
+        <div class="text-xs text-gray-500 mb-3">
+            種別ごとに OR、種別間で AND の絞り込み。各種別の選択 0 件 = 制約なし。
+        </div>
+        <div class="flex-1 overflow-auto space-y-4">
+            <div data-tag-type="operation">
+                <div class="text-sm font-bold text-amber-300 mb-2">操縦カテゴリ</div>
+                <div class="tag-filter-list flex flex-wrap gap-2"></div>
+            </div>
+            <div data-tag-type="scene">
+                <div class="text-sm font-bold text-cyan-300 mb-2">シーン</div>
+                <div class="tag-filter-list flex flex-wrap gap-2"></div>
+            </div>
+            <div data-tag-type="sub_scene">
+                <div class="text-sm font-bold text-emerald-300 mb-2">詳細</div>
+                <div class="tag-filter-list flex flex-wrap gap-2"></div>
+            </div>
+        </div>
+        <div class="flex justify-between gap-2 mt-4 pt-3 border-t border-gray-800">
+            <div id="tag-filter-result-count" class="text-xs text-gray-400 self-center"></div>
+            <div class="flex gap-2">
+                <button id="tag-filter-clear" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">クリア</button>
+                <button id="tag-filter-cancel" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">キャンセル</button>
+                <button id="tag-filter-apply" class="px-3 py-1.5 bg-purple-700 hover:bg-purple-600 text-white text-sm rounded">適用</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- テスト判定結果モーダル -->
 <div id="prompt-test-modal" class="fixed inset-0 bg-black/70 z-[70] hidden items-center justify-center">
     <div class="bg-gray-900 rounded-lg p-6 w-[48rem] max-w-full max-h-[90vh] flex flex-col border border-gray-700">
@@ -459,7 +520,7 @@
     if (_gh && _ds) { _ds.insertBefore(_gh, _ds.firstChild); }
 
     const POLL_INTERVAL = 3000;
-    const API_BASE = 'api/search.php';
+    const API_BASE = 'api/dashboard.php';
     const grid = document.getElementById('grid');
     const stats = document.getElementById('stats');
     const modal = document.getElementById('modal');
@@ -886,6 +947,11 @@
             filtered = baseScreens.filter(s => s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative);
         } else if (filter === 'pending') {
             filtered = baseScreens.filter(s => (s.cluster_id === null || s.cluster_id === undefined) || (s.is_representative && !s.has_hq_ocr && !s.has_gemini));
+        }
+        // タグ絞り込み (Phase 5、Final タブのみ)
+        if (currentTab === 'final' && window._tagSearchMatchedFps !== null) {
+            const set = window._tagSearchMatchedFps;
+            filtered = filtered.filter(s => s.master_fp && set.has(s.master_fp));
         }
         // ソート: Live は API が降順(新しい順)、Final は API が昇順(古い順)
         const wantDesc = sortToggle.dataset.sort === 'desc';
@@ -4187,6 +4253,248 @@
         _currentVersionId = d.version?.id || 1;
     }).catch(() => {});
 
+    // ─── タグ絞り込み (Phase 5) ────────────────────────
+    // Final タブの allScreens を master_fp ベースで絞り込む。
+    // null = 絞り込みなし、Set = 絞り込み有効 (master_fp ∈ Set)。
+    window._tagSearchMatchedFps = null;
+    window._tagSearchSelected = { operation: new Set(), scene: new Set(), sub_scene: new Set() };
+
+    async function tagFilterOpen() {
+        const modal = document.getElementById('tag-filter-modal');
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        document.getElementById('tag-filter-result-count').textContent = '';
+        // 全タグを取得して描画
+        try {
+            const res = await fetch('api/tags.php');
+            const data = await res.json();
+            if (!data.ok) return;
+            const byType = { operation: [], scene: [], sub_scene: [] };
+            for (const t of (data.tags || [])) {
+                if (byType[t.tag_type]) byType[t.tag_type].push(t);
+            }
+            for (const type of ['operation', 'scene', 'sub_scene']) {
+                const container = document.querySelector(`#tag-filter-modal [data-tag-type="${type}"] .tag-filter-list`);
+                if (!container) continue;
+                if (!byType[type].length) {
+                    container.innerHTML = '<span class="text-xs text-gray-600">タグなし</span>';
+                    continue;
+                }
+                container.innerHTML = byType[type].map(t => {
+                    const checked = window._tagSearchSelected[type].has(t.id) ? 'checked' : '';
+                    const bg = t.color || '#555';
+                    return `
+                        <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                            <input type="checkbox" class="tag-filter-cb" data-type="${type}" data-id="${t.id}" ${checked} />
+                            <span class="px-2 py-0.5 text-xs rounded text-white" style="background:${escapeHtml(bg)}">${escapeHtml(t.name)}</span>
+                            <span class="text-[10px] text-gray-600">[${t.assigned_count}]</span>
+                        </label>
+                    `;
+                }).join('');
+            }
+            // チェックボックス変更でリアルタイムで件数プレビュー
+            modal.querySelectorAll('.tag-filter-cb').forEach(cb => {
+                cb.addEventListener('change', tagFilterPreview);
+            });
+            tagFilterPreview();
+        } catch (e) { /* ignore */ }
+    }
+
+    function tagFilterClose() {
+        const m = document.getElementById('tag-filter-modal');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
+    }
+
+    function tagFilterCollectSelected() {
+        const sel = { operation: [], scene: [], sub_scene: [] };
+        document.querySelectorAll('#tag-filter-modal .tag-filter-cb:checked').forEach(cb => {
+            sel[cb.dataset.type].push(parseInt(cb.dataset.id));
+        });
+        return sel;
+    }
+
+    async function tagFilterPreview() {
+        const sel = tagFilterCollectSelected();
+        const total = sel.operation.length + sel.scene.length + sel.sub_scene.length;
+        const counter = document.getElementById('tag-filter-result-count');
+        if (total === 0) {
+            counter.textContent = '(全件表示)';
+            return;
+        }
+        const params = new URLSearchParams({
+            action: 'search',
+            version_id: String(_currentVersionId || 1),
+        });
+        if (sel.operation.length) params.set('op_ids', sel.operation.join(','));
+        if (sel.scene.length) params.set('scene_ids', sel.scene.join(','));
+        if (sel.sub_scene.length) params.set('sub_ids', sel.sub_scene.join(','));
+        try {
+            counter.textContent = '計算中...';
+            const res = await fetch('api/tags.php?' + params);
+            const data = await res.json();
+            counter.textContent = data.ok ? `→ ${data.count} 件にマッチ` : '取得失敗';
+        } catch (e) {
+            counter.textContent = '取得失敗';
+        }
+    }
+
+    async function tagFilterApply() {
+        const sel = tagFilterCollectSelected();
+        // 選択を保存
+        window._tagSearchSelected.operation = new Set(sel.operation);
+        window._tagSearchSelected.scene = new Set(sel.scene);
+        window._tagSearchSelected.sub_scene = new Set(sel.sub_scene);
+        const total = sel.operation.length + sel.scene.length + sel.sub_scene.length;
+        if (total === 0) {
+            window._tagSearchMatchedFps = null;
+            tagFilterUpdateBadge(0);
+            tagFilterClose();
+            renderAll();
+            return;
+        }
+        const params = new URLSearchParams({
+            action: 'search',
+            version_id: String(_currentVersionId || 1),
+        });
+        if (sel.operation.length) params.set('op_ids', sel.operation.join(','));
+        if (sel.scene.length) params.set('scene_ids', sel.scene.join(','));
+        if (sel.sub_scene.length) params.set('sub_ids', sel.sub_scene.join(','));
+        try {
+            const res = await fetch('api/tags.php?' + params);
+            const data = await res.json();
+            if (!data.ok) {
+                alert('検索失敗: ' + (data.message || data.error));
+                return;
+            }
+            window._tagSearchMatchedFps = new Set(data.master_fps || []);
+            tagFilterUpdateBadge(total);
+            tagFilterClose();
+            renderAll();
+        } catch (e) {
+            alert('通信エラー: ' + e.message);
+        }
+    }
+
+    function tagFilterClear() {
+        window._tagSearchSelected = { operation: new Set(), scene: new Set(), sub_scene: new Set() };
+        window._tagSearchMatchedFps = null;
+        document.querySelectorAll('#tag-filter-modal .tag-filter-cb').forEach(cb => { cb.checked = false; });
+        tagFilterUpdateBadge(0);
+        tagFilterPreview();
+        renderAll();
+    }
+
+    function tagFilterUpdateBadge(count) {
+        const badge = document.getElementById('tag-filter-badge');
+        if (!badge) return;
+        if (count > 0) {
+            badge.textContent = String(count);
+            badge.classList.remove('hidden');
+        } else {
+            badge.classList.add('hidden');
+        }
+    }
+
+    // ─── 一括付与 (Phase 6) ────────────────────────────
+    let _tagBulkContext = null;  // { tagId, tagName, type, fps: [...] }
+
+    window.tagOpenBulkAssign = function(tagId, tagName, type) {
+        // 対象 master_fp 一覧を決定:
+        // 1. _tagSearchMatchedFps が有効ならそれ
+        // 2. それ以外は allScreens から master_fp を抽出
+        let fps = [];
+        if (window._tagSearchMatchedFps !== null && window._tagSearchMatchedFps.size > 0) {
+            fps = Array.from(window._tagSearchMatchedFps);
+        } else if (Array.isArray(window.allScreens)) {
+            const set = new Set();
+            for (const s of window.allScreens) {
+                if (s.master_fp) set.add(s.master_fp);
+            }
+            fps = Array.from(set);
+        }
+        _tagBulkContext = { tagId, tagName, type, fps };
+        const summary = document.getElementById('tag-bulk-summary');
+        const source = window._tagSearchMatchedFps !== null && window._tagSearchMatchedFps.size > 0
+            ? '現在の Final タブ絞り込み結果'
+            : '現在の Final タブ表示中の全マスターノード';
+        summary.innerHTML = `<div class="mb-2">タグ <span class="text-amber-300 font-bold">${escapeHtml(tagName)}</span> を <span class="text-cyan-300">${source}</span> に付与します。</div>`;
+        document.getElementById('tag-bulk-target-count').textContent = String(fps.length);
+        document.getElementById('tag-bulk-error').classList.add('hidden');
+        const m = document.getElementById('tag-bulk-modal');
+        m.classList.remove('hidden');
+        m.classList.add('flex');
+    };
+
+    function tagCloseBulkModal() {
+        const m = document.getElementById('tag-bulk-modal');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
+        _tagBulkContext = null;
+    }
+
+    async function tagBulkExecute() {
+        if (!_tagBulkContext) return;
+        const { tagId, type, fps } = _tagBulkContext;
+        if (fps.length === 0) {
+            const err = document.getElementById('tag-bulk-error');
+            err.textContent = '対象が 0 件です';
+            err.classList.remove('hidden');
+            return;
+        }
+        const versionId = _currentVersionId || 1;
+        const btn = document.getElementById('tag-bulk-execute');
+        btn.disabled = true;
+        btn.textContent = '実行中...';
+        try {
+            const res = await fetch(TAGS_API + '?action=bulk_assign&tag_id=' + tagId + '&version_id=' + versionId, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ master_fps: fps }),
+            });
+            const data = await res.json();
+            if (!data.ok) {
+                const err = document.getElementById('tag-bulk-error');
+                err.textContent = data.message || data.error || '失敗';
+                err.classList.remove('hidden');
+                btn.disabled = false;
+                btn.textContent = '付与実行';
+                return;
+            }
+            tagCloseBulkModal();
+            // 一覧再読込 (assigned_count 更新のため)
+            tagsFetchAndRender(type);
+            alert(`✓ ${data.assigned} 件に付与完了 (スキップ ${data.skipped})`);
+        } catch (e) {
+            const err = document.getElementById('tag-bulk-error');
+            err.textContent = '通信エラー: ' + e.message;
+            err.classList.remove('hidden');
+            btn.disabled = false;
+            btn.textContent = '付与実行';
+        }
+    }
+
+    document.getElementById('tag-bulk-cancel')?.addEventListener('click', tagCloseBulkModal);
+    document.getElementById('tag-bulk-execute')?.addEventListener('click', tagBulkExecute);
+    document.getElementById('tag-bulk-modal')?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) tagCloseBulkModal();
+    });
+
+    // allScreens を window 経由で他からアクセスできるようにエクスポート
+    Object.defineProperty(window, 'allScreens', {
+        get() { return allScreens; },
+        configurable: true,
+    });
+
+    document.getElementById('tag-filter-btn')?.addEventListener('click', tagFilterOpen);
+    document.getElementById('tag-filter-close')?.addEventListener('click', tagFilterClose);
+    document.getElementById('tag-filter-cancel')?.addEventListener('click', tagFilterClose);
+    document.getElementById('tag-filter-apply')?.addEventListener('click', tagFilterApply);
+    document.getElementById('tag-filter-clear')?.addEventListener('click', tagFilterClear);
+    document.getElementById('tag-filter-modal')?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) tagFilterClose();
+    });
+
     // ─── Tag タブ (Phase 1) ────────────────────────────
     // 設計書: docs/design/master_node_tags.md §6
     // 詳細計画: docs/design/master_node_tags_phase1.md §6
@@ -4223,7 +4531,9 @@
         if (!listEl) return;
         listEl.innerHTML = '<div class="text-center text-gray-600 py-6 text-sm">読み込み中...</div>';
         try {
-            const res = await fetch(TAGS_API + '?type=' + encodeURIComponent(type));
+            // 操縦カテゴリは deprecated タグも表示する (CLAUDE.md §21 ルール 1)
+            const includeDeleted = (type === 'operation') ? '&include_deleted=1' : '';
+            const res = await fetch(TAGS_API + '?type=' + encodeURIComponent(type) + includeDeleted);
             const data = await res.json();
             if (!data.ok) {
                 listEl.innerHTML = '<div class="text-center text-red-400 py-6 text-sm">読み込み失敗: ' + escapeHtml(data.error || '') + '</div>';
@@ -4248,6 +4558,7 @@
         const isReadOnly = (type === 'operation');
         listEl.innerHTML = tags.map(t => {
             const isSystem = t.is_system === 1;
+            const isDeleted = t.is_deleted === 1;
             const lockIcon = isSystem ? '🔒 ' : '';
             const colorDot = t.color
                 ? `<span class="inline-block w-3 h-3 rounded-full" style="background:${escapeHtml(t.color)}"></span>`
@@ -4256,21 +4567,31 @@
             const codeKeyBadge = t.code_key
                 ? `<span class="text-xs text-gray-500">[code: ${escapeHtml(t.code_key)}]</span>`
                 : '';
+            // Phase 6: 廃止 (deprecated) 表示 (CLAUDE.md §21 ルール 1)
+            const deprecatedBadge = isDeleted
+                ? '<span class="px-1.5 py-0.5 bg-gray-700 text-amber-400 text-[10px] rounded font-bold">廃止</span>'
+                : '';
             const editBtn = (isReadOnly || isSystem)
                 ? `<button class="px-2 py-1 text-xs bg-gray-800 text-gray-600 rounded cursor-not-allowed" disabled title="編集不可 (コード定義タグ)">編集</button>`
                 : `<button class="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors tag-edit-btn" data-id="${t.id}">編集</button>`;
             const delBtn = (isReadOnly || isSystem)
                 ? `<button class="px-2 py-1 text-xs bg-gray-800 text-gray-600 rounded cursor-not-allowed" disabled title="削除不可 (コード定義タグ)">削除</button>`
                 : `<button class="px-2 py-1 text-xs bg-red-900/40 hover:bg-red-800/60 text-red-300 rounded transition-colors tag-del-btn" data-id="${t.id}" data-name="${escapeHtml(t.name)}" data-cnt="${t.assigned_count}">削除</button>`;
+            // Phase 6: 一括付与ボタン (シーン/詳細のみ、is_system は不可)
+            const bulkBtn = (!isReadOnly && !isSystem && !isDeleted)
+                ? `<button class="px-2 py-1 text-xs bg-orange-900/50 hover:bg-orange-800/60 text-orange-300 rounded transition-colors tag-bulk-btn" data-id="${t.id}" data-name="${escapeHtml(t.name)}" data-type="${type}" title="現在の Final タブ表示中ノードに一括付与">🔥 一括</button>`
+                : '';
+            const rowOpacity = isDeleted ? 'opacity-40' : '';
             return `
-                <div class="flex items-center gap-3 p-2 bg-gray-900/40 hover:bg-gray-800/60 border border-gray-800 rounded">
+                <div class="flex items-center gap-3 p-2 bg-gray-900/40 hover:bg-gray-800/60 border border-gray-800 rounded ${rowOpacity}">
                     ${colorDot}
                     <span class="text-sm text-gray-200">${lockIcon}${escapeHtml(t.name)}</span>
+                    ${deprecatedBadge}
                     ${codeKeyBadge}
                     <span class="text-xs text-gray-500">[${t.assigned_count}] 件</span>
                     ${colorHex}
                     <span class="text-xs text-gray-700 truncate flex-1">${escapeHtml(t.description || '')}</span>
-                    <div class="flex gap-1 flex-shrink-0">${editBtn}${delBtn}</div>
+                    <div class="flex gap-1 flex-shrink-0">${bulkBtn}${editBtn}${delBtn}</div>
                 </div>
             `;
         }).join('');
@@ -4285,6 +4606,12 @@
         listEl.querySelectorAll('.tag-del-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 tagOpenDeleteModal(type, parseInt(btn.dataset.id), btn.dataset.name, parseInt(btn.dataset.cnt));
+            });
+        });
+        // Phase 6: 一括付与ボタン
+        listEl.querySelectorAll('.tag-bulk-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                tagOpenBulkAssign(parseInt(btn.dataset.id), btn.dataset.name, btn.dataset.type);
             });
         });
     }
@@ -4450,8 +4777,17 @@
                     ? ''
                     : `<button class="ml-1 text-white/70 hover:text-white node-chip-close" data-tag-id="${t.id}">✕</button>`;
                 const lock = isSystem ? '🔒 ' : '';
+                // Phase 6: 確信度が低い Gemini 付与に「⚠ 要確認」マーク
+                const lowConf = (t.assigned_by === 'gemini' && t.confidence !== null && t.confidence < 0.7);
+                const warnIcon = lowConf
+                    ? `<span class="ml-1 text-amber-200" title="確信度 ${(t.confidence * 100).toFixed(0)}% — 要確認">⚠</span>`
+                    : '';
+                const sourceBadge = t.assigned_by === 'gemini'
+                    ? `<span class="ml-1 text-[9px] text-white/60" title="Gemini 自動付与 (信頼度 ${(t.confidence ?? 1.0) * 100 | 0}%)">AI</span>`
+                    : (t.assigned_by === 'auto_pilot' ? '<span class="ml-1 text-[9px] text-white/60" title="auto_pilot 自動付与">AUTO</span>' : '');
                 const bg = t.color || '#555';
-                return `<span class="inline-flex items-center px-2 py-0.5 text-xs rounded text-white" style="background:${escapeHtml(bg)}">${lock}${escapeHtml(t.name)}${closeBtn}</span>`;
+                const opacity = lowConf ? 'opacity-70 ring-1 ring-amber-400' : '';
+                return `<span class="inline-flex items-center px-2 py-0.5 text-xs rounded text-white ${opacity}" style="background:${escapeHtml(bg)}">${lock}${escapeHtml(t.name)}${warnIcon}${sourceBadge}${closeBtn}</span>`;
             }).join(' ');
             return `
                 <div class="flex items-start gap-2">
