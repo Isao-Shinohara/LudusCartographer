@@ -6,7 +6,6 @@ require_once __DIR__ . '/../../vendor/autoload.php';
 
 use LudusCartographer\Database;
 use LudusCartographer\EvidenceRepository;
-use LudusCartographer\ScreenRepository;
 
 // --- 環境変数ロード ---
 $envPath = __DIR__ . '/../../config/.env';
@@ -27,23 +26,16 @@ $GEMINI_ENABLED = _gemini_enabled();
 
 header('Content-Type: application/json; charset=utf-8');
 
-$action    = $_GET['action'] ?? 'search';
+$action    = $_GET['action'] ?? '';
 $gameTitle = trim(strip_tags($_GET['game'] ?? ''));
 $versionParam = isset($_GET['version']) ? (int)$_GET['version'] : null;
 
 try {
-    $pdo        = Database::getConnection();
-    $repository = new ScreenRepository($pdo);
+    $pdo        = Database::getSqliteConnection();
+    $repository = new EvidenceRepository($pdo);
     $useDb      = true;
 } catch (\Throwable) {
-    // MySQL が使えない場合は SQLite evidence DB にフォールバック
-    try {
-        $pdo        = Database::getSqliteConnection();
-        $repository = new EvidenceRepository($pdo);
-        $useDb      = true;
-    } catch (\Throwable) {
-        $useDb = false;
-    }
+    $useDb = false;
 }
 
 // --- heartbeat アクション (ダッシュボード生存通知) ---
@@ -187,13 +179,9 @@ if ($action === 'get_games') {
 if ($action === 'get_sessions') {
     $limit = min((int)($_GET['limit'] ?? 20), 100);
 
-    if ($useDb) {
-        $sessions = ($repository instanceof EvidenceRepository)
-            ? $repository->getSessions($limit, $gameTitle, $versionParam)
-            : $repository->getSessions($limit, $gameTitle);
-    } else {
-        $sessions = ScreenRepository::getSampleSessions();
-    }
+    $sessions = $useDb
+        ? $repository->getSessions($limit, $gameTitle, $versionParam)
+        : [];
 
     echo json_encode(
         ['sessions' => $sessions, 'count' => count($sessions)],
@@ -1511,55 +1499,9 @@ if ($action === 'get_graph') {
     exit;
 }
 
-// --- detail アクション ---
-if ($action === 'detail') {
-    $id = (int)($_GET['id'] ?? 0);
-    if ($id <= 0) {
-        http_response_code(400);
-        echo json_encode(['error' => 'invalid id']);
-        exit;
-    }
-
-    if ($useDb) {
-        $result = $repository->findWithElements($id);
-    } else {
-        $screen = null;
-        foreach (ScreenRepository::getSampleData() as $s) {
-            if ((int)$s['id'] === $id) {
-                $screen = $s;
-                break;
-            }
-        }
-        $result = ['screen' => $screen, 'elements' => [], 'parents' => []];
-    }
-
-    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-    exit;
-}
-
-// --- search アクション (default) ---
-$title     = trim(strip_tags($_GET['title']      ?? ''));
-$keyword   = trim(strip_tags($_GET['keyword']    ?? ''));
-$sessionId = trim(strip_tags($_GET['session_id'] ?? ''));
-$limit     = min((int)($_GET['limit'] ?? 100), 500);
-
-if ($useDb) {
-    $screens = $repository->searchAdvanced($title, $keyword, $sessionId, $limit, $gameTitle);
-} else {
-    $screens = ScreenRepository::getSampleData();
-    foreach (array_filter([$title, $keyword]) as $f) {
-        $fl = mb_strtolower($f);
-        $screens = array_values(array_filter(
-            $screens,
-            static function (array $s) use ($fl): bool {
-                return str_contains(mb_strtolower((string)($s['name'] ?? '')), $fl)
-                    || str_contains(mb_strtolower((string)($s['ocr_text'] ?? '')), $fl);
-            },
-        ));
-    }
-}
-
+// --- 未対応 action ---
+http_response_code(400);
 echo json_encode(
-    ['screens' => $screens, 'count' => count($screens)],
+    ['error' => 'unknown action', 'action' => $action],
     JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
 );

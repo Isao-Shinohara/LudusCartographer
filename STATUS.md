@@ -1,6 +1,6 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-05-04 (Phase 5 + PR #2/#3 作成完了)
+最終更新: 2026-05-04 (Phase 6 + Search 機能撤去)
 
 ## 現在のブランチ
 - `feature/master-node-tags` (main から 11 コミット先行、Phase 0〜4 完了 → **PR #2**)
@@ -26,12 +26,13 @@
 - 一括手動付与の操縦カテゴリ対応 (現状は scene/sub_scene のみ、§11 で「将来拡張」)
 
 ### 別タスク
-- `web/public/api/search.php` クリーンアップ — **規模大** (40+ エンドポイント、ダッシュボード全 backend)
-  - 設計書の note は「Phase 4 完了後の独立タスク」だが実態はリネーム/分割が必要
-  - 安全に進めるには別 PR で段階的に (action ごとに個別ファイル化など)
+- `web/public/api/search.php` の **ファイル分割 / リネーム** (45 actions のままで稼働中、見通し改善は別 PR で段階的に)
 - 実機検証 (auto_pilot 起動 + 周回 1 回 + Tag タブ確認) ← ユーザー作業
 - `test_graph_build.py` の壊れテスト修復 (graph build ロジックの差分、深い調査が必要)
 - `test_unmerge.py::test_unmerge_edges_recalculated` 修復 (edge recalc ロジックの差分)
+
+### 完了済 (本セッション内)
+- ✅ 旧 Search 機能の撤去 (top-nav の Search ページ + ScreenRepository + 旧 detail/search action) — PR #4 に同梱
 
 ## 最終セッション (2026-05-04) — マスターノードタグ機能 Phase 1〜4 一気通貫完了
 
