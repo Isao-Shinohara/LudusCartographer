@@ -2613,6 +2613,12 @@ def main():
         logger.info("[STOP 4/4] レポート生成中...")
         generate_and_copy_report(_pilot_state_ref, "手動停止 (Ctrl+C / SIGINT)")
         logger.info("[STOP 4/4] レポート生成完了")
+        # WriteWorker のキューを drain してから停止 (メトリクス書き込みの取りこぼし防止)
+        try:
+            from tools.ap.write_worker import shutdown_write_worker
+            shutdown_write_worker(drain=True, timeout=5.0)
+        except Exception as e:
+            logger.warning("[STOP] WriteWorker shutdown 失敗: %s", e)
         logger.info("[STOP] シャットダウン完了 — exit")
         sys.exit(0)
 

@@ -95,32 +95,34 @@ def learn_from_correction(original: str, corrected: str) -> None:
 
 
 def _record_corrections_to_db(diff_pairs: list, source: str = "gemini") -> None:
-    """差分ペアを lc_ocr_corrections に記録。"""
+    """差分ペアを lc_ocr_corrections に記録 (WriteWorker 経由で直列化)。
+
+    旧実装では timeout=2 秒の自前 conn でロック競合多発 (139 件/セッション)。
+    WriteWorker に投入することで database lock 競合を完全排除。
+    """
     db_path = Path(__file__).parent.parent.parent / "storage" / "ludus.db"
     if not db_path.exists():
         return
+    if not diff_pairs:
+        return
     try:
-        import sqlite3
-        conn = sqlite3.connect(str(db_path), timeout=2)
-        try:
-            for old, new in diff_pairs:
-                conn.execute(
-                    "INSERT INTO lc_ocr_corrections "
-                    "(before_text, after_text, scope, source, frequency) "
-                    "VALUES (?, ?, 'global', ?, 1) "
-                    "ON CONFLICT(before_text, after_text, scope, scope_id) "
-                    "DO UPDATE SET frequency = frequency + 1",
-                    (old, new, source),
-                )
-            # 高頻度ルール自動昇格 (frequency >= 5 で promoted_to_regex に)
-            conn.execute(
-                "UPDATE lc_ocr_corrections SET promoted_to_regex = 1 "
-                "WHERE frequency >= 5 AND promoted_to_regex = 0 AND source = ?",
-                (source,),
+        from tools.ap.write_worker import get_write_worker
+        worker = get_write_worker(db_path)
+        for old, new in diff_pairs:
+            worker.submit(
+                "INSERT INTO lc_ocr_corrections "
+                "(before_text, after_text, scope, source, frequency) "
+                "VALUES (?, ?, 'global', ?, 1) "
+                "ON CONFLICT(before_text, after_text, scope, scope_id) "
+                "DO UPDATE SET frequency = frequency + 1",
+                (old, new, source),
             )
-            conn.commit()
-        finally:
-            conn.close()
+        # 高頻度ルール自動昇格 (frequency >= 5 で promoted_to_regex に)
+        worker.submit(
+            "UPDATE lc_ocr_corrections SET promoted_to_regex = 1 "
+            "WHERE frequency >= 5 AND promoted_to_regex = 0 AND source = ?",
+            (source,),
+        )
     except Exception as e:
         logger.warning("[OCR_LEARN] DB 記録失敗: %s", e)
 
