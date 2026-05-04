@@ -544,6 +544,8 @@
         return (a === 'dhash' || a === 'compare') ? a : 'hybrid';
     })();
     let _diffFilter = 'all';  // 'all' / 'diff' / 'merged' / 'split'
+    // Tag タブ用: 早期 switchTab('tags') から参照される TDZ 回避のため上方で宣言
+    let _tagCurrentSubtab = 'scene';
     let _diffMap = {};  // screen_id → 'same' / 'merged' / 'split' / 'mixed'
 
     // クラスタID切替: cluster_id を currentClusterAlgo に応じて読み替える
@@ -4504,7 +4506,7 @@
     // 詳細計画: docs/design/master_node_tags_phase1.md §6
 
     const TAGS_API = 'api/tags.php';
-    let _tagCurrentSubtab = 'scene';
+    // _tagCurrentSubtab は早期 switchTab 経路の TDZ 回避のため line 548 で宣言済み
     let _tagEditingId = null;
     let _tagEditingType = 'scene';
     let _tagDeleteId = null;
