@@ -1,10 +1,20 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-05-04 (Phase 4 完了時点で更新)
+最終更新: 2026-05-04 (Phase 5 + PR #2/#3 作成完了)
 
 ## 現在のブランチ
-- `feature/master-node-tags` (main から 8 コミット先行、Phase 0〜4 全完了)
+- `feature/master-node-tags` (main から 11 コミット先行、Phase 0〜4 完了 → **PR #2 作成済**)
+- `feature/tag-search` (`feature/master-node-tags` から 1 コミット先行、Phase 5 完了 → **PR #3 作成済 (chained)**)
 - `feature/screen-recorder` は **PR #1 でマージ済み・削除済み** (2026-05-02)
+
+## オープン中の PR
+
+| # | URL | 内容 | 依存 |
+|---|---|---|---|
+| #2 | https://github.com/Isao-Shinohara/LudusCartographer/pull/2 | Phases 1-4: タグ機能基盤 (定義・付与・編集・Gemini 判定) | なし → main |
+| #3 | https://github.com/Isao-Shinohara/LudusCartographer/pull/3 | Phase 5: タグによる Master ノード絞り込み検索 | #2 が base |
+
+#2 を main にマージすると #3 の base は自動的に main に更新される。
 
 ## 最終セッション (2026-05-04) — マスターノードタグ機能 Phase 1〜4 一気通貫完了
 
