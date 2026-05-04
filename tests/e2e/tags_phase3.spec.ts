@@ -64,9 +64,9 @@ test.describe('Tag タブ Phase 3', () => {
         await expect(page.locator('#prompt-edit-status')).toContainText('デフォルト', { timeout: 5000 });
     });
 
-    test('判定 → 「未付与のみ判定」選択で確認モーダルが開く', async ({ page }) => {
+    test('タグ付け実行 →「未付与のみタグ付け」選択で確認モーダルが開く', async ({ page }) => {
         await page.click('#tag-judge-btn-scene');
-        await page.locator('#tag-judge-menu-modal >> text=未付与のみ判定').click();
+        await page.locator('#tag-judge-menu-modal >> text=未付与のみタグ付け').click();
         const modal = page.locator('#tag-run-confirm-modal');
         await expect(modal).toBeVisible();
         await expect(page.locator('#tag-run-confirm-title')).toContainText('未付与のみ');
@@ -75,16 +75,16 @@ test.describe('Tag タブ Phase 3', () => {
         await expect(page.locator('#tag-run-confirm-body')).toContainText('対象件数');
     });
 
-    test('判定 → 「全件再判定」選択で確認モーダルが開く', async ({ page }) => {
+    test('タグ付け実行 →「全件タグ付け」選択で確認モーダルが開く', async ({ page }) => {
         await page.click('#tag-judge-btn-scene');
-        await page.locator('#tag-judge-menu-modal >> text=全件再判定').click();
+        await page.locator('#tag-judge-menu-modal >> text=全件タグ付け').click();
         await expect(page.locator('#tag-run-confirm-modal')).toBeVisible();
-        await expect(page.locator('#tag-run-confirm-title')).toContainText('全件再判定');
+        await expect(page.locator('#tag-run-confirm-title')).toContainText('全件');
     });
 
     test('確認モーダルに 完全リセット チェックボックスが存在する', async ({ page }) => {
         await page.click('#tag-judge-btn-scene');
-        await page.locator('#tag-judge-menu-modal >> text=全件再判定').click();
+        await page.locator('#tag-judge-menu-modal >> text=全件タグ付け').click();
         await expect(page.locator('#tag-run-reset-manual')).toBeVisible();
         await expect(page.locator('#tag-run-reset-manual')).not.toBeChecked();
     });
@@ -92,14 +92,14 @@ test.describe('Tag タブ Phase 3', () => {
     test('対象 0 件の場合は実行ボタンが disabled', async ({ page }) => {
         // production DB は master_fp が 0 件のはず
         await page.click('#tag-judge-btn-scene');
-        await page.locator('#tag-judge-menu-modal >> text=未付与のみ判定').click();
+        await page.locator('#tag-judge-menu-modal >> text=未付与のみタグ付け').click();
         await page.waitForSelector('#tag-run-confirm-body:not(.hidden)', { timeout: 5000 });
         await expect(page.locator('#tag-run-confirm')).toBeDisabled();
     });
 
     test('キャンセルボタンで確認モーダルが閉じる', async ({ page }) => {
         await page.click('#tag-judge-btn-scene');
-        await page.locator('#tag-judge-menu-modal >> text=未付与のみ判定').click();
+        await page.locator('#tag-judge-menu-modal >> text=未付与のみタグ付け').click();
         await expect(page.locator('#tag-run-confirm-modal')).toBeVisible();
         await page.click('#tag-run-cancel');
         await expect(page.locator('#tag-run-confirm-modal')).toBeHidden();
