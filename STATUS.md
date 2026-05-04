@@ -1,43 +1,64 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-05-04 (Phase 6 + Search 機能撤去)
+最終更新: 2026-05-05 (実機検証セッション + auto_pilot 安定化)
 
 ## 現在のブランチ
-- `feature/master-node-tags` (main から 11 コミット先行、Phase 0〜4 完了 → **PR #2**)
-- `feature/tag-search` (`feature/master-node-tags` から 2 コミット先行、Phase 5 + doc 更新 → **PR #3 chained**)
-- `feature/tag-polish` (`feature/tag-search` から 1 コミット先行、Phase 6 polish → **PR #4 chained**)
-- `feature/screen-recorder` は **PR #1 でマージ済み・削除済み** (2026-05-02)
+- `main` (最新: PR #6 マージ後、commit `1f06a6e`)
+- **`feature/tagging`** (main から 13 コミット先行、未 PR、push 済み)
+  - 内容: 実機検証セッションで発見した課題への修正 + Tag タブ UI 改善
+- `feature/master-node-tags` / `feature/tag-search` / `feature/tag-polish` / `feature/tag-tab-polish` / `feature/screen-recorder` は **PR #1〜#6 でマージ済み・削除済み**
+
+## マージ済みの PR (履歴)
+
+| # | 内容 | マージ日 |
+|---|---|---|
+| #1 | スクリーン記録機能 + クロスセッションマージ + クラスタリング基盤 | 2026-05-02 |
+| #2 | Phases 1-4: タグ機能基盤 (定義・付与・編集・Gemini 判定) | 2026-05-04 |
+| #3 | Phase 5: タグによる Master ノード絞り込み検索 | 2026-05-04 |
+| #4 | Phase 6 polish: 一括付与 / deprecated 表示 / 確信度 UI | 2026-05-04 |
+| #5 | tag PR #3/#4 を main に取り込み (chained merge の整合) | 2026-05-04 |
+| #6 | Tag タブを Merge の隣へ + 判定ボタン統合 | 2026-05-04 |
 
 ## オープン中の PR
+**なし** — `feature/tagging` ブランチは push 済みだが、**ユーザー指示があるまで PR は作成しない** (CLAUDE.md §13 ルール)。
 
-| # | URL | 内容 | 依存 |
-|---|---|---|---|
-| #2 | https://github.com/Isao-Shinohara/LudusCartographer/pull/2 | Phases 1-4: タグ機能基盤 (定義・付与・編集・Gemini 判定) | なし → main |
-| #3 | https://github.com/Isao-Shinohara/LudusCartographer/pull/3 | Phase 5: タグによる Master ノード絞り込み検索 | #2 が base |
-| #4 | TBD | Phase 6 polish: 一括付与 / deprecated 表示 / 確信度 UI / 事前壊れテスト修復 | #3 が base |
+## feature/tagging に積まれた未マージ commits (13 件)
 
-マージ順序: #2 → #3 → #4 (上流をマージするごとに下流の base が自動的に main に更新される)。
+| Commit | 内容 |
+|---|---|
+| `435ff5c` | docs(CLAUDE): PR 作成は明示指示時のみとするルール追加 |
+| `8167023` | docs(CLAUDE): Git ワークフロー明示化 (作業ブランチ運用) |
+| `c7f5dee` | style(tags): toolbar ボタンを Live タブ規格 (px-3 py-1 text-xs) に統一 + 右揃え |
+| `fac4fc8` | fix(dashboard): switchTab('tags') 初期化時 tagSwitchSubtab undefined 回避 |
+| `2f1af01` | fix(dashboard): _tagCurrentSubtab を IIFE 上方に hoist (TDZ 回避) |
+| `b1c40dc` | refactor(tags): 🔥 一括 ボタンを Tag タブから撤去 (将来 Final タブへ移設) |
+| `2f1b2df` | feat(tags): 判定ボタン統合 (1 ボタン + モード選択ポップアップ) |
+| `554b555` | style(tags): 命名統一 「判定」→「タグ付け実行」 |
+| `2bd3cc6` | fix(migration): lc_ocr_noise_words テーブルを batch_processor._migrate に追加 |
+| `5442514` | fix(migration): lc_ocr_noise_words を screen_recorder._migrate に追加 (起動時保証) |
+| `cae9511` | fix(image_proc): detect_login_bonus_popup に矩形 inset 要件追加 (案 A) |
+| `670e0d0` | feat(write_worker): SQLite 書き込み専用スレッドで lock 競合を完全排除 |
+| `10587d3` | fix(login_bonus): inset 閾値を 40px → 20px に緩和 (本物 LB が棄却される問題修正) |
 
-## まだ残っているタスク (本セッション完了後)
+## まだ残っているタスク
 
-### Phase 7+ (将来)
+### 🔴 必須対応 (次セッションで検討推奨)
+- **ConfirmDialog のスキップ確認区別**: `dialog_phase.py` で「ストーリースキップ」と「ムービースキップ」を OCR テキストで区別
+  - 現状: 両方とも `STORY_SKIP_CANCEL` でキャンセル
+  - 問題: ログインボーナス画面の ▶| (ムービースキップ確認) もキャンセルされ、LB 閉じられないループ
+  - 区別: `"ムービー"` を含む → OK タップ / `"ストーリー"` を含む → キャンセル
+
+### 🟡 任意 (二重防御)
+- WFC_ESCAPE に icon_skip 併用 (現状 detect_login_bonus_popup で対処済のため優先度低)
+
+### 🟢 Phase 7+ (将来)
 - 前後ノード情報の Gemini ヒント (案 A: タグテキスト → 案 B: 画像、§11)
 - 新タグ追加時の差分判定モード (Gemini API 料金次第、§11)
 - 一括手動付与の操縦カテゴリ対応 (現状は scene/sub_scene のみ、§11 で「将来拡張」)
+- 一括付与ボタンを Final タブへ移設 (撤去済み、再実装)
 
 ### 別タスク
-- 実機検証 (auto_pilot 起動 + 周回 1 回 + Tag タブ確認) ← ユーザー作業
-
-### 完了済 (本セッション内)
-- ✅ 旧 Search 機能の撤去 (top-nav の Search ページ + ScreenRepository + 旧 detail/search action) — PR #4 に同梱
-- ✅ `test_graph_build.py` 4 件修復 (skeletal lc_screens に is_representative + edge_type 追加、_insert_screen で is_representative=1 に)
-- ✅ `test_unmerge_edges_recalculated` 修復 + production バグ修正
-  - `_merge_edges` の fp_map 構築 SQL に `direct_fp_match` を追加
-  - 影響: `_add_all_as_new` 経由のマージで「既存 master fp と直接一致する session fp」を経由するエッジが失われていたバグを解消
-- ✅ `api/search.php` を `api/dashboard.php` (ルーター) + `_common.php` (共通初期化) + 9 個の category handlers にリファクタ
-  - handlers/: system / versions / games / sessions / screens / merge / ocr / api_usage / graph
-  - dashboard.html.twig + graph.html.twig の API_BASE/API を `api/dashboard.php` に更新
-  - 既存 actions の挙動は完全互換 (Playwright 46 件全 pass)
+- 実機検証の続き (LB ループの修正 + 周回 1 完走 + Tag タブ確認) ← ユーザー作業
 
 ## 最終セッション (2026-05-04) — マスターノードタグ機能 Phase 1〜4 一気通貫完了
 
