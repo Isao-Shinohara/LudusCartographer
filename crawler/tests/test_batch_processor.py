@@ -28,7 +28,8 @@ def _create_test_db(tmp_path: Path) -> Path:
             id INTEGER PRIMARY KEY, session_id TEXT, fingerprint TEXT,
             title TEXT, depth INTEGER DEFAULT 0, parent_fp TEXT,
             phash TEXT, screenshot_path TEXT, thumbnail_path TEXT,
-            ocr_text TEXT, scene TEXT, discovered_at TEXT
+            ocr_text TEXT, scene TEXT, discovered_at TEXT,
+            is_representative INTEGER DEFAULT 0
         );
         CREATE TABLE lc_tappable_items (
             id INTEGER PRIMARY KEY, screen_id INTEGER, text TEXT, confidence REAL
