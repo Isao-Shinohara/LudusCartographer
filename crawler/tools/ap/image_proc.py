@@ -3409,6 +3409,11 @@ _LBP_PEAK_RATIO = 0.25
 _LBP_PEAK_MIN_DIST = 80
 # 検出矩形の最小画面占有率
 _LBP_MIN_SCREEN_RATIO = 0.35
+# 検出矩形が画面端から確保すべき最小マージン (px)
+# 本物の login bonus popup は中央配置で四辺に余白がある。
+# 画面端の Sobel エッジ (ROI 境界・キャラのアウトライン等) を矩形と
+# 誤判定するパターンを棄却するためのガード。
+_LBP_MIN_INSET = 40
 
 
 def _find_projection_peaks(
@@ -3484,6 +3489,22 @@ def detect_login_bonus_popup(
     if _screen_ratio < _LBP_MIN_SCREEN_RATIO:
         logger.debug("[LOGIN_BONUS] 面積比 %.1f%% < %.0f%% → 棄却",
                      _screen_ratio * 100, _LBP_MIN_SCREEN_RATIO * 100)
+        return None
+
+    # ── 矩形 inset 確認 (画面端からのマージン) ──
+    # ADV/MOVIE シーン遷移フレームの Sobel が画面端を矩形と
+    # 誤判定するパターンを棄却。本物の login bonus popup は
+    # 画面中央に配置されるため四辺に余白がある。
+    _inset_l = _left
+    _inset_t = _top
+    _inset_r = _W - _right
+    _inset_b = _H - _bottom
+    if (_inset_l < _LBP_MIN_INSET or _inset_t < _LBP_MIN_INSET
+            or _inset_r < _LBP_MIN_INSET or _inset_b < _LBP_MIN_INSET):
+        logger.debug(
+            "[LOGIN_BONUS] 矩形が画面端 → 棄却 inset=L%d T%d R%d B%d (<%d)",
+            _inset_l, _inset_t, _inset_r, _inset_b, _LBP_MIN_INSET,
+        )
         return None
 
     # ── 背景ぼかし確認 ──
