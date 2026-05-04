@@ -1,11 +1,177 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-04-30
+最終更新: 2026-05-04 (Phase 4 完了時点で更新)
 
 ## 現在のブランチ
-- `feature/screen-recorder` (main 未マージ、HEAD ~614 コミット先行)
+- `feature/master-node-tags` (main から 8 コミット先行、Phase 0〜4 全完了)
+- `feature/screen-recorder` は **PR #1 でマージ済み・削除済み** (2026-05-02)
 
-## 最終セッション (2026-04-30 後半) — マージ時系列バグ修正 (fingerprint 再設計)
+## 最終セッション (2026-05-04) — マスターノードタグ機能 Phase 1〜4 一気通貫完了
+
+ユーザーから「確認なしで最後のフェーズまで一気に実装してOK」の許可を得て
+Phase 1 から Phase 4 までを同セッションで完走。pytest 101 件 + Playwright 29 件、全 green。
+
+### Phase 別コミット一覧
+
+| Phase | Commit | 内容 |
+|---|---|---|
+| 0 | `3a02303` | 設計書 (1,493 行) + CLAUDE.md §21 (90 行) |
+| 1 | `8f246ea` | DB Migration: 5 テーブル + index + 初期データ |
+| 1 | `dc2d652` | 代表変更ハンドラ |
+| 1 | `29aac52` | tags.php API: CRUD + ノードタグ操作 |
+| 1 | `a7d42b3` | Tag タブ UI + ノード詳細チップ |
+| 1 | `0abb343` | docs: Phase 1 セッション要約 |
+| 2 | `8faa9d6` | OperationTag enum + auto_pilot --operation + 自動付与 |
+| 3 | `72d3468` | tag_judgment.py + tagging.php + tag_prompts.php + プロンプト編集 UI |
+| 4 | `81188b5` | sub_scene 判定検証テスト (14 + 6 件) |
+
+### Phase 別の主要実装
+
+#### Phase 2: 操縦カテゴリ自動付与
+- `crawler/tools/ap/operation_tags.py` 新規 (OperationTag IntEnum + maps + resolve/upsert)
+- auto_pilot に `--operation` (-o) 必須引数 + 環境変数 OPERATION フォールバック
+- ScreenRecorder が lc_sessions に `operation_code_key` / `operation_tag_id` を書き込む
+- cross_session_merger.merge_to_master / _seed_master / _add_all_as_new で
+  マージ完了時に `_assign_operation_tags_for_session()` を呼び出し、
+  `lc_node_mappings` 経由で master_fp 群に INSERT OR IGNORE
+
+#### Phase 3: シーンタグ Gemini 判定 + プロンプト編集
+- `crawler/tools/tag_judgment.py`:
+  - DEFAULT_PROMPTS (scene / sub_scene)
+  - compute_prompt_hash (sha256 over prompt + sorted (id, name, description))
+  - run_judgment: ThreadPoolExecutor 5 並列 + REST API 呼び出し
+  - 「未付与のみ」 = auto_pilot OR manual で付与済み (gemini-only は再判定可能)
+  - 「全件再判定」 = auto_pilot 常時保護、reset_manual で manual も上書き
+  - エラー結果はキャッシュしない (CLAUDE.md §17 と整合)
+  - estimate_targets / test_prompt_with_samples (DB 書き込みなし)
+  - CLI: `python -m tools.tag_judgment --type scene --mode unassigned`
+- `web/public/api/tagging.php`: ?action=run / progress / estimate
+- `web/public/api/tag_prompts.php`: GET / PUT / POST&action=test / POST&action=reset
+- ダッシュボード: 4 モーダル (run-confirm / prompt-edit / prompt-test / progress) +
+  Phase 1 で disabled だったボタンを有効化
+
+#### Phase 4: 詳細タグ拡張 (検証・テスト)
+- バックエンド機能は Phase 3 で sub_scene にも対応済み (DEFAULT_PROMPTS / MODEL_BY_TYPE / PURPOSE_BY_TYPE)
+- Phase 4 の追加: sub_scene 固有の挙動を pytest 14 件 + Playwright 6 件で固める
+- model='gemini-2.5-flash' / purpose='tag_subscene_judgment' を確認
+- 0+ 配列の処理 / scene タグを破壊しないこと / scene と sub_scene のプロンプト独立性
+
+### テスト結果サマリ
+
+| 区分 | テスト数 | 状態 |
+|---|---|---|
+| pytest test_tags_schema.py | 23 | 全 green |
+| pytest test_tags_api.py | 23 | 全 green |
+| pytest test_tag_history.py | 6 | 全 green |
+| pytest test_operation_tag.py | 12 | 全 green |
+| pytest test_tag_judgment.py | 23 | 全 green |
+| pytest test_tag_judgment_subscene.py | 14 | 全 green |
+| **pytest 合計** | **101** | **全 green** |
+| Playwright tags_phase1.spec.ts | 12 | 全 green |
+| Playwright tags_phase3.spec.ts | 11 | 全 green |
+| Playwright tags_phase4.spec.ts | 6 | 全 green |
+| **Playwright 合計** | **29** | **全 green** |
+
+詳細: `docs/history/2026-05-04.md` (本セッション要約)
+
+### Phase 1〜4 完了後の状態
+- DB: 5 タグテーブル + 初期 11+9 タグ + 操縦カテゴリ tutorial 1 件 (auto_pilot 起動時に upsert)
+- API: 3 ファイル (tags.php / tagging.php / tag_prompts.php) + 共通ヘルパ
+- UI: Tag タブ完全実装 + ノード詳細モーダルのタグチップ表示
+- Backend: tag_judgment.py で scene + sub_scene 両対応
+- 残: 検索機能との統合 (本機能の本来の目的、別タスク予定)
+
+### 次セッション (PR 作成 + 残タスク)
+
+#### PR 作成
+全 Phase 完了済 → PR #2 を作成 (前回 screen-recorder と同流儀)。
+- ベース: main (commit `3a41eb3`)
+- HEAD: `feature/master-node-tags` (約 9 コミット先行)
+- タイトル: "feat(tags): master node tag system (Phases 1-4)"
+- 本文に各 Phase の概要 + テスト件数 + 残タスク (検索統合) を記載
+
+#### Phase 5+ (将来)
+- 前後ノードのヒント送信 (Gemini プロンプトに含める)
+- 新タグ追加時の差分判定モード
+- 確信度ベースの「要確認」UI
+- 検索機能との統合 ← 本機能の本来の目的、別タスク
+- search.php クリーンアップ
+
+## ひとつ前のセッション (2026-05-03) — マスターノードタグ機能の Phase 0 (設計書作成)
+
+Phase 1 (スキーマ migration + Tag タブ CRUD + 手動編集 + 代表変更ハンドラ) を 4 コミットで完了。
+pytest 52 件 + Playwright 12 件、全 green。
+
+### Phase 1 コミット
+| Commit | 内容 |
+|---|---|
+| `8f246ea` | DB Migration: 5 テーブル + index + 初期データ (シーン 11 / 詳細 9) |
+| `dc2d652` | 代表変更ハンドラ: orphan 修復で履歴記録 + Gemini タグ削除 |
+| `29aac52` | tags.php API: CRUD + ノードタグ操作 (シーン置換 + 履歴記録) |
+| `a7d42b3` | Tag タブ UI + ノード詳細モーダルのタグチップエリア (Playwright 12 件含む) |
+
+### Phase 1 で確定した方針 (P1 計画書 §1.2)
+- 操縦カテゴリサブタブ: P1 では空 + 説明文表示
+- 代表変更ハンドラ: P1 でスキーマと一緒に実装 (履歴記録 + Gemini タグ削除)
+- 「未付与のみ」モード: prompt_hash 変化時は再判定 (P3 で実装)
+- Gemini シーン置換時の history: 不要 (判定キャッシュで追跡、手動編集のみ history 記録)
+- 初期データ: `INSERT ... WHERE NOT EXISTS` で重複防止 (DB UNIQUE 制約はアプリ側ガードのため)
+
+### 詳細ドキュメント
+- `docs/design/master_node_tags.md` (1,493 行、Phase 0)
+- `docs/design/master_node_tags_phase1.md` (1,321 行、Phase 1 詳細計画)
+- `docs/history/2026-05-04.md` (本セッション要約)
+
+### 次セッション (Phase 2)
+- `OperationTag` IntEnum + `OPERATION_TAG_NAMES` / `OPERATION_TAG_CODE_KEYS` 定義
+- auto_pilot `--operation` 必須引数
+- screen_recorder の操縦カテゴリ自動付与
+- `PilotState.operation_tag_id` 追加 (CycleState ではなく PilotState)
+
+## ひとつ前のセッション (2026-05-03) — マスターノードタグ機能の Phase 0 (設計書作成)
+
+スクリーン記録機能を main にマージ → 次の機能「マスターノードタグ機能」の **計画策定のみ** に集中したセッション。実装には着手せず、Phase 0 (設計書作成) のみを完了。
+
+仕様確定までに **v1〜v6 の計 6 ラウンド** の質疑応答を経て、設計書 1,493 行 + CLAUDE.md §21 (90 行、運用ルール 9 項目) を作成。1 コミット (`3a02303`)。
+
+詳細: `docs/history/2026-05-03.md` / `docs/design/master_node_tags.md`
+
+### 機能の目的
+将来の検索機能でタグによるカテゴリ検索を可能にするため、マスターノードに 3 種別のタグを付与する基盤を構築。
+
+### タグ 3 種別
+
+| 種別 | 個数 | 管理 | 付与方法 |
+|---|---|---|---|
+| 操縦カテゴリ | 0+ | コード `OperationTag` IntEnum + DB 同期 | auto_pilot 起動引数で自動付与 |
+| シーン | 1 個必須 | DB (Tag タブで CRUD) | Gemini AI / 手動 |
+| 詳細 | 0+ シーン横断 | DB (Tag タブで CRUD) | Gemini AI / 手動 |
+
+### Phase 計画
+- ✅ P0: 設計書作成 (本セッション完了)
+- ⏳ P1: スキーマ migration + Tag タブ CRUD + 手動編集
+- ⏳ P2: 操縦カテゴリ自動付与 (`OperationTag` enum + auto_pilot 引数)
+- ⏳ P3: シーンタグ Gemini 判定 + プロンプト編集 (シーンのみ)
+- ⏳ P4: 詳細タグ Gemini 判定 + プロンプト編集 (詳細にも拡張)
+- 🔮 P5+: 前後ノードヒント / 検索統合 / search.php クリーンアップ
+
+PR は全 Phase (P1-P4) 完了後に 1 つ作成 (前回 screen-recorder と同流儀)。
+
+### 設計書の特徴
+- 設計書 + 仕様書の二役 (冒頭ガイダンスで使い分け明示)
+- 5 テーブルの全列定義 + index + 制約
+- 13 API エンドポイントのリクエスト/レスポンス JSON 完備
+- 6+ UI モック (Tag タブ + ノード詳細モーダル + 確認モーダル + プロンプト編集 UI)
+- Phase ごとの pytest + Playwright + 実機確認テストケース概要
+- Cost タブとの統合 (既存 `record_api_usage` + リアルタイム JPY 為替を活用)
+
+### 次セッションへの引き継ぎ手順
+1. CLAUDE.md §0、§13、§21 を読み直す
+2. 設計書 `docs/design/master_node_tags.md` を読む (特に §3.2 / §5 / §6 / §9)
+3. **Phase 1 詳細計画書** `docs/design/master_node_tags_phase1.md` を作成 → 承認
+4. テスト先行で着手 (CLAUDE.md §3)、最小単位で実機確認 (§7) → コミット (§2)
+
+## ひとつ前のセッション (2026-04-30 後半) — マージ時系列バグ修正 (fingerprint 再設計)
 
 ユーザー報告「マージ後の master でダウンロードゲージが巻き戻る」の根本対策。
 3 つの絡み合う原因 (fingerprint 数字除去 / merge 直接 fp 未チェック / SafeInsert 削除) を Phase 1 で解消。1 コミット (`322b2b0`)、109 件テスト PASS。
@@ -206,10 +372,19 @@ TH_LOOSE がドリフト絶対上限。連鎖統合で代表から TH_LOOSE 以�
 
 ## 次セッション開始時の推奨手順
 
-スクリーン記録機能はひと段落 (`feature/screen-recorder` ブランチ、614 コミット先行)。次の機能着手前に:
+マスターノードタグ機能の Phase 1 着手:
 
-1. `git log --oneline -15` で直近 4/30 セッションの変更を再確認
-2. STATUS.md と `docs/history/2026-04-30.md` を読む
-3. 必要なら main へのマージ計画 (大規模なので慎重に)
-4. ダッシュボード (`http://localhost:8080/dashboard.php`) で paused 状態 + 新規ノード不採用の動作確認
-5. 次の機能テーマをユーザーと相談
+1. CLAUDE.md §0 (チュートリアル自律操縦)、§13 (行動ルール)、§21 (タグ機能運用ルール) を読み直す
+2. `docs/design/master_node_tags.md` (設計書 1,493 行) を読む — 特に §3.2 (スキーマ), §5 (API), §6 (UI), §9.1 (Phase 1 テストケース)
+3. `docs/history/2026-05-03.md` (本セッション要約・議論経過) を読む
+4. **Phase 1 詳細計画書** `docs/design/master_node_tags_phase1.md` を作成
+   - 実装ファイル一覧 (新規 / 修正)
+   - pytest テストケース具体形 (関数名 + 内容)
+   - Playwright テストケース具体形
+   - Migration SQL 完全版
+   - API リクエスト/レスポンス JSON サンプル
+5. ユーザー承認 → テスト先行で着手 (CLAUDE.md §3)
+6. 最小単位で実機確認 (CLAUDE.md §7) → コミット (CLAUDE.md §2)
+
+過去セッション (PR マージ済み機能) の確認が必要なら:
+- `git log --oneline 3a41eb3 | head -20` で直近の main 変更を確認

@@ -1611,6 +1611,9 @@ def parse_args():
                         help="scrcpy 起動時に端末の画面をオフにする")
     parser.add_argument("-S", "--screenshot", action="store_true",
                         help="スクリーン記録: ユニーク画面をSQLiteに保存")
+    parser.add_argument("-o", "--operation", type=str, default=None,
+                        help="操縦カテゴリの code_key (例: tutorial)。"
+                             " 未指定時は環境変数 OPERATION を参照、それも無ければ起動拒否。")
     parser.add_argument("-V", "--version", type=int, default=None,
                         help="バージョンID (未指定時はActiveバージョンを使用)")
     # parse_known_args: main.py 経由の場合に --android, --package 等の未知引数を無視
@@ -2350,12 +2353,27 @@ def _handle_rapid_path(
 def main():
     import tools.ap.constants as _ap_const  # _DEBUG_SAVE_IMAGES 直接書換え用
     from tools.ap.mission import select_mission
+    from tools.ap.operation_tags import (
+        resolve_operation_code_key, upsert_operation_tag, OPERATION_TAG_CODE_KEYS,
+    )
 
     args = parse_args()
     mission = select_mission(args)
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
         _ap_const._DEBUG_SAVE_IMAGES = True
+
+    # ─── 操縦カテゴリの解決 (Phase 2、起動拒否ガード) ───
+    _operation_code_key = args.operation or os.environ.get("OPERATION") or ""
+    if not _operation_code_key:
+        valid = ", ".join(OPERATION_TAG_CODE_KEYS.values())
+        logger.error(
+            "[OPERATION] --operation (-o) または環境変数 OPERATION が必要です。"
+            " 有効な値: %s", valid,
+        )
+        sys.exit(1)
+    _operation_tag = resolve_operation_code_key(_operation_code_key)  # 未登録なら SystemExit
+    logger.info("[OPERATION] 操縦カテゴリ: %s (id=%d)", _operation_code_key, int(_operation_tag))
 
     # ─── ADB 自動接続: USB → Wi-Fi フォールバック ───
     try:
@@ -2431,6 +2449,9 @@ def main():
 
     # ─── PilotState 早期作成: インストール時間も計測に含める ───
     state = PilotState()
+    state.operation_code_key = _operation_code_key
+    # operation_tag_id は ScreenRecorder の DB 接続を使って起動時 upsert する
+    # (DB が存在する前なのでここでは保留、recorder 構築直後に upsert する)
 
     # ─── ライブダッシュボード (スクリーン記録有効時) ───
     # reinstall より先に起動して、インストール中もブラウザで確認できるようにする
@@ -2538,13 +2559,27 @@ def main():
         if not _rec_session:
             _rec_session = f"ap_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             logger.info("[ScreenRecorder] 新規セッション: %s", _rec_session)
+        # 操縦カテゴリ (Phase 2): まずタグ無しで recorder を起動し、DB 接続経由で
+        # upsert → 取得した tag_id をセッション行へ反映する
         recorder = ScreenRecorder(
             db_path=_STATE_DB_PATH,
             storage_dir=Path(__file__).parent.parent / "storage" / "screenshots",
             session_id=_rec_session,
             game_title="まどドラ",
             version_id=args.version,
+            operation_code_key=_operation_code_key,
+            operation_tag_id=None,
         )
+        # recorder の DB に operation tag を upsert
+        _op_tag_id = upsert_operation_tag(recorder._conn, _operation_tag)
+        recorder._conn.execute(
+            "UPDATE lc_sessions SET operation_tag_id = ?, operation_code_key = ?"
+            " WHERE session_id = ?",
+            (_op_tag_id, _operation_code_key, _rec_session),
+        )
+        recorder._conn.commit()
+        recorder._operation_tag_id = _op_tag_id
+        state.operation_tag_id = _op_tag_id
         state.cycle.recorder = recorder
         # バックグラウンドワーカー起動 (クラスタリング + OCR 再処理)
         from tools.ap.background_worker import BackgroundWorker

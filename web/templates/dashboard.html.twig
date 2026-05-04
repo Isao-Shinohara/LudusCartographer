@@ -39,6 +39,10 @@
             onclick="switchTab('settings')">
         Settings
     </button>
+    <button id="tab-tags" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300"
+            onclick="switchTab('tags')">
+        Tag
+    </button>
     <select id="filter-select" class="ml-3 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="reps" selected>採用</option>
         <option value="thinned">不採用</option>
@@ -154,6 +158,168 @@
 <div id="merge-container" class="hidden"></div>
 <div id="settings-container" class="hidden"></div>
 
+<!-- Tag タブ用コンテナ -->
+<div id="tags-container" class="hidden">
+    <!-- サブタブ -->
+    <div class="flex gap-1 mb-4 border-b border-gray-800">
+        <button id="tag-subtab-scene" class="tag-subtab-btn px-4 py-2 text-sm font-medium border-b-2 border-brand text-brand-light"
+                onclick="tagSwitchSubtab('scene')">シーン</button>
+        <button id="tag-subtab-sub_scene" class="tag-subtab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300"
+                onclick="tagSwitchSubtab('sub_scene')">詳細</button>
+        <button id="tag-subtab-operation" class="tag-subtab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300"
+                onclick="tagSwitchSubtab('operation')">操縦カテゴリ</button>
+    </div>
+
+    <!-- シーン サブコンテンツ -->
+    <div id="tag-content-scene" class="tag-subtab-content">
+        <div class="flex gap-2 mb-4 flex-wrap">
+            <button id="tag-add-btn-scene" class="px-3 py-1.5 bg-brand/80 hover:bg-brand text-white text-sm rounded transition-colors"
+                    onclick="tagOpenEditModal('scene', null)">+ 新規タグ追加</button>
+            <button id="tag-prompt-edit-scene" class="px-3 py-1.5 bg-purple-700/70 hover:bg-purple-700 text-white text-sm rounded transition-colors"
+                    onclick="tagOpenPromptEditor('scene')">プロンプト編集</button>
+            <div class="inline-flex rounded overflow-hidden border border-emerald-700">
+                <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-700/70 hover:bg-emerald-700 text-white text-sm transition-colors"
+                        onclick="tagOpenRunConfirm('scene', 'unassigned')">未付与のみ判定</button>
+                <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-900/70 hover:bg-emerald-800 text-white text-sm transition-colors border-l border-emerald-800"
+                        onclick="tagOpenRunConfirm('scene', 'all')">全件再判定</button>
+            </div>
+        </div>
+        <div id="tag-progress-scene" class="hidden mb-4 bg-gray-900/60 border border-gray-700 rounded p-3 text-sm"></div>
+        <div id="tag-list-scene" class="tag-list space-y-1"></div>
+    </div>
+
+    <!-- 詳細 サブコンテンツ -->
+    <div id="tag-content-sub_scene" class="tag-subtab-content hidden">
+        <div class="flex gap-2 mb-4 flex-wrap">
+            <button id="tag-add-btn-sub_scene" class="px-3 py-1.5 bg-brand/80 hover:bg-brand text-white text-sm rounded transition-colors"
+                    onclick="tagOpenEditModal('sub_scene', null)">+ 新規タグ追加</button>
+            <button id="tag-prompt-edit-sub_scene" class="px-3 py-1.5 bg-purple-700/70 hover:bg-purple-700 text-white text-sm rounded transition-colors"
+                    onclick="tagOpenPromptEditor('sub_scene')">プロンプト編集</button>
+            <div class="inline-flex rounded overflow-hidden border border-emerald-700">
+                <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-700/70 hover:bg-emerald-700 text-white text-sm transition-colors"
+                        onclick="tagOpenRunConfirm('sub_scene', 'unassigned')">未付与のみ判定</button>
+                <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-900/70 hover:bg-emerald-800 text-white text-sm transition-colors border-l border-emerald-800"
+                        onclick="tagOpenRunConfirm('sub_scene', 'all')">全件再判定</button>
+            </div>
+        </div>
+        <div id="tag-progress-sub_scene" class="hidden mb-4 bg-gray-900/60 border border-gray-700 rounded p-3 text-sm"></div>
+        <div id="tag-list-sub_scene" class="tag-list space-y-1"></div>
+    </div>
+
+    <!-- 操縦カテゴリ サブコンテンツ (read-only) -->
+    <div id="tag-content-operation" class="tag-subtab-content hidden">
+        <div class="bg-gray-800/60 border border-gray-700 rounded p-3 mb-4 text-sm text-gray-400">
+            ⓘ 操縦カテゴリは Phase 2 以降で auto_pilot 起動時に自動登録されます。<br>
+            Tag タブから追加・編集・削除はできません。
+        </div>
+        <div id="tag-list-operation" class="tag-list space-y-1"></div>
+    </div>
+</div>
+
+<!-- タグ編集モーダル (新規追加 / 編集) -->
+<div id="tag-edit-modal" class="fixed inset-0 bg-black/60 z-[60] hidden items-center justify-center">
+    <div class="bg-gray-900 rounded-lg p-6 w-96 max-w-full border border-gray-700">
+        <h3 id="tag-edit-modal-title" class="text-lg font-bold text-brand-light mb-4">タグ追加</h3>
+        <div class="space-y-3">
+            <div>
+                <label class="text-xs text-gray-400 block mb-1">名称 <span class="text-red-400">*</span></label>
+                <input id="tag-edit-name" type="text" maxlength="50" class="w-full bg-gray-800 text-gray-200 text-sm rounded px-2 py-1.5 border border-gray-700 focus:border-brand outline-none" />
+            </div>
+            <div>
+                <label class="text-xs text-gray-400 block mb-1">説明 (Gemini プロンプトに含まれる)</label>
+                <textarea id="tag-edit-description" maxlength="500" rows="2" class="w-full bg-gray-800 text-gray-200 text-sm rounded px-2 py-1.5 border border-gray-700 focus:border-brand outline-none"></textarea>
+            </div>
+            <div class="flex gap-3">
+                <div class="flex-1">
+                    <label class="text-xs text-gray-400 block mb-1">色 (#RRGGBB)</label>
+                    <input id="tag-edit-color" type="text" placeholder="#42A5F5" class="w-full bg-gray-800 text-gray-200 text-sm rounded px-2 py-1.5 border border-gray-700 focus:border-brand outline-none" />
+                </div>
+                <div class="w-24">
+                    <label class="text-xs text-gray-400 block mb-1">表示順</label>
+                    <input id="tag-edit-sort_order" type="number" value="0" class="w-full bg-gray-800 text-gray-200 text-sm rounded px-2 py-1.5 border border-gray-700 focus:border-brand outline-none" />
+                </div>
+            </div>
+            <div id="tag-edit-error" class="hidden text-xs text-red-400 mt-1"></div>
+        </div>
+        <div class="flex justify-end gap-2 mt-5">
+            <button id="tag-edit-cancel" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">キャンセル</button>
+            <button id="tag-edit-save" class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-sm rounded">保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- タグ削除確認モーダル -->
+<div id="tag-delete-modal" class="fixed inset-0 bg-black/60 z-[60] hidden items-center justify-center">
+    <div class="bg-gray-900 rounded-lg p-6 w-96 max-w-full border border-gray-700">
+        <h3 class="text-lg font-bold text-amber-300 mb-3">タグ削除確認</h3>
+        <p id="tag-delete-message" class="text-sm text-gray-300 mb-4"></p>
+        <div class="flex justify-end gap-2">
+            <button id="tag-delete-cancel" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">キャンセル</button>
+            <button id="tag-delete-confirm" class="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-sm rounded">削除</button>
+        </div>
+    </div>
+</div>
+
+<!-- 判定実行確認モーダル (Phase 3) -->
+<div id="tag-run-confirm-modal" class="fixed inset-0 bg-black/60 z-[60] hidden items-center justify-center">
+    <div class="bg-gray-900 rounded-lg p-6 w-[36rem] max-w-full border border-gray-700">
+        <h3 id="tag-run-confirm-title" class="text-lg font-bold text-emerald-300 mb-3">タグ付け実行確認</h3>
+        <div id="tag-run-confirm-loading" class="text-sm text-gray-500 py-4">推定中...</div>
+        <div id="tag-run-confirm-body" class="hidden text-sm text-gray-300 space-y-2"></div>
+        <div class="mt-4 flex items-center gap-2">
+            <input type="checkbox" id="tag-run-reset-manual" class="cursor-pointer" />
+            <label for="tag-run-reset-manual" class="text-xs text-gray-400 cursor-pointer">手動付与タグも上書きする (完全リセット)</label>
+        </div>
+        <div id="tag-run-confirm-error" class="hidden text-xs text-red-400 mt-2"></div>
+        <div class="flex justify-end gap-2 mt-5">
+            <button id="tag-run-cancel" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">キャンセル</button>
+            <button id="tag-run-confirm" class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-sm rounded" disabled>実行</button>
+        </div>
+    </div>
+</div>
+
+<!-- プロンプト編集モーダル (Phase 3) -->
+<div id="prompt-edit-modal" class="fixed inset-0 bg-black/60 z-[60] hidden items-center justify-center">
+    <div class="bg-gray-900 rounded-lg p-6 w-[44rem] max-w-full max-h-[90vh] flex flex-col border border-gray-700">
+        <h3 id="prompt-edit-title" class="text-lg font-bold text-purple-300 mb-3">シーンタグ プロンプト編集</h3>
+        <div class="flex-1 overflow-auto">
+            <textarea id="prompt-edit-text" class="w-full h-72 bg-gray-800 text-gray-200 text-xs font-mono rounded px-3 py-2 border border-gray-700 focus:border-brand outline-none"></textarea>
+            <div class="text-xs text-gray-500 mt-2">
+                利用可能プレースホルダ:
+                <code class="text-amber-300">{tag_candidates}</code>
+                <code class="text-amber-300">{detected_scene}</code>
+                <code class="text-amber-300">{ocr_text}</code>
+            </div>
+            <div id="prompt-edit-status" class="text-xs text-gray-500 mt-1"></div>
+            <div id="prompt-edit-error" class="hidden text-xs text-red-400 mt-1"></div>
+            <div id="prompt-edit-warn" class="hidden text-xs text-amber-300 mt-1"></div>
+        </div>
+        <div class="flex justify-between gap-2 mt-4 pt-3 border-t border-gray-800">
+            <div class="flex gap-2">
+                <button id="prompt-test-btn" class="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-white text-sm rounded">テスト判定 (5件)</button>
+                <button id="prompt-reset-btn" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">デフォルトに戻す</button>
+            </div>
+            <div class="flex gap-2">
+                <button id="prompt-cancel-btn" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">キャンセル</button>
+                <button id="prompt-save-btn" class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-sm rounded">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- テスト判定結果モーダル -->
+<div id="prompt-test-modal" class="fixed inset-0 bg-black/70 z-[70] hidden items-center justify-center">
+    <div class="bg-gray-900 rounded-lg p-6 w-[48rem] max-w-full max-h-[90vh] flex flex-col border border-gray-700">
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-bold text-cyan-300">テスト判定結果</h3>
+            <button id="prompt-test-close" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+        </div>
+        <div id="prompt-test-loading" class="text-center text-gray-500 py-8 text-sm">判定中...</div>
+        <div id="prompt-test-results" class="hidden flex-1 overflow-auto space-y-3"></div>
+        <div class="text-xs text-gray-700 mt-3 pt-2 border-t border-gray-800">※ DB には保存されません (テスト専用)</div>
+    </div>
+</div>
+
 <!-- 固定フッター (画面数) -->
 <div id="dashboard-footer" class="fixed bottom-0 left-0 right-0 z-30 bg-gray-900/90 border-t border-gray-800 py-1.5">
     <div class="max-w-7xl mx-auto px-4 flex items-center gap-6">
@@ -244,6 +410,8 @@
                         <span id="modal-time"></span>
                         <span id="modal-decision-badge" class="hidden"></span>
                     </div>
+                    <!-- タグエリア (Phase 1, Step 8) -->
+                    <div id="node-tags-area" class="hidden mt-3 bg-gray-800/40 border border-gray-700 rounded p-3"></div>
                 </div>
                 <!-- アンカー比較 (右サイド) -->
                 <div id="modal-anchor-compare" class="hidden w-72 flex-shrink-0 border-l border-gray-800 flex flex-col">
@@ -1206,6 +1374,9 @@
         const mergeContainer = document.getElementById('merge-container');
         const finalActions = document.getElementById('final-actions');
         const liveActions = document.getElementById('live-actions');
+        const tagsContainer = document.getElementById('tags-container');
+        // tags 以外のタブでは tags-container を隠す
+        if (tagsContainer && tab !== 'tags') tagsContainer.classList.add('hidden');
         pendingChanges = {};
         selectedForGroup.clear();
         selectedLiveScreens.clear();
@@ -1343,8 +1514,27 @@
             mergeContainer.classList.add('hidden');
             const sc = document.getElementById('settings-container');
             sc.classList.remove('hidden');
+            const tc = document.getElementById('tags-container');
+            if (tc) tc.classList.add('hidden');
             syncUrlParams();
             fetchVersions();
+        } else if (tab === 'tags') {
+            finalActions.classList.add('hidden');
+            liveActions.classList.add('hidden');
+            statusDot.classList.add('hidden');
+            statusText.textContent = '';
+            stats.textContent = '';
+            filterSelect.classList.add('hidden');
+            sessionSelect.classList.add('hidden');
+            sortToggle.classList.add('hidden');
+            grid.classList.add('hidden');
+            mergeContainer.classList.add('hidden');
+            document.getElementById('settings-container').classList.add('hidden');
+            const tc = document.getElementById('tags-container');
+            tc.classList.remove('hidden');
+            syncUrlParams();
+            // 現在開いているサブタブを再読込 (デフォルト: scene)
+            tagSwitchSubtab(_tagCurrentSubtab || 'scene');
         }
     };
 
@@ -3053,6 +3243,10 @@
         document.getElementById('modal-anchor-compare').classList.remove('flex');
         modal.classList.remove('hidden');
         modal.classList.add('flex');
+        // タグエリア更新 (Phase 1, Step 8): master_fp があるときのみ表示
+        if (typeof window.tagsRenderNodeChips === 'function') {
+            window.tagsRenderNodeChips(s.master_fp || null, _currentVersionId);
+        }
         // Final タブ: クラスタ兄弟を表示
         const clusterDiv = document.getElementById('modal-cluster');
         const clusterGrid = document.getElementById('modal-cluster-grid');
@@ -3992,6 +4186,654 @@
     fetch(API_BASE + '?action=get_active_version').then(r => r.json()).then(d => {
         _currentVersionId = d.version?.id || 1;
     }).catch(() => {});
+
+    // ─── Tag タブ (Phase 1) ────────────────────────────
+    // 設計書: docs/design/master_node_tags.md §6
+    // 詳細計画: docs/design/master_node_tags_phase1.md §6
+
+    const TAGS_API = 'api/tags.php';
+    let _tagCurrentSubtab = 'scene';
+    let _tagEditingId = null;
+    let _tagEditingType = 'scene';
+    let _tagDeleteId = null;
+    let _tagDeleteType = 'scene';
+
+    window.tagSwitchSubtab = function(type) {
+        _tagCurrentSubtab = type;
+        // サブタブのスタイル更新
+        document.querySelectorAll('.tag-subtab-btn').forEach(btn => {
+            btn.classList.remove('border-brand', 'text-brand-light');
+            btn.classList.add('border-transparent', 'text-gray-500');
+        });
+        const activeSubtab = document.getElementById('tag-subtab-' + type);
+        if (activeSubtab) {
+            activeSubtab.classList.remove('border-transparent', 'text-gray-500');
+            activeSubtab.classList.add('border-brand', 'text-brand-light');
+        }
+        // サブコンテンツの表示切替
+        document.querySelectorAll('.tag-subtab-content').forEach(c => c.classList.add('hidden'));
+        const activeContent = document.getElementById('tag-content-' + type);
+        if (activeContent) activeContent.classList.remove('hidden');
+        // 一覧読み込み
+        tagsFetchAndRender(type);
+    };
+
+    async function tagsFetchAndRender(type) {
+        const listEl = document.getElementById('tag-list-' + type);
+        if (!listEl) return;
+        listEl.innerHTML = '<div class="text-center text-gray-600 py-6 text-sm">読み込み中...</div>';
+        try {
+            const res = await fetch(TAGS_API + '?type=' + encodeURIComponent(type));
+            const data = await res.json();
+            if (!data.ok) {
+                listEl.innerHTML = '<div class="text-center text-red-400 py-6 text-sm">読み込み失敗: ' + escapeHtml(data.error || '') + '</div>';
+                return;
+            }
+            tagsRenderList(type, data.tags || []);
+        } catch (e) {
+            listEl.innerHTML = '<div class="text-center text-red-400 py-6 text-sm">通信エラー</div>';
+        }
+    }
+
+    function tagsRenderList(type, tags) {
+        const listEl = document.getElementById('tag-list-' + type);
+        if (!listEl) return;
+        if (tags.length === 0) {
+            const emptyMsg = type === 'operation'
+                ? 'まだ操縦カテゴリは登録されていません。'
+                : 'タグがありません。「+ 新規タグ追加」から作成してください。';
+            listEl.innerHTML = '<div class="text-center text-gray-600 py-6 text-sm">' + emptyMsg + '</div>';
+            return;
+        }
+        const isReadOnly = (type === 'operation');
+        listEl.innerHTML = tags.map(t => {
+            const isSystem = t.is_system === 1;
+            const lockIcon = isSystem ? '🔒 ' : '';
+            const colorDot = t.color
+                ? `<span class="inline-block w-3 h-3 rounded-full" style="background:${escapeHtml(t.color)}"></span>`
+                : '<span class="inline-block w-3 h-3 rounded-full bg-gray-600"></span>';
+            const colorHex = t.color ? `<span class="text-xs text-gray-600">${escapeHtml(t.color)}</span>` : '';
+            const codeKeyBadge = t.code_key
+                ? `<span class="text-xs text-gray-500">[code: ${escapeHtml(t.code_key)}]</span>`
+                : '';
+            const editBtn = (isReadOnly || isSystem)
+                ? `<button class="px-2 py-1 text-xs bg-gray-800 text-gray-600 rounded cursor-not-allowed" disabled title="編集不可 (コード定義タグ)">編集</button>`
+                : `<button class="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors tag-edit-btn" data-id="${t.id}">編集</button>`;
+            const delBtn = (isReadOnly || isSystem)
+                ? `<button class="px-2 py-1 text-xs bg-gray-800 text-gray-600 rounded cursor-not-allowed" disabled title="削除不可 (コード定義タグ)">削除</button>`
+                : `<button class="px-2 py-1 text-xs bg-red-900/40 hover:bg-red-800/60 text-red-300 rounded transition-colors tag-del-btn" data-id="${t.id}" data-name="${escapeHtml(t.name)}" data-cnt="${t.assigned_count}">削除</button>`;
+            return `
+                <div class="flex items-center gap-3 p-2 bg-gray-900/40 hover:bg-gray-800/60 border border-gray-800 rounded">
+                    ${colorDot}
+                    <span class="text-sm text-gray-200">${lockIcon}${escapeHtml(t.name)}</span>
+                    ${codeKeyBadge}
+                    <span class="text-xs text-gray-500">[${t.assigned_count}] 件</span>
+                    ${colorHex}
+                    <span class="text-xs text-gray-700 truncate flex-1">${escapeHtml(t.description || '')}</span>
+                    <div class="flex gap-1 flex-shrink-0">${editBtn}${delBtn}</div>
+                </div>
+            `;
+        }).join('');
+        // ボタンに動的にハンドラ登録
+        listEl.querySelectorAll('.tag-edit-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const id = parseInt(btn.dataset.id);
+                const tag = tags.find(t => t.id === id);
+                if (tag) tagOpenEditModal(type, tag);
+            });
+        });
+        listEl.querySelectorAll('.tag-del-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                tagOpenDeleteModal(type, parseInt(btn.dataset.id), btn.dataset.name, parseInt(btn.dataset.cnt));
+            });
+        });
+    }
+
+    window.tagOpenEditModal = function(type, tag) {
+        _tagEditingType = type;
+        _tagEditingId = tag ? tag.id : null;
+        document.getElementById('tag-edit-modal-title').textContent = tag ? 'タグ編集' : 'タグ追加';
+        document.getElementById('tag-edit-name').value = tag ? (tag.name || '') : '';
+        document.getElementById('tag-edit-description').value = tag ? (tag.description || '') : '';
+        document.getElementById('tag-edit-color').value = tag ? (tag.color || '') : '';
+        document.getElementById('tag-edit-sort_order').value = tag ? (tag.sort_order || 0) : 0;
+        const errEl = document.getElementById('tag-edit-error');
+        errEl.classList.add('hidden');
+        errEl.textContent = '';
+        const m = document.getElementById('tag-edit-modal');
+        m.classList.remove('hidden');
+        m.classList.add('flex');
+    };
+
+    function tagCloseEditModal() {
+        const m = document.getElementById('tag-edit-modal');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
+    }
+
+    async function tagSaveFromModal() {
+        const name = document.getElementById('tag-edit-name').value.trim();
+        const description = document.getElementById('tag-edit-description').value.trim();
+        const color = document.getElementById('tag-edit-color').value.trim();
+        const sortOrder = parseInt(document.getElementById('tag-edit-sort_order').value) || 0;
+        const errEl = document.getElementById('tag-edit-error');
+        errEl.classList.add('hidden');
+
+        if (!name) {
+            errEl.textContent = '名称は必須です';
+            errEl.classList.remove('hidden');
+            return;
+        }
+        if (color && !/^#[0-9A-Fa-f]{6}$/.test(color)) {
+            errEl.textContent = '色は #RRGGBB 形式 (例: #42A5F5) で入力してください';
+            errEl.classList.remove('hidden');
+            return;
+        }
+
+        try {
+            let url = TAGS_API;
+            let method;
+            const body = { name, description, color: color || null, sort_order: sortOrder };
+            if (_tagEditingId) {
+                url += '?id=' + _tagEditingId;
+                method = 'PUT';
+            } else {
+                body.tag_type = _tagEditingType;
+                method = 'POST';
+            }
+            const res = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (!data.ok) {
+                errEl.textContent = data.message || data.error || '保存に失敗しました';
+                errEl.classList.remove('hidden');
+                return;
+            }
+            tagCloseEditModal();
+            tagsFetchAndRender(_tagEditingType);
+        } catch (e) {
+            errEl.textContent = '通信エラー: ' + e.message;
+            errEl.classList.remove('hidden');
+        }
+    }
+
+    function tagOpenDeleteModal(type, id, name, cnt) {
+        _tagDeleteType = type;
+        _tagDeleteId = id;
+        const msg = cnt > 0
+            ? `タグ「${name}」を削除しますか？\nこのタグは ${cnt} 件のノードに付与されています (付与レコードは保持されます)。`
+            : `タグ「${name}」を削除しますか？`;
+        document.getElementById('tag-delete-message').textContent = msg;
+        const m = document.getElementById('tag-delete-modal');
+        m.classList.remove('hidden');
+        m.classList.add('flex');
+    }
+
+    function tagCloseDeleteModal() {
+        const m = document.getElementById('tag-delete-modal');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
+    }
+
+    async function tagConfirmDelete() {
+        if (!_tagDeleteId) return;
+        try {
+            const res = await fetch(TAGS_API + '?id=' + _tagDeleteId, { method: 'DELETE' });
+            const data = await res.json();
+            if (!data.ok) {
+                alert('削除失敗: ' + (data.message || data.error || ''));
+                return;
+            }
+            tagCloseDeleteModal();
+            tagsFetchAndRender(_tagDeleteType);
+        } catch (e) {
+            alert('通信エラー: ' + e.message);
+        }
+    }
+
+    // モーダルのボタンを wire up
+    document.getElementById('tag-edit-cancel')?.addEventListener('click', tagCloseEditModal);
+    document.getElementById('tag-edit-save')?.addEventListener('click', tagSaveFromModal);
+    document.getElementById('tag-delete-cancel')?.addEventListener('click', tagCloseDeleteModal);
+    document.getElementById('tag-delete-confirm')?.addEventListener('click', tagConfirmDelete);
+    // モーダル外クリックで閉じる
+    document.getElementById('tag-edit-modal')?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) tagCloseEditModal();
+    });
+    document.getElementById('tag-delete-modal')?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) tagCloseDeleteModal();
+    });
+
+    // ─── ノード詳細モーダルのタグエリア (Phase 1, Step 8) ──
+    // showModal() の処理後に master_fp ベースでタグを取得・描画する。
+    // 元の showModal を wrap せず、modal-img の更新を契機にタグエリアを更新する。
+
+    window.tagsFetchNodeTags = async function(masterFp, versionId) {
+        if (!masterFp) return [];
+        try {
+            const res = await fetch(TAGS_API + '?master_fp=' + encodeURIComponent(masterFp)
+                + '&version_id=' + (versionId || 1));
+            const data = await res.json();
+            return data.ok ? (data.tags || []) : [];
+        } catch (e) {
+            return [];
+        }
+    };
+
+    window.tagsRenderNodeChips = async function(masterFp, versionId) {
+        const wrap = document.getElementById('node-tags-area');
+        if (!wrap) return;
+        if (!masterFp) {
+            wrap.classList.add('hidden');
+            return;
+        }
+        wrap.classList.remove('hidden');
+        wrap.dataset.masterFp = masterFp;
+        wrap.dataset.versionId = String(versionId || 1);
+
+        // 既存タグ + 全タグ取得 (未付与候補を select に出すため)
+        const [assigned, allTagsRes] = await Promise.all([
+            tagsFetchNodeTags(masterFp, versionId),
+            fetch(TAGS_API).then(r => r.json()).catch(() => ({ tags: [] })),
+        ]);
+        const allTags = (allTagsRes.tags || []).filter(t => t.is_deleted === 0);
+
+        // 種別別にレンダー
+        const renderGroup = (label, type) => {
+            const items = assigned.filter(t => t.tag_type === type);
+            const chips = items.map(t => {
+                const isSystem = t.is_system === 1;
+                const closeBtn = isSystem
+                    ? ''
+                    : `<button class="ml-1 text-white/70 hover:text-white node-chip-close" data-tag-id="${t.id}">✕</button>`;
+                const lock = isSystem ? '🔒 ' : '';
+                const bg = t.color || '#555';
+                return `<span class="inline-flex items-center px-2 py-0.5 text-xs rounded text-white" style="background:${escapeHtml(bg)}">${lock}${escapeHtml(t.name)}${closeBtn}</span>`;
+            }).join(' ');
+            return `
+                <div class="flex items-start gap-2">
+                    <span class="text-xs text-gray-500 w-24 pt-0.5">${label}:</span>
+                    <div class="flex flex-wrap gap-1 flex-1" data-type="${type}">${chips || '<span class="text-xs text-gray-700">(なし)</span>'}</div>
+                </div>
+            `;
+        };
+
+        // 未付与タグの候補を集める
+        const assignedIds = new Set(assigned.map(t => t.id));
+        const candidates = allTags.filter(t =>
+            t.tag_type !== 'operation' && !assignedIds.has(t.id)
+        );
+        const candidateOpts = candidates.map(t =>
+            `<option value="${t.id}">[${t.tag_type === 'scene' ? 'シーン' : '詳細'}] ${escapeHtml(t.name)}</option>`
+        ).join('');
+
+        wrap.innerHTML = `
+            <div class="space-y-2">
+                ${renderGroup('シーン', 'scene')}
+                ${renderGroup('詳細', 'sub_scene')}
+                ${renderGroup('操縦カテゴリ', 'operation')}
+            </div>
+            <div class="mt-2 flex items-center gap-2 pt-2 border-t border-gray-800">
+                <select id="node-tag-add-select" class="flex-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
+                    <option value="">+ タグを追加...</option>
+                    ${candidateOpts}
+                </select>
+                <button id="node-tag-add-btn" class="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 disabled:bg-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed text-white text-xs rounded transition-colors" disabled>追加</button>
+            </div>
+            <div class="text-[10px] text-gray-700 mt-1">※ 操縦カテゴリは手動付与/解除できません</div>
+        `;
+
+        // wire up
+        const sel = document.getElementById('node-tag-add-select');
+        const addBtn = document.getElementById('node-tag-add-btn');
+        sel.addEventListener('change', () => {
+            addBtn.disabled = !sel.value;
+        });
+        addBtn.addEventListener('click', async () => {
+            const tagId = parseInt(sel.value);
+            if (!tagId) return;
+            await tagsAssignNodeTag(masterFp, versionId || 1, tagId);
+            tagsRenderNodeChips(masterFp, versionId);
+        });
+        wrap.querySelectorAll('.node-chip-close').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const tagId = parseInt(btn.dataset.tagId);
+                await tagsUnassignNodeTag(masterFp, versionId || 1, tagId);
+                tagsRenderNodeChips(masterFp, versionId);
+            });
+        });
+    };
+
+    // ─── 判定実行 + プロンプト編集 (Phase 3) ──────────
+
+    const TAGGING_API = 'api/tagging.php';
+    const TAG_PROMPTS_API = 'api/tag_prompts.php';
+    let _tagRunPolling = null;
+    let _tagRunCurrentType = null;
+    let _tagPromptType = 'scene';
+
+    window.tagOpenRunConfirm = async function(tagType, mode) {
+        _tagRunCurrentType = tagType;
+        const modal = document.getElementById('tag-run-confirm-modal');
+        document.getElementById('tag-run-confirm-title').textContent =
+            (tagType === 'scene' ? 'シーンタグ' : '詳細タグ') + ' 判定実行確認 ('
+            + (mode === 'unassigned' ? '未付与のみ' : '全件再判定') + ')';
+        document.getElementById('tag-run-confirm-loading').classList.remove('hidden');
+        document.getElementById('tag-run-confirm-body').classList.add('hidden');
+        document.getElementById('tag-run-confirm-error').classList.add('hidden');
+        document.getElementById('tag-run-reset-manual').checked = false;
+        const confirmBtn = document.getElementById('tag-run-confirm');
+        confirmBtn.disabled = true;
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+
+        // estimate を取得
+        const versionId = _currentVersionId || 1;
+        const params = new URLSearchParams({
+            action: 'estimate',
+            tag_type: tagType,
+            mode,
+            reset_manual: '0',
+            version_id: String(versionId),
+        });
+        try {
+            const res = await fetch(TAGGING_API + '?' + params);
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.message || data.error || 'estimate failed');
+            const est = data.estimate || {};
+            const inTok = est.estimated_input_tokens_total || 0;
+            const outTok = est.estimated_output_tokens_total || 0;
+            const usdRate = (typeof window.COST_PRICING === 'object' && window.COST_PRICING[est.model])
+                ? window.COST_PRICING[est.model] : null;
+            let costStr = '計測情報なし';
+            if (usdRate) {
+                const usd = (inTok / 1_000_000) * usdRate.input + (outTok / 1_000_000) * usdRate.output;
+                const jpyRate = window._exchangeRate || 150;
+                costStr = '$' + usd.toFixed(4) + ' (約 ¥' + Math.ceil(usd * jpyRate) + ')';
+            }
+            const body = document.getElementById('tag-run-confirm-body');
+            body.innerHTML = `
+                <div>対象件数: <span class="text-white font-bold">${est.target_count}</span> 件</div>
+                <div class="ml-4 text-xs text-gray-500">└ キャッシュヒット見込み: ${est.cache_hit_estimate}</div>
+                <div class="ml-4 text-xs text-gray-500">└ API 呼び出し見込み: ${est.api_call_estimate}</div>
+                <div>推定時間: <span class="text-white">約 ${est.estimated_seconds || 0} 秒</span></div>
+                <div>推定トークン: 入力 ${(inTok/1000).toFixed(1)}K / 出力 ${(outTok/1000).toFixed(1)}K</div>
+                <div>推定コスト: ${costStr}</div>
+                <div>モデル: <code class="text-amber-300">${est.model || ''}</code></div>
+            `;
+            body.dataset.tagType = tagType;
+            body.dataset.mode = mode;
+            body.dataset.versionId = String(versionId);
+            document.getElementById('tag-run-confirm-loading').classList.add('hidden');
+            body.classList.remove('hidden');
+            confirmBtn.disabled = (est.target_count === 0);
+        } catch (e) {
+            document.getElementById('tag-run-confirm-loading').classList.add('hidden');
+            const errEl = document.getElementById('tag-run-confirm-error');
+            errEl.textContent = String(e);
+            errEl.classList.remove('hidden');
+        }
+    };
+
+    function tagCloseRunConfirm() {
+        const m = document.getElementById('tag-run-confirm-modal');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
+    }
+
+    async function tagRunConfirmExecute() {
+        const body = document.getElementById('tag-run-confirm-body');
+        const tagType = body.dataset.tagType;
+        const mode = body.dataset.mode;
+        const versionId = parseInt(body.dataset.versionId) || 1;
+        const resetManual = document.getElementById('tag-run-reset-manual').checked;
+        try {
+            const res = await fetch(TAGGING_API + '?action=run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tag_type: tagType, mode, reset_manual: resetManual, version_id: versionId }),
+            });
+            const data = await res.json();
+            if (!data.ok) {
+                const errEl = document.getElementById('tag-run-confirm-error');
+                errEl.textContent = data.message || data.error || '実行失敗';
+                errEl.classList.remove('hidden');
+                return;
+            }
+            tagCloseRunConfirm();
+            tagStartProgressPolling(tagType);
+        } catch (e) {
+            const errEl = document.getElementById('tag-run-confirm-error');
+            errEl.textContent = '通信エラー: ' + e.message;
+            errEl.classList.remove('hidden');
+        }
+    }
+
+    function tagStartProgressPolling(tagType) {
+        if (_tagRunPolling) clearInterval(_tagRunPolling);
+        const progressEl = document.getElementById('tag-progress-' + tagType);
+        progressEl.classList.remove('hidden');
+        progressEl.innerHTML = '<div class="text-gray-400">起動中...</div>';
+
+        const tick = async () => {
+            try {
+                const res = await fetch(TAGGING_API + '?action=progress');
+                const data = await res.json();
+                if (!data.ok) return;
+                const p = data;
+                if (p.summary) {
+                    progressEl.innerHTML = `
+                        <div class="text-emerald-300 font-bold">✓ 完了</div>
+                        <div class="text-xs text-gray-400 mt-1">
+                            ${p.summary.total} 件 / 付与 ${p.summary.assigned} / API ${p.summary.api_calls}
+                            / キャッシュ ${p.summary.cache_hits || 0} / エラー ${p.summary.errors}
+                            / ${p.summary.duration_seconds} 秒
+                        </div>
+                    `;
+                    clearInterval(_tagRunPolling);
+                    _tagRunPolling = null;
+                    setTimeout(() => tagsFetchAndRender(tagType), 500);
+                } else if (p.running === false) {
+                    progressEl.innerHTML = '<div class="text-gray-400">待機中</div>';
+                    clearInterval(_tagRunPolling);
+                    _tagRunPolling = null;
+                } else {
+                    const pct = p.total > 0 ? Math.floor((p.processed / p.total) * 100) : 0;
+                    progressEl.innerHTML = `
+                        <div class="text-cyan-300 font-bold">判定中... ${p.processed || 0} / ${p.total || 0} (${pct}%)</div>
+                        <div class="w-full bg-gray-800 h-1.5 rounded mt-2 overflow-hidden">
+                            <div class="bg-cyan-500 h-full transition-all" style="width:${pct}%"></div>
+                        </div>
+                        <div class="text-xs text-gray-500 mt-1">
+                            キャッシュ ${p.cache_hits || 0} / API ${p.api_calls || 0} / エラー ${p.errors || 0}
+                        </div>
+                    `;
+                }
+            } catch (e) { /* ignore */ }
+        };
+        tick();
+        _tagRunPolling = setInterval(tick, 1500);
+    }
+
+    // プロンプト編集
+    window.tagOpenPromptEditor = async function(tagType) {
+        _tagPromptType = tagType;
+        document.getElementById('prompt-edit-title').textContent =
+            (tagType === 'scene' ? 'シーンタグ' : '詳細タグ') + ' プロンプト編集';
+        document.getElementById('prompt-edit-text').value = '';
+        document.getElementById('prompt-edit-status').textContent = '読み込み中...';
+        document.getElementById('prompt-edit-error').classList.add('hidden');
+        document.getElementById('prompt-edit-warn').classList.add('hidden');
+        const m = document.getElementById('prompt-edit-modal');
+        m.classList.remove('hidden');
+        m.classList.add('flex');
+
+        try {
+            const res = await fetch(TAG_PROMPTS_API + '?type=' + tagType);
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.message || data.error || 'load failed');
+            document.getElementById('prompt-edit-text').value = data.current?.prompt_text || '';
+            const st = data.current?.is_default
+                ? '✓ デフォルトプロンプト'
+                : '✏ ユーザー編集済み (最終更新: ' + (data.current?.updated_at || '?') + ')';
+            document.getElementById('prompt-edit-status').textContent = st;
+            document.getElementById('prompt-edit-modal').dataset.defaultText = data.default?.prompt_text || '';
+        } catch (e) {
+            document.getElementById('prompt-edit-status').textContent = '';
+            const err = document.getElementById('prompt-edit-error');
+            err.textContent = String(e);
+            err.classList.remove('hidden');
+        }
+    };
+
+    function tagClosePromptEditor() {
+        const m = document.getElementById('prompt-edit-modal');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
+    }
+
+    async function tagSavePrompt() {
+        const text = document.getElementById('prompt-edit-text').value;
+        if (!text.trim()) {
+            const err = document.getElementById('prompt-edit-error');
+            err.textContent = 'プロンプトは必須です';
+            err.classList.remove('hidden');
+            return;
+        }
+        try {
+            const res = await fetch(TAG_PROMPTS_API + '?type=' + _tagPromptType, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt_text: text }),
+            });
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.message || data.error || 'save failed');
+            const warn = document.getElementById('prompt-edit-warn');
+            warn.textContent = '✓ ' + (data.warning || '保存しました');
+            warn.classList.remove('hidden');
+            setTimeout(() => tagClosePromptEditor(), 1500);
+        } catch (e) {
+            const err = document.getElementById('prompt-edit-error');
+            err.textContent = String(e);
+            err.classList.remove('hidden');
+        }
+    }
+
+    async function tagResetPrompt() {
+        try {
+            const res = await fetch(TAG_PROMPTS_API + '?type=' + _tagPromptType + '&action=reset', {
+                method: 'POST',
+            });
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.message || data.error || 'reset failed');
+            tagOpenPromptEditor(_tagPromptType);  // 再読込
+        } catch (e) {
+            const err = document.getElementById('prompt-edit-error');
+            err.textContent = String(e);
+            err.classList.remove('hidden');
+        }
+    }
+
+    async function tagTestPrompt() {
+        const text = document.getElementById('prompt-edit-text').value;
+        if (!text.trim()) return;
+        const versionId = _currentVersionId || 1;
+        const m = document.getElementById('prompt-test-modal');
+        document.getElementById('prompt-test-loading').classList.remove('hidden');
+        document.getElementById('prompt-test-results').classList.add('hidden');
+        m.classList.remove('hidden');
+        m.classList.add('flex');
+
+        try {
+            const res = await fetch(TAG_PROMPTS_API + '?type=' + _tagPromptType + '&action=test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt_text: text, sample_size: 5, version_id: versionId }),
+            });
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.message || data.error || 'test failed');
+            document.getElementById('prompt-test-loading').classList.add('hidden');
+            const list = document.getElementById('prompt-test-results');
+            list.classList.remove('hidden');
+            list.innerHTML = (data.samples || []).map((s, i) => {
+                const r = s.result || {};
+                const tagSummary = r.tag_id !== undefined
+                    ? `tag_id=${r.tag_id} (信頼度 ${r.confidence ?? '?'})`
+                    : (r.tag_ids ? `tag_ids=[${r.tag_ids.join(', ')}] (信頼度 ${r.confidence ?? '?'})` : 'パース不可');
+                const reason = r.reasoning || r.error || '(なし)';
+                return `
+                    <div class="bg-gray-800/60 rounded p-3">
+                        <div class="text-sm text-gray-300 mb-1">サンプル ${i+1}: ${escapeHtml(s.title || '(無題)')}</div>
+                        <div class="text-xs text-gray-500 mb-2">scene: ${escapeHtml(s.detected_scene || '?')} | fp: <code>${escapeHtml(s.master_fp || '').slice(0,16)}</code></div>
+                        <div class="text-xs text-gray-400 max-h-16 overflow-auto bg-gray-900 rounded px-2 py-1 mb-2">${escapeHtml(s.ocr_text || '(なし)')}</div>
+                        <div class="text-xs text-cyan-300">→ ${escapeHtml(tagSummary)}</div>
+                        <div class="text-xs text-gray-500 mt-1">理由: ${escapeHtml(String(reason))}</div>
+                    </div>
+                `;
+            }).join('');
+        } catch (e) {
+            document.getElementById('prompt-test-loading').classList.add('hidden');
+            const list = document.getElementById('prompt-test-results');
+            list.classList.remove('hidden');
+            list.innerHTML = `<div class="text-red-400 text-sm">${escapeHtml(String(e))}</div>`;
+        }
+    }
+
+    document.getElementById('tag-run-cancel')?.addEventListener('click', tagCloseRunConfirm);
+    document.getElementById('tag-run-confirm')?.addEventListener('click', tagRunConfirmExecute);
+    document.getElementById('tag-run-confirm-modal')?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) tagCloseRunConfirm();
+    });
+    document.getElementById('prompt-cancel-btn')?.addEventListener('click', tagClosePromptEditor);
+    document.getElementById('prompt-save-btn')?.addEventListener('click', tagSavePrompt);
+    document.getElementById('prompt-reset-btn')?.addEventListener('click', tagResetPrompt);
+    document.getElementById('prompt-test-btn')?.addEventListener('click', tagTestPrompt);
+    document.getElementById('prompt-edit-modal')?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) tagClosePromptEditor();
+    });
+    document.getElementById('prompt-test-close')?.addEventListener('click', () => {
+        const m = document.getElementById('prompt-test-modal');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
+    });
+    document.getElementById('prompt-test-modal')?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) {
+            const m = document.getElementById('prompt-test-modal');
+            m.classList.add('hidden');
+            m.classList.remove('flex');
+        }
+    });
+
+    async function tagsAssignNodeTag(masterFp, versionId, tagId) {
+        try {
+            const res = await fetch(TAGS_API + '?master_fp=' + encodeURIComponent(masterFp)
+                + '&version_id=' + versionId, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tag_id: tagId }),
+            });
+            const data = await res.json();
+            if (!data.ok) alert('付与失敗: ' + (data.message || data.error || ''));
+        } catch (e) {
+            alert('通信エラー: ' + e.message);
+        }
+    }
+
+    async function tagsUnassignNodeTag(masterFp, versionId, tagId) {
+        try {
+            const res = await fetch(TAGS_API + '?master_fp=' + encodeURIComponent(masterFp)
+                + '&version_id=' + versionId + '&tag_id=' + tagId, {
+                method: 'DELETE',
+            });
+            const data = await res.json();
+            if (!data.ok) alert('解除失敗: ' + (data.message || data.error || ''));
+        } catch (e) {
+            alert('通信エラー: ' + e.message);
+        }
+    }
 
 })();
 </script>
