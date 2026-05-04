@@ -23,6 +23,10 @@
             onclick="switchTab('merge')">
         Merge
     </button>
+    <button id="tab-tags" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300"
+            onclick="switchTab('tags')">
+        Tag
+    </button>
     <button id="tab-rules" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300"
             onclick="switchTab('rules')">
         Rules
@@ -38,10 +42,6 @@
     <button id="tab-settings" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300"
             onclick="switchTab('settings')">
         Settings
-    </button>
-    <button id="tab-tags" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300"
-            onclick="switchTab('tags')">
-        Tag
     </button>
     <select id="filter-select" class="ml-3 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
         <option value="reps" selected>採用</option>
@@ -181,12 +181,10 @@
                     onclick="tagOpenEditModal('scene', null)">+ 新規タグ追加</button>
             <button id="tag-prompt-edit-scene" class="px-3 py-1.5 bg-purple-700/70 hover:bg-purple-700 text-white text-sm rounded transition-colors"
                     onclick="tagOpenPromptEditor('scene')">プロンプト編集</button>
-            <div class="inline-flex rounded overflow-hidden border border-emerald-700">
-                <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-700/70 hover:bg-emerald-700 text-white text-sm transition-colors"
-                        onclick="tagOpenRunConfirm('scene', 'unassigned')">未付与のみ判定</button>
-                <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-900/70 hover:bg-emerald-800 text-white text-sm transition-colors border-l border-emerald-800"
-                        onclick="tagOpenRunConfirm('scene', 'all')">全件再判定</button>
-            </div>
+            <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-900/50 hover:bg-emerald-800/60 text-emerald-300 text-sm rounded transition-colors"
+                    onclick="tagOpenRunConfirm('scene', 'unassigned')">未付与のみ判定</button>
+            <button class="tag-judge-mode-btn px-3 py-1.5 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-sm rounded transition-colors"
+                    onclick="tagOpenRunConfirm('scene', 'all')">全件再判定</button>
         </div>
         <div id="tag-progress-scene" class="hidden mb-4 bg-gray-900/60 border border-gray-700 rounded p-3 text-sm"></div>
         <div id="tag-list-scene" class="tag-list space-y-1"></div>
@@ -199,12 +197,10 @@
                     onclick="tagOpenEditModal('sub_scene', null)">+ 新規タグ追加</button>
             <button id="tag-prompt-edit-sub_scene" class="px-3 py-1.5 bg-purple-700/70 hover:bg-purple-700 text-white text-sm rounded transition-colors"
                     onclick="tagOpenPromptEditor('sub_scene')">プロンプト編集</button>
-            <div class="inline-flex rounded overflow-hidden border border-emerald-700">
-                <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-700/70 hover:bg-emerald-700 text-white text-sm transition-colors"
-                        onclick="tagOpenRunConfirm('sub_scene', 'unassigned')">未付与のみ判定</button>
-                <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-900/70 hover:bg-emerald-800 text-white text-sm transition-colors border-l border-emerald-800"
-                        onclick="tagOpenRunConfirm('sub_scene', 'all')">全件再判定</button>
-            </div>
+            <button class="tag-judge-mode-btn px-3 py-1.5 bg-emerald-900/50 hover:bg-emerald-800/60 text-emerald-300 text-sm rounded transition-colors"
+                    onclick="tagOpenRunConfirm('sub_scene', 'unassigned')">未付与のみ判定</button>
+            <button class="tag-judge-mode-btn px-3 py-1.5 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-sm rounded transition-colors"
+                    onclick="tagOpenRunConfirm('sub_scene', 'all')">全件再判定</button>
         </div>
         <div id="tag-progress-sub_scene" class="hidden mb-4 bg-gray-900/60 border border-gray-700 rounded p-3 text-sm"></div>
         <div id="tag-list-sub_scene" class="tag-list space-y-1"></div>
