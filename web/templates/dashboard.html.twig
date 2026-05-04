@@ -1596,7 +1596,15 @@
             tc.classList.remove('hidden');
             syncUrlParams();
             // 現在開いているサブタブを再読込 (デフォルト: scene)
-            tagSwitchSubtab(_tagCurrentSubtab || 'scene');
+            // window.tagSwitchSubtab は IIFE 後半で定義されるため、初期化時の
+            // switchTab(initialTab) が tab='tags' のとき undefined になることがある。
+            // その場合は次の tick まで遅延して呼び出す。
+            const _tagSubtabTarget = _tagCurrentSubtab || 'scene';
+            if (typeof window.tagSwitchSubtab === 'function') {
+                window.tagSwitchSubtab(_tagSubtabTarget);
+            } else {
+                setTimeout(() => window.tagSwitchSubtab(_tagSubtabTarget), 0);
+            }
         }
     };
 
