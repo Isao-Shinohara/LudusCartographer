@@ -181,10 +181,8 @@
                     onclick="tagOpenEditModal('scene', null)">+ 新規タグ追加</button>
             <button id="tag-prompt-edit-scene" class="px-3 py-1 bg-purple-900/60 hover:bg-purple-800/70 text-purple-200 text-xs rounded transition-colors"
                     onclick="tagOpenPromptEditor('scene')">プロンプト編集</button>
-            <button class="tag-judge-mode-btn px-3 py-1 bg-emerald-900/70 hover:bg-emerald-800/80 text-emerald-200 text-xs rounded transition-colors"
-                    onclick="tagOpenRunConfirm('scene', 'unassigned')">未付与のみ判定</button>
-            <button class="tag-judge-mode-btn px-3 py-1 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-xs rounded transition-colors"
-                    onclick="tagOpenRunConfirm('scene', 'all')">全件再判定</button>
+            <button id="tag-judge-btn-scene" class="tag-judge-btn px-3 py-1 bg-emerald-900/70 hover:bg-emerald-800/80 text-emerald-200 text-xs rounded transition-colors"
+                    onclick="tagOpenJudgeMenu('scene')">判定</button>
         </div>
         <div id="tag-progress-scene" class="hidden mb-4 bg-gray-900/60 border border-gray-700 rounded p-3 text-sm"></div>
         <div id="tag-list-scene" class="tag-list space-y-1"></div>
@@ -197,10 +195,8 @@
                     onclick="tagOpenEditModal('sub_scene', null)">+ 新規タグ追加</button>
             <button id="tag-prompt-edit-sub_scene" class="px-3 py-1 bg-purple-900/60 hover:bg-purple-800/70 text-purple-200 text-xs rounded transition-colors"
                     onclick="tagOpenPromptEditor('sub_scene')">プロンプト編集</button>
-            <button class="tag-judge-mode-btn px-3 py-1 bg-emerald-900/70 hover:bg-emerald-800/80 text-emerald-200 text-xs rounded transition-colors"
-                    onclick="tagOpenRunConfirm('sub_scene', 'unassigned')">未付与のみ判定</button>
-            <button class="tag-judge-mode-btn px-3 py-1 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-xs rounded transition-colors"
-                    onclick="tagOpenRunConfirm('sub_scene', 'all')">全件再判定</button>
+            <button id="tag-judge-btn-sub_scene" class="tag-judge-btn px-3 py-1 bg-emerald-900/70 hover:bg-emerald-800/80 text-emerald-200 text-xs rounded transition-colors"
+                    onclick="tagOpenJudgeMenu('sub_scene')">判定</button>
         </div>
         <div id="tag-progress-sub_scene" class="hidden mb-4 bg-gray-900/60 border border-gray-700 rounded p-3 text-sm"></div>
         <div id="tag-list-sub_scene" class="tag-list space-y-1"></div>
@@ -256,6 +252,27 @@
         <div class="flex justify-end gap-2">
             <button id="tag-delete-cancel" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded">キャンセル</button>
             <button id="tag-delete-confirm" class="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-sm rounded">削除</button>
+        </div>
+    </div>
+</div>
+
+<!-- 判定モード選択モーダル (Phase 3 拡張: ボタン統合) -->
+<div id="tag-judge-menu-modal" class="fixed inset-0 bg-black/60 z-[60] hidden items-center justify-center">
+    <div class="bg-gray-900 rounded-lg p-6 w-[28rem] max-w-full border border-gray-700">
+        <h3 id="tag-judge-menu-title" class="text-base font-bold text-emerald-300 mb-3">判定モードを選択</h3>
+        <p class="text-xs text-gray-400 mb-4">対象範囲を選んでください。</p>
+        <div class="flex flex-col gap-2">
+            <button class="tag-judge-mode-btn px-3 py-2 bg-emerald-900/70 hover:bg-emerald-800/80 text-emerald-200 text-sm rounded transition-colors text-left" data-mode="unassigned">
+                <div class="font-bold">未付与のみ判定</div>
+                <div class="text-xs text-emerald-400/80">未付与のノードだけ Gemini 判定</div>
+            </button>
+            <button class="tag-judge-mode-btn px-3 py-2 bg-amber-900/50 hover:bg-amber-800/60 text-amber-300 text-sm rounded transition-colors text-left" data-mode="all">
+                <div class="font-bold">全件再判定</div>
+                <div class="text-xs text-amber-400/80">既存判定も含め全件を再判定 (コスト大)</div>
+            </button>
+        </div>
+        <div class="flex justify-end mt-4">
+            <button id="tag-judge-menu-cancel" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded">キャンセル</button>
         </div>
     </div>
 </div>
@@ -4854,6 +4871,33 @@
     let _tagRunPolling = null;
     let _tagRunCurrentType = null;
     let _tagPromptType = 'scene';
+    let _tagJudgeMenuType = null;
+
+    // 判定モード選択モーダル: 判定 ボタンから呼ばれ、選択結果で run-confirm へ進む
+    window.tagOpenJudgeMenu = function(tagType) {
+        _tagJudgeMenuType = tagType;
+        const m = document.getElementById('tag-judge-menu-modal');
+        document.getElementById('tag-judge-menu-title').textContent =
+            (tagType === 'scene' ? 'シーンタグ' : '詳細タグ') + ' — 判定モードを選択';
+        m.classList.remove('hidden');
+        m.classList.add('flex');
+    };
+    function tagCloseJudgeMenu() {
+        const m = document.getElementById('tag-judge-menu-modal');
+        m.classList.add('hidden');
+        m.classList.remove('flex');
+    }
+    document.querySelectorAll('#tag-judge-menu-modal .tag-judge-mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const mode = btn.dataset.mode;
+            tagCloseJudgeMenu();
+            if (_tagJudgeMenuType) tagOpenRunConfirm(_tagJudgeMenuType, mode);
+        });
+    });
+    document.getElementById('tag-judge-menu-cancel').addEventListener('click', tagCloseJudgeMenu);
+    document.getElementById('tag-judge-menu-modal').addEventListener('click', (e) => {
+        if (e.target.id === 'tag-judge-menu-modal') tagCloseJudgeMenu();
+    });
 
     window.tagOpenRunConfirm = async function(tagType, mode) {
         _tagRunCurrentType = tagType;
