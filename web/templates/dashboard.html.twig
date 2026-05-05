@@ -848,7 +848,7 @@
         const thumb = s.thumbnail_path ? imgUrl(s.thumbnail_path) : (s.screenshot_path ? imgUrl(s.screenshot_path) : '');
         const isThinned = s.cluster_id !== null && s.cluster_id !== undefined && !s.is_representative;
         const dots = [];
-        if (s.is_artifact === 1) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-red-500" title="Gemini不採用"></span>');
+        if (s.is_artifact === 1) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-red-500" title="判定不採用 (Gemini or 黒比率)"></span>');
         if (s.is_artifact === 2) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-orange-500" title="ユーザー不採用"></span>');
         if (isThinned && !s.is_artifact) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-gray-500" title="非代表"></span>');
         if (s.has_hq_ocr) dots.push('<span class="w-1.5 h-1.5 rounded-full bg-sky-500" title="HQ OCR済"></span>');

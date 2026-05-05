@@ -1476,6 +1476,34 @@ class BackgroundWorker:
 
     # ─── Gemini バッチ修正 ──────────────────────────────────
 
+    @staticmethod
+    def _is_truncated_capture(scene, screenshot_path) -> bool:
+        """画面が「見切れ/不完全キャプチャ」かを判定する。
+
+        本来の用途は scrcpy が壊れて欠けたキャプチャを弾くこと。
+        STARTUP/LOADING シーンは設計上「黒背景にロゴ/テキスト」なので
+        判定対象外 (= 正常な暗背景を artifact 扱いしない)。
+
+        Returns:
+            True: 見切れキャプチャ (artifact 扱いすべき)
+            False: 正常 (or 判定対象外/読み込み失敗)
+        """
+        if scene in ("STARTUP", "LOADING"):
+            return False
+        if not screenshot_path or not Path(screenshot_path).exists():
+            return False
+        _BLACK_PIXEL_THRESHOLD = 0.50
+        try:
+            import cv2
+            img = cv2.imread(str(screenshot_path))
+            if img is None:
+                return False
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            black_ratio = (gray < 15).sum() / gray.size
+            return bool(black_ratio >= _BLACK_PIXEL_THRESHOLD)
+        except Exception:
+            return False
+
     def _run_gemini_batch_correction(self) -> None:
         """Gemini Flash で代表画像の OCR を画像付きで補正 (API キー未設定ならスキップ)。
 
@@ -1524,7 +1552,7 @@ class BackgroundWorker:
             if not target_sid:
                 return
             rows = conn.execute(
-                "SELECT id, screenshot_path,"
+                "SELECT id, screenshot_path, scene,"
                 " COALESCE(ocr_text_hq, ocr_text, '') AS ocr"
                 " FROM lc_screens"
                 " WHERE is_representative = 1"
@@ -1545,7 +1573,6 @@ class BackgroundWorker:
 
             # 前処理: 見切れ検出 + 有効アイテム収集
             items = []
-            _BLACK_PIXEL_THRESHOLD = 0.50
             for row in rows:
                 sid = row["id"]
                 path = row["screenshot_path"]
@@ -1555,22 +1582,17 @@ class BackgroundWorker:
                         (sid,),
                     )
                     continue
-                try:
-                    import cv2
-                    _img = cv2.imread(str(path))
-                    if _img is not None:
-                        _gray = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY)
-                        _black_ratio = (_gray < 15).sum() / _gray.size
-                        if _black_ratio >= _BLACK_PIXEL_THRESHOLD:
-                            conn.execute(
-                                "UPDATE lc_screens SET ocr_text_gemini = '', is_artifact = 1"
-                                " WHERE id = ?", (sid,),
-                            )
-                            logger.info("[BG_WORKER] 見切れ検出: id=%d black=%.0f%% → artifact",
-                                        sid, _black_ratio * 100)
-                            continue
-                except Exception:
-                    pass
+                # STARTUP/LOADING の正常な暗背景は黒比率検出をスキップ。
+                # is_artifact のみマークし、ocr_text_gemini は NULL のまま保持
+                # (空文字で上書きすると _remerge_text_clusters の COALESCE が
+                # 元 ocr_text にフォールバックできなくなり、別画面が誤統合される)。
+                if self._is_truncated_capture(row["scene"], path):
+                    conn.execute(
+                        "UPDATE lc_screens SET is_artifact = 1 WHERE id = ?",
+                        (sid,),
+                    )
+                    logger.info("[BG_WORKER] 見切れ検出: id=%d → artifact", sid)
+                    continue
                 items.append({
                     "id": sid,
                     "screenshot_path": path,
