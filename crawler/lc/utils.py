@@ -720,3 +720,22 @@ def dhash_distance(h1: str, h2: str) -> int:
     """2 つの dHash 文字列のハミング距離を返す。"""
     a, b = int(h1, 16), int(h2, 16)
     return bin(a ^ b).count("1")
+
+
+def is_degenerate_phash(ph) -> bool:
+    """縮退 phash 判定: set bit が極端に少ない/多い (ほぼ単色画像)。
+
+    Hamming 距離は「異なるビット数」で計算するため、bit がほぼ全 0 または全 1
+    の phash は内容が違っていても見かけ上「他と近い」と誤判定されやすい。
+    アンカー・クラスタ統合判定で信用してはならない。
+
+    閾値 (CLAUDE.md §16):
+      set bit < 8 or > 56 → 縮退
+    """
+    if not ph:
+        return True
+    try:
+        n = bin(int(ph, 16)).count("1")
+    except (ValueError, TypeError):
+        return True
+    return n < 8 or n > 56

@@ -49,6 +49,8 @@ def classify_empty_text_pair(
     fallback_threshold: int,
     jaccard_similarity: Optional[float] = None,
     min_jaccard: float = 0.3,
+    prev_phash: Optional[str] = None,
+    curr_phash: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """旧 API: 後方互換用。"""
     r = classify_empty_text_pair_with_metrics(
@@ -61,6 +63,8 @@ def classify_empty_text_pair(
         fallback_threshold=fallback_threshold,
         jaccard_similarity=jaccard_similarity,
         min_jaccard=min_jaccard,
+        prev_phash=prev_phash,
+        curr_phash=curr_phash,
     )
     return r.is_same, r.method
 
@@ -76,11 +80,17 @@ def classify_empty_text_pair_with_metrics(
     fallback_threshold: int,
     jaccard_similarity: Optional[float] = None,
     min_jaccard: float = 0.3,
+    prev_phash: Optional[str] = None,
+    curr_phash: Optional[str] = None,
 ) -> ClassifyResult:
     """Step A: phash 単独で同/別を決める。
 
     中間域 (near <= phash < far) では Jaccard 類似度も考慮:
     Jaccard < min_jaccard なら別判定 (phash_low_jaccard)、それ以外は phash_mid。
+
+    縮退 phash (set bit < 8 or > 56) 同士は内容と無関係に距離 0 になるため、
+    phash_near (= 同) 判定の対象外とする。これらは別物として扱い、新規クラスタ
+    として独立させる (誤統合防止)。
     """
     import cv2
 
@@ -91,11 +101,21 @@ def classify_empty_text_pair_with_metrics(
     prev_br = _brightness(prev_path) if prev_path is not None else None
     curr_br = _brightness(curr_path)
 
+    # 縮退 phash 同士は phash 距離を信用しない (同 phash でも別画像の可能性大)
+    is_degen_pair = False
+    if prev_phash is not None and curr_phash is not None:
+        from lc.utils import is_degenerate_phash
+        is_degen_pair = is_degenerate_phash(prev_phash) or is_degenerate_phash(curr_phash)
+
     # 第1層: phash 即決
-    if phash_distance < near_threshold:
+    if phash_distance < near_threshold and not is_degen_pair:
         return ClassifyResult(True, "phash_near", phash_distance, dhash_distance, prev_br, curr_br)
     if phash_distance >= far_threshold:
         return ClassifyResult(False, "phash_far", phash_distance, dhash_distance, prev_br, curr_br)
+
+    # 縮退 phash 同士は中間域・near 判定もスキップして「別」確定 (内容判定不能)
+    if is_degen_pair:
+        return ClassifyResult(False, "phash_degenerate", phash_distance, dhash_distance, prev_br, curr_br)
 
     # 中間域 (near 〜 far): Jaccard 類似度で疎ペア (両方が単色寄り) を弾く
     # Jaccard < min_jaccard → 別 (phash_low_jaccard)

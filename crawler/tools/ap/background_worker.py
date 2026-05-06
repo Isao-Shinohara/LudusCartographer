@@ -55,18 +55,9 @@ def _text_similarity(a: str, b: str) -> float:
 
 
 def _is_degenerate_phash(ph: Optional[str]) -> bool:
-    """縮退 phash 判定: set bit が極端に少ない/多い (ほぼ単色画像)。
-
-    Hamming 距離は「異なるビット数」なので、bit がほぼ全 0 または全 1 の phash は
-    距離計算で見かけ上「他と近い」と誤判定されやすい。アンカーとして信頼できない。
-    """
-    if not ph:
-        return True
-    try:
-        n = bin(int(ph, 16)).count('1')
-    except (ValueError, TypeError):
-        return True
-    return n < 8 or n > 56  # 64 bit 中、8 未満 or 56 超 → 縮退
+    """縮退 phash 判定 (lc.utils.is_degenerate_phash の薄いラッパー、後方互換)。"""
+    from lc.utils import is_degenerate_phash
+    return is_degenerate_phash(ph)
 
 
 def _normalize_text(text: str) -> str:
@@ -643,7 +634,13 @@ class BackgroundWorker:
                         d = _phash_distance(_rep_ph, ph) if _rep_ph else 999
                         _has_face = self._max_face_area(conn, sid) > 0
                         _ph_lim = 5 if _has_face else 20
-                        if not _rep_norm and d < _ph_lim:
+                        # 縮退 phash 同士は内容と無関係に距離 0 になるため統合判定対象外。
+                        # (例: MOVIE 暗転 (phash=8000...) + マギカストーン獲得 (phash=8000...)
+                        #  が同クラスタに誤合流するバグへの対策)
+                        _is_degen_pair = (
+                            _is_degenerate_phash(_rep_ph) or _is_degenerate_phash(ph)
+                        )
+                        if not _rep_norm and d < _ph_lim and not _is_degen_pair:
                             # 直前テキスト空 + phash 近い → 統合 (テキストあり側が代表)
                             _merge_to_prev = True
                             _merge_method = "merge_to_prev_empty"
@@ -737,6 +734,8 @@ class BackgroundWorker:
                             fallback_threshold=_FALLBACK_TH,
                             jaccard_similarity=jac,
                             min_jaccard=0.3,
+                            prev_phash=_rep_ph,
+                            curr_phash=ph,
                         )
                         is_same = _result.is_same
                         _decision_method = _result.method
