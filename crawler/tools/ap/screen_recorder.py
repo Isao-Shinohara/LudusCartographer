@@ -394,15 +394,13 @@ class ScreenRecorder:
         # - 直前と同じ縮退 phash → スキップ
         # - 散発する縮退 phash (間に別画面) → それぞれ別イベントとして記録継続
         # - force=True (タップ前記録) はバイパス、状態だけ更新
+        # 縮退判定は CLAUDE.md §16 の基準 (set bit < 8 or > 56) で他のクラスタリング
+        # ロジックと統一 (lc.utils.is_degenerate_phash)
+        from lc.utils import is_degenerate_phash
         _prev_seen = self._last_seen_phash
         self._last_seen_phash = phash or ""
-        if not force and phash and phash == _prev_seen:
-            try:
-                bits = bin(int(phash, 16)).count("1")
-                if bits < 4 or bits > 60:
-                    return False
-            except (ValueError, TypeError):
-                pass
+        if not force and phash and phash == _prev_seen and is_degenerate_phash(phash):
+            return False
 
         if not force:
             # 0. タップ後クールダウン: 保存のみスキップ (phash 追跡は呼び出し元で継続)

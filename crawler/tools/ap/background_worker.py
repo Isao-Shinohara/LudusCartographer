@@ -54,10 +54,10 @@ def _text_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b, autojunk=False).ratio()
 
 
-def _is_degenerate_phash(ph: Optional[str]) -> bool:
-    """縮退 phash 判定 (lc.utils.is_degenerate_phash の薄いラッパー、後方互換)。"""
-    from lc.utils import is_degenerate_phash
-    return is_degenerate_phash(ph)
+# 縮退 phash 判定は lc.utils.is_degenerate_phash を直接 import する
+# (旧 _is_degenerate_phash ラッパーは廃止して呼び出し側で is_degenerate_phash
+#  を使用 — クラスタリングロジックの判定基準を一箇所に集約するため)
+from lc.utils import is_degenerate_phash
 
 
 def _normalize_text(text: str) -> str:
@@ -638,7 +638,7 @@ class BackgroundWorker:
                         # (例: MOVIE 暗転 (phash=8000...) + マギカストーン獲得 (phash=8000...)
                         #  が同クラスタに誤合流するバグへの対策)
                         _is_degen_pair = (
-                            _is_degenerate_phash(_rep_ph) or _is_degenerate_phash(ph)
+                            is_degenerate_phash(_rep_ph) or is_degenerate_phash(ph)
                         )
                         if not _rep_norm and d < _ph_lim and not _is_degen_pair:
                             # 直前テキスト空 + phash 近い → 統合 (テキストあり側が代表)
@@ -1870,7 +1870,7 @@ class BackgroundWorker:
                         if not orig and not prev_orig:
                             # 縮退 phash (ほぼ単色画像) はアンカーとして信頼できない
                             # → 連鎖マージで遠いクラスタまで吸い込む問題を防ぐため除外
-                            if _is_degenerate_phash(ph) or _is_degenerate_phash(prev_ph):
+                            if is_degenerate_phash(ph) or is_degenerate_phash(prev_ph):
                                 pass  # 統合しない
                             else:
                                 # phash + dhash の両方が近い場合のみ統合
