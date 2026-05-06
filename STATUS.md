@@ -1,11 +1,11 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-05-05 (実機検証セッション + auto_pilot 安定化)
+最終更新: 2026-05-06 (ダッシュボードバグ修正 + Gemini コスト対策 + Stuck 検知器)
 
 ## 現在のブランチ
 - `main` (最新: PR #6 マージ後、commit `1f06a6e`)
-- **`feature/tagging`** (main から 13 コミット先行、未 PR、push 済み)
-  - 内容: 実機検証セッションで発見した課題への修正 + Tag タブ UI 改善
+- **`feature/tagging`** (main から **17 コミット先行**、origin より **4 コミット先行 (未 push)**)
+  - 内容: 実機検証セッションで発見した課題への修正 + Tag タブ UI 改善 + 本日の 4 修正
 - `feature/master-node-tags` / `feature/tag-search` / `feature/tag-polish` / `feature/tag-tab-polish` / `feature/screen-recorder` は **PR #1〜#6 でマージ済み・削除済み**
 
 ## マージ済みの PR (履歴)
@@ -20,9 +20,20 @@
 | #6 | Tag タブを Merge の隣へ + 判定ボタン統合 | 2026-05-04 |
 
 ## オープン中の PR
-**なし** — `feature/tagging` ブランチは push 済みだが、**ユーザー指示があるまで PR は作成しない** (CLAUDE.md §13 ルール)。
+**なし** — `feature/tagging` ブランチは origin より 4 コミット先行 (未 push)、**ユーザー指示があるまで PR は作成しない** (CLAUDE.md §13 ルール)。
 
-## feature/tagging に積まれた未マージ commits (13 件)
+## feature/tagging に積まれた未マージ commits (17 件)
+
+### 2026-05-06 追加 (本日、未 push 4 件)
+
+| Commit | 内容 |
+|---|---|
+| `aca7bf1` | feat(stuck_detect): タップ無効 stuck 検知で API コスト浪費を防止 |
+| `707ab21` | fix(gemini): MAX_TOKENS 早期検出 + truncated sentinel で API コスト削減 |
+| `bcfa016` | fix(bg_worker): scene-aware truncation check + preserve ocr_text_gemini |
+| `3ac60c1` | fix(api): remove device_mode column reference from getSessions |
+
+### 2026-05-05 追加 (push 済み 13 件)
 
 | Commit | 内容 |
 |---|---|
@@ -42,25 +53,71 @@
 
 ## まだ残っているタスク
 
-### 🔴 必須対応 (次セッションで検討推奨)
+### 🔴 必須対応 (前回からの継続課題、本日未着手)
 - **ConfirmDialog のスキップ確認区別**: `dialog_phase.py` で「ストーリースキップ」と「ムービースキップ」を OCR テキストで区別
   - 現状: 両方とも `STORY_SKIP_CANCEL` でキャンセル
   - 問題: ログインボーナス画面の ▶| (ムービースキップ確認) もキャンセルされ、LB 閉じられないループ
   - 区別: `"ムービー"` を含む → OK タップ / `"ストーリー"` を含む → キャンセル
+  - 本日の実機検証でも 02:25 と 03:57-04:01 で発生確認 (自動脱出はしたが本来出るべきではない)
 
-### 🟡 任意 (二重防御)
+### 🟡 任意
 - WFC_ESCAPE に icon_skip 併用 (現状 detect_login_bonus_popup で対処済のため優先度低)
+- session 4 (paused) の処理判断 — manual_stop で停止中、削除 or 完了確定 or 継続検証
 
 ### 🟢 Phase 7+ (将来)
 - 前後ノード情報の Gemini ヒント (案 A: タグテキスト → 案 B: 画像、§11)
 - 新タグ追加時の差分判定モード (Gemini API 料金次第、§11)
 - 一括手動付与の操縦カテゴリ対応 (現状は scene/sub_scene のみ、§11 で「将来拡張」)
 - 一括付与ボタンを Final タブへ移設 (撤去済み、再実装)
+- Stuck 検知 案 1A (時間ベース) を追加 — 現状 1B のみ採用、必要なら補強
+- Stuck 検知 案 3 (クラスタ単位 Gemini クォータ) — 不要と判断、再評価可
 
 ### 別タスク
-- 実機検証の続き (LB ループの修正 + 周回 1 完走 + Tag タブ確認) ← ユーザー作業
+- 実機検証の続き (ConfirmDialog 修正後 + Tag タブ確認) ← ユーザー作業
 
-## 最終セッション (2026-05-04) — マスターノードタグ機能 Phase 1〜4 一気通貫完了
+## 最終セッション (2026-05-06) — ダッシュボードバグ修正 + Gemini コスト対策 + Stuck 検知器
+
+4 コミットを `feature/tagging` に追加 (origin に未 push)。すべてテスト先行で
+実装し pytest 全 787 件 pass (新規 19 件)。
+
+### 主要 4 修正
+1. **`3ac60c1`** ダッシュボードバグ修正
+   - `EvidenceRepository::getSessions` の `device_mode` 列参照を削除
+   - 結果: Live タブのセッションフィルタが正しく動作 (混在表示解消)
+
+2. **`bcfa016`** STARTUP/LOADING 誤 artifact + クラスタ統合バグ修正
+   - `_is_truncated_capture` ヘルパー抽出: scene='STARTUP'/'LOADING' で黒比率検出スキップ
+   - `ocr_text_gemini=''` 上書きを廃止 (NULL のまま保持で OCR 状態破壊回避)
+   - 既存 22 件のフラグ修復 + cluster 1556 を 4 つに手動分割
+   - dashboard 「Gemini不採用」→「判定不採用 (Gemini or 黒比率)」に訂正
+
+3. **`707ab21`** Gemini truncated レスポンスで API コスト削減
+   - `maxOutputTokens` 8192 → 16384
+   - `finishReason=MAX_TOKENS` の早期検出 (内部リトライ無し)
+   - 永続失敗時の sentinel 化 (将来バッチで再試行されない)
+   - 1 問題画面あたり API call 3 → 1 に削減
+
+4. **`aca7bf1`** タップ無効 stuck 検知
+   - `StuckTapDetector` クラス: タップ後画面変化なしを検出
+   - 同一画面判定: phash + dHash + (OCR 類似度) の 3 段非対称判定
+   - 失敗 target `(action, x//30, y//30)` を set に集約、K=8 で停止
+   - ADV セリフ進行・バトル進行は OCR 類似度低でリセット → 誤検知なし
+
+詳細: `docs/history/2026-05-06.md`
+
+### DB クリーンアップ実行
+ユーザー指示で CLAUDE.md §14 手順を実行:
+- `lc_screens` 5,633 → 0、その他セッション関連テーブル全削除
+- スクショ全削除、DB サイズ 23M → 960K
+- **保護**: `lc_ocr_corrections` (3,167 件)、`lc_ocr_noise_words` (162 件)、`ocr_learned_patterns.json`
+
+### auto_pilot 実機検証 (周回 -c 3 -r)
+- 周回 #1 (01:00-02:30): 1948 screens, goal_reached ✓
+- ANIPLEX/POKELABO/注意事項が個別に「採用」表示で復活 ✓
+- LB ループ自動脱出 ✓ (ConfirmDialog 修正未着手のため根絶はせず)
+- 周回 #2 でキオク編成 stuck → 手動停止 (今後 stuck 検知器が自動停止する想定)
+
+## ひとつ前のセッション (2026-05-04) — マスターノードタグ機能 Phase 1〜4 一気通貫完了
 
 ユーザーから「確認なしで最後のフェーズまで一気に実装してOK」の許可を得て
 Phase 1 から Phase 4 までを同セッションで完走。pytest 101 件 + Playwright 29 件、全 green。
