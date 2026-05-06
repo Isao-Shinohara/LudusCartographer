@@ -268,6 +268,9 @@ _GEMINI_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedr
 - キャラ名: 鹿目まどか、暁美ほむら、美樹さやか、巴マミ、佐倉杏子、由比鶴乃、七海やちよ、環いろは、秋野かえで、深月フェリシア、二葉さな、水波レナ、御園かりん、梓みふゆ、十咎ももこ、志筑仁美、キュゥべえ、早乙女和子
 - UI用語: パーティー、ホーム、ショップ、ガチャ、クエスト、バトル、スキル、通常攻撃、マギア、ドッペル、キオク、額縁、プレイヤー、推奨、報酬、限界突破、ATTACKER、BUFFER、DEFENDER、BREAK、SKIP、AUTO
 
+## 参考: 検出器が推定したシーン
+{scene_hint}
+
 ## 参考: 初期 OCR 結果（誤読の可能性あり、参考程度に）
 {ocr_text}
 
@@ -305,8 +308,10 @@ UIの装飾・ボタン・ステータス表示として頻出する短い文字
 以下の【判定ステップ】に沿って、上から順に評価し、最初に該当した条件で判定を確定してください。
 
 **ステップ1: 演出エフェクトか？（該当 → is_artifact=true で確定）**
-以下のいずれかに当てはまれば、他の要素（テキスト、顔アイコン、SKIPボタン等）の有無に関わらず直ちに true:
-1. **スキル・必殺技の演出**: 画面の大部分（50%以上）がビーム、光線、爆発、魔法陣、閃光などのエフェクトで覆われている。以下の要素が見えていても true:
+以下のいずれかに当てはまれば、他の要素の有無に関わらず直ちに true:
+1. **バトル中のスキル・必殺技の演出**: 画面の大部分（50%以上）がビーム、光線、爆発、魔法陣、閃光などのエフェクトで覆われている。
+   ★重要: これは「バトル画面（HPバー、キャラ顔アイコン列、コマンドボタン等のバトルUIが画面に存在する）」であることが前提です。バトルUIが一切ないストーリームービーの爆発シーンは例外としてステップ2へ進んでください。
+   （※バトル中であれば、以下の要素が見えていても true）:
    - SKIPボタン
    - 画面下部の小さなキャラ顔アイコン列
    - ロール表示（ATTACKER, BUFFER, DEFENDER, BREAKER 等）
@@ -320,21 +325,28 @@ UIの装飾・ボタン・ステータス表示として頻出する短い文字
 - 人物（キャラクター）の本体が**エフェクトに遮られず明瞭に**視認できる画面（全身、顔のクローズアップ、手元・目元・口元、後ろ姿を含む。テキストが一切ないアニメ風カットも false）
   ※ 画面下部の「小さなキャラ顔アイコン」だけでは「キャラクターが見えている」と判断しない
   ※ エフェクト越しのシルエット・輪郭だけでは「明瞭に視認できる」と判断しない
+- **ストーリームービーの1フレーム (MOVIE_CUT)**: バトルUIが存在せず、シネマスコープ風レイアウト（上下黒帯）または字幕（テキストボックス外の小さなテキスト）を伴う固有のシーン。エフェクトや風景（瓦礫、爆発、煙など）のみでキャラクター本体が不在でも false。
+  - また、検出器が推定したシーンが MOVIE の場合、この画像は確実にムービーカットなので無条件で false (MOVIE_CUT) として扱ってください。
 - メニュー、ホーム、編成、バトルコマンド選択（エフェクトで覆われていない安定した状態に限る）、ダイアログ、リザルト画面
 - セリフ付きの会話シーン（ADV）
 
-**判定の原則**: エフェクトが画面の半分以上を覆っていたら true。迷ったら、エフェクトが支配的なら true。
+**判定の原則**: バトルUIが存在し、かつエフェクトが画面の半分以上を覆っていたら true（迷ったら true）。ただし、バトルUIが一切ないムービー風のカットシーンはストーリー上の固有フレームである可能性が高いため、安易に true にせず、背景や字幕の存在を考慮して慎重に false (MOVIE_CUT) と判定してください。
 
 ※テキスト抽出に関する警告:
 corrected_text が空であることと is_artifact=true は全く無関係です。テキストが空でもキャラクター本体が明瞭に視認できれば必ず false。
+
+【判定例】
+- 例1: 画面の大半がレーザーと爆発で覆われているが、画面下に「WAVE 1/3」やキャラの顔アイコン列が並んでいる。 → バトル中の必殺技なので is_artifact=true, screen_type=ARTIFACT
+- 例2: 画面の大半が瓦礫と煙の爆発で覆われておりキャラはいないが、バトルUIは一切なく、画面下に小さく「今度こそ…」と字幕がある。 → ムービーの1カットなので is_artifact=false, screen_type=MOVIE_CUT
 
 ## screen_type 判定ルール
 先に決定した is_artifact の値に基づいて判定してください。
 - is_artifact=true の場合: 必ず "ARTIFACT"
 - is_artifact=false の場合: 以下の優先順位で分類
-  1. テキストボックスとキャラクター名がある → "ADV"
-  2. バトルのUI（HPバー、コマンド）がある → "BATTLE_UI"
-  3. 上記以外（メニュー、ホーム、カットシーン等） → "HOME"'''
+  1. ストーリームービーの1フレーム（バトルUIなし + シネマスコープ/字幕） → "MOVIE_CUT"
+  2. テキストボックスとキャラクター名がある → "ADV"
+  3. バトルのUI（HPバー、コマンド）がある → "BATTLE_UI"
+  4. 上記以外（メニュー、ホーム、カットシーン等） → "HOME"'''
 
 
 _GEMINI_BATCH_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedra」のUI仕様と世界観に精通したデバッグエンジニアです。
@@ -348,7 +360,10 @@ _GEMINI_BATCH_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia
 - キャラ名: 鹿目まどか、暁美ほむら、美樹さやか、巴マミ、佐倉杏子、由比鶴乃、七海やちよ、環いろは、秋野かえで、深月フェリシア、二葉さな、水波レナ、御園かりん、梓みふゆ、十咎ももこ、志筑仁美、キュゥべえ、早乙女和子
 - UI用語: パーティー、ホーム、ショップ、ガチャ、クエスト、バトル、スキル、通常攻撃、マギア、ドッペル、キオク、額縁、プレイヤー、推奨、報酬、限界突破、ATTACKER、BUFFER、DEFENDER、BREAK、SKIP、AUTO
 
-## 各画像の初期 OCR 結果（誤読の可能性あり、参考程度に）
+## 各画像の検出器シーン推定 + 初期 OCR 結果（誤読の可能性あり、参考程度に）
+各行: `画像N: [scene=<検出器の推定>] <初期OCR>`
+- scene=MOVIE はストーリームービーのカットシーンが確実に検出されたケース
+- scene=UNKNOWN は検出器でも分類できなかったケース（必要なら画像から判断）
 {ocr_block}
 
 ## 出力形式（JSONのみ、他の説明不要）
@@ -392,8 +407,10 @@ _GEMINI_BATCH_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia
 以下の【判定ステップ】に沿って、上から順に評価し、最初に該当した条件で判定を確定してください。
 
 **ステップ1: 演出エフェクトか？（該当 → is_artifact=true で確定）**
-以下のいずれかに当てはまれば、他の要素（テキスト、顔アイコン、SKIPボタン等）の有無に関わらず直ちに true:
-1. **スキル・必殺技の演出**: 画面の大部分（50%以上）がビーム、光線、爆発、魔法陣、閃光などのエフェクトで覆われている。以下の要素が見えていても true:
+以下のいずれかに当てはまれば、他の要素の有無に関わらず直ちに true:
+1. **バトル中のスキル・必殺技の演出**: 画面の大部分（50%以上）がビーム、光線、爆発、魔法陣、閃光などのエフェクトで覆われている。
+   ★重要: これは「バトル画面（HPバー、キャラ顔アイコン列、コマンドボタン等のバトルUIが画面に存在する）」であることが前提です。バトルUIが一切ないストーリームービーの爆発シーンは例外としてステップ2へ進んでください。
+   （※バトル中であれば、以下の要素が見えていても true）:
    - SKIPボタン
    - 画面下部の小さなキャラ顔アイコン列
    - ロール表示（ATTACKER, BUFFER, DEFENDER, BREAKER 等）
@@ -407,21 +424,28 @@ _GEMINI_BATCH_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia
 - 人物（キャラクター）の本体が**エフェクトに遮られず明瞭に**視認できる画面（全身、顔のクローズアップ、手元・目元・口元、後ろ姿を含む。テキストが一切ないアニメ風カットも false）
   ※ 画面下部の「小さなキャラ顔アイコン」だけでは「キャラクターが見えている」と判断しない
   ※ エフェクト越しのシルエット・輪郭だけでは「明瞭に視認できる」と判断しない
+- **ストーリームービーの1フレーム (MOVIE_CUT)**: バトルUIが存在せず、シネマスコープ風レイアウト（上下黒帯）または字幕（テキストボックス外の小さなテキスト）を伴う固有のシーン。エフェクトや風景（瓦礫、爆発、煙など）のみでキャラクター本体が不在でも false。
+  - また、検出器が推定したシーンが MOVIE の場合、この画像は確実にムービーカットなので無条件で false (MOVIE_CUT) として扱ってください。
 - メニュー、ホーム、編成、バトルコマンド選択（エフェクトで覆われていない安定した状態に限る）、ダイアログ、リザルト画面
 - セリフ付きの会話シーン（ADV）
 
-**判定の原則**: エフェクトが画面の半分以上を覆っていたら true。迷ったら、エフェクトが支配的なら true。
+**判定の原則**: バトルUIが存在し、かつエフェクトが画面の半分以上を覆っていたら true（迷ったら true）。ただし、バトルUIが一切ないムービー風のカットシーンはストーリー上の固有フレームである可能性が高いため、安易に true にせず、背景や字幕の存在を考慮して慎重に false (MOVIE_CUT) と判定してください。
 
 ※テキスト抽出に関する警告:
 corrected_text や noise_words が空であることと is_artifact=true は全く無関係です。テキストが空でもキャラクター本体が明瞭に視認できれば必ず false。
+
+【判定例】
+- 例1: 画面の大半がレーザーと爆発で覆われているが、画面下に「WAVE 1/3」やキャラの顔アイコン列が並んでいる。 → バトル中の必殺技なので is_artifact=true, screen_type=ARTIFACT
+- 例2: 画面の大半が瓦礫と煙の爆発で覆われておりキャラはいないが、バトルUIは一切なく、画面下に小さく「今度こそ…」と字幕がある。 → ムービーの1カットなので is_artifact=false, screen_type=MOVIE_CUT
 
 ## screen_type 判定ルール (string)
 先に決定した is_artifact の値に基づいて判定してください。
 - is_artifact=true の場合: 必ず "ARTIFACT"
 - is_artifact=false の場合: 以下の優先順位で分類
-  1. テキストボックスとキャラクター名がある → "ADV"
-  2. バトルのUI（HPバー、コマンド）がある → "BATTLE_UI"
-  3. 上記以外（メニュー、ホーム、カットシーン等） → "HOME"
+  1. ストーリームービーの1フレーム（バトルUIなし + シネマスコープ/字幕） → "MOVIE_CUT"
+  2. テキストボックスとキャラクター名がある → "ADV"
+  3. バトルのUI（HPバー、コマンド）がある → "BATTLE_UI"
+  4. 上記以外（メニュー、ホーム、カットシーン等） → "HOME"
 
 ## UIノイズ語の抽出
 各画像のテキスト中に、画面の本来のコンテンツ（セリフ、メニュー名、説明文）ではなく、
@@ -459,11 +483,15 @@ def gemini_correct_single(
     ocr_text: str,
     client=None,
     item_id: Optional[int] = None,
+    scene: Optional[str] = None,
 ) -> Optional[dict]:
     """1枚の画像に対して Gemini REST API で OCR 補正を実行。
 
     google-genai SDK の画像送信にタイムアウトバグがあるため、
     urllib で REST API を直接呼び出す。
+
+    scene: 検出器が推定したシーン (MOVIE/ADV/BATTLE/UNKNOWN 等)。
+        プロンプトに渡され、特に MOVIE はムービーカット保護のヒントになる。
 
     Returns: {"id": int, "corrected_text": str, "corrections": list,
               "is_artifact": bool, "screen_type": str, "noise_words": list} or None
@@ -491,7 +519,8 @@ def gemini_correct_single(
         mime = "image/webp" if img_path.suffix == ".webp" else "image/png"
         img_b64 = base64.b64encode(img_data).decode()
 
-        prompt_text = _GEMINI_PROMPT.format(ocr_text=ocr_text)
+        scene_hint = f"検出器の推定シーン: {scene}" if scene else "検出器の推定シーン: (情報なし)"
+        prompt_text = _GEMINI_PROMPT.format(ocr_text=ocr_text, scene_hint=scene_hint)
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent?key={api_key}"
         body = json.dumps({
             "contents": [{"parts": [
@@ -592,7 +621,8 @@ def gemini_correct_multi(
     """複数画像を1リクエストでバッチ補正。
 
     Args:
-        items: [{"id": int, "screenshot_path": str, "ocr_text": str}, ...]
+        items: [{"id": int, "screenshot_path": str, "ocr_text": str, "scene"?: str}, ...]
+            scene は省略可。検出器の推定シーン (MOVIE/ADV/BATTLE/UNKNOWN 等)。
         client: Gemini クライアント (None なら自動作成)
 
     Returns:
@@ -620,7 +650,8 @@ def gemini_correct_multi(
                 img_data = f.read()
             mime = "image/webp" if img_path.suffix == ".webp" else "image/png"
             contents.append(_genai.types.Part.from_bytes(data=img_data, mime_type=mime))
-            ocr_lines.append(f"画像{i}: {item.get('ocr_text', '')}")
+            _scene = item.get("scene") or "UNKNOWN"
+            ocr_lines.append(f"画像{i}: [scene={_scene}] {item.get('ocr_text', '')}")
             valid_items.append((i, item))
 
         if not contents:

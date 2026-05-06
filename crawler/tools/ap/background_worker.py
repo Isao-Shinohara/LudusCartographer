@@ -1597,6 +1597,7 @@ class BackgroundWorker:
                     "id": sid,
                     "screenshot_path": path,
                     "ocr_text": row["ocr"],
+                    "scene": row["scene"],
                 })
 
             if not items:
@@ -1612,6 +1613,7 @@ class BackgroundWorker:
                         item["ocr_text"],
                         None,  # スレッドごとに新規Client作成（共有Client→SSLタイムアウト対策）
                         item["id"],
+                        item.get("scene"),
                     ): item
                     for item in items
                 }
@@ -1657,6 +1659,17 @@ class BackgroundWorker:
                 corrected = _clean_gemini_output(raw_corrected)
                 is_artifact = bool(r.get("is_artifact", False))
                 screen_type = r.get("screen_type", "")
+
+                # 検出器が MOVIE と確定したシーンは Gemini の is_artifact を信用しない。
+                # auto_pilot 側の MOVIE 判定 (⏭ + ADV 証拠なし + バトル UI なし) は
+                # 構造的特徴に基づく確実な判定であり、ストーリームービーのカットを
+                # Gemini が爆発演出と誤判定して取り逃がすケースを防ぐ。
+                if is_artifact and item.get("scene") == "MOVIE":
+                    logger.info(
+                        "[BG_WORKER] scene=MOVIE → Gemini の is_artifact=true を棄却 "
+                        "(MOVIE_CUT として保持): id=%d", sid)
+                    is_artifact = False
+                    screen_type = "MOVIE_CUT"
 
                 if is_artifact:
                     logger.info("[BG_WORKER] artifact 検出: id=%d type=%s text=%s",
