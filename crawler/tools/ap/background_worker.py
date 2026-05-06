@@ -1498,6 +1498,13 @@ class BackgroundWorker:
             img = cv2.imread(str(screenshot_path))
             if img is None:
                 return False
+            # scrcpy 黒帯を除外してから黒比率を計算する。
+            # 黒帯込みだと「中央 30% 黒 + 黒帯 20%」で誤って 50% 超になる。
+            try:
+                from tools.ap.image_proc import get_roi_cropped_image
+                img = get_roi_cropped_image(img)
+            except Exception:
+                pass
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             black_ratio = (gray < 15).sum() / gray.size
             return bool(black_ratio >= _BLACK_PIXEL_THRESHOLD)

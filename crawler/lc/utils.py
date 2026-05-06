@@ -648,11 +648,17 @@ def compute_phash(image_path: "Path", hash_size: int = 8) -> str:
     import numpy as np
 
     try:
-        img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+        bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
     except Exception:
-        img = None
-    if img is None:
+        bgr = None
+    if bgr is None:
         raise ValueError(f"画像を読み込めません: {image_path}")
+    try:
+        from tools.ap.image_proc import get_roi_cropped_image
+        bgr = get_roi_cropped_image(bgr)
+    except Exception:
+        pass  # クロップ失敗時は元画像で続行
+    img = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     img = cv2.resize(img, (hash_size * 4, hash_size * 4))
     dct = cv2.dct(np.float32(img))
     top = dct[:hash_size, :hash_size]
@@ -696,9 +702,15 @@ def compute_dhash(image_path: "Path", hash_size: int = 8) -> str:
     """
     import cv2
 
-    img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
-    if img is None:
+    bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if bgr is None:
         raise ValueError(f"画像を読み込めません: {image_path}")
+    try:
+        from tools.ap.image_proc import get_roi_cropped_image
+        bgr = get_roi_cropped_image(bgr)
+    except Exception:
+        pass
+    img = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     resized = cv2.resize(img, (hash_size + 1, hash_size))
     diff = resized[:, 1:] > resized[:, :-1]
     return format(int("".join("1" if b else "0" for b in diff.flatten()), 2), "016x")
