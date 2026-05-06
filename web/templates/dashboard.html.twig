@@ -52,8 +52,8 @@
     <button id="sort-toggle" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 hover:border-brand hover:text-brand-light transition-colors outline-none" data-sort="desc">降順</button>
     <select id="version-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none hidden">
     </select>
-    <select id="session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none">
-        <option value="">最新セッション</option>
+    <select id="session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none" title="現在セッション固定 (デフォルト) または過去セッション選択">
+        <option value="">現在セッション</option>
     </select>
     <select id="debug-session-select" class="ml-1 bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-brand outline-none hidden">
     </select>
@@ -1069,8 +1069,13 @@
             const res = await fetch(API_BASE + '?' + params);
             const data = await res.json();
             knownSessions = (data.sessions || []).map(s => s.session_dir);
-            sessionSelect.innerHTML = '<option value="">最新セッション</option>';
-            const older = (data.sessions || []).slice(1); // 最新を除外
+            // 「現在セッション」(空value) は知られている最新セッションを実 ID 付きで表示
+            const _currentSid = knownSessions.length > 0 ? knownSessions[0] : '';
+            const _currentLabel = _currentSid
+                ? `現在セッション (${_currentSid})`
+                : '現在セッション';
+            sessionSelect.innerHTML = `<option value="">${escapeHtml(_currentLabel)}</option>`;
+            const older = (data.sessions || []).slice(1); // 現在セッションは除外
             for (const s of older) {
                 sessionSelect.innerHTML += `<option value="${escapeHtml(s.session_dir)}">${escapeHtml(s.session_dir)}</option>`;
             }
@@ -1116,7 +1121,11 @@
             const latestSessions = (sessData.sessions || []).map(s => s.session_dir);
             if (latestSessions.length > 0 && latestSessions[0] !== knownSessions[0]) {
                 knownSessions = latestSessions;
-                sessionSelect.innerHTML = '<option value="">最新セッション</option>';
+                const _curSidPoll = latestSessions.length > 0 ? latestSessions[0] : '';
+                const _curLabelPoll = _curSidPoll
+                    ? `現在セッション (${_curSidPoll})`
+                    : '現在セッション';
+                sessionSelect.innerHTML = `<option value="">${escapeHtml(_curLabelPoll)}</option>`;
                 const olderPoll = (sessData.sessions || []).slice(1);
                 for (const s of olderPoll) {
                     sessionSelect.innerHTML += `<option value="${escapeHtml(s.session_dir)}">${escapeHtml(s.session_dir)}</option>`;
