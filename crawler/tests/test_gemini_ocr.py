@@ -119,8 +119,12 @@ class TestGeminiRetryOnJsonError:
         assert result["corrected_text"] == "OK"
         assert call_count[0] == 3, f"3回呼ばれるはず (1+2リトライ): {call_count[0]}"
 
-    def test_returns_none_after_all_retries_fail(self, tmp_path, monkeypatch):
-        """全リトライ失敗で None を返し、無限ループに入らない。"""
+    def test_returns_truncated_marker_after_all_retries_fail(self, tmp_path, monkeypatch):
+        """全リトライ失敗時は truncated marker を返す (= sentinel 化のシグナル)。
+
+        従来 None を返していたが、後続バッチで再試行されてコストを浪費するため
+        永続的失敗 (truncated) と一過性エラーを区別できるようマーカー付き辞書を返す。
+        """
         monkeypatch.setenv("GEMINI_API_KEY", "dummy")
         img = tmp_path / "test.webp"
         img.write_bytes(b"webp")
@@ -131,9 +135,50 @@ class TestGeminiRetryOnJsonError:
                             self._fake_urlopen_factory([truncated], call_count))
         monkeypatch.setattr("tools.ap.api_usage.record_api_usage", lambda *a, **k: None)
 
-        result = gemini_correct_single(str(img), "test_input")
-        assert result is None
+        result = gemini_correct_single(str(img), "test_input", item_id=42)
+        assert result is not None, "None ではなく truncated marker を返すべき"
+        assert result.get("error") == "truncated"
+        assert result.get("id") == 42
         assert call_count[0] == 3, f"3回試行で打ち切るはず: {call_count[0]}"
+
+    def test_max_tokens_finish_reason_returns_immediately_without_retry(self, tmp_path, monkeypatch):
+        """finishReason=MAX_TOKENS の場合は即諦め (内部リトライしない)。
+
+        同じプロンプト+画像で再試行しても結果は同じなので、リトライ無駄。
+        コスト最適化のため 1 回の API コールで打ち切る。
+        """
+        import json as _json
+        monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+        img = tmp_path / "test.webp"
+        img.write_bytes(b"webp")
+
+        # finishReason=MAX_TOKENS つき truncated レスポンス
+        max_tokens_resp = _json.dumps({
+            "candidates": [{
+                "content": {"parts": [{"text": '{"corrected'}]},
+                "finishReason": "MAX_TOKENS",
+            }],
+            "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 8192, "totalTokenCount": 8292},
+        }).encode()
+
+        call_count = [0]
+        monkeypatch.setattr("urllib.request.urlopen",
+                            self._fake_urlopen_factory([max_tokens_resp], call_count))
+        monkeypatch.setattr("tools.ap.api_usage.record_api_usage", lambda *a, **k: None)
+
+        result = gemini_correct_single(str(img), "test_input", item_id=99)
+        assert result is not None
+        assert result.get("error") == "truncated"
+        assert result.get("id") == 99
+        assert call_count[0] == 1, f"MAX_TOKENS 時は 1 回のみで諦めるはず: {call_count[0]}"
+
+    def test_max_output_tokens_config_is_16384(self):
+        """maxOutputTokens は 16384 (truncated 削減のため 8192 から拡大)。"""
+        import inspect
+        from tools.ap import ocr_correction
+        src = inspect.getsource(ocr_correction.gemini_correct_single)
+        assert '"maxOutputTokens": 16384' in src, \
+            "maxOutputTokens が 16384 でない (truncated 防止のため必要)"
 
     def test_no_retry_on_http_error(self, tmp_path, monkeypatch):
         """HTTP エラーはリトライ対象外 (auth 等の永続エラーで API クォータを浪費しない)。"""

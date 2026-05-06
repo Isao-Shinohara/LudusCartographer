@@ -1642,6 +1642,15 @@ class BackgroundWorker:
                 sid = r.get("id")
                 if sid is None or sid not in item_map:
                     continue
+                # 永続的失敗 (truncated 等) は sentinel ('') で記録して将来バッチでの
+                # 再試行を停止 → API コスト浪費を防ぐ。
+                if r.get("error") == "truncated":
+                    conn.execute(
+                        "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?",
+                        (sid,),
+                    )
+                    logger.info("[BG_WORKER] gemini truncated 諦め: id=%d → sentinel ('')", sid)
+                    continue
                 item = item_map[sid]
 
                 raw_corrected = (r.get("corrected_text", "") or "").strip()

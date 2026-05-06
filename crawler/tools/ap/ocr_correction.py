@@ -500,7 +500,7 @@ def gemini_correct_single(
             ]}],
             "generationConfig": {
                 "responseMimeType": "application/json",
-                "maxOutputTokens": 8192,
+                "maxOutputTokens": 16384,
                 "temperature": 0.1,
             },
         }).encode()
@@ -535,6 +535,13 @@ def gemini_correct_single(
             if not candidates:
                 logger.warning("[GEMINI] 応答なし (safety filter?)")
                 return None
+            # MAX_TOKENS truncation を早期検出: 同じプロンプト+画像で再試行しても
+            # 結果は同じなのでリトライせず即諦める (API コスト削減)。
+            finish_reason = candidates[0].get("finishReason", "")
+            if finish_reason == "MAX_TOKENS":
+                logger.warning("[GEMINI] MAX_TOKENS truncated → リトライせず即諦め (id=%s)",
+                               item_id)
+                return {"error": "truncated", "id": item_id}
             parts = candidates[0].get("content", {}).get("parts", [])
             if not parts:
                 logger.warning("[GEMINI] 応答パーツなし")
@@ -553,9 +560,11 @@ def gemini_correct_single(
                 if attempt < _GEMINI_JSON_RETRIES:
                     _time.sleep(0.3 + _random.uniform(0, 0.4) + attempt * 0.5)
                     continue
+                # 永続的な失敗 (truncated 等): 後続バッチで再試行されないよう
+                # marker 付きで返す。呼び出し元で sentinel ('') 化する。
                 logger.warning("[GEMINI] 内側 JSON パース失敗 (リトライ%d回後): %s",
                                _GEMINI_JSON_RETRIES, e)
-                return None
+                return {"error": "truncated", "id": item_id}
 
             # パターン学習
             corrected = result.get("corrected_text", "")
