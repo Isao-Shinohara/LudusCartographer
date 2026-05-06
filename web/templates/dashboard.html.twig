@@ -811,7 +811,7 @@
 
     // --- 共通カード生成 (Live / Final / マージプレビュー) ---
     function buildCard(opts) {
-        // opts: { thumb, title, ocrPreview, scene, time, badge, dots, dimClass, extraClass, dataAttr }
+        // opts: { thumb, title, ocrPreview, scene, time, badge, dots, dimClass, extraClass, dataAttr, screenId }
         const thumb = opts.thumb || '';
         const title = opts.title || '';
         const ocrPreview = opts.ocrPreview || '';
@@ -828,10 +828,14 @@
         const extraClass = opts.extraClass || '';
         const dataAttr = opts.dataAttr || '';
         const extraHtml = opts.extraHtml || '';
+        const idStripHtml = (opts.screenId !== undefined && opts.screenId !== null)
+            ? `<div class="px-2 py-0.5 text-[9px] text-gray-500 bg-gray-950/70 border-t border-gray-800 font-mono" title="screen id">id:${opts.screenId}</div>`
+            : '';
         return `<div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer relative hover:border-brand/50 hover:shadow-lg hover:shadow-brand/10 transition-all${dimClass}${extraClass}" ${dataAttr}>
             <div>
                 ${thumb ? `<img src="${thumb}" class="w-full aspect-video object-cover bg-gray-800" loading="lazy" />` : '<div class="w-full aspect-video bg-gray-800 flex items-center justify-center text-3xl">📱</div>'}
             </div>
+            ${idStripHtml}
             <div class="p-2">
                 <p class="text-xs font-semibold text-gray-200 truncate">${escapeHtml(title)}</p>
                 <p class="text-[10px] text-gray-500 truncate mt-0.5">${escapeHtml(ocrPreview)}</p>
@@ -888,6 +892,7 @@
             dots, dimClass,
             extraClass: pendingMark + groupSelectMark + anchorMark,
             dataAttr: `data-idx="${idx}"`,
+            screenId: s.id,
         });
     }
 
