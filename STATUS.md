@@ -1,11 +1,11 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-05-06 (ダッシュボードバグ修正 + Gemini コスト対策 + Stuck 検知器)
+最終更新: 2026-05-07 (画像処理精度向上 + handler パスバグ修正)
 
 ## 現在のブランチ
 - `main` (最新: PR #6 マージ後、commit `1f06a6e`)
-- **`feature/tagging`** (main から **17 コミット先行**、origin より **4 コミット先行 (未 push)**)
-  - 内容: 実機検証セッションで発見した課題への修正 + Tag タブ UI 改善 + 本日の 4 修正
+- **`feature/tagging`** (main から **28 コミット先行**、origin に push 済み `5b6186f`)
+  - 内容: 実機検証で発見した課題への修正 + Tag タブ UI + Gemini コスト対策 + 本日の 11 修正
 - `feature/master-node-tags` / `feature/tag-search` / `feature/tag-polish` / `feature/tag-tab-polish` / `feature/screen-recorder` は **PR #1〜#6 でマージ済み・削除済み**
 
 ## マージ済みの PR (履歴)
@@ -22,9 +22,25 @@
 ## オープン中の PR
 **なし** — `feature/tagging` ブランチは origin より 4 コミット先行 (未 push)、**ユーザー指示があるまで PR は作成しない** (CLAUDE.md §13 ルール)。
 
-## feature/tagging に積まれた未マージ commits (17 件)
+## feature/tagging に積まれた未マージ commits (28 件)
 
-### 2026-05-06 追加 (本日、未 push 4 件)
+### 2026-05-07 追加 (本日、push 済み 11 件)
+
+| Commit | 内容 |
+|---|---|
+| `5b6186f` | fix(api): handler files の crawler パス解決を 4 ups に修正 |
+| `ab3489d` | refactor(phash): 縮退判定を lc.utils.is_degenerate_phash に一元化 |
+| `d870827` | fix(clustering): 縮退 phash 同士の誤統合を Step A / merge_to_prev_empty で防止 |
+| `9e96fa1` | feat(screen_recorder): 連続する縮退 phash を集約してダウンロード中の白フラッシュ重複を解消 |
+| `5419e60` | feat(dashboard): Live セッションセレクタを「現在セッション (実 ID)」表示に |
+| `3726412` | feat(recognition): phash/dhash/Gemini で scrcpy 黒帯クロップを適用 |
+| `7a506bd` | feat(image_proc): scrcpy 黒帯をクロップする get_roi_cropped_image を追加 |
+| `b5c767a` | feat(gemini): scene 情報を渡し MOVIE_CUT を保護 |
+| `1a55690` | feat(dashboard): Live/Final カードにスクリーン id バッジを追加 |
+| `4e39dd9` | docs: STATUS.md + 2026-05-06 セッション要約 |
+| (前日まで) | (以下 13 件は 2026-05-05 以前) |
+
+### 2026-05-06 追加 (push 済み 4 件)
 
 | Commit | 内容 |
 |---|---|
@@ -53,12 +69,19 @@
 
 ## まだ残っているタスク
 
-### 🔴 必須対応 (前回からの継続課題、本日未着手)
+### 🔴 必須対応 (本日ユーザー承認済、未着手)
+- **BG worker 漏れ修正 (5 メソッド)**: 走行中に過去セッションの未処理を放置するバグ
+  - 漏れる: `_run_incremental_clustering` / `_remerge_text_clusters` / `_run_incremental_group` / `_run_gemini_batch_correction` / `_synthesize_auto_edges`
+  - 修正方針: 「現セッション優先 + 過去未処理フォールバック」共通パターン (`_resolve_target_session` ヘルパー)
+  - 詳細は `docs/history/2026-05-07.md`
+- **既存問題クラスタの SQL リセット (Phase 1)**: 縮退 phash 誤統合のターゲット型修復
+  - BG worker 修正後に実行 (再クラスタリングで新ロジック適用)
+
+### 🔴 必須対応 (前日からの継続課題、本日未着手)
 - **ConfirmDialog のスキップ確認区別**: `dialog_phase.py` で「ストーリースキップ」と「ムービースキップ」を OCR テキストで区別
   - 現状: 両方とも `STORY_SKIP_CANCEL` でキャンセル
   - 問題: ログインボーナス画面の ▶| (ムービースキップ確認) もキャンセルされ、LB 閉じられないループ
   - 区別: `"ムービー"` を含む → OK タップ / `"ストーリー"` を含む → キャンセル
-  - 本日の実機検証でも 02:25 と 03:57-04:01 で発生確認 (自動脱出はしたが本来出るべきではない)
 
 ### 🟡 任意
 - WFC_ESCAPE に icon_skip 併用 (現状 detect_login_bonus_popup で対処済のため優先度低)
