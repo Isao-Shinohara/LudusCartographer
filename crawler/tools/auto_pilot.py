@@ -3874,6 +3874,42 @@ def main():
         state.cycle.last_analysis_path = analysis_path
         state.cycle.last_ocr_results = ocr_results
 
+        # ── タップ無効 stuck 検知 ──
+        # アプリ側の不具合等でタップしても画面が変わらない状態を検知して
+        # auto_pilot を自動停止し、API/CPU リソースの無駄遣いを防ぐ。
+        if state.cycle.last_tap_action and cur_phash:
+            if state.cycle.stuck_detector is None:
+                from tools.ap.stuck_detector import StuckTapDetector
+                state.cycle.stuck_detector = StuckTapDetector(k=8)
+            _stuck_text = " ".join(t for t in texts if t)[:200]
+            _is_stuck = state.cycle.stuck_detector.evaluate(
+                action_type=state.cycle.last_tap_action,
+                tap_x=state.cycle.last_tap_x,
+                tap_y=state.cycle.last_tap_y,
+                curr_phash=cur_phash,
+                curr_dhash=None,  # メインループでは dhash 計算しない
+                curr_text=_stuck_text,
+            )
+            if _is_stuck:
+                logger.error("=" * 60)
+                logger.error("[STUCK_DETECTED] %d 個の異なるタップ位置で全部失敗 → auto_pilot 停止",
+                             len(state.cycle.stuck_detector.ineffective_targets))
+                logger.error("  最後のタップ: %s (%d, %d)",
+                             state.cycle.last_tap_action,
+                             state.cycle.last_tap_x, state.cycle.last_tap_y)
+                logger.error("  失敗 target 一覧: %s",
+                             sorted(state.cycle.stuck_detector.ineffective_targets))
+                logger.error("  アプリ側の不具合か検知器の誤動作の可能性。介入が必要。")
+                logger.error("=" * 60)
+                if recorder is not None:
+                    recorder.close(goal_reached=False)
+                if bg_worker is not None:
+                    bg_worker.wait_until_idle()
+                    bg_worker.stop()
+                _cleanup_dashboard()
+                generate_and_copy_report(state, "STUCK 検知 (タップ無効)")
+                break
+
         # ── ineffective_tap_count 更新 (メニュースタック救済用) ──
         # 前回イテレーションでタップしたのに phash/OCR が変化なし → カウントアップ
         # OCR 変化判定:

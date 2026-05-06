@@ -141,6 +141,11 @@ class CycleState:
     is_fresh_start: bool = False
     startup_phase: bool = False
     milestone_logged: dict = field(default_factory=dict)
+    # タップ無効 stuck 検知 (アプリ側不具合検知用)
+    stuck_detector: object = None  # StuckTapDetector instance, lazy init
+    last_tap_action: str = ""  # 直近タップの action_type (stuck 検知用)
+    last_tap_x: int = 0
+    last_tap_y: int = 0
 
 
 @dataclass
