@@ -222,6 +222,11 @@ class ScreenRecorder:
         self._last_recorded_phash: str = ""
         self._last_inserted_id: Optional[int] = None
 
+        # 連続フラッシュ集約用: 直前 maybe_record 呼び出し時の phash
+        # (記録成否に関わらず常に更新する。ダウンロード中の連続白フラッシュを
+        # 1 件にまとめるため)
+        self._last_seen_phash: str = ""
+
         # 遷移グラフ: タップ→次画面の非同期記録
         self._pending_transition: Optional[dict] = None
         # 前セッションの未完了遷移をクリーンアップ (クラッシュ復帰時のゴミ防止)
@@ -384,6 +389,20 @@ class ScreenRecorder:
         # Android システムダイアログはゲーム画面ではないので常にスキップ (force含む)
         if ocr_results and any("応答していません" in r.get("text", "") for r in ocr_results):
             return False
+
+        # 連続する同一縮退 phash は集約 (ダウンロード中の白フラッシュ等の連発対策)
+        # - 直前と同じ縮退 phash → スキップ
+        # - 散発する縮退 phash (間に別画面) → それぞれ別イベントとして記録継続
+        # - force=True (タップ前記録) はバイパス、状態だけ更新
+        _prev_seen = self._last_seen_phash
+        self._last_seen_phash = phash or ""
+        if not force and phash and phash == _prev_seen:
+            try:
+                bits = bin(int(phash, 16)).count("1")
+                if bits < 4 or bits > 60:
+                    return False
+            except (ValueError, TypeError):
+                pass
 
         if not force:
             # 0. タップ後クールダウン: 保存のみスキップ (phash 追跡は呼び出し元で継続)
