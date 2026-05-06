@@ -130,7 +130,7 @@ if ($action === 'adopt_and_rebuild') {
     $isSeed = $toggleResult['is_seed'] ?? false;
 
     // 2. バックグラウンドで unmerge → 再マージ
-    $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
+    $crawlerDirRaw = realpath(__DIR__ . '/../../../..') . '/crawler';
     $resultFile = $crawlerDirRaw . '/storage/merge_result.json';
     @unlink($resultFile);
     $scriptFile = $crawlerDirRaw . '/storage/_adopt_rebuild.py';
@@ -328,7 +328,7 @@ if ($action === 'update_manual_text') {
         exit;
     }
     try {
-        $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+        $crawlerDir = realpath(__DIR__ . '/../../../..') . '/crawler';
         $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
         $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 

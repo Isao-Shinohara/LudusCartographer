@@ -10,7 +10,7 @@ use LudusCartographer\EvidenceRepository;
 
 // --- get_noise_words アクション ---
 if ($action === 'get_noise_words') {
-    $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+    $crawlerDir = realpath(__DIR__ . '/../../../..') . '/crawler';
     try {
         $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
         $db->setAttribute(PDO::ATTR_TIMEOUT, 2);
@@ -25,7 +25,7 @@ if ($action === 'get_noise_words') {
 if ($action === 'delete_noise_word') {
     $word = $_GET['word'] ?? '';
     if ($word === '') { echo json_encode(['error' => 'word required']); exit; }
-    $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+    $crawlerDir = realpath(__DIR__ . '/../../../..') . '/crawler';
     try {
         $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
         $db->prepare("DELETE FROM lc_ocr_noise_words WHERE word = ?")->execute([$word]);
@@ -39,7 +39,7 @@ if ($action === 'delete_noise_word') {
 if ($action === 'add_noise_word') {
     $word = trim($_GET['word'] ?? '');
     if ($word === '') { echo json_encode(['error' => 'word required']); exit; }
-    $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+    $crawlerDir = realpath(__DIR__ . '/../../../..') . '/crawler';
     try {
         $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
         $db->exec("CREATE TABLE IF NOT EXISTS lc_ocr_noise_words (word TEXT PRIMARY KEY, count INTEGER DEFAULT 1, first_seen_at TEXT DEFAULT (datetime('now')), last_seen_at TEXT DEFAULT (datetime('now')))");
@@ -53,7 +53,7 @@ if ($action === 'add_noise_word') {
 // --- get_correction_candidates アクション (Phase 2: 適用候補取得) ---
 if ($action === 'get_correction_candidates') {
     try {
-        $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+        $crawlerDir = realpath(__DIR__ . '/../../../..') . '/crawler';
         $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
 
         // 全 global ルールを取得
@@ -105,7 +105,7 @@ if ($action === 'apply_correction_rule') {
         exit;
     }
     try {
-        $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+        $crawlerDir = realpath(__DIR__ . '/../../../..') . '/crawler';
         $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
         $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 

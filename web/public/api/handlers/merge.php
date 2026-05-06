@@ -10,7 +10,7 @@ use LudusCartographer\EvidenceRepository;
 
 // --- merge_progress アクション (結果ファイルの出現で完了判定) ---
 if ($action === 'merge_progress') {
-    $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+    $crawlerDir = realpath(__DIR__ . '/../../../..') . '/crawler';
     $resultFile = $crawlerDir . '/storage/merge_result.json';
     if (!file_exists($resultFile)) {
         // Phase 進捗を返す
@@ -47,12 +47,12 @@ if ($action === 'preview_merge') {
         echo json_encode(['error' => 'session_id required']);
         exit;
     }
-    $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
-    $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
+    $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../../..') . '/crawler');
+    $resultFile = realpath(__DIR__ . '/../../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
     // 二重起動防止はフロント側の withOperationLock で制御
     // スクリプトファイルに書き出してバックグラウンド実行 (クォート問題を回避)
-    $scriptFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/_preview_merge.py';
+    $scriptFile = realpath(__DIR__ . '/../../../..') . '/crawler/storage/_preview_merge.py';
     $excludeFpsPreview = $_GET['exclude_fps'] ?? '[]';
     $includeFpsPreview = $_GET['include_fps'] ?? '[]';
     file_put_contents($scriptFile, <<<PYTHON
@@ -85,7 +85,7 @@ except Exception:
     traceback.print_exc(file=sys.stderr)
     sys.exit(1)
 PYTHON);
-    $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
+    $crawlerDirRaw = realpath(__DIR__ . '/../../../..') . '/crawler';
     $bgCmd = "cd " . escapeshellarg($crawlerDirRaw)
            . " && ./venv/bin/python -B -W ignore " . escapeshellarg($scriptFile)
            . " " . escapeshellarg($resultFile)
@@ -102,10 +102,10 @@ if ($action === 'execute_merge') {
         echo json_encode(['error' => 'session_id required']);
         exit;
     }
-    $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
-    $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
+    $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../../..') . '/crawler');
+    $resultFile = realpath(__DIR__ . '/../../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
-    $scriptFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/_execute_merge.py';
+    $scriptFile = realpath(__DIR__ . '/../../../..') . '/crawler/storage/_execute_merge.py';
     $excludeFps = $_GET['exclude_fps'] ?? '[]';
     $includeFps = $_GET['include_fps'] ?? '[]';
     file_put_contents($scriptFile, <<<PYTHON
@@ -141,7 +141,7 @@ except Exception as e:
     with open(sys.argv[1], "w") as f:
         json.dump({"ok": False, "error": str(e)}, f, ensure_ascii=False)
 PYTHON);
-    $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
+    $crawlerDirRaw = realpath(__DIR__ . '/../../../..') . '/crawler';
     $bgCmd = "cd " . escapeshellarg($crawlerDirRaw)
            . " && ./venv/bin/python -B -W ignore " . escapeshellarg($scriptFile)
            . " " . escapeshellarg($resultFile)
@@ -160,7 +160,7 @@ if ($action === 'can_unmerge') {
     }
     $cmd = sprintf(
         'cd %s && ./venv/bin/python -c %s 2>&1',
-        escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler'),
+        escapeshellarg(realpath(__DIR__ . '/../../../..') . '/crawler'),
         escapeshellarg(
             "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
             . "m = CrossSessionMerger(Path('storage/ludus.db')); "
@@ -183,7 +183,7 @@ if ($action === 'execute_unmerge') {
     }
     $cmd = sprintf(
         'cd %s && ./venv/bin/python -c %s 2>&1',
-        escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler'),
+        escapeshellarg(realpath(__DIR__ . '/../../../..') . '/crawler'),
         escapeshellarg(
             "import json; from pathlib import Path; from tools.cross_session_merger import CrossSessionMerger; "
             . "m = CrossSessionMerger(Path('storage/ludus.db')); "
