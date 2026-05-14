@@ -186,6 +186,7 @@ class BatchProcessor:
             ("bfs_depth", "INTEGER"),
             ("scc_id", "INTEGER"),
             ("scc_label", "TEXT"),
+            ("cluster_stable_loops", "INTEGER DEFAULT 0"),
         ]:
             if col not in cols:
                 self._conn.execute(f"ALTER TABLE lc_screens ADD COLUMN {col} {typ}")

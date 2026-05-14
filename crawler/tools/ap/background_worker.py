@@ -27,6 +27,14 @@ logger = logging.getLogger(__name__)
 _PHASH_CLUSTER_THRESHOLD = 8
 _GROUP_GAP_SECONDS = 60
 
+# Gemini OCR を投入する前に要求するクラスタ安定 loop 数。
+# クラスタリング loop で cluster_id が変動しなかった連続回数がこの値以上に
+# なった代表のみ Gemini に送る。降格代表への無駄な API 呼び出しを防ぐ。
+# 新規 screen の遷移: loop1 = cluster_id 確定 (スナップショット外、値 0 のまま) /
+# loop2 = スナップショットに入る、変動なしなら +1 (=1) / loop3 = +1 (=2) で対象。
+# クラスタリング間隔 15 秒なので約 30 秒の遅延 (新規 screen 到達から)。
+_GEMINI_CLUSTER_STABLE_THRESHOLD = 2
+
 _SCENE_LABELS = {
     "BATTLE": "バトル",
     "ADV": "ストーリー",
@@ -477,6 +485,69 @@ class BackgroundWorker:
         from lc.image_comparator import dhash_distance
         return dhash_distance(h1, h2)
 
+    def _take_cluster_snapshot(
+        self,
+        conn: sqlite3.Connection,
+        sid_filter: str = "",
+        sid_params: tuple = (),
+    ) -> dict[int, int]:
+        """loop 開始時点の cluster_id スナップショットを取得。
+
+        cluster_id が確定 (IS NOT NULL) している screen のみ対象。新規 (NULL)
+        screen は含めない。_mark_cluster_stability と組で使い、loop 中に
+        cluster_id が変動したかを比較するための基準値となる。
+        """
+        rows = conn.execute(
+            "SELECT id, cluster_id FROM lc_screens"
+            " WHERE cluster_id IS NOT NULL" + sid_filter,
+            sid_params,
+        ).fetchall()
+        return {r["id"]: r["cluster_id"] for r in rows}
+
+    def _mark_cluster_stability(
+        self,
+        conn: sqlite3.Connection,
+        pre_snapshot: dict[int, int],
+    ) -> None:
+        """loop 完了後の cluster_id 変動を判定し cluster_stable_loops を更新。
+
+        - スナップショットに含まれる screen (loop 開始時に cluster_id 確定済み):
+            - 一致 → cluster_stable_loops += 1
+            - 不一致 (cluster 変動 or 行削除) → cluster_stable_loops = 0
+        - スナップショットに含まれない (新規) screen は触らない (DEFAULT 0 維持)。
+        """
+        if not pre_snapshot:
+            return
+        incremented = 0
+        reset = 0
+        for sid, prev_cid in pre_snapshot.items():
+            row = conn.execute(
+                "SELECT cluster_id FROM lc_screens WHERE id = ?",
+                (sid,),
+            ).fetchone()
+            if row is None:
+                continue
+            if row["cluster_id"] == prev_cid:
+                conn.execute(
+                    "UPDATE lc_screens"
+                    " SET cluster_stable_loops = COALESCE(cluster_stable_loops, 0) + 1"
+                    " WHERE id = ?",
+                    (sid,),
+                )
+                incremented += 1
+            else:
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_stable_loops = 0 WHERE id = ?",
+                    (sid,),
+                )
+                reset += 1
+        if incremented or reset:
+            conn.commit()
+            logger.debug(
+                "[BG_WORKER] cluster stability: stable+1=%d, reset=%d",
+                incremented, reset,
+            )
+
     def _run_incremental_clustering(self) -> None:
         """未処理スクリーンに対してテキスト優先 + ハッシュ距離フォールバックでクラスタリング。
 
@@ -501,6 +572,11 @@ class BackgroundWorker:
                 _sid_filter = " AND session_id = ?"
                 _sid_params = (self._session_id,)
 
+            # loop 開始時点の cluster_id スナップショット (Gemini 投入判定用)。
+            # loop 末尾の _mark_cluster_stability で cluster_id 変動の有無を判定し、
+            # cluster_stable_loops カウンタを更新する。
+            pre_snapshot = self._take_cluster_snapshot(conn, _sid_filter, _sid_params)
+
             # クラスタリングは常に初期 OCR (Vision) で判定し、HQ OCR を待たない。
             # HQ OCR (PaddleOCR/Gemini) はクラスタリング後の代表のみで実行され、表示用テキストの精度向上が目的。
             _hq_filter = ""
@@ -515,6 +591,9 @@ class BackgroundWorker:
             ).fetchall()
 
             if not rows:
+                # 新規 screen がなくても既存 screen は誰も触らない → 変動ゼロ。
+                # cluster_stable_loops を進めることで安定判定が滞らないようにする。
+                self._mark_cluster_stability(conn, pre_snapshot)
                 return
 
             existing_reps = conn.execute(
@@ -853,6 +932,11 @@ class BackgroundWorker:
             # 後から HQ/Gemini OCR でテキストを獲得した場合、同セリフのクラスタを統合する。
             # _remerge_text_clusters は ocr_text_gemini OR ocr_text_hq IS NOT NULL の代表が対象。
             self._remerge_text_clusters(conn)
+
+            # 全クラスタリング処理が終わった時点で cluster_id 変動を判定して
+            # cluster_stable_loops を更新する。Gemini はこの値が閾値以上の
+            # 代表のみ対象にすることで降格代表への無駄な API 呼び出しを防ぐ。
+            self._mark_cluster_stability(conn, pre_snapshot)
 
         finally:
             conn.close()
@@ -1557,6 +1641,21 @@ class BackgroundWorker:
                     target_sid = row["session_id"]
             if not target_sid:
                 return
+            # running セッションのみクラスタ安定待ち。completed セッションは
+            # クラスタリングが止まっているため即処理 (放置すると永遠に対象外になる)。
+            sess_row = conn.execute(
+                "SELECT status FROM lc_sessions WHERE session_id = ?",
+                (target_sid,),
+            ).fetchone()
+            is_running = bool(sess_row and sess_row["status"] == "running")
+            stable_clause = (
+                " AND COALESCE(cluster_stable_loops, 0) >= ?"
+                if is_running else ""
+            )
+            params: tuple = (target_sid,)
+            if is_running:
+                params = (target_sid, _GEMINI_CLUSTER_STABLE_THRESHOLD)
+            params = params + (fetch_limit,)
             rows = conn.execute(
                 "SELECT id, screenshot_path, scene,"
                 " COALESCE(ocr_text_hq, ocr_text, '') AS ocr"
@@ -1565,9 +1664,10 @@ class BackgroundWorker:
                 " AND ocr_text_gemini IS NULL"
                 " AND screenshot_path != ''"
                 " AND session_id = ?"
+                + stable_clause +
                 " ORDER BY discovered_at"
                 " LIMIT ?",
-                (target_sid, fetch_limit),
+                params,
             ).fetchall()
 
             if not rows:

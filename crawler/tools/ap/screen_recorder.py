@@ -707,6 +707,16 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: dhash_dist_to_prev_rep カラム追加")
+        # クラスタ安定 loop カウンタ (Gemini OCR 投入タイミング判定用)
+        # クラスタリング loop で cluster_id が変動しなかった連続回数を保持。
+        # _run_gemini_batch_correction は running セッションでは
+        # cluster_stable_loops >= _GEMINI_CLUSTER_STABLE_THRESHOLD を要求する。
+        if "cluster_stable_loops" not in cols:
+            self._conn.execute(
+                "ALTER TABLE lc_screens ADD COLUMN cluster_stable_loops INTEGER DEFAULT 0"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: cluster_stable_loops カラム追加")
         # 旧カラム hist_dist_to_prev_rep は廃止 (Q3=B、ヒスト判定撤廃のため)
         if "hist_dist_to_prev_rep" in cols:
             try:
