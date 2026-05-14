@@ -1,11 +1,14 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-05-07 (画像処理精度向上 + handler パスバグ修正)
+最終更新: 2026-05-15 (Gemini コスト最適化: cluster_stable_loops + Implicit Cache)
 
 ## 現在のブランチ
 - `main` (最新: PR #6 マージ後、commit `1f06a6e`)
-- **`feature/tagging`** (main から **28 コミット先行**、origin に push 済み `5b6186f`)
-  - 内容: 実機検証で発見した課題への修正 + Tag タブ UI + Gemini コスト対策 + 本日の 11 修正
+- `feature/tagging` (main から 28 コミット先行、origin に push 済み `5b6186f`)
+- **`feature/gemini-cost-stable-loops`** (main から **3 コミット先行**、**未 push**)
+  - 内容: 案 C (cluster_stable_loops で Gemini 遅延) + 案 A (プロンプト SYSTEM/USER 分離 → Implicit Cache 75% 割引) + CLAUDE.md §22 永続化
+  - 新規テスト 27 件 (14 + 13) 全 pass
+  - stash@{0} に feature/tagging の wip-ocr-learned-patterns あり
 - `feature/master-node-tags` / `feature/tag-search` / `feature/tag-polish` / `feature/tag-tab-polish` / `feature/screen-recorder` は **PR #1〜#6 でマージ済み・削除済み**
 
 ## マージ済みの PR (履歴)
@@ -20,7 +23,17 @@
 | #6 | Tag タブを Merge の隣へ + 判定ボタン統合 | 2026-05-04 |
 
 ## オープン中の PR
-**なし** — `feature/tagging` ブランチは origin より 4 コミット先行 (未 push)、**ユーザー指示があるまで PR は作成しない** (CLAUDE.md §13 ルール)。
+**なし** — `feature/tagging` ブランチは origin より 4 コミット先行 (未 push)、`feature/gemini-cost-stable-loops` も未 push。**ユーザー指示があるまで PR は作成しない** (CLAUDE.md §13 ルール)。
+
+## feature/gemini-cost-stable-loops に積まれた commits (3 件、本日)
+
+| Commit | 内容 |
+|---|---|
+| `aa0c266` | docs(claude): Gemini プロンプト SYSTEM/USER 分離ルールを §22 に永続化 |
+| `e3f0b03` | feat(gemini): プロンプトを SYSTEM/USER 分離して Implicit Cache を有効化 |
+| `5bd2ab3` | feat(bg_worker): cluster_stable_loops で Gemini OCR 投入を安定後まで遅延 |
+
+詳細: `docs/history/2026-05-15.md`
 
 ## feature/tagging に積まれた未マージ commits (28 件)
 
@@ -69,19 +82,30 @@
 
 ## まだ残っているタスク
 
-### 🔴 必須対応 (本日ユーザー承認済、未着手)
-- **BG worker 漏れ修正 (5 メソッド)**: 走行中に過去セッションの未処理を放置するバグ
+### 🔴 必須対応 (前セッション承認済、未着手)
+- **BG worker 漏れ修正 (5 メソッド)**: 走行中に過去セッションの未処理を放置するバグ (feature/tagging 内)
   - 漏れる: `_run_incremental_clustering` / `_remerge_text_clusters` / `_run_incremental_group` / `_run_gemini_batch_correction` / `_synthesize_auto_edges`
   - 修正方針: 「現セッション優先 + 過去未処理フォールバック」共通パターン (`_resolve_target_session` ヘルパー)
   - 詳細は `docs/history/2026-05-07.md`
 - **既存問題クラスタの SQL リセット (Phase 1)**: 縮退 phash 誤統合のターゲット型修復
   - BG worker 修正後に実行 (再クラスタリングで新ロジック適用)
 
-### 🔴 必須対応 (前日からの継続課題、本日未着手)
+### 🔴 必須対応 (継続課題、本日未着手)
 - **ConfirmDialog のスキップ確認区別**: `dialog_phase.py` で「ストーリースキップ」と「ムービースキップ」を OCR テキストで区別
   - 現状: 両方とも `STORY_SKIP_CANCEL` でキャンセル
   - 問題: ログインボーナス画面の ▶| (ムービースキップ確認) もキャンセルされ、LB 閉じられないループ
   - 区別: `"ムービー"` を含む → OK タップ / `"ストーリー"` を含む → キャンセル
+
+### 🟡 中優先 (本日 §22 永続化で明示、新規)
+- **anchor_matcher.py (P4-P6) の SYSTEM/USER 分離**: CLAUDE.md §22 ルールに準拠させる
+- **tag_judgment.py の SYSTEM/USER 分離**: 同上
+- **`cachedContentTokenCount` のログ + `lc_api_usage.cached_tokens` カラム**: Implicit Cache の実 hit 率測定
+- **実機検証**: 案 A + C 実装の効果測定 (期待: 月 $25 → $5-8、80% 削減)
+
+### 🟢 低優先 (案 A + C 効果次第で再評価)
+- **案 E (テキスト一致 skip)**: 案 C 後は 3-8% で割に合わない可能性
+- **案 F (multi バッチ復活)**: input 60-80% 削減見込みだが精度低下リスク
+- **Explicit Cache (cachedContent API)**: Implicit Cache が効かない場合の代替
 
 ### 🟡 任意
 - WFC_ESCAPE に icon_skip 併用 (現状 detect_login_bonus_popup で対処済のため優先度低)
