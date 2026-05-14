@@ -260,19 +260,17 @@ def _clean_gemini_output(text: str) -> str:
         return ""
     return text
 
-_GEMINI_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedra」のUI仕様と世界観に精通したデバッグエンジニアです。
+# Implicit Cache の最大活用のため、動的値 (scene_hint, ocr_text) は SYSTEM 側に
+# 含めない。固定指示を _GEMINI_SYSTEM_PROMPT として systemInstruction に渡し、
+# 動的値は _GEMINI_USER_TEMPLATE 経由で contents 側に渡す。
+# (1024+ tok の共通 prefix で Gemini が自動的に 75% 割引する仕組み)
+_GEMINI_SYSTEM_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedra」のUI仕様と世界観に精通したデバッグエンジニアです。
 
 ゲーム画面のスクリーンショットから、画面上のテキストを正確に読み取ってください。
 
 ## マスターリスト（参考）
 - キャラ名: 鹿目まどか、暁美ほむら、美樹さやか、巴マミ、佐倉杏子、由比鶴乃、七海やちよ、環いろは、秋野かえで、深月フェリシア、二葉さな、水波レナ、御園かりん、梓みふゆ、十咎ももこ、志筑仁美、キュゥべえ、早乙女和子
 - UI用語: パーティー、ホーム、ショップ、ガチャ、クエスト、バトル、スキル、通常攻撃、マギア、ドッペル、キオク、額縁、プレイヤー、推奨、報酬、限界突破、ATTACKER、BUFFER、DEFENDER、BREAK、SKIP、AUTO
-
-## 参考: 検出器が推定したシーン
-{scene_hint}
-
-## 参考: 初期 OCR 結果（誤読の可能性あり、参考程度に）
-{ocr_text}
 
 ## 出力形式（JSONのみ、他の説明不要）
 {{
@@ -354,7 +352,22 @@ corrected_text が空であることと is_artifact=true は全く無関係で�
   4. 上記以外（メニュー、ホーム、カットシーン等） → "HOME"'''
 
 
-_GEMINI_BATCH_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedra」のUI仕様と世界観に精通したデバッグエンジニアです。
+# 動的値テンプレ (contents 側に渡る、リクエスト毎に異なる)
+_GEMINI_USER_TEMPLATE = '''## 参考: 検出器が推定したシーン
+{scene_hint}
+
+## 参考: 初期 OCR 結果（誤読の可能性あり、参考程度に）
+{ocr_text}
+
+添付画像とこれらの参考情報を用い、システム指示の判定ルールに従って JSON を出力してください。'''
+
+
+# 後方互換: 既存テストやデバッグツールが _GEMINI_PROMPT 全体を参照する。
+# SYSTEM + USER を連結したものを公開する (実際の API call では分けて送る)。
+_GEMINI_PROMPT = _GEMINI_SYSTEM_PROMPT + "\n\n" + _GEMINI_USER_TEMPLATE
+
+
+_GEMINI_BATCH_SYSTEM_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia Exedra」のUI仕様と世界観に精通したデバッグエンジニアです。
 
 複数のゲーム画面のスクリーンショットから、各画面のテキストを正確に読み取ってください。
 画像は順番に「画像1, 画像2, ...」として渡されます。
@@ -364,12 +377,6 @@ _GEMINI_BATCH_PROMPT = '''あなたは「魔法少女まどか★マギカ Magia
 ## マスターリスト（参考）
 - キャラ名: 鹿目まどか、暁美ほむら、美樹さやか、巴マミ、佐倉杏子、由比鶴乃、七海やちよ、環いろは、秋野かえで、深月フェリシア、二葉さな、水波レナ、御園かりん、梓みふゆ、十咎ももこ、志筑仁美、キュゥべえ、早乙女和子
 - UI用語: パーティー、ホーム、ショップ、ガチャ、クエスト、バトル、スキル、通常攻撃、マギア、ドッペル、キオク、額縁、プレイヤー、推奨、報酬、限界突破、ATTACKER、BUFFER、DEFENDER、BREAK、SKIP、AUTO
-
-## 各画像の検出器シーン推定 + 初期 OCR 結果（誤読の可能性あり、参考程度に）
-各行: `画像N: [scene=<検出器の推定>] <初期OCR>`
-- scene=MOVIE はストーリームービーのカットシーンが確実に検出されたケース
-- scene=UNKNOWN は検出器でも分類できなかったケース（必要なら画像から判断）
-{ocr_block}
 
 ## 出力形式（JSONのみ、他の説明不要）
 {{
@@ -468,6 +475,20 @@ result オブジェクトに以下を追加:
 （該当なしなら空配列 []）'''
 
 
+# batch 版動的値テンプレ (各画像のシーン推定 + 初期 OCR を一括渡し)
+_GEMINI_BATCH_USER_TEMPLATE = '''## 各画像の検出器シーン推定 + 初期 OCR 結果（誤読の可能性あり、参考程度に）
+各行: `画像N: [scene=<検出器の推定>] <初期OCR>`
+- scene=MOVIE はストーリームービーのカットシーンが確実に検出されたケース
+- scene=UNKNOWN は検出器でも分類できなかったケース（必要なら画像から判断）
+{ocr_block}
+
+添付画像群とこの参考情報を用い、システム指示の判定ルールに従って JSON を出力してください。'''
+
+
+# 後方互換: 既存テスト用に SYSTEM + USER を連結したものを公開
+_GEMINI_BATCH_PROMPT = _GEMINI_BATCH_SYSTEM_PROMPT + "\n\n" + _GEMINI_BATCH_USER_TEMPLATE
+
+
 _GEMINI_TIMEOUT = 60  # API リクエストタイムアウト (秒)
 _GEMINI_JSON_RETRIES = 2  # JSON パース失敗時の追加リトライ回数 (truncated レスポンス対策、合計 1+N 回)
 
@@ -552,12 +573,18 @@ def gemini_correct_single(
         img_b64 = base64.b64encode(img_data).decode()
 
         scene_hint = f"検出器の推定シーン: {scene}" if scene else "検出器の推定シーン: (情報なし)"
-        prompt_text = _GEMINI_PROMPT.format(ocr_text=ocr_text, scene_hint=scene_hint)
+        # 動的値は USER 側のみに含める (SYSTEM は完全固定で Implicit Cache 対象)。
+        user_prompt = _GEMINI_USER_TEMPLATE.format(
+            ocr_text=ocr_text, scene_hint=scene_hint,
+        )
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent?key={api_key}"
         body = json.dumps({
-            "contents": [{"parts": [
+            "systemInstruction": {
+                "parts": [{"text": _GEMINI_SYSTEM_PROMPT}],
+            },
+            "contents": [{"role": "user", "parts": [
                 {"inline_data": {"mime_type": mime, "data": img_b64}},
-                {"text": prompt_text},
+                {"text": user_prompt},
             ]}],
             "generationConfig": {
                 "responseMimeType": "application/json",
@@ -689,13 +716,17 @@ def gemini_correct_multi(
         if not contents:
             return []
 
-        prompt = _GEMINI_BATCH_PROMPT.format(ocr_block="\n".join(ocr_lines))
-        contents.append(prompt)
+        # 動的値は USER 側のみに含める (SYSTEM は完全固定で Implicit Cache 対象)。
+        user_prompt = _GEMINI_BATCH_USER_TEMPLATE.format(
+            ocr_block="\n".join(ocr_lines),
+        )
+        contents.append(user_prompt)
 
         response = client.models.generate_content(
             model=_GEMINI_MODEL,
             contents=contents,
             config=_genai.types.GenerateContentConfig(
+                system_instruction=_GEMINI_BATCH_SYSTEM_PROMPT,
                 response_mime_type="application/json",
                 max_output_tokens=8192,
                 temperature=0.1,
