@@ -1,13 +1,19 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-05-15 (Gemini コスト最適化: cluster_stable_loops + Implicit Cache)
+最終更新: 2026-05-24 (CLAUDE.md スリム化 — context window 41% 削減)
 
 ## 現在のブランチ
 - `main` (最新: PR #6 マージ後、commit `1f06a6e`)
 - `feature/tagging` (main から 28 コミット先行、origin に push 済み `5b6186f`)
-- **`feature/gemini-cost-stable-loops`** (main から **3 コミット先行**、**未 push**)
+- `feature/gemini-cost-stable-loops` (main から **3 コミット先行**、**未 push**)
   - 内容: 案 C (cluster_stable_loops で Gemini 遅延) + 案 A (プロンプト SYSTEM/USER 分離 → Implicit Cache 75% 割引) + CLAUDE.md §22 永続化
   - 新規テスト 27 件 (14 + 13) 全 pass
+- **`feature/claude-md-slim`** (`feature/gemini-cost-stable-loops` から **3 コミット先行**、**未 push**)
+  - 内容: CLAUDE.md を 985 → 578 行 (41% 削減)。詳細を docs/ 配下に外出し
+  - 乖離修正: §13 find_finger_blobs (実コード残存に合わせて記述変更) / §16 BG worker OCR 間隔 (5s → 0.5s)
+  - 新規 docs: tutorial_autopilot.md / evidence_recording.md / cleanup_procedure.md / gemini_prompt_design.md
+  - 既存 docs 追記: troubleshooting.md (§8 リトライ + §10 ADB)
+  - pytest test_gemini_prompt_cache.py: 13 件 pass
   - stash@{0} に feature/tagging の wip-ocr-learned-patterns あり
 - `feature/master-node-tags` / `feature/tag-search` / `feature/tag-polish` / `feature/tag-tab-polish` / `feature/screen-recorder` は **PR #1〜#6 でマージ済み・削除済み**
 
