@@ -420,7 +420,7 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 ### HSV 色検出は使わない — テンプレートマッチへの移行を推進
 - テンプレートマッチング (ASSET_MANAGER) を第一選択にする
 - ゲーム UI に金色装飾が多すぎるため、HSV 色範囲での検出は必ず偽陽性を生む
-- `find_finger_blobs`（HSV 肌色検出）は廃止済み → `tutorial_hand_pointer` テンプレートに置換
+- `find_finger_blobs`（HSV 肌色検出）は **移行作業中**（`battle_loop.py:80, 126` に残存）→ `tutorial_hand_pointer` テンプレへ段階移行中。新規利用禁止
 - **金枠検出の移行課題:** 以下の HSV ベース関数はテンプレートマッチ (`gold_frame_small` 等) への置き換えを検討中。周回時に各関数の偽陽性・検出漏れを監視し、テンプレート化の可否を判断する
   - `find_gold_frame_near` — 金枠ボタン検出
   - `detect_tutorial_gold_button_tap` — チュートリアル金枠ボタン
@@ -608,7 +608,7 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 ### バックグラウンドワーカー処理順序
 
 1. グルーピング (30秒間隔)
-2. PaddleOCR 再処理 (5秒間隔/1枚、全画像対象、タイトルも更新)
+2. PaddleOCR 再処理 (0.5秒間隔/1枚、全画像対象、タイトルも更新)
 3. クラスタリング (15秒間隔、OCR 完了後の HQ テキストで比較)
 4. 遷移グラフ構築 (120秒間隔、cluster + OCR 全完了後に実行)
 
