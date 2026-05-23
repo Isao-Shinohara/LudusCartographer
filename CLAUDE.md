@@ -3,84 +3,15 @@
 このファイルはプロジェクト全体の運用ルールを定める憲法です。
 Claude Code はこれらのルールを厳守して作業を行います。
 
+詳細仕様は `docs/` 配下に分離。本ファイルは即時行動ルール (§11/§12/§13/§15) を厚めに、それ以外は要点 + リンク。
+
 ---
 
 ## 0. チュートリアル自律操縦マニュアル
 
-※このルールは、ホーム画面到達までの「誘導」がある間のみ適用する。
-ホーム画面到達後は解除し、状況に応じた論理的判断に戻す。
+※チュートリアル誘導期間のみ適用 (ホーム画面到達後は解除)。現状 (2026-05〜) は周回・最適化フェーズに移行しており、新規アカウント (`-r`) 初回起動時のみ参照。
 
-### 優先度チェックリスト（上から順に評価）
-
-| 優先度 | 条件 | アクション |
-|--------|------|-----------|
-| **1. 指差し・ハイライト** | 画面上に指差しアイコン・黄色い枠・ゴールドハイライトが存在する | **即タップ**（OCR テキスト解析より優先。ガイドが指す対象の座標を叩く） |
-| **2. ダイアログ・ポップアップ** | X ボタン・OK・確認・閉じる・はい・次へ・完了・決定 が表示されている | **下記「ダイアログ3種別」に従って操作** |
-| **3. スキップ・ストーリー進行** | 「スキップ」「SKIP」ボタンが見える / 下部に会話ウィンドウがある | **スキップボタン優先タップ** → なければ画面中央タップでセリフ送り |
-| **4. バトル AUTO + 待機** | バトル UI（AUTO, 通常攻撃, Turn, WAVE 等）が表示されている | **AUTO ボタンをタップしてオン** → バトル終了まで wait（リザルト・勝利・クリアが見えたらタップで進む） |
-| **5. ダウンロード待機** | 「追加データ」「ダウンロード中」「Loading」が表示されている | **一切タップせず wait を繰り返す**（完了まで粘り強く待つ） |
-
-### ダイアログ3種別と操作ルール
-
-ダイアログは以下の3種別を区別し、それぞれ異なる操作を行う。
-
-| 種別 | 特徴 | 操作 |
-|------|------|------|
-| **チュートリアルポップアップ** | ゲーム操作のガイド・ヒント・遊び方説明 | **ページドットあり(2個以上):** ▷で最終ページまで送り → ×で閉じる。**ページドットなし or ドット1個:** ×で閉じる |
-| **お知らせダイアログ** | 新機能通知・メンテ情報・イベント告知 | **ページドット数分だけ▷で送り → 最終ページで×で閉じる** |
-| **通常ダイアログ** | OK/キャンセル/はい/いいえ等の操作ボタンが内包 | ダイアログ内のボタン（OK等）をタップ。**×ボタンは絶対に押さない** |
-
-### お知らせ一覧画面の検出ルール（厳格）
-
-- **判定条件**: OCR で「お知らせ」「情報」「不具合」の **3つ全て** がタブヘッダとして検出された場合
-- **操作**: 右上の × ボタンで閉じる（テンプレマッチ → フォールバック: 右上固定座標）
-- **お知らせポップアップとは別物**: お知らせ一覧はタブ付きの全画面表示。お知らせポップアップは背景ぼかし+ページドット+▷/×のオーバーレイ
-
-### お知らせポップアップの検出ルール
-
-- **判定条件（ビジュアル）**: 四隅テンプレ + ページドット≥1 + 背景ぼかし
-- **判定条件（OCR フォールバック）**: 「今日は表示し」テキスト検出
-- **操作**: ページドット数分だけ▷で送り → 最終ページで×で閉じる
-- OCR テキストに依存しない設計（OCR 誤読対策）
-
-- チュートリアルポップアップの判定に**指ポインター・金枠の検出は不要**（カード装飾等の誤検出でブロックされるため）
-- 通常ダイアログの×はキャンセルと同義のため、押すと進行が止まる
-
-### 共通ルール
-- **高精度タップ:** タップ前は 0.5 秒静止し、必ず座標の「中心点」を狙う
-- **ガイド対象の座標を叩く:** OCR で「ここをタップ！」を検出した場合、そのテキストではなくガイドが指し示す対象ボタンの座標をタップする
-
-### 低燃費モード（トークン・API コスト削減）
-
-自律操縦中は以下のルールでリソース消費を最小化すること。
-
-#### セリフ待ち — 連打禁止
-- 会話シーン（文字送り中）はセリフが**止まったことを確認してから** 1 回だけタップする
-- 判定基準: 右下の送りアイコン（▼）が出現した / 2 回連続で OCR テキストが同一
-- 連打は厳禁（誤タップで選択肢を飛ばすリスクがある）
-
-#### 無駄なキャプチャの抑制
-- **ロード・ダウンロード中:** 「Now Loading」「ダウンロード中」等の進行状況バーが表示されている間は AI 画像解析（トークン消費）を一時停止し、数秒おきの**ピクセル差分のみ**で変化を確認する
-- **同一画面の連続:** 直前と同じ画面が続いている場合（phash 距離 < 8）、フル解析をスキップして「待機」を選択する
-
-#### 粗解析 → 精査の二段構え
-| フェーズ | 手法 | コスト | 実行条件 |
-|---------|------|--------|---------|
-| **1. 粗解析** | 低解像度リサイズ (320px 幅) + phash 比較 | 極小 | 毎ループ |
-| **2. 精査** | フル解像度 OCR + AI 画像解析 | 大 | 粗解析で**大きな変化を検出した時のみ** (phash 距離 >= 8) |
-
-- 粗解析で「画面が動いていない」と判断したら精査をスキップし、wait を延長する
-- バトル AUTO 中・ダウンロード中は粗解析のみで回し、結果画面・新画面遷移時にのみ精査を実行する
-
-### 動画シーンのルール
-
-- **動画はタップで一時停止/再開する** → 動画再生中は絶対にタップしない（待機のみ）
-- **動画 vs ADV 判別**: ⏭ボタンあり + ADV証拠（AUTO/↓ボタン/上部アイコン2個以上）なし → 動画確定
-- **一時停止検出と自動再開**: phash が完全一致（dist=0）の状態が10秒以上続いた場合、一時停止と判定し画面中央タップで再開する
-  - 再生中の動画はフレームが常に変化するため dist > 0。dist=0 の連続は一時停止の確実な証拠
-  - 字幕・暗転等の静止シーンでも微差があるため dist > 0 となり、誤判定しない
-  - 再開には⏭ボタンではなく **画面の任意の場所（中央）をタップ** する
-- **暗転中のタップ禁止**: 動画遷移直後の暗いフレームでタップすると一時停止を引き起こすため、暗転を理由にしたタップは行わない
+**詳細**: `docs/tutorial_autopilot.md` を参照 (優先度チェックリスト・ダイアログ3種別・お知らせ検出・低燃費モード・動画シーンルール)。
 
 ---
 
@@ -142,29 +73,6 @@ AIにモバイルゲームを自律実行させ、すべてのUIを「地図を�
 
 ---
 
-## 6. ディレクトリ構造
-
-```
-LudusCartographer/
-├── crawler/            # Python: Appium + PaddleOCR クローラー
-│   ├── tests/          # Pytest テスト
-│   ├── config/         # 設定ファイル（.gitignore対象）
-│   └── venv/           # Python 仮想環境（.gitignore対象）
-├── web/                # PHP: Twig + Tailwind 検索 UI
-│   ├── src/            # PHP ソース
-│   ├── templates/      # Twig テンプレート
-│   ├── public/         # ドキュメントルート
-│   └── vendor/         # Composer 依存（.gitignore対象）
-├── tests/              # Playwright E2E テスト
-├── docs/
-│   ├── history/        # セッション要約ログ
-│   └── schema/         # MySQL スキーマ定義
-├── STATUS.md           # 進捗管理
-└── CLAUDE.md           # 本ファイル（運用憲法）
-```
-
----
-
 ## 7. イテレーティブ開発ルール
 
 実機検証・クローラー開発は必ず最小単位で進めること：
@@ -179,102 +87,28 @@ LudusCartographer/
 
 ## 8. ゲーム解析堅牢化ルール
 
-Appium によるゲーム操作では以下を標準実装すること：
-
-### リトライ戦略
 - XML要素検索には **最大3回のリトライ（1秒間隔）** を標準実装する
-- 実装パターン（Python）:
-  ```python
-  import time
-  def find_element_with_retry(driver, by, value, retries=3, interval=1.0):
-      for i in range(retries):
-          try:
-              return driver.find_element(by, value)
-          except Exception:
-              if i < retries - 1:
-                  time.sleep(interval)
-      return None
-  ```
-
-### OCRフォールバック
-- XML要素が取得できない場合、PaddleOCR の座標データを用いた
-  **「座標指定タップ」** へフォールバックする
+- XML要素が取得できない場合、PaddleOCR の座標データを用いた **「座標指定タップ」** へフォールバックする
 - フォールバック時はログに `[FALLBACK_OCR_TAP]` プレフィックスを付けて記録する
+
+**詳細**: `docs/troubleshooting.md §4` (リトライ実装例・OCR フォールバック)。
 
 ---
 
 ## 9. 証拠記録ルール
 
-クローラーが行うすべてのアクションについて、以下をセットで保存すること：
+クローラーの全アクションについて `crawler/evidence/<session_id>/<timestamp>_<action>/` 配下に `before.png` / `after.png` / `ocr_result.json` を保存する。
 
-```
-crawler/evidence/<session_id>/<timestamp>_<action>/
-├── before.png          # アクション前のスクリーンショット
-├── after.png           # アクション後のスクリーンショット
-└── ocr_result.json     # PaddleOCR解析結果（テキスト・座標・信頼スコア）
-```
-
-- `ocr_result.json` の形式:
-  ```json
-  {
-    "timestamp": "2026-03-03T00:00:00",
-    "action": "tap",
-    "target": "ショップボタン",
-    "ocr_boxes": [
-      {"text": "ショップ", "confidence": 0.98, "box": [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]}
-    ]
-  }
-  ```
-- これにより「なぜその判断をしたか」を後から追跡可能にする
+**詳細**: `docs/evidence_recording.md` (ディレクトリ構造・JSON スキーマ)。
 
 ---
 
 ## 10. ADB 接続・復旧マニュアル
 
-### デバイス自動検出
-`get_android_serial()` が以下の優先順位で Android デバイスを検出する:
-1. 環境変数 `ANDROID_UDID`（最優先）
-2. 環境変数 `ANDROID_SERIAL`
-3. `adb devices` から最初のオンラインデバイス（USB / Wi-Fi 両対応）
+- `get_android_serial()` (`crawler/tools/lc/utils.py:278`) の優先順位: `ANDROID_UDID` → `ANDROID_SERIAL` → `adb devices` 自動検出
+- Wi-Fi 接続が切れたら `adb connect 192.168.10.118:5555` で再接続。だめなら USB → `adb tcpip 5555` で再設定
 
-### USB 接続
-```bash
-# デバイス確認
-adb devices
-# 出力例: f6b8cef7	device
-```
-
-### Wi-Fi 接続
-```bash
-# 1. USB 接続状態で TCP/IP モードに切り替え
-adb tcpip 5555
-
-# 2. USB を外して Wi-Fi 接続
-adb connect 192.168.10.118:5555
-
-# 3. 接続確認
-adb devices
-# 出力例: 192.168.10.118:5555	device
-```
-
-### 接続が切れた場合の復旧
-```bash
-# Wi-Fi 再接続
-adb connect 192.168.10.118:5555
-
-# それでもダメなら USB 再接続 → tcpip 再設定
-adb tcpip 5555
-adb connect 192.168.10.118:5555
-```
-
-### 環境変数設定例
-```bash
-# Wi-Fi 接続のデバイスを固定指定
-export ANDROID_UDID=192.168.10.118:5555
-
-# USB 接続のデバイスを固定指定
-export ANDROID_SERIAL=f6b8cef7
-```
+**詳細**: `docs/troubleshooting.md §5` (USB・Wi-Fi・環境変数設定例)。
 
 ---
 
@@ -503,7 +337,7 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 
 ### CLAUDE.md 参照義務
 - **実装の修正・確認を行う前に、必ず CLAUDE.md を読み直す**
-- 特に §0（チュートリアル自律操縦マニュアル）と §13（行動ルール）を確認し、ルールに矛盾する変更を行わない
+- 特に §0（チュートリアル自律操縦マニュアル → `docs/tutorial_autopilot.md`）と §13（行動ルール）を確認し、ルールに矛盾する変更を行わない
 - 「知っている」と思っても省略しない — 会話が長くなるとルール認識が薄まるため、毎回明示的に確認する
 
 ### 用語統一: 「間引き」ではなく「クラスタリング」（厳格）
@@ -516,55 +350,19 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 
 ## 14. DB・スクショのクリーンアップ手順
 
-ユーザーが「クリーンアップして」と指示した場合、**セッション・画面データのみ**をクリアする。
-**OCR 修正ルール・学習パターンは絶対に削除しない（厳格）。**
+ユーザーが「クリーンアップして」と指示した場合、**セッション・画面データのみ**をクリアする。**OCR 修正ルール・学習パターン (`lc_ocr_corrections` テーブル / `crawler/storage/ocr_learned_patterns.json`) は絶対に削除しない（厳格）。**
 
-### 削除対象（セッション関連データのみ）
+削除対象 (要約):
+- `crawler/storage/ludus.db` の `lc_*` テーブル + `auto_pilot_state` を DELETE → VACUUM
+- `crawler/{storage/screenshots, storage/reinstall, storage/evidence, evidence, screenshots}/` の中身
 
-1. **crawler/storage/ludus.db**: 以下のテーブルのみ DELETE → VACUUM（スキーマは保持）
-   ```sql
-   DELETE FROM lc_node_mappings;
-   DELETE FROM lc_master_edges;
-   DELETE FROM lc_master_nodes;
-   DELETE FROM lc_session_graphs;
-   DELETE FROM lc_scc_groups;
-   DELETE FROM lc_transitions;
-   DELETE FROM lc_tappable_items;
-   DELETE FROM lc_screen_groups;
-   DELETE FROM lc_screens;
-   DELETE FROM lc_sessions;
-   DELETE FROM lc_projects;
-   DELETE FROM auto_pilot_state;
-   VACUUM;
-   ```
-   ※ `crawler/ludus.db` は未使用。本体は `crawler/storage/ludus.db`
-2. **crawler/storage/screenshots/**: 中身を全削除（ディレクトリは残す）
-3. **crawler/storage/reinstall/**: 中身を全削除（ディレクトリは残す）
-4. **crawler/storage/evidence/**: 中身を全削除（ディレクトリは残す）
-5. **crawler/evidence/**: 中身を全削除（ディレクトリは残す）
-6. **crawler/screenshots/**: 中身を全削除（ディレクトリは残す）
-7. クリーンアップ後に行数とディスク使用量を確認して報告する
-
-### 保護対象（絶対に削除しない）
-
-| リソース | 内容 | 理由 |
-|---------|------|------|
-| `lc_ocr_corrections` テーブル | OCR 修正ルール (手動編集から自動抽出) | 周回を重ねて蓄積した学習資産 |
-| `crawler/storage/ocr_learned_patterns.json` | OCR 学習パターン | 同上 |
-
-- 「クリーンアップして」は上記の削除対象のみを実行する
-- OCR ルールの削除が必要な場合は「OCR ルールも含めてクリーンアップして」等の**明示的な指示が必要**
-- 迷った場合は確認してから実行する
-
-### 起動コマンドの使い分け（厳格）
-
+起動コマンド:
 | ユーザー指示 | 操作 |
 |-------------|------|
-| **「再起動して」** | `-S -s` で起動（`-r` は付けない、クリーンアップしない） |
-| **「クリーンアップして新規スタート」** | §14 のクリーンアップ実行 → `-S -s -r` で起動 |
+| **「再起動して」** | `-S -s` (`-r` 禁止、クリーンアップしない) |
+| **「クリーンアップして新規スタート」** | クリーンアップ → `-S -s -r` |
 
-- `-r` は **ユーザーが「新規」「-r」「クリーンアップして新規スタート」と明示的に指示した場合のみ** 付与する
-- 「再起動」「起動して」だけの場合は絶対に `-r` を付けない（§13「--fresh-install は指示直後の1回のみ」参照）
+**詳細**: `docs/cleanup_procedure.md` (削除 SQL 全文・保護対象一覧・起動コマンド対応表)。
 
 ---
 
@@ -594,68 +392,24 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 | **3. テキスト空 + phash 近い** | テキスト空同士で直前クラスタと phash 距離 < 20 | **不採用**（顔面積が大きい方を代表に） |
 | **4. テキスト空 + phash 遠い** | テキスト空同士で直前クラスタと phash 距離 >= 20 | **採用** |
 
-- **テキストがある画像同士では phash を判定に使わない** — 背景アニメーションで phash が変わってもセリフが違えば別画面
-- **phash はテキスト空の画像にのみ使用** — 動画フレームや暗転等のテキストなし画像の重複排除用
-- **間引きは直前クラスタとのみ比較（厳格）** — 間に別画面が入った場合は別の場面として扱う。全クラスタを検索して遠い画面同士をマージしてはならない（連鎖マージで暴走するリスクがある）
-- テキスト有無の判定: `ocr_text` が **1文字以上** なら「テキストあり」（1文字でも空扱いしない）
-- **phash 近傍スキップで重複排除してはならない（厳格）** — セリフだけが変わった画面は phash がほぼ同一のため、phash 距離による重複排除を `maybe_record` に入れるとセリフ変化を取りこぼす。重複排除は必ず OCR テキストベースの fingerprint で行うこと
-
-### セッション管理
-
-- `-r` (新規インストール) / 周回2周目以降 → **新セッション**
-- 途中再開 / 再起動 → **前回セッション継続**（DB から最新セッションIDを取得）
+### 必須原則
+- **テキストがある画像同士では phash を判定に使わない**（背景アニメで phash が変わってもセリフが違えば別画面）
+- **phash はテキスト空の画像にのみ使用**
+- **間引きは直前クラスタとのみ比較**（連鎖マージ暴走防止）
+- テキスト有無は `ocr_text` 1 文字以上で「あり」
+- **phash 近傍スキップで重複排除してはならない** — `maybe_record` に phash 距離判定を入れるとセリフ変化を取りこぼす
 
 ### バックグラウンドワーカー処理順序
-
 1. グルーピング (30秒間隔)
-2. PaddleOCR 再処理 (0.5秒間隔/1枚、全画像対象、タイトルも更新)
+2. PaddleOCR 再処理 (0.5秒間隔/1枚)
 3. クラスタリング (15秒間隔、OCR 完了後の HQ テキストで比較)
-4. 遷移グラフ構築 (120秒間隔、cluster + OCR 全完了後に実行)
+4. 遷移グラフ構築 (120秒間隔)
 
-**OCR → クラスタリングの順序が重要**: HQ OCR 結果でテキスト比較することで間引き精度が向上する
+### セッション管理
+- `-r` / 周回2周目以降 → **新セッション**
+- 途中再開 / 再起動 → **前回セッション継続**
 
-### 起動シーン撮影制御 (`startup_phase`)
-
-起動時のスクリーンショット撮影は `startup_phase` フラグで制御する。
-
-| 条件 | `startup_phase` | 撮影関数 |
-|------|-----------------|---------|
-| `-r`（新規インストール）初回起動 | `True` | `record_startup` |
-| GRIND 新周回開始 | `True` | `record_startup` |
-| 途中再開・再起動・クラッシュ復帰 | `False`（デフォルト） | `maybe_record`（LOADING/STARTUP シーンはスキップ） |
-
-- **`True` → `False`**: MENU / ADV / BATTLE 到達時のみ（メインループ内、1箇所）
-- **TAP TO START 検出時**: `startup_phase` を変更しない（ロード画面まで `record_startup` の管理下に置く）
-- **クラッシュ復帰（Watchdog / BLACKOUT_RECOVER）**: `startup_phase` を変更しない（True なら起動記録継続、False なら再起動由来のロード画面をスキップ）
-- **再起動時の LOADING/STARTUP シーン**: `maybe_record` のスキップ条件で除外（`scene not in ("LOADING", "STARTUP")`）
-
-### クロスセッションマージのアンカー方針（厳格）
-
-- **確実性 > 数**: アンカー数を無理に増やすより、正確なマッチのみをアンカーにする
-- **周回を重ねれば自然にアンカーは増える** — 同じ経路を通るたびに同じ画面がマッチし、隣接ペアが増えていく。無理にアンカーを選出する必要はない
-- **誤マッチは致命的**: 1つの誤アンカーが多数のノードを間違った位置に挿入する。誤マッチ防止を最優先
-- **挿入は隣接アンカー条件を満たす場合のみ**: 条件を満たさないノードは挿入しない（次の周回に委ねる）
-- 詳細は `docs/merge_sort_algorithm.md` 参照
-
-### Fingerprint 設計ルール（厳格）
-
-`screen_recorder._normalize_ocr` での fingerprint 生成方針:
-
-- **数字を保持する** — `re.sub(r"\d+", "")` 等で数字を除去してはならない
-  - 「Download 1083 MB」「Download 2046 MB」を同 fp に collapse すると、進捗違いの画面が同一画面として扱われ master 時系列が崩壊する
-  - 「Lv.5 まどか」「Lv.10 まどか」「Ver.3.4.0」「STEP 1 / STEP 2」も同様
-- **純数字トークンは除外** — `_PURE_NUMBER_RE` で単独の数字 (HP "1234"、ダメージ "5678" 等) は除外する。これは自然な変動を吸収するため
-- **同一 dialog (数字なし) は同 fp** — クロスセッションで同じセリフは集約される (= 正しい衝突)
-- **「Turn 3」「Turn 5」は別 fp になるが許容** — 既存クラスタリング (phash + dHash + Jaccard) が異なる Turn を別 cluster 化するため、master ノード増は cluster 増と同等で問題なし
-
-### Cross-Session Merge での直接 fp 一致ルール（厳格）
-
-`cross_session_merger.merge_to_master` / `_add_all_as_new` の挙動:
-
-- session_fp と既存 master_fp が**直接一致**する場合、AnchorMatcher の結果に関わらず `'direct_fp_match'` として記録する
-- これを 'new' 分類すると SafeInsert が「配置不能」と判定して既存 master ノードを削除してしまう (= seed nodes 消失バグの原因)
-- `PHASE_DEFS` に `direct_fp_match` (order=0, label='FP', 緑色) を定義済み
-- 直接 fp 一致は AnchorMatcher の Phase 1〜6 より優先される (= 同 fp は同一画面として扱う)
+**詳細** (`startup_phase` 制御 / クロスセッションマージのアンカー方針 / Fingerprint 設計 / direct_fp_match): `docs/screen_recorder.md`。
 
 ---
 
@@ -670,64 +424,20 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 | **P3** | `phase3_tap_phash` | tap + テキスト空 | phash < 15 + 前後アンカー必須 | - |
 | **P4** | `phase4_gemini_text` | テキスト Gemini | phash < 20 + sim ≥ 0.4 → テキストのみ判定 | flash-lite (テキスト) |
 | **P5** | `phase5_gemini_image` | 画像 Gemini (高確信) | phash < 8 + sim ≥ 0.4 → 画像ペア判定 | flash-lite (画像) |
-| **P6** | `phase6_gemini_flash` | 画像 Gemini (低確信) + P5棄却再審査 | phash 8-20 + sim ≥ 0.3 → 画像ペア判定 | flash (画像) |
+| **P6** | `phase6_gemini_flash` | 画像 Gemini (低確信) + P5 棄却再審査 | phash 8-20 + sim ≥ 0.3 → 画像ペア判定 | flash (画像) |
 
 - **PHASE_DEFS** (`anchor_matcher.py`) で表示名・色・順序を一元管理。key は DB・API で使用するため変更禁止
-- LIS 順序チェックは廃止済み
-
-### Phase 間のデータフロー（厳格）
-
-```
-P1 → P2 → P3 (ローカル判定)
-  ↓ P1〜P3 全ての未マッチ（候補なし・条件不一致含む）
-P4 テキスト Gemini (テキストのみ送信、画像なし、安価)
-  ↓ P4 確定 → アンカー、P4 棄却 → P5 へ
-P5 画像 Flash-Lite (P3 確定アンカーの検証 + P4 棄却の再検証 + 新規候補)
-  ↓ P5 棄却 → P6 へ
-P6 画像 Flash (P5 棄却の再審査 + 新規候補)
-  ↓ P6 棄却 = 最終棄却
-```
-
-- **P4 の入力**: P1〜P3 全てで未マッチだったノード（P1 で候補複数、P2 で範囲外、P3 で前後アンカーなし等を含む）
-- **P4 確定**: テキストだけで同一画面と判定 → アンカー確定。P5/P6 の画像送信が不要
-- **P4 棄却**: テキストだけでは判断不可 → P5 に画像ペアとして渡し再検証
-- **P5 の検証対象**: P3 確定アンカー（phash のみで確定、テキストなし）の画像検証。P1/P2 は信頼度が高いため検証不要、P4 確定も検証不要
-- **P5 の再検証対象**: P4 が棄却した候補を画像ペアで再判定
-- **P5 の新規候補**: phash < 8 で P1〜P4 未マッチの残りから探索
-- **P6**: P5 棄却を flash で再審査 + phash 8-20 の新規候補
-
-### テキスト類似度計算
-
-- **SequenceMatcher + Bag-of-Words (Jaccard係数)** の高い方を採用
-- **動的閾値** (テキスト長に応じて変動):
-  - < 20字: 0.5（1文字違いで大きく変動するため緩め）
-  - < 50字: 0.65
-  - < 200字: 0.8
-  - 200字+: 0.7（揺れが積み重なるため少し緩め）
-
-### ノイズ除去 (`_normalize_for_comparison`)
-
-比較時のみ適用（元テキストは変更しない）:
-1. 数値トークン除去（ダメージ値、Lv 等）
-2. ノイズ語辞書除去（`lc_ocr_noise_words` テーブル + デフォルト: AUTO, SKIP, MANUAL, NEW, WAVE, Turn, MAX）
-3. Episode + 数字パターン除去
-4. 1文字ノイズ除去（i, !, ※, +, ★ 等）
-5. 英字-日本語境界スペース除去
+- データフロー: P1→P2→P3 (ローカル) → P4 (テキスト Gemini) → P5 (画像 flash-lite) → P6 (画像 flash)
 
 ### Gemini 判定の実装制約（厳格）
+- **プロンプト構造**: **§22 (Gemini プロンプト設計ルール) に従う**。SYSTEM/USER 分離で Implicit Cache を有効化 (P4-P6 は未対応、次回タスクで揃える)
+- **送信方式**: `Part.from_bytes` インライン（`files.upload` は遅すぎる）
+- **並列化**: ThreadPoolExecutor 5 並列
+- **キャッシュ**: `lc_anchor_judgments` に `(session_fp, master_fp)` + `model` で永続化
+- **エラー時のキャッシュ禁止（厳格）**: 失敗結果を `is_same=False` でキャッシュしない。`error: True` フラグでスキップ
+- **判定ルール**: 迷ったら true (false は取り返しがつかない、true は人間が修正可能)
 
-- **P4 テキスト判定**: `gemini-2.5-flash-lite` — テキストのみ送信（画像なし、安価）。phash < 20 + sim ≥ 0.4
-- **P5 画像判定**: `gemini-2.5-flash-lite` — phash < 8 の高確信ペア（画像ペア送信）
-- **P6 画像判定**: `gemini-2.5-flash` — phash 8-20 の低確信ペア + P5 棄却の再審査
-- **プロンプト構造**: **§22 (Gemini プロンプト設計ルール) に従う**。SYSTEM/USER 分離で Implicit Cache を有効化すること (現状 P4-P6 は未対応、次回タスクで揃える)
-- **送信方式**: `Part.from_bytes` インライン（`files.upload` は 5秒/画像で遅すぎる）
-- **並列化**: ThreadPoolExecutor 5並列で 1ペアずつ送信（asyncio はサブプロセスでデッドロック）
-- **レスポンス**: `{"is_same": bool, "prefer": "A"|"B"|""}`（A=セッション, B=マスター）
-- **キャッシュ**: `lc_anchor_judgments` テーブルで `(session_fp, master_fp)` + `model` カラムで永続化。P4(gemini-text)/P5(flash-lite)/P6(flash) は model で区別
-- **エラー時のキャッシュ禁止（厳格）**: Gemini API 呼び出しが失敗した場合、その結果を `is_same=False` としてキャッシュしてはならない。エラー結果には `error: True` フラグを付与し、キャッシュをスキップする。エラーをキャッシュすると誤った棄却が永続化され、再実行しても修復できない
-- **判定ルール**: 迷ったら true（false の誤りは取り返しがつかないが、true は人間が後から修正できる）
-- **別画面判定**: キャラ編成（下部アイコン列）が異なるバトル画面、見切れ/不完全キャプチャ
-- **PHP→Python サブプロセス**: `-B` フラグ + dotenv 読み込み必須（pyc キャッシュ問題対策）
+**詳細** (テキスト類似度計算 / ノイズ除去 / 別画面判定 / PHP→Python サブプロセス): `docs/anchor_matching_design.md`。
 
 ---
 
@@ -762,7 +472,6 @@ CREATE TABLE IF NOT EXISTS lc_versions (
 ## 19. SafeInsert 安全挿入方式
 
 ### 原則
-
 1. 挿入されたノードの `sort_order` は **100% 正しい**
 2. 不確実な位置には **挿入しない**
 3. 一度配置されたノードの `sort_order` は **変更しない**
@@ -777,8 +486,7 @@ CREATE TABLE IF NOT EXISTS lc_versions (
 | 前後のアンカーが sort_order で隣同士 (差=1) | 間に挿入 |
 | 上記いずれにも該当しない | **挿入しない（破棄）** |
 
-- 挿入しなかったノードは `lc_node_mappings` にも記録しない
-- 詳細は `docs/merge_sort_algorithm.md` 参照
+**詳細**: `docs/merge_sort_algorithm.md`。
 
 ---
 
@@ -810,45 +518,14 @@ UI 要素 (ボタン・セレクト・入力欄・badge 等) のモード切替�
 
 詳細設計は `docs/design/master_node_tags.md` を参照。
 
-### 1. 操縦カテゴリの追加 (厳格・最重要)
+### 操縦カテゴリの追加 (厳格・最重要)
 
 新しい auto_pilot operation handler を追加する際:
-- `crawler/tools/ap/operation_tags.py` の `OperationTag` IntEnum と
-  `OPERATION_TAG_NAMES` / `OPERATION_TAG_CODE_KEYS` に必ず追加する
-- **既存の ID は変更しない、削除しない** (reserved 扱い)
-- 廃止する操縦カテゴリは `_DEPRECATED` コメントで残し、ID は再利用禁止
+- `crawler/tools/ap/operation_tags.py` の `OperationTag` IntEnum と `OPERATION_TAG_NAMES` / `OPERATION_TAG_CODE_KEYS` に必ず追加する
+- **既存の ID は変更しない、削除しない** (reserved 扱い)。廃止は `_DEPRECATED` コメントで残し ID 再利用禁止
 - 起動時に DB upsert されるので、コード追加だけで Tag タブに反映される
 
-例:
-```python
-class OperationTag(IntEnum):
-    TUTORIAL = 1
-    QUEST_GRIND = 2
-    # GACHA_OLD = 3  # _DEPRECATED 2026-XX (do not reuse)
-    GACHA = 4        # 新 ID で再定義
-```
-
-### 2. シーン/詳細タグの管理
-
-- Tag タブから自由に追加/削除/名称変更可能
-- **削除は論理削除のみ** (`is_deleted=1`)、物理削除しない
-  - `lc_master_node_tags` の付与レコードは保持 (履歴保護)
-  - 表示時に JOIN で `is_deleted=0` を絞り込む
-- 名称変更は `tag_id` を維持、付与済みノードは自動的に新名称表示
-- description 変更は Gemini 判定キャッシュを自動破棄 (prompt_hash 変化)
-
-### 3. Gemini 判定のキャッシュ・エラー扱い
-
-- 対象は **マスターノードの代表のみ**
-- キャッシュキー: `(master_fp, tag_type, prompt_hash, model)`
-- `prompt_hash` には プロンプト本文 + 候補タグ (id/name/description) を含める
-  - description / プロンプト編集で自動再判定が走る
-  - color / sort_order 変更ではキャッシュ維持
-- **エラー結果はキャッシュしない** (§17 と同思想、再実行で復旧可能に)
-- 並列化は ThreadPoolExecutor 5 並列 (§17 と統一)
-- API 使用量は `record_api_usage()` で `lc_api_usage` に記録 → Cost タブと統合
-
-### 4. 保護ルール
+### 保護ルール
 
 | `assigned_by` | 「未付与のみ」モード | 「全件再判定」(reset_manual=False) | 「全件再判定」(reset_manual=True) |
 |---|---|---|---|
@@ -857,129 +534,45 @@ class OperationTag(IntEnum):
 | `gemini` | (条件次第) | 上書き | 上書き |
 
 - 操縦カテゴリは常に保護 (= ユーザー判断より自動操縦の事実が正)
-- 手動付与はデフォルトで保護 (= ユーザー判断を尊重)、明示的にリセット指示時のみ上書き
+- 手動付与はデフォルトで保護、明示的にリセット指示時のみ上書き
 
-### 5. 代表ノード変更時の挙動
+### Gemini 判定キャッシュ・エラー扱い (要約)
+- キャッシュキー: `(master_fp, tag_type, prompt_hash, model)`。description/プロンプト編集で自動再判定
+- **エラー結果はキャッシュしない** (§17 と同思想)
+- 並列化は ThreadPoolExecutor 5 並列 (§17 と統一)
+- 検出器の `lc_master_nodes.scene` カラムとタグの scene は **別物** (互いに書き換えない)
 
-- マスターノードの `representative_screen_id` が変更されたタイミングで:
-  1. 現在の付与タグ (auto_pilot 含む全部) を `lc_master_node_tag_history` に記録
-  2. `assigned_by='gemini'` のタグを物理削除
-  3. `assigned_by='auto_pilot'` / `'manual'` は保持 (代表が変わっても操縦履歴/手動判断は残す)
-  4. 次回タグ付け実行で Gemini が未付与状態として再判定
-
-### 6. 検出器の `lc_master_nodes.scene` カラムとの区別 (厳格)
-
-- `lc_master_nodes.scene`: 検出器 (auto_pilot 内) の推定 (操縦制御用、`STARTUP/MENU/ADV/BATTLE` 等)
-- `lc_tags` のシーンタグ: ユーザーが Tag タブで管理する分類タグ
-- **両者は別物**。Gemini プロンプトでは `lc_master_nodes.scene` を「検出器の推定: XXX」として参考情報のみ渡す
-- `lc_master_nodes.scene` の値はタグ機能から書き換えない
-
-### 7. ノード詳細モーダルでの手動編集
-
-- 操縦カテゴリは手動付与/解除できない (`is_system=1` のため UI で × ボタン非表示)
-  - 操縦カテゴリの誤付与はノード自体を削除することで対処 (= 周回履歴の改変はしない)
-- シーンタグの手動付与は既存シーンタグを物理削除して置換 (1 個必須制約)
-- 詳細タグは独立して付与/解除
-
-### 8. プロンプト編集
-
-- ユーザーが編集可能 (`lc_tag_prompts.is_default=0` に変更)
-- プロンプトテンプレートのプレースホルダ: `{tag_candidates}` / `{detected_scene}` / `{ocr_text}`
-- 編集後の保存でキャッシュは即座に無効化されない (prompt_hash で自動的に効く)
-- 「デフォルトに戻す」でコード側 `DEFAULT_PROMPTS` の値で上書き
-
-### 9. タグ機能と検索機能の分離
-
-- 本機能 (Phase 1〜4) は **タグの定義・付与・編集** のみを扱う
-- タグでの検索・絞り込みは別機能として後続実装する
-- API 設計時は将来の検索機能を想定した index を張っておく (`idx_mnt_master`, `idx_mnt_tag`)
+**詳細** (シーン/詳細タグ管理 / 代表ノード変更時の挙動 / ノード詳細モーダル / プロンプト編集 / 検索機能との分離): `docs/design/master_node_tags.md`。
 
 ---
 
 ## 22. Gemini プロンプト設計ルール（厳格・コスト最適化）
 
-Gemini API の Implicit Cache (1024+ tok の共通 prefix で input 75% 割引) を確実に発動させるため、**すべての Gemini 呼び出しは以下の構造を厳守する**。Implicit Cache が壊れると累積コストが 4 倍に跳ね上がる。
+Gemini API の Implicit Cache (1024+ tok の共通 prefix で input 75% 割引) を発動させるため、**すべての Gemini 呼び出しは SYSTEM/USER 分離を厳守する**。Cache が壊れると累積コストが 4 倍。
 
-### 1. SYSTEM/USER 分離（厳格・最重要）
+### SYSTEM/USER 分離（厳格・最重要）
 
 | 区分 | 内容 | 配置先 |
 |---|---|---|
-| **SYSTEM (完全固定)** | 役割定義 / マスターリスト / 出力形式 JSON / 制約 / 判定ルール / 判定例 / screen_type 判定 / 候補タグリスト (タグ機能) | `systemInstruction` (REST) / `config.system_instruction` (SDK) |
-| **USER (動的)** | scene_hint / ocr_text / 画像 / シーン別補助ヒント / 検出器の推定情報 | `contents[].parts` |
+| **SYSTEM (完全固定)** | 役割定義 / 出力形式 JSON / 判定ルール / 判定例 / 候補タグリスト | `systemInstruction` (REST) / `config.system_instruction` (SDK) |
+| **USER (動的)** | scene_hint / ocr_text / 画像 / シーン別補助ヒント | `contents[].parts` |
 
 - **SYSTEM プロンプトに動的値 placeholder (`{xxx}`) を含めてはならない**
-- **USER テンプレートには SYSTEM の指示内容を重複させない** (Cache prefix が伸びるだけで割引対象外)
-- 候補タグリストはユーザー編集時のみ変化 → `prompt_hash` で別キャッシュキーとして扱う (Cache 自体は発動)
+- **USER テンプレートに SYSTEM 内容を重複させない** (Cache prefix が伸びるだけで割引対象外)
+- **シーン別・画像種類別の SYSTEM 分割は禁止** — 共通 prefix が壊れて Cache 無効化 → コスト 4 倍
 
-### 2. 送信構造のテンプレート
+### 既存実装ファイル
 
-#### REST API (urllib 直接呼び出し)
-```python
-body = json.dumps({
-    "systemInstruction": {
-        "parts": [{"text": _GEMINI_SYSTEM_PROMPT}],  # 完全固定
-    },
-    "contents": [{"role": "user", "parts": [
-        {"inline_data": {"mime_type": mime, "data": img_b64}},
-        {"text": _GEMINI_USER_TEMPLATE.format(...)},  # 動的値
-    ]}],
-    "generationConfig": {...},
-}).encode()
-```
+| ファイル | 状態 |
+|---|---|
+| `crawler/tools/ap/ocr_correction.py` (single/batch) | ✅ SYSTEM/USER 分離済み、後方互換 `_GEMINI_PROMPT` / `_GEMINI_BATCH_PROMPT` 保持 |
+| `crawler/tools/anchor_matcher.py` (P4-P6) | **未対応** (次回タスクで揃える) |
+| `crawler/tools/tag_judgment.py` | **未対応** (次回タスクで揃える) |
 
-#### SDK (google-genai)
-```python
-client.models.generate_content(
-    model=_GEMINI_MODEL,
-    contents=[...image..., user_prompt],  # 動的値のみ
-    config=_genai.types.GenerateContentConfig(
-        system_instruction=_GEMINI_SYSTEM_PROMPT,  # 完全固定
-        ...
-    ),
-)
-```
+### 編集時のチェック
+1. SYSTEM 編集後に動的値 placeholder (`{...}`) が混入していないか
+2. `pytest crawler/tests/test_gemini_prompt_cache.py` が pass するか
+3. SYSTEM 文字数が **1500 以上** を維持しているか (Cache 発動圏)
+4. 後方互換変数 (`_GEMINI_PROMPT` 等) を **削除していない** か
 
-### 3. 既存実装ファイル
-
-| ファイル | SYSTEM 変数 | USER 変数 | 後方互換変数 |
-|---|---|---|---|
-| `crawler/tools/ap/ocr_correction.py` (single) | `_GEMINI_SYSTEM_PROMPT` | `_GEMINI_USER_TEMPLATE` | `_GEMINI_PROMPT` |
-| `crawler/tools/ap/ocr_correction.py` (batch) | `_GEMINI_BATCH_SYSTEM_PROMPT` | `_GEMINI_BATCH_USER_TEMPLATE` | `_GEMINI_BATCH_PROMPT` |
-| `crawler/tools/anchor_matcher.py` (P4-P6) | **未対応** (次回タスクで揃える) | - | - |
-| `crawler/tools/tag_judgment.py` | **未対応** (次回タスクで揃える) | - | - |
-
-### 4. プロンプト編集時の必須チェックリスト
-
-新規ルール追加・修正・調整時は以下を順に確認:
-
-1. このルールは **全リクエストで共通** か → SYSTEM
-2. リクエスト毎に **変化する値** か → USER
-3. SYSTEM 編集後に動的値 placeholder (`{...}`) が混入していないか
-4. `pytest crawler/tests/test_gemini_prompt_cache.py` が pass するか
-5. SYSTEM 文字数が **1500 以上** を維持しているか (Cache 発動圏)
-6. 後方互換変数 (`_GEMINI_PROMPT` 等) を **削除していない** か
-
-### 5. 効果測定
-
-- Gemini API レスポンスの `usageMetadata.cachedContentTokenCount` で実 cache hit を確認
-- `lc_api_usage` テーブルに `cached_tokens` カラムを追加して周回毎の hit 率を集計 (将来タスク)
-- hit 率が低い場合 (50% 未満) は Explicit Cache (`cachedContent` API) への移行を検討
-
-### 6. シーン別・画像種類別の分割は禁止（重要）
-
-「精度向上のため SYSTEM を MOVIE 用・BATTLE 用に分ける」等の発想は **禁止**:
-- 共通 prefix が壊れて Cache が無効化される → コスト 4 倍
-- Gemini は十分賢く、関係ない判定ルールがあっても無視できる
-- 精度問題は **USER 側に短い補助ヒントを動的追加** することで対応する (SYSTEM は不変)
-
-### 7. 関連テスト
-
-- `crawler/tests/test_gemini_prompt_cache.py`: SYSTEM/USER 分離の構造検証 (13 件)
-- `crawler/tests/test_gemini_ocr.py::TestSceneAwarePrompt`: 後方互換変数の検証
-
-### 8. 例外 (USER 側に動的ヒント追加する場合)
-
-精度問題対応で USER テンプレートに補助文を加える場合は以下を守る:
-- SYSTEM は **絶対に触らない** (Cache 維持)
-- USER への追加は **50-200 文字以内** に留める (動的値の token コストを抑える)
-- 動的ヒントが安定運用に必要だと判明したら SYSTEM への昇格を検討 (ただし `prompt_hash` で別キャッシュ扱いになるため慎重に)
+**詳細** (REST/SDK 送信テンプレ / 効果測定 / USER 動的ヒントの例外規定): `docs/gemini_prompt_design.md`。
