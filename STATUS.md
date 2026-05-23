@@ -1,6 +1,6 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-05-24 (CLAUDE.md スリム化 — context window 41% 削減)
+最終更新: 2026-05-24 (CLAUDE.md 第二弾リファクタ — 578 → 506 行 + 構造的重複排除)
 
 ## 現在のブランチ
 - `main` (最新: PR #6 マージ後、commit `1f06a6e`)
@@ -8,12 +8,23 @@
 - `feature/gemini-cost-stable-loops` (main から **3 コミット先行**、**未 push**)
   - 内容: 案 C (cluster_stable_loops で Gemini 遅延) + 案 A (プロンプト SYSTEM/USER 分離 → Implicit Cache 75% 割引) + CLAUDE.md §22 永続化
   - 新規テスト 27 件 (14 + 13) 全 pass
-- **`feature/claude-md-slim`** (`feature/gemini-cost-stable-loops` から **3 コミット先行**、**未 push**)
-  - 内容: CLAUDE.md を 985 → 578 行 (41% 削減)。詳細を docs/ 配下に外出し
-  - 乖離修正: §13 find_finger_blobs (実コード残存に合わせて記述変更) / §16 BG worker OCR 間隔 (5s → 0.5s)
-  - 新規 docs: tutorial_autopilot.md / evidence_recording.md / cleanup_procedure.md / gemini_prompt_design.md
-  - 既存 docs 追記: troubleshooting.md (§8 リトライ + §10 ADB)
-  - pytest test_gemini_prompt_cache.py: 13 件 pass
+- **`feature/claude-md-slim`** (`feature/gemini-cost-stable-loops` から **4 コミット先行**、**未 push**)
+  - 第一弾 (3 コミット): CLAUDE.md を 985 → 578 行 (41% 削減)。詳細を docs/ 配下に外出し
+    - 乖離修正: §13 find_finger_blobs (実コード残存に合わせて記述変更) / §16 BG worker OCR 間隔 (5s → 0.5s)
+    - 新規 docs: tutorial_autopilot.md / evidence_recording.md / cleanup_procedure.md / gemini_prompt_design.md
+    - 既存 docs 追記: troubleshooting.md (§8 リトライ + §10 ADB)
+  - **第二弾 (本日、構造リファクタ)**: 578 → 506 行 (重複排除 + ドメイン規約の外出し)
+    - §0 廃止 (`docs/tutorial_autopilot.md` 一本化、§12 に 1 行ポインタ)
+    - §13 を協働メタ 9 ルールに絞り、ドメイン実装規約 11 個を `docs/scene_detection_rules.md` (新規 83 行) に外出し
+    - §13 内ルール順を再編 (CLAUDE.md 参照義務 + コード修正前確認を冒頭へ)
+    - §12 起動コマンド表を §14 に一本化 (重複削除)
+    - §17 §21 §22 の Gemini 共通実装ルール (送信方式 / 並列化 / エラーキャッシュ) を §22 に集約
+    - §11 Gemini 4 項目 → 1 行ポインタ (§22 参照)
+    - §2 コミットテンプレを Opus 4.7 (1M context) に更新
+    - 「厳格・最重要」マーカーを §11 §13 の真の最重要 2 箇所のみに絞る (§21 §22 は「厳格」に降格)
+    - §22 「未対応 (次回タスクで揃える)」表を削除 → STATUS.md 中優先タスクで管理に一本化
+    - 番号欠番 (§0 §6) を冒頭注記
+  - pytest test_gemini_prompt_cache.py: 13 件 pass (リファクタ後再確認)
   - stash@{0} に feature/tagging の wip-ocr-learned-patterns あり
 - `feature/master-node-tags` / `feature/tag-search` / `feature/tag-polish` / `feature/tag-tab-polish` / `feature/screen-recorder` は **PR #1〜#6 でマージ済み・削除済み**
 
