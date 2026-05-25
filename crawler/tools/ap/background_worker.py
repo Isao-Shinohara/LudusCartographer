@@ -27,6 +27,14 @@ logger = logging.getLogger(__name__)
 _PHASH_CLUSTER_THRESHOLD = 8
 _GROUP_GAP_SECONDS = 60
 
+# Gemini OCR を投入する前に要求するクラスタ安定 loop 数。
+# クラスタリング loop で cluster_id が変動しなかった連続回数がこの値以上に
+# なった代表のみ Gemini に送る。降格代表への無駄な API 呼び出しを防ぐ。
+# 新規 screen の遷移: loop1 = cluster_id 確定 (スナップショット外、値 0 のまま) /
+# loop2 = スナップショットに入る、変動なしなら +1 (=1) / loop3 = +1 (=2) で対象。
+# クラスタリング間隔 15 秒なので約 30 秒の遅延 (新規 screen 到達から)。
+_GEMINI_CLUSTER_STABLE_THRESHOLD = 2
+
 _SCENE_LABELS = {
     "BATTLE": "バトル",
     "ADV": "ストーリー",
@@ -54,19 +62,10 @@ def _text_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b, autojunk=False).ratio()
 
 
-def _is_degenerate_phash(ph: Optional[str]) -> bool:
-    """縮退 phash 判定: set bit が極端に少ない/多い (ほぼ単色画像)。
-
-    Hamming 距離は「異なるビット数」なので、bit がほぼ全 0 または全 1 の phash は
-    距離計算で見かけ上「他と近い」と誤判定されやすい。アンカーとして信頼できない。
-    """
-    if not ph:
-        return True
-    try:
-        n = bin(int(ph, 16)).count('1')
-    except (ValueError, TypeError):
-        return True
-    return n < 8 or n > 56  # 64 bit 中、8 未満 or 56 超 → 縮退
+# 縮退 phash 判定は lc.utils.is_degenerate_phash を直接 import する
+# (旧 _is_degenerate_phash ラッパーは廃止して呼び出し側で is_degenerate_phash
+#  を使用 — クラスタリングロジックの判定基準を一箇所に集約するため)
+from lc.utils import is_degenerate_phash
 
 
 def _normalize_text(text: str) -> str:
@@ -486,6 +485,69 @@ class BackgroundWorker:
         from lc.image_comparator import dhash_distance
         return dhash_distance(h1, h2)
 
+    def _take_cluster_snapshot(
+        self,
+        conn: sqlite3.Connection,
+        sid_filter: str = "",
+        sid_params: tuple = (),
+    ) -> dict[int, int]:
+        """loop 開始時点の cluster_id スナップショットを取得。
+
+        cluster_id が確定 (IS NOT NULL) している screen のみ対象。新規 (NULL)
+        screen は含めない。_mark_cluster_stability と組で使い、loop 中に
+        cluster_id が変動したかを比較するための基準値となる。
+        """
+        rows = conn.execute(
+            "SELECT id, cluster_id FROM lc_screens"
+            " WHERE cluster_id IS NOT NULL" + sid_filter,
+            sid_params,
+        ).fetchall()
+        return {r["id"]: r["cluster_id"] for r in rows}
+
+    def _mark_cluster_stability(
+        self,
+        conn: sqlite3.Connection,
+        pre_snapshot: dict[int, int],
+    ) -> None:
+        """loop 完了後の cluster_id 変動を判定し cluster_stable_loops を更新。
+
+        - スナップショットに含まれる screen (loop 開始時に cluster_id 確定済み):
+            - 一致 → cluster_stable_loops += 1
+            - 不一致 (cluster 変動 or 行削除) → cluster_stable_loops = 0
+        - スナップショットに含まれない (新規) screen は触らない (DEFAULT 0 維持)。
+        """
+        if not pre_snapshot:
+            return
+        incremented = 0
+        reset = 0
+        for sid, prev_cid in pre_snapshot.items():
+            row = conn.execute(
+                "SELECT cluster_id FROM lc_screens WHERE id = ?",
+                (sid,),
+            ).fetchone()
+            if row is None:
+                continue
+            if row["cluster_id"] == prev_cid:
+                conn.execute(
+                    "UPDATE lc_screens"
+                    " SET cluster_stable_loops = COALESCE(cluster_stable_loops, 0) + 1"
+                    " WHERE id = ?",
+                    (sid,),
+                )
+                incremented += 1
+            else:
+                conn.execute(
+                    "UPDATE lc_screens SET cluster_stable_loops = 0 WHERE id = ?",
+                    (sid,),
+                )
+                reset += 1
+        if incremented or reset:
+            conn.commit()
+            logger.debug(
+                "[BG_WORKER] cluster stability: stable+1=%d, reset=%d",
+                incremented, reset,
+            )
+
     def _run_incremental_clustering(self) -> None:
         """未処理スクリーンに対してテキスト優先 + ハッシュ距離フォールバックでクラスタリング。
 
@@ -510,6 +572,11 @@ class BackgroundWorker:
                 _sid_filter = " AND session_id = ?"
                 _sid_params = (self._session_id,)
 
+            # loop 開始時点の cluster_id スナップショット (Gemini 投入判定用)。
+            # loop 末尾の _mark_cluster_stability で cluster_id 変動の有無を判定し、
+            # cluster_stable_loops カウンタを更新する。
+            pre_snapshot = self._take_cluster_snapshot(conn, _sid_filter, _sid_params)
+
             # クラスタリングは常に初期 OCR (Vision) で判定し、HQ OCR を待たない。
             # HQ OCR (PaddleOCR/Gemini) はクラスタリング後の代表のみで実行され、表示用テキストの精度向上が目的。
             _hq_filter = ""
@@ -524,6 +591,9 @@ class BackgroundWorker:
             ).fetchall()
 
             if not rows:
+                # 新規 screen がなくても既存 screen は誰も触らない → 変動ゼロ。
+                # cluster_stable_loops を進めることで安定判定が滞らないようにする。
+                self._mark_cluster_stability(conn, pre_snapshot)
                 return
 
             existing_reps = conn.execute(
@@ -643,7 +713,13 @@ class BackgroundWorker:
                         d = _phash_distance(_rep_ph, ph) if _rep_ph else 999
                         _has_face = self._max_face_area(conn, sid) > 0
                         _ph_lim = 5 if _has_face else 20
-                        if not _rep_norm and d < _ph_lim:
+                        # 縮退 phash 同士は内容と無関係に距離 0 になるため統合判定対象外。
+                        # (例: MOVIE 暗転 (phash=8000...) + マギカストーン獲得 (phash=8000...)
+                        #  が同クラスタに誤合流するバグへの対策)
+                        _is_degen_pair = (
+                            is_degenerate_phash(_rep_ph) or is_degenerate_phash(ph)
+                        )
+                        if not _rep_norm and d < _ph_lim and not _is_degen_pair:
                             # 直前テキスト空 + phash 近い → 統合 (テキストあり側が代表)
                             _merge_to_prev = True
                             _merge_method = "merge_to_prev_empty"
@@ -737,6 +813,8 @@ class BackgroundWorker:
                             fallback_threshold=_FALLBACK_TH,
                             jaccard_similarity=jac,
                             min_jaccard=0.3,
+                            prev_phash=_rep_ph,
+                            curr_phash=ph,
                         )
                         is_same = _result.is_same
                         _decision_method = _result.method
@@ -854,6 +932,11 @@ class BackgroundWorker:
             # 後から HQ/Gemini OCR でテキストを獲得した場合、同セリフのクラスタを統合する。
             # _remerge_text_clusters は ocr_text_gemini OR ocr_text_hq IS NOT NULL の代表が対象。
             self._remerge_text_clusters(conn)
+
+            # 全クラスタリング処理が終わった時点で cluster_id 変動を判定して
+            # cluster_stable_loops を更新する。Gemini はこの値が閾値以上の
+            # 代表のみ対象にすることで降格代表への無駄な API 呼び出しを防ぐ。
+            self._mark_cluster_stability(conn, pre_snapshot)
 
         finally:
             conn.close()
@@ -1476,6 +1559,41 @@ class BackgroundWorker:
 
     # ─── Gemini バッチ修正 ──────────────────────────────────
 
+    @staticmethod
+    def _is_truncated_capture(scene, screenshot_path) -> bool:
+        """画面が「見切れ/不完全キャプチャ」かを判定する。
+
+        本来の用途は scrcpy が壊れて欠けたキャプチャを弾くこと。
+        STARTUP/LOADING シーンは設計上「黒背景にロゴ/テキスト」なので
+        判定対象外 (= 正常な暗背景を artifact 扱いしない)。
+
+        Returns:
+            True: 見切れキャプチャ (artifact 扱いすべき)
+            False: 正常 (or 判定対象外/読み込み失敗)
+        """
+        if scene in ("STARTUP", "LOADING"):
+            return False
+        if not screenshot_path or not Path(screenshot_path).exists():
+            return False
+        _BLACK_PIXEL_THRESHOLD = 0.50
+        try:
+            import cv2
+            img = cv2.imread(str(screenshot_path))
+            if img is None:
+                return False
+            # scrcpy 黒帯を除外してから黒比率を計算する。
+            # 黒帯込みだと「中央 30% 黒 + 黒帯 20%」で誤って 50% 超になる。
+            try:
+                from tools.ap.image_proc import get_roi_cropped_image
+                img = get_roi_cropped_image(img)
+            except Exception:
+                pass
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            black_ratio = (gray < 15).sum() / gray.size
+            return bool(black_ratio >= _BLACK_PIXEL_THRESHOLD)
+        except Exception:
+            return False
+
     def _run_gemini_batch_correction(self) -> None:
         """Gemini Flash で代表画像の OCR を画像付きで補正 (API キー未設定ならスキップ)。
 
@@ -1523,17 +1641,33 @@ class BackgroundWorker:
                     target_sid = row["session_id"]
             if not target_sid:
                 return
+            # running セッションのみクラスタ安定待ち。completed セッションは
+            # クラスタリングが止まっているため即処理 (放置すると永遠に対象外になる)。
+            sess_row = conn.execute(
+                "SELECT status FROM lc_sessions WHERE session_id = ?",
+                (target_sid,),
+            ).fetchone()
+            is_running = bool(sess_row and sess_row["status"] == "running")
+            stable_clause = (
+                " AND COALESCE(cluster_stable_loops, 0) >= ?"
+                if is_running else ""
+            )
+            params: tuple = (target_sid,)
+            if is_running:
+                params = (target_sid, _GEMINI_CLUSTER_STABLE_THRESHOLD)
+            params = params + (fetch_limit,)
             rows = conn.execute(
-                "SELECT id, screenshot_path,"
+                "SELECT id, screenshot_path, scene,"
                 " COALESCE(ocr_text_hq, ocr_text, '') AS ocr"
                 " FROM lc_screens"
                 " WHERE is_representative = 1"
                 " AND ocr_text_gemini IS NULL"
                 " AND screenshot_path != ''"
                 " AND session_id = ?"
+                + stable_clause +
                 " ORDER BY discovered_at"
                 " LIMIT ?",
-                (target_sid, fetch_limit),
+                params,
             ).fetchall()
 
             if not rows:
@@ -1545,7 +1679,6 @@ class BackgroundWorker:
 
             # 前処理: 見切れ検出 + 有効アイテム収集
             items = []
-            _BLACK_PIXEL_THRESHOLD = 0.50
             for row in rows:
                 sid = row["id"]
                 path = row["screenshot_path"]
@@ -1555,26 +1688,22 @@ class BackgroundWorker:
                         (sid,),
                     )
                     continue
-                try:
-                    import cv2
-                    _img = cv2.imread(str(path))
-                    if _img is not None:
-                        _gray = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY)
-                        _black_ratio = (_gray < 15).sum() / _gray.size
-                        if _black_ratio >= _BLACK_PIXEL_THRESHOLD:
-                            conn.execute(
-                                "UPDATE lc_screens SET ocr_text_gemini = '', is_artifact = 1"
-                                " WHERE id = ?", (sid,),
-                            )
-                            logger.info("[BG_WORKER] 見切れ検出: id=%d black=%.0f%% → artifact",
-                                        sid, _black_ratio * 100)
-                            continue
-                except Exception:
-                    pass
+                # STARTUP/LOADING の正常な暗背景は黒比率検出をスキップ。
+                # is_artifact のみマークし、ocr_text_gemini は NULL のまま保持
+                # (空文字で上書きすると _remerge_text_clusters の COALESCE が
+                # 元 ocr_text にフォールバックできなくなり、別画面が誤統合される)。
+                if self._is_truncated_capture(row["scene"], path):
+                    conn.execute(
+                        "UPDATE lc_screens SET is_artifact = 1 WHERE id = ?",
+                        (sid,),
+                    )
+                    logger.info("[BG_WORKER] 見切れ検出: id=%d → artifact", sid)
+                    continue
                 items.append({
                     "id": sid,
                     "screenshot_path": path,
                     "ocr_text": row["ocr"],
+                    "scene": row["scene"],
                 })
 
             if not items:
@@ -1590,6 +1719,7 @@ class BackgroundWorker:
                         item["ocr_text"],
                         None,  # スレッドごとに新規Client作成（共有Client→SSLタイムアウト対策）
                         item["id"],
+                        item.get("scene"),
                     ): item
                     for item in items
                 }
@@ -1620,12 +1750,32 @@ class BackgroundWorker:
                 sid = r.get("id")
                 if sid is None or sid not in item_map:
                     continue
+                # 永続的失敗 (truncated 等) は sentinel ('') で記録して将来バッチでの
+                # 再試行を停止 → API コスト浪費を防ぐ。
+                if r.get("error") == "truncated":
+                    conn.execute(
+                        "UPDATE lc_screens SET ocr_text_gemini = '' WHERE id = ?",
+                        (sid,),
+                    )
+                    logger.info("[BG_WORKER] gemini truncated 諦め: id=%d → sentinel ('')", sid)
+                    continue
                 item = item_map[sid]
 
                 raw_corrected = (r.get("corrected_text", "") or "").strip()
                 corrected = _clean_gemini_output(raw_corrected)
                 is_artifact = bool(r.get("is_artifact", False))
                 screen_type = r.get("screen_type", "")
+
+                # 検出器が MOVIE と確定したシーンは Gemini の is_artifact を信用しない。
+                # auto_pilot 側の MOVIE 判定 (⏭ + ADV 証拠なし + バトル UI なし) は
+                # 構造的特徴に基づく確実な判定であり、ストーリームービーのカットを
+                # Gemini が爆発演出と誤判定して取り逃がすケースを防ぐ。
+                if is_artifact and item.get("scene") == "MOVIE":
+                    logger.info(
+                        "[BG_WORKER] scene=MOVIE → Gemini の is_artifact=true を棄却 "
+                        "(MOVIE_CUT として保持): id=%d", sid)
+                    is_artifact = False
+                    screen_type = "MOVIE_CUT"
 
                 if is_artifact:
                     logger.info("[BG_WORKER] artifact 検出: id=%d type=%s text=%s",
@@ -1820,7 +1970,7 @@ class BackgroundWorker:
                         if not orig and not prev_orig:
                             # 縮退 phash (ほぼ単色画像) はアンカーとして信頼できない
                             # → 連鎖マージで遠いクラスタまで吸い込む問題を防ぐため除外
-                            if _is_degenerate_phash(ph) or _is_degenerate_phash(prev_ph):
+                            if is_degenerate_phash(ph) or is_degenerate_phash(prev_ph):
                                 pass  # 統合しない
                             else:
                                 # phash + dhash の両方が近い場合のみ統合

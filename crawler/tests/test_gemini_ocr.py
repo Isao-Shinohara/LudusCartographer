@@ -119,8 +119,12 @@ class TestGeminiRetryOnJsonError:
         assert result["corrected_text"] == "OK"
         assert call_count[0] == 3, f"3回呼ばれるはず (1+2リトライ): {call_count[0]}"
 
-    def test_returns_none_after_all_retries_fail(self, tmp_path, monkeypatch):
-        """全リトライ失敗で None を返し、無限ループに入らない。"""
+    def test_returns_truncated_marker_after_all_retries_fail(self, tmp_path, monkeypatch):
+        """全リトライ失敗時は truncated marker を返す (= sentinel 化のシグナル)。
+
+        従来 None を返していたが、後続バッチで再試行されてコストを浪費するため
+        永続的失敗 (truncated) と一過性エラーを区別できるようマーカー付き辞書を返す。
+        """
         monkeypatch.setenv("GEMINI_API_KEY", "dummy")
         img = tmp_path / "test.webp"
         img.write_bytes(b"webp")
@@ -131,9 +135,50 @@ class TestGeminiRetryOnJsonError:
                             self._fake_urlopen_factory([truncated], call_count))
         monkeypatch.setattr("tools.ap.api_usage.record_api_usage", lambda *a, **k: None)
 
-        result = gemini_correct_single(str(img), "test_input")
-        assert result is None
+        result = gemini_correct_single(str(img), "test_input", item_id=42)
+        assert result is not None, "None ではなく truncated marker を返すべき"
+        assert result.get("error") == "truncated"
+        assert result.get("id") == 42
         assert call_count[0] == 3, f"3回試行で打ち切るはず: {call_count[0]}"
+
+    def test_max_tokens_finish_reason_returns_immediately_without_retry(self, tmp_path, monkeypatch):
+        """finishReason=MAX_TOKENS の場合は即諦め (内部リトライしない)。
+
+        同じプロンプト+画像で再試行しても結果は同じなので、リトライ無駄。
+        コスト最適化のため 1 回の API コールで打ち切る。
+        """
+        import json as _json
+        monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+        img = tmp_path / "test.webp"
+        img.write_bytes(b"webp")
+
+        # finishReason=MAX_TOKENS つき truncated レスポンス
+        max_tokens_resp = _json.dumps({
+            "candidates": [{
+                "content": {"parts": [{"text": '{"corrected'}]},
+                "finishReason": "MAX_TOKENS",
+            }],
+            "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 8192, "totalTokenCount": 8292},
+        }).encode()
+
+        call_count = [0]
+        monkeypatch.setattr("urllib.request.urlopen",
+                            self._fake_urlopen_factory([max_tokens_resp], call_count))
+        monkeypatch.setattr("tools.ap.api_usage.record_api_usage", lambda *a, **k: None)
+
+        result = gemini_correct_single(str(img), "test_input", item_id=99)
+        assert result is not None
+        assert result.get("error") == "truncated"
+        assert result.get("id") == 99
+        assert call_count[0] == 1, f"MAX_TOKENS 時は 1 回のみで諦めるはず: {call_count[0]}"
+
+    def test_max_output_tokens_config_is_16384(self):
+        """maxOutputTokens は 16384 (truncated 削減のため 8192 から拡大)。"""
+        import inspect
+        from tools.ap import ocr_correction
+        src = inspect.getsource(ocr_correction.gemini_correct_single)
+        assert '"maxOutputTokens": 16384' in src, \
+            "maxOutputTokens が 16384 でない (truncated 防止のため必要)"
 
     def test_no_retry_on_http_error(self, tmp_path, monkeypatch):
         """HTTP エラーはリトライ対象外 (auth 等の永続エラーで API クォータを浪費しない)。"""
@@ -153,6 +198,146 @@ class TestGeminiRetryOnJsonError:
         result = gemini_correct_single(str(img), "test")
         assert result is None
         assert call_count[0] == 1, f"HTTP エラーは1回のみ: {call_count[0]}"
+
+
+class TestSceneAwarePrompt:
+    """シーン情報を Gemini プロンプトに渡し、MOVIE シーンを MOVIE_CUT として
+    保護できることを検証する (id=35「今度こそ…」のようなムービー爆発カット
+    が誤って is_artifact=true になる問題への対策)。"""
+
+    def test_single_prompt_mentions_movie_cut(self):
+        """単画像プロンプトに MOVIE_CUT 概念が含まれている。"""
+        from tools.ap.ocr_correction import _GEMINI_PROMPT
+        assert "MOVIE_CUT" in _GEMINI_PROMPT, \
+            "MOVIE_CUT が screen_type の選択肢に含まれていない"
+
+    def test_batch_prompt_mentions_movie_cut(self):
+        """バッチプロンプトにも MOVIE_CUT 概念が含まれている。"""
+        from tools.ap.ocr_correction import _GEMINI_BATCH_PROMPT
+        assert "MOVIE_CUT" in _GEMINI_BATCH_PROMPT
+
+    def test_single_prompt_has_battle_ui_qualifier(self):
+        """ステップ 1.1 にバトル UI 必須の限定条件が入っている (ムービー爆発
+        カットがバトル必殺技と区別されるため)。"""
+        from tools.ap.ocr_correction import _GEMINI_PROMPT
+        # バトル UI 限定条件 + MOVIE_CUT 救済ルールの両方が必要
+        assert "バトルUI" in _GEMINI_PROMPT or "バトル UI" in _GEMINI_PROMPT, \
+            "バトル UI の限定条件が見当たらない"
+
+    def test_single_prompt_has_scene_placeholder(self):
+        """単画像プロンプトに scene 情報のプレースホルダがある。"""
+        from tools.ap.ocr_correction import _GEMINI_PROMPT
+        assert "{scene_hint}" in _GEMINI_PROMPT, \
+            "scene_hint プレースホルダが見当たらない"
+
+    def test_gemini_correct_single_accepts_scene(self, tmp_path, monkeypatch):
+        """gemini_correct_single が scene 引数を受け付ける。"""
+        import inspect
+        from tools.ap.ocr_correction import gemini_correct_single
+        sig = inspect.signature(gemini_correct_single)
+        assert "scene" in sig.parameters, "scene 引数が未追加"
+
+    def test_scene_movie_appears_in_request_body(self, tmp_path, monkeypatch):
+        """scene='MOVIE' を渡すとリクエストボディに反映される。"""
+        import json as _json
+        monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+        img = tmp_path / "test.webp"
+        img.write_bytes(b"webp")
+
+        captured = {"body": None}
+
+        outer = _json.dumps({
+            "candidates": [{"content": {"parts": [{
+                "text": '{"corrected_text": "今度こそ…", "is_artifact": false, "screen_type": "MOVIE_CUT"}'
+            }]}}],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1, "totalTokenCount": 2},
+        }).encode()
+
+        class FakeResp:
+            def __init__(self, data): self._data = data
+            def read(self): return self._data
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        def fake_urlopen(req, timeout=None):
+            captured["body"] = req.data.decode() if isinstance(req.data, (bytes, bytearray)) else req.data
+            return FakeResp(outer)
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        monkeypatch.setattr("tools.ap.api_usage.record_api_usage", lambda *a, **k: None)
+
+        result = gemini_correct_single(str(img), "今度こそ", scene="MOVIE")
+        assert result is not None
+        # リクエストボディに scene=MOVIE 情報が含まれている
+        assert captured["body"] is not None
+        assert "MOVIE" in captured["body"], "プロンプトに scene=MOVIE が反映されていない"
+
+    def test_batch_ocr_block_includes_scene(self, tmp_path, monkeypatch):
+        """gemini_correct_multi の ocr_block に scene 情報が反映される。"""
+        import json as _json
+        monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+        img = tmp_path / "test.webp"
+        img.write_bytes(b"webp")
+
+        captured = {"prompt": None}
+
+        # Mock both client init and the actual API call to capture prompt
+        from tools.ap import ocr_correction
+
+        class FakeModels:
+            def generate_content(self, model, contents, config):
+                # contents: [Part image, ..., prompt_string]
+                for c in contents:
+                    if isinstance(c, str):
+                        captured["prompt"] = c
+                resp = MagicMock()
+                resp.candidates = [MagicMock(finish_reason=None,
+                                              content=MagicMock(parts=[
+                                                  MagicMock(text='{"results": [{"index": 1, "corrected_text": "x", "corrections": [], "is_artifact": false, "screen_type": "MOVIE_CUT"}]}')
+                                              ]))]
+                resp.text = '{"results": [{"index": 1, "corrected_text": "x", "corrections": [], "is_artifact": false, "screen_type": "MOVIE_CUT"}]}'
+                resp.usage_metadata = MagicMock(prompt_token_count=1, candidates_token_count=1, total_token_count=2)
+                return resp
+
+        class FakeClient:
+            def __init__(self): self.models = FakeModels()
+
+        monkeypatch.setattr(ocr_correction, "_init_gemini_client", lambda: FakeClient())
+        monkeypatch.setattr("tools.ap.api_usage.record_api_usage", lambda *a, **k: None)
+
+        items = [{"id": 100, "screenshot_path": str(img), "ocr_text": "今度こそ", "scene": "MOVIE"}]
+        ocr_correction.gemini_correct_multi(items)
+
+        assert captured["prompt"] is not None
+        assert "scene=MOVIE" in captured["prompt"], \
+            f"ocr_block に scene 情報が見当たらない: {captured['prompt'][:200]}"
+
+    def test_scene_none_does_not_break(self, tmp_path, monkeypatch):
+        """scene=None でも従来通り動作する (後方互換)。"""
+        import json as _json
+        monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+        img = tmp_path / "test.webp"
+        img.write_bytes(b"webp")
+
+        outer = _json.dumps({
+            "candidates": [{"content": {"parts": [{
+                "text": '{"corrected_text": "OK", "is_artifact": false, "screen_type": "HOME"}'
+            }]}}],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1, "totalTokenCount": 2},
+        }).encode()
+
+        class FakeResp:
+            def __init__(self, data): self._data = data
+            def read(self): return self._data
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=None: FakeResp(outer))
+        monkeypatch.setattr("tools.ap.api_usage.record_api_usage", lambda *a, **k: None)
+
+        result = gemini_correct_single(str(img), "test")  # scene 省略
+        assert result is not None
+        assert result["corrected_text"] == "OK"
 
 
 class TestLearnFromCorrection:

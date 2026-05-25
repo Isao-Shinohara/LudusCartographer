@@ -648,11 +648,17 @@ def compute_phash(image_path: "Path", hash_size: int = 8) -> str:
     import numpy as np
 
     try:
-        img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+        bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
     except Exception:
-        img = None
-    if img is None:
+        bgr = None
+    if bgr is None:
         raise ValueError(f"画像を読み込めません: {image_path}")
+    try:
+        from tools.ap.image_proc import get_roi_cropped_image
+        bgr = get_roi_cropped_image(bgr)
+    except Exception:
+        pass  # クロップ失敗時は元画像で続行
+    img = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     img = cv2.resize(img, (hash_size * 4, hash_size * 4))
     dct = cv2.dct(np.float32(img))
     top = dct[:hash_size, :hash_size]
@@ -696,9 +702,15 @@ def compute_dhash(image_path: "Path", hash_size: int = 8) -> str:
     """
     import cv2
 
-    img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
-    if img is None:
+    bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if bgr is None:
         raise ValueError(f"画像を読み込めません: {image_path}")
+    try:
+        from tools.ap.image_proc import get_roi_cropped_image
+        bgr = get_roi_cropped_image(bgr)
+    except Exception:
+        pass
+    img = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     resized = cv2.resize(img, (hash_size + 1, hash_size))
     diff = resized[:, 1:] > resized[:, :-1]
     return format(int("".join("1" if b else "0" for b in diff.flatten()), 2), "016x")
@@ -708,3 +720,22 @@ def dhash_distance(h1: str, h2: str) -> int:
     """2 つの dHash 文字列のハミング距離を返す。"""
     a, b = int(h1, 16), int(h2, 16)
     return bin(a ^ b).count("1")
+
+
+def is_degenerate_phash(ph) -> bool:
+    """縮退 phash 判定: set bit が極端に少ない/多い (ほぼ単色画像)。
+
+    Hamming 距離は「異なるビット数」で計算するため、bit がほぼ全 0 または全 1
+    の phash は内容が違っていても見かけ上「他と近い」と誤判定されやすい。
+    アンカー・クラスタ統合判定で信用してはならない。
+
+    閾値 (CLAUDE.md §16):
+      set bit < 8 or > 56 → 縮退
+    """
+    if not ph:
+        return True
+    try:
+        n = bin(int(ph, 16)).count("1")
+    except (ValueError, TypeError):
+        return True
+    return n < 8 or n > 56

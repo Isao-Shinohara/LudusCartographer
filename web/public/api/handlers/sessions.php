@@ -67,7 +67,7 @@ if ($action === 'process_session_bg') {
         echo json_encode(['error' => 'session_id required']);
         exit;
     }
-    $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
+    $crawlerDirRaw = realpath(__DIR__ . '/../../../..') . '/crawler';
     $crawlerDir = escapeshellarg($crawlerDirRaw);
     $resultFile = $crawlerDirRaw . '/storage/merge_result.json';
     $dbPath = $crawlerDirRaw . '/storage/ludus.db';
@@ -237,10 +237,10 @@ if ($action === 'build_session_graph') {
         echo json_encode(['error' => 'session_id required']);
         exit;
     }
-    $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../..') . '/crawler');
-    $resultFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/merge_result.json';
+    $crawlerDir = escapeshellarg(realpath(__DIR__ . '/../../../..') . '/crawler');
+    $resultFile = realpath(__DIR__ . '/../../../..') . '/crawler/storage/merge_result.json';
     @unlink($resultFile);
-    $scriptFile = realpath(__DIR__ . '/../../..') . '/crawler/storage/_build_graph.py';
+    $scriptFile = realpath(__DIR__ . '/../../../..') . '/crawler/storage/_build_graph.py';
     file_put_contents($scriptFile, <<<PYTHON
 import json, logging, sys, os
 sys.dont_write_bytecode = True
@@ -254,7 +254,7 @@ bp.close()
 with open(sys.argv[1], "w") as f:
     json.dump({"ok": True, "sccs": sccs}, f, ensure_ascii=False)
 PYTHON);
-    $crawlerDirRaw = realpath(__DIR__ . '/../../..') . '/crawler';
+    $crawlerDirRaw = realpath(__DIR__ . '/../../../..') . '/crawler';
     $bgCmd = "cd " . escapeshellarg($crawlerDirRaw)
            . " && ./venv/bin/python -B -W ignore " . escapeshellarg($scriptFile)
            . " " . escapeshellarg($resultFile)
@@ -274,7 +274,7 @@ if ($action === 'delete_session') {
     $result = $repository->deleteSession($sessionId);
     // セッションディレクトリが空なら削除
     if ($result['ok'] ?? false) {
-        $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+        $crawlerDir = realpath(__DIR__ . '/../../../..') . '/crawler';
         $imageDirs = [
             $crawlerDir . '/storage/screenshots/',
             $crawlerDir . '/storage/evidence/',

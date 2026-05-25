@@ -28,13 +28,23 @@ logger = logging.getLogger(__name__)
 
 
 def compute_phash(image_path: Path | str, hash_size: int = 8) -> str:
-    """DCT ベース知覚ハッシュ (16桁hex)。"""
+    """DCT ベース知覚ハッシュ (16桁hex)。
+
+    scrcpy のレターボックス (左右黒帯) を除去してからハッシュ計算する。
+    黒帯込み画像で計算すると set bit 数が縮退する問題への対策。
+    """
     import cv2
     import numpy as np
 
-    img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
-    if img is None:
+    bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if bgr is None:
         raise ValueError(f"画像を読み込めません: {image_path}")
+    try:
+        from tools.ap.image_proc import get_roi_cropped_image
+        bgr = get_roi_cropped_image(bgr)
+    except Exception:
+        pass  # クロップ失敗時は元画像で続行
+    img = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     img = cv2.resize(img, (hash_size * 4, hash_size * 4))
     dct = cv2.dct(np.float32(img))
     top = dct[:hash_size, :hash_size]
@@ -68,12 +78,21 @@ def phash_jaccard_similarity(h1: str, h2: str) -> float:
 
 
 def compute_dhash(image_path: Path | str, hash_size: int = 8) -> str:
-    """隣接ピクセル差分ハッシュ (16桁hex)。構図・エッジに敏感。"""
+    """隣接ピクセル差分ハッシュ (16桁hex)。構図・エッジに敏感。
+
+    scrcpy のレターボックス (左右黒帯) を除去してからハッシュ計算する。
+    """
     import cv2
 
-    img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
-    if img is None:
+    bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if bgr is None:
         raise ValueError(f"画像を読み込めません: {image_path}")
+    try:
+        from tools.ap.image_proc import get_roi_cropped_image
+        bgr = get_roi_cropped_image(bgr)
+    except Exception:
+        pass
+    img = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     resized = cv2.resize(img, (hash_size + 1, hash_size))
     diff = resized[:, 1:] > resized[:, :-1]
     return format(int("".join("1" if b else "0" for b in diff.flatten()), 2), "016x")

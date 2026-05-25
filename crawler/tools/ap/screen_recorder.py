@@ -222,6 +222,11 @@ class ScreenRecorder:
         self._last_recorded_phash: str = ""
         self._last_inserted_id: Optional[int] = None
 
+        # 連続フラッシュ集約用: 直前 maybe_record 呼び出し時の phash
+        # (記録成否に関わらず常に更新する。ダウンロード中の連続白フラッシュを
+        # 1 件にまとめるため)
+        self._last_seen_phash: str = ""
+
         # 遷移グラフ: タップ→次画面の非同期記録
         self._pending_transition: Optional[dict] = None
         # 前セッションの未完了遷移をクリーンアップ (クラッシュ復帰時のゴミ防止)
@@ -383,6 +388,18 @@ class ScreenRecorder:
 
         # Android システムダイアログはゲーム画面ではないので常にスキップ (force含む)
         if ocr_results and any("応答していません" in r.get("text", "") for r in ocr_results):
+            return False
+
+        # 連続する同一縮退 phash は集約 (ダウンロード中の白フラッシュ等の連発対策)
+        # - 直前と同じ縮退 phash → スキップ
+        # - 散発する縮退 phash (間に別画面) → それぞれ別イベントとして記録継続
+        # - force=True (タップ前記録) はバイパス、状態だけ更新
+        # 縮退判定は CLAUDE.md §16 の基準 (set bit < 8 or > 56) で他のクラスタリング
+        # ロジックと統一 (lc.utils.is_degenerate_phash)
+        from lc.utils import is_degenerate_phash
+        _prev_seen = self._last_seen_phash
+        self._last_seen_phash = phash or ""
+        if not force and phash and phash == _prev_seen and is_degenerate_phash(phash):
             return False
 
         if not force:
@@ -690,6 +707,16 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: dhash_dist_to_prev_rep カラム追加")
+        # クラスタ安定 loop カウンタ (Gemini OCR 投入タイミング判定用)
+        # クラスタリング loop で cluster_id が変動しなかった連続回数を保持。
+        # _run_gemini_batch_correction は running セッションでは
+        # cluster_stable_loops >= _GEMINI_CLUSTER_STABLE_THRESHOLD を要求する。
+        if "cluster_stable_loops" not in cols:
+            self._conn.execute(
+                "ALTER TABLE lc_screens ADD COLUMN cluster_stable_loops INTEGER DEFAULT 0"
+            )
+            self._conn.commit()
+            logger.info("[ScreenRecorder] migrate: cluster_stable_loops カラム追加")
         # 旧カラム hist_dist_to_prev_rep は廃止 (Q3=B、ヒスト判定撤廃のため)
         if "hist_dist_to_prev_rep" in cols:
             try:
@@ -768,6 +795,19 @@ class ScreenRecorder:
             )
             self._conn.commit()
             logger.info("[ScreenRecorder] migrate: v1.0.0 初期バージョン作成")
+
+        # OCR ノイズ語辞書 — background_worker の Gemini 補正で INSERT される。
+        # batch_processor の migration は周回完了後にしか走らないため、
+        # 起動時必ず実行される screen_recorder._migrate に置く必要がある。
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS lc_ocr_noise_words (
+                word TEXT PRIMARY KEY,
+                count INTEGER DEFAULT 1,
+                first_seen_at TEXT DEFAULT (datetime('now')),
+                last_seen_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        self._conn.commit()
 
     # ─── 画像保存 ─────────────────────────────────────
 

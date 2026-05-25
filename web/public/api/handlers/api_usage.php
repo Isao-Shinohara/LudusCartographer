@@ -10,7 +10,7 @@ use LudusCartographer\EvidenceRepository;
 
 // --- get_api_usage アクション ---
 if ($action === 'get_api_usage') {
-    $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+    $crawlerDir = realpath(__DIR__ . '/../../../..') . '/crawler';
     try {
         $db = new PDO('sqlite:' . $crawlerDir . '/storage/ludus.db');
         $db->setAttribute(PDO::ATTR_TIMEOUT, 2);

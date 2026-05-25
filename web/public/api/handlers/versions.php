@@ -81,7 +81,7 @@ if ($action === 'delete_version') {
     $result = $repository->deleteVersion($versionId);
     // ローカル画像ファイル削除
     if (($result['ok'] ?? false) && !empty($result['session_ids'])) {
-        $crawlerDir = realpath(__DIR__ . '/../../..') . '/crawler';
+        $crawlerDir = realpath(__DIR__ . '/../../../..') . '/crawler';
         $imageDirs = [
             $crawlerDir . '/storage/screenshots/',
             $crawlerDir . '/storage/reinstall/',

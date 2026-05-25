@@ -135,14 +135,105 @@ def count_home_nav_templates(img_path: Path, threshold: float = 0.75) -> int:
     return _matched
 
 
-def detect_game_roi(img) -> tuple[int, int, int, int]:
+def get_roi_cropped_image(
+    img: "np.ndarray",
+    *,
+    margin: int = 5,
+    symmetry_threshold: int = 30,
+    snap: int = 4,
+) -> "np.ndarray":
+    """scrcpy のレターボックス (左右黒帯) を除去してゲーム描画領域だけを返す。
+
+    認識タスク (phash / dhash / Gemini) の前処理用ヘルパー。保存画像や
+    座標補正 (`roi_to_device`) には影響しない。
+
+    Args:
+        img: BGR ndarray (cv2.imread で読み込んだ画像)。
+        margin: 検出 ROI の内側に何 px 留めるか (キャラ画面端の誤クロップ防止)。
+        symmetry_threshold: 左右マージンの差が N px 超なら異常 → 全画面返却
+            (片側のみ大きく削れる scrcpy 黒帯以外の誤検出をブロック)。
+        snap: ROI 座標を N px 単位に丸める (キャプチャブレ吸収)。
+
+    Returns:
+        クロップ済み ndarray。検出失敗・例外時は元画像を返す。
+    """
+    try:
+        if img is None:
+            return img
+        h, w = img.shape[:2]
+        if h < 100 or w < 100:
+            # 極小画像は処理対象外 (テスト用 1x1 等)
+            return img
+
+        # クロップ用は scrcpy 黒帯 (実際の輝度 ~17) を確実に検出するため
+        # 閾値を上げて detect_game_roi を呼ぶ
+        # (デフォルト brightness_threshold=12 はタップ座標補正用で scrcpy 黒帯を取り逃がす)
+        roi_x, roi_y, roi_w, roi_h = detect_game_roi(
+            img, brightness_threshold=30, min_pixels=30
+        )
+
+        # 検出失敗 or 黒帯なし: detect_game_roi の内部フォールバックで全画面が返ってきた
+        # → クロップする意味がないので元画像をそのまま返す (誤動作リスクをゼロに)
+        if (roi_x, roi_y) == (0, 0) and (roi_w, roi_h) == (w, h):
+            return img
+
+        # 対称性チェック: 左右 (上下) のマージン差が異常に大きいとノイズ
+        # 片側だけ大きく削れる scrcpy 黒帯以外の誤検出をブロック
+        left_m = roi_x
+        right_m = w - (roi_x + roi_w)
+        top_m = roi_y
+        bottom_m = h - (roi_y + roi_h)
+        if (abs(left_m - right_m) > symmetry_threshold
+                or abs(top_m - bottom_m) > symmetry_threshold):
+            return img
+
+        # 安全マージン: ROI を内側に N px 絞る (キャラ画面端の誤クロップ防止)
+        roi_x += margin
+        roi_y += margin
+        roi_w -= 2 * margin
+        roi_h -= 2 * margin
+
+        # snap: 座標を N px 単位に丸めてキャプチャブレ吸収
+        if snap > 1:
+            roi_x = (roi_x // snap) * snap
+            roi_y = (roi_y // snap) * snap
+            roi_w = (roi_w // snap) * snap
+            roi_h = (roi_h // snap) * snap
+
+        # 範囲チェック (margin/snap で負や画像外にならないよう保護)
+        roi_x = max(0, min(roi_x, w - 1))
+        roi_y = max(0, min(roi_y, h - 1))
+        roi_w = max(1, min(roi_w, w - roi_x))
+        roi_h = max(1, min(roi_h, h - roi_y))
+
+        # 過剰クロップ (元の 50% 未満) なら諦めて元画像
+        if roi_w * roi_h < (w * h) * 0.5:
+            return img
+
+        return img[roi_y:roi_y + roi_h, roi_x:roi_x + roi_w]
+    except Exception:
+        return img
+
+
+def detect_game_roi(
+    img,
+    *,
+    brightness_threshold: int = 12,
+    min_pixels: int = 4,
+) -> tuple[int, int, int, int]:
     """
     スクリーンショットの黒帯（レターボックス）を検出し、純粋なゲーム描画領域を返す。
 
     アルゴリズム:
-      1. グレースケール変換し、輝度 > 12 の「非黒」ピクセルを検出
-      2. 列合計 / 行合計から黒帯の始終端を特定
+      1. グレースケール変換し、輝度 > brightness_threshold の「非黒」ピクセルを検出
+      2. 列合計 / 行合計から「非黒ピクセル数 >= min_pixels」となる始終端を特定
       3. ROI サイズが全体の50%未満の場合はフォールバック (全画面)
+
+    用途別パラメータ推奨値:
+      - タップ座標補正 (roi_to_device): デフォルト (threshold=12, min_pixels=4)
+        ADB screencap の OS UI 黒帯 (実際に < 12) を検出
+      - phash/dhash クロップ (get_roi_cropped_image): threshold=30, min_pixels=30
+        scrcpy レターボックス (実際の輝度 ~17) を検出するため厳しい閾値が必要
 
     Returns: (roi_x, roi_y, roi_w, roi_h) in analysis image pixel coordinates
     """
@@ -150,13 +241,13 @@ def detect_game_roi(img) -> tuple[int, int, int, int]:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         _H, _W = img.shape[:2]
         # 列/行ごとの輝度ピクセル数
-        col_bright = (np.array(gray, dtype=np.int32) > 12).sum(axis=0)
-        row_bright = (np.array(gray, dtype=np.int32) > 12).sum(axis=1)
-        # 各辺の黒帯を検出 (ノイズ耐性: min 3px 以上の明るい列/行)
-        x0 = next((x for x in range(_W) if col_bright[x] > 3), 0)
-        x1 = next((x for x in range(_W - 1, -1, -1) if col_bright[x] > 3), _W - 1)
-        y0 = next((y for y in range(_H) if row_bright[y] > 3), 0)
-        y1 = next((y for y in range(_H - 1, -1, -1) if row_bright[y] > 3), _H - 1)
+        col_bright = (np.array(gray, dtype=np.int32) > brightness_threshold).sum(axis=0)
+        row_bright = (np.array(gray, dtype=np.int32) > brightness_threshold).sum(axis=1)
+        # 各辺の黒帯を検出 (ノイズ耐性: min N px 以上の明るい列/行)
+        x0 = next((x for x in range(_W) if col_bright[x] >= min_pixels), 0)
+        x1 = next((x for x in range(_W - 1, -1, -1) if col_bright[x] >= min_pixels), _W - 1)
+        y0 = next((y for y in range(_H) if row_bright[y] >= min_pixels), 0)
+        y1 = next((y for y in range(_H - 1, -1, -1) if row_bright[y] >= min_pixels), _H - 1)
         roi_w = x1 - x0 + 1
         roi_h = y1 - y0 + 1
         # 全黒画面 or ROI が異常に小さい場合は全画面を返す
@@ -3409,6 +3500,12 @@ _LBP_PEAK_RATIO = 0.25
 _LBP_PEAK_MIN_DIST = 80
 # 検出矩形の最小画面占有率
 _LBP_MIN_SCREEN_RATIO = 0.35
+# 検出矩形が画面端から確保すべき最小マージン (px)
+# 画面端の Sobel エッジ (ROI 境界・キャラのアウトライン等) を矩形と
+# 誤判定するパターンを棄却するためのガード。
+# 旧値 40px は本物の LB (上端 34px しかない) を棄却してしまったため
+# 20px に緩和。ADV 誤検出ケース (上端 15px / 下端 2px) は引き続き棄却。
+_LBP_MIN_INSET = 20
 
 
 def _find_projection_peaks(
@@ -3484,6 +3581,22 @@ def detect_login_bonus_popup(
     if _screen_ratio < _LBP_MIN_SCREEN_RATIO:
         logger.debug("[LOGIN_BONUS] 面積比 %.1f%% < %.0f%% → 棄却",
                      _screen_ratio * 100, _LBP_MIN_SCREEN_RATIO * 100)
+        return None
+
+    # ── 矩形 inset 確認 (画面端からのマージン) ──
+    # ADV/MOVIE シーン遷移フレームの Sobel が画面端を矩形と
+    # 誤判定するパターンを棄却。本物の login bonus popup は
+    # 画面中央に配置されるため四辺に余白がある。
+    _inset_l = _left
+    _inset_t = _top
+    _inset_r = _W - _right
+    _inset_b = _H - _bottom
+    if (_inset_l < _LBP_MIN_INSET or _inset_t < _LBP_MIN_INSET
+            or _inset_r < _LBP_MIN_INSET or _inset_b < _LBP_MIN_INSET):
+        logger.debug(
+            "[LOGIN_BONUS] 矩形が画面端 → 棄却 inset=L%d T%d R%d B%d (<%d)",
+            _inset_l, _inset_t, _inset_r, _inset_b, _LBP_MIN_INSET,
+        )
         return None
 
     # ── 背景ぼかし確認 ──

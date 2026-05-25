@@ -118,3 +118,87 @@ TEMPLATE_THRESHOLD = 0.70  # マッチング閾値 (0.0-1.0)
 - 誤検出が多い場合: 閾値を上げる (0.75-0.85)
 - 検出漏れが多い場合: 閾値を下げる (0.60-0.70)
 - テンプレート画像のサイズは元画像と同じ解像度で切り出すこと
+
+---
+
+## 4. ゲーム解析堅牢化 (リトライ・OCR フォールバック)
+
+CLAUDE.md §8 から外出し。Appium によるゲーム操作では以下を標準実装する。
+
+### リトライ戦略
+
+XML要素検索には **最大3回のリトライ（1秒間隔）** を標準実装する。
+
+```python
+import time
+def find_element_with_retry(driver, by, value, retries=3, interval=1.0):
+    for i in range(retries):
+        try:
+            return driver.find_element(by, value)
+        except Exception:
+            if i < retries - 1:
+                time.sleep(interval)
+    return None
+```
+
+### OCR フォールバック
+
+- XML要素が取得できない場合、PaddleOCR の座標データを用いた **「座標指定タップ」** へフォールバックする
+- フォールバック時はログに `[FALLBACK_OCR_TAP]` プレフィックスを付けて記録する
+
+---
+
+## 5. ADB 接続・復旧マニュアル
+
+CLAUDE.md §10 から外出し。
+
+### デバイス自動検出
+
+`get_android_serial()` (`crawler/tools/lc/utils.py:278`) が以下の優先順位で Android デバイスを検出する:
+
+1. 環境変数 `ANDROID_UDID`（最優先）
+2. 環境変数 `ANDROID_SERIAL`
+3. `adb devices` から最初のオンラインデバイス（USB / Wi-Fi 両対応）
+
+### USB 接続
+
+```bash
+# デバイス確認
+adb devices
+# 出力例: f6b8cef7	device
+```
+
+### Wi-Fi 接続
+
+```bash
+# 1. USB 接続状態で TCP/IP モードに切り替え
+adb tcpip 5555
+
+# 2. USB を外して Wi-Fi 接続
+adb connect 192.168.10.118:5555
+
+# 3. 接続確認
+adb devices
+# 出力例: 192.168.10.118:5555	device
+```
+
+### 接続が切れた場合の復旧
+
+```bash
+# Wi-Fi 再接続
+adb connect 192.168.10.118:5555
+
+# それでもダメなら USB 再接続 → tcpip 再設定
+adb tcpip 5555
+adb connect 192.168.10.118:5555
+```
+
+### 環境変数設定例
+
+```bash
+# Wi-Fi 接続のデバイスを固定指定
+export ANDROID_UDID=192.168.10.118:5555
+
+# USB 接続のデバイスを固定指定
+export ANDROID_SERIAL=f6b8cef7
+```

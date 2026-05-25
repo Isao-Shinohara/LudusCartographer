@@ -186,6 +186,7 @@ class BatchProcessor:
             ("bfs_depth", "INTEGER"),
             ("scc_id", "INTEGER"),
             ("scc_label", "TEXT"),
+            ("cluster_stable_loops", "INTEGER DEFAULT 0"),
         ]:
             if col not in cols:
                 self._conn.execute(f"ALTER TABLE lc_screens ADD COLUMN {col} {typ}")
@@ -260,6 +261,18 @@ class BatchProcessor:
             "CREATE INDEX IF NOT EXISTS idx_corrections_before"
             " ON lc_ocr_corrections(before_text)"
         )
+
+        # OCR ノイズ語辞書 (Gemini 補正で蓄積、anchor_matcher で参照)
+        # 旧来 ocr.php の lazy CREATE のみだったため fresh install で
+        # background_worker の INSERT が失敗していた。migration で確実に作成。
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS lc_ocr_noise_words (
+                word TEXT PRIMARY KEY,
+                count INTEGER DEFAULT 1,
+                first_seen_at TEXT DEFAULT (datetime('now')),
+                last_seen_at TEXT DEFAULT (datetime('now'))
+            );
+        """)
         self._conn.commit()
 
         # ── タグ機能 (Phase 1) ─────────────────────────────

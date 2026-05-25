@@ -760,6 +760,10 @@ def tap_device(x: int, y: int, state, desc: str = "",
     adb(f"shell input tap {real_x} {real_y}")
     state.cycle.total_taps += 1
     state.cycle.last_action_time = time.time()
+    # stuck 検知用: 直近タップ情報を記録 (次イテレーションで評価される)
+    state.cycle.last_tap_action = desc
+    state.cycle.last_tap_x = x
+    state.cycle.last_tap_y = y
     time.sleep(post_wait)
 
 

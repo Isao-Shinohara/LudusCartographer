@@ -48,8 +48,9 @@ test.describe('Tag タブ Phase 4 (詳細タグ)', () => {
         expect(value).toContain('tag_ids');
     });
 
-    test('詳細「未付与のみ判定」モーダルで model が flash になる', async ({ page }) => {
-        await page.click('#tag-content-sub_scene >> text=未付与のみ判定');
+    test('詳細「未付与のみタグ付け」モーダルで model が flash になる', async ({ page }) => {
+        await page.click('#tag-judge-btn-sub_scene');
+        await page.locator('#tag-judge-menu-modal >> text=未付与のみタグ付け').click();
         await expect(page.locator('#tag-run-confirm-modal')).toBeVisible();
         // estimate を待つ
         await page.waitForSelector('#tag-run-confirm-body:not(.hidden)', { timeout: 5000 });

@@ -1,45 +1,197 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-05-04 (Phase 6 + Search 機能撤去)
+最終更新: 2026-05-25 (CLAUDE.md 第三弾リファクタ — 全 Tier 改善 + エージェント/スキル基準 + docs/_archive 整理)
 
 ## 現在のブランチ
-- `feature/master-node-tags` (main から 11 コミット先行、Phase 0〜4 完了 → **PR #2**)
-- `feature/tag-search` (`feature/master-node-tags` から 2 コミット先行、Phase 5 + doc 更新 → **PR #3 chained**)
-- `feature/tag-polish` (`feature/tag-search` から 1 コミット先行、Phase 6 polish → **PR #4 chained**)
-- `feature/screen-recorder` は **PR #1 でマージ済み・削除済み** (2026-05-02)
+- `main` (最新: PR #6 マージ後、commit `1f06a6e`)
+- `feature/tagging` (main から 28 コミット先行、origin に push 済み `5b6186f`)
+- `feature/gemini-cost-stable-loops` (main から **3 コミット先行**、**未 push**)
+  - 内容: 案 C (cluster_stable_loops で Gemini 遅延) + 案 A (プロンプト SYSTEM/USER 分離 → Implicit Cache 75% 割引) + CLAUDE.md §22 永続化
+  - 新規テスト 27 件 (14 + 13) 全 pass
+- **`feature/claude-md-slim`** (`feature/gemini-cost-stable-loops` から **11 コミット先行**、**未 push**)
+  - 第一弾 (3 コミット): CLAUDE.md を 985 → 578 行 (41% 削減)。詳細を docs/ 配下に外出し
+    - 乖離修正: §13 find_finger_blobs (実コード残存に合わせて記述変更) / §16 BG worker OCR 間隔 (5s → 0.5s)
+    - 新規 docs: tutorial_autopilot.md / evidence_recording.md / cleanup_procedure.md / gemini_prompt_design.md
+    - 既存 docs 追記: troubleshooting.md (§8 リトライ + §10 ADB)
+  - 第二弾 (構造リファクタ): 578 → 506 行 (重複排除 + ドメイン規約の外出し)
+    - §0 廃止 / §13 ドメイン規約 11 個を `docs/scene_detection_rules.md` (新規 83 行) に外出し
+    - §17 §21 §22 の Gemini 共通実装ルールを §22 に集約 / §11 Gemini 4 項目 → 1 行ポインタ
+    - 「厳格・最重要」マーカーを §11 §13 の真の最重要 2 箇所のみに絞る
+  - **第三弾 (2026-05-25、全 Tier 改善)**: 506 → 554 行 (§23 で +40 + 責任分界明文化 +6)
+    - **Step 1**: settings.json SessionStart の §0 参照を §11/§13/§15 に修正、git status + STATUS.md 確認を追加
+    - **Step 2** (`743f272`): §10 ハードコード行番号 `:278` 削除
+    - **Step 3** (`55bc499`): §14 起動コマンド対応表を `-r` 判断の Single Source of Truth と宣言、§12 重複削除
+    - **Step 4** (`93b1715`): Gemini 共通実装ルールへの参照を §17/§21 で「※ ... は §22 に集約」表記で統一化
+    - **Step 5** (`551227f`): **§23 エージェント/スキル活用ルール新設** (Explore/Plan agent, /review, /security-review, update-config, simplify skill の使用基準を表化)
+    - **Step 6** (`6dc5178`): §15-5 矩形テンプレマッチ詳細を `scene_detection_rules.md` 冒頭に外出し
+    - **Step 7**: `.claude/settings.json` に PreToolUse フック追加 — §11 違反候補 (rm -rf, DROP TABLE, DELETE FROM lc_, VACUUM, --reinstall, auto_pilot.*-r) を exit 2 でブロック。8 ケース手動検証済 (grep -r, tar -rf は誤検出なし)
+    - **Step 8**: `.claude/skills/review-gemini-prompt/SKILL.md` 新規 — §22 編集時チェック 4 項目を自動化
+    - **Step 9** (`63666d4`): docs/ 孤児 6 件を `_archive/` へ移動 + 現役 5 件を `docs/README.md` でインデックス化
+      - archive: PROMPT_CONTEXT, gemini_consultation, fingerprint_redesign_plan, cross_session_merge, anchor_matching_implementation_plan, ROADMAP
+      - keep: image_recognition, setup, auto_pilot_setup, UxPlay_setup, ocr_improvement_plan
+    - **Step 10** (`4ab044a`): §5 に CLAUDE.md / STATUS.md / docs/ の責任分界明文化
+  - pytest test_gemini_prompt_cache.py: 13 件 pass (リファクタ後再確認)
+  - stash@{0} に feature/tagging の wip-ocr-learned-patterns あり
+- `feature/master-node-tags` / `feature/tag-search` / `feature/tag-polish` / `feature/tag-tab-polish` / `feature/screen-recorder` は **PR #1〜#6 でマージ済み・削除済み**
+
+## マージ済みの PR (履歴)
+
+| # | 内容 | マージ日 |
+|---|---|---|
+| #1 | スクリーン記録機能 + クロスセッションマージ + クラスタリング基盤 | 2026-05-02 |
+| #2 | Phases 1-4: タグ機能基盤 (定義・付与・編集・Gemini 判定) | 2026-05-04 |
+| #3 | Phase 5: タグによる Master ノード絞り込み検索 | 2026-05-04 |
+| #4 | Phase 6 polish: 一括付与 / deprecated 表示 / 確信度 UI | 2026-05-04 |
+| #5 | tag PR #3/#4 を main に取り込み (chained merge の整合) | 2026-05-04 |
+| #6 | Tag タブを Merge の隣へ + 判定ボタン統合 | 2026-05-04 |
 
 ## オープン中の PR
+**なし** — `feature/tagging` ブランチは origin より 4 コミット先行 (未 push)、`feature/gemini-cost-stable-loops` も未 push。**ユーザー指示があるまで PR は作成しない** (CLAUDE.md §13 ルール)。
 
-| # | URL | 内容 | 依存 |
-|---|---|---|---|
-| #2 | https://github.com/Isao-Shinohara/LudusCartographer/pull/2 | Phases 1-4: タグ機能基盤 (定義・付与・編集・Gemini 判定) | なし → main |
-| #3 | https://github.com/Isao-Shinohara/LudusCartographer/pull/3 | Phase 5: タグによる Master ノード絞り込み検索 | #2 が base |
-| #4 | TBD | Phase 6 polish: 一括付与 / deprecated 表示 / 確信度 UI / 事前壊れテスト修復 | #3 が base |
+## feature/gemini-cost-stable-loops に積まれた commits (3 件、本日)
 
-マージ順序: #2 → #3 → #4 (上流をマージするごとに下流の base が自動的に main に更新される)。
+| Commit | 内容 |
+|---|---|
+| `aa0c266` | docs(claude): Gemini プロンプト SYSTEM/USER 分離ルールを §22 に永続化 |
+| `e3f0b03` | feat(gemini): プロンプトを SYSTEM/USER 分離して Implicit Cache を有効化 |
+| `5bd2ab3` | feat(bg_worker): cluster_stable_loops で Gemini OCR 投入を安定後まで遅延 |
 
-## まだ残っているタスク (本セッション完了後)
+詳細: `docs/history/2026-05-15.md`
 
-### Phase 7+ (将来)
+## feature/tagging に積まれた未マージ commits (28 件)
+
+### 2026-05-07 追加 (本日、push 済み 11 件)
+
+| Commit | 内容 |
+|---|---|
+| `5b6186f` | fix(api): handler files の crawler パス解決を 4 ups に修正 |
+| `ab3489d` | refactor(phash): 縮退判定を lc.utils.is_degenerate_phash に一元化 |
+| `d870827` | fix(clustering): 縮退 phash 同士の誤統合を Step A / merge_to_prev_empty で防止 |
+| `9e96fa1` | feat(screen_recorder): 連続する縮退 phash を集約してダウンロード中の白フラッシュ重複を解消 |
+| `5419e60` | feat(dashboard): Live セッションセレクタを「現在セッション (実 ID)」表示に |
+| `3726412` | feat(recognition): phash/dhash/Gemini で scrcpy 黒帯クロップを適用 |
+| `7a506bd` | feat(image_proc): scrcpy 黒帯をクロップする get_roi_cropped_image を追加 |
+| `b5c767a` | feat(gemini): scene 情報を渡し MOVIE_CUT を保護 |
+| `1a55690` | feat(dashboard): Live/Final カードにスクリーン id バッジを追加 |
+| `4e39dd9` | docs: STATUS.md + 2026-05-06 セッション要約 |
+| (前日まで) | (以下 13 件は 2026-05-05 以前) |
+
+### 2026-05-06 追加 (push 済み 4 件)
+
+| Commit | 内容 |
+|---|---|
+| `aca7bf1` | feat(stuck_detect): タップ無効 stuck 検知で API コスト浪費を防止 |
+| `707ab21` | fix(gemini): MAX_TOKENS 早期検出 + truncated sentinel で API コスト削減 |
+| `bcfa016` | fix(bg_worker): scene-aware truncation check + preserve ocr_text_gemini |
+| `3ac60c1` | fix(api): remove device_mode column reference from getSessions |
+
+### 2026-05-05 追加 (push 済み 13 件)
+
+| Commit | 内容 |
+|---|---|
+| `435ff5c` | docs(CLAUDE): PR 作成は明示指示時のみとするルール追加 |
+| `8167023` | docs(CLAUDE): Git ワークフロー明示化 (作業ブランチ運用) |
+| `c7f5dee` | style(tags): toolbar ボタンを Live タブ規格 (px-3 py-1 text-xs) に統一 + 右揃え |
+| `fac4fc8` | fix(dashboard): switchTab('tags') 初期化時 tagSwitchSubtab undefined 回避 |
+| `2f1af01` | fix(dashboard): _tagCurrentSubtab を IIFE 上方に hoist (TDZ 回避) |
+| `b1c40dc` | refactor(tags): 🔥 一括 ボタンを Tag タブから撤去 (将来 Final タブへ移設) |
+| `2f1b2df` | feat(tags): 判定ボタン統合 (1 ボタン + モード選択ポップアップ) |
+| `554b555` | style(tags): 命名統一 「判定」→「タグ付け実行」 |
+| `2bd3cc6` | fix(migration): lc_ocr_noise_words テーブルを batch_processor._migrate に追加 |
+| `5442514` | fix(migration): lc_ocr_noise_words を screen_recorder._migrate に追加 (起動時保証) |
+| `cae9511` | fix(image_proc): detect_login_bonus_popup に矩形 inset 要件追加 (案 A) |
+| `670e0d0` | feat(write_worker): SQLite 書き込み専用スレッドで lock 競合を完全排除 |
+| `10587d3` | fix(login_bonus): inset 閾値を 40px → 20px に緩和 (本物 LB が棄却される問題修正) |
+
+## まだ残っているタスク
+
+### 🔴 必須対応 (前セッション承認済、未着手)
+- **BG worker 漏れ修正 (5 メソッド)**: 走行中に過去セッションの未処理を放置するバグ (feature/tagging 内)
+  - 漏れる: `_run_incremental_clustering` / `_remerge_text_clusters` / `_run_incremental_group` / `_run_gemini_batch_correction` / `_synthesize_auto_edges`
+  - 修正方針: 「現セッション優先 + 過去未処理フォールバック」共通パターン (`_resolve_target_session` ヘルパー)
+  - 詳細は `docs/history/2026-05-07.md`
+- **既存問題クラスタの SQL リセット (Phase 1)**: 縮退 phash 誤統合のターゲット型修復
+  - BG worker 修正後に実行 (再クラスタリングで新ロジック適用)
+
+### 🔴 必須対応 (継続課題、本日未着手)
+- **ConfirmDialog のスキップ確認区別**: `dialog_phase.py` で「ストーリースキップ」と「ムービースキップ」を OCR テキストで区別
+  - 現状: 両方とも `STORY_SKIP_CANCEL` でキャンセル
+  - 問題: ログインボーナス画面の ▶| (ムービースキップ確認) もキャンセルされ、LB 閉じられないループ
+  - 区別: `"ムービー"` を含む → OK タップ / `"ストーリー"` を含む → キャンセル
+
+### 🟡 中優先 (本日 §22 永続化で明示、新規)
+- **anchor_matcher.py (P4-P6) の SYSTEM/USER 分離**: CLAUDE.md §22 ルールに準拠させる
+- **tag_judgment.py の SYSTEM/USER 分離**: 同上
+- **`cachedContentTokenCount` のログ + `lc_api_usage.cached_tokens` カラム**: Implicit Cache の実 hit 率測定
+- **実機検証**: 案 A + C 実装の効果測定 (期待: 月 $25 → $5-8、80% 削減)
+
+### 🟢 低優先 (案 A + C 効果次第で再評価)
+- **案 E (テキスト一致 skip)**: 案 C 後は 3-8% で割に合わない可能性
+- **案 F (multi バッチ復活)**: input 60-80% 削減見込みだが精度低下リスク
+- **Explicit Cache (cachedContent API)**: Implicit Cache が効かない場合の代替
+
+### 🟡 任意
+- WFC_ESCAPE に icon_skip 併用 (現状 detect_login_bonus_popup で対処済のため優先度低)
+- session 4 (paused) の処理判断 — manual_stop で停止中、削除 or 完了確定 or 継続検証
+
+### 🟢 Phase 7+ (将来)
 - 前後ノード情報の Gemini ヒント (案 A: タグテキスト → 案 B: 画像、§11)
 - 新タグ追加時の差分判定モード (Gemini API 料金次第、§11)
 - 一括手動付与の操縦カテゴリ対応 (現状は scene/sub_scene のみ、§11 で「将来拡張」)
+- 一括付与ボタンを Final タブへ移設 (撤去済み、再実装)
+- Stuck 検知 案 1A (時間ベース) を追加 — 現状 1B のみ採用、必要なら補強
+- Stuck 検知 案 3 (クラスタ単位 Gemini クォータ) — 不要と判断、再評価可
 
 ### 別タスク
-- 実機検証 (auto_pilot 起動 + 周回 1 回 + Tag タブ確認) ← ユーザー作業
+- 実機検証の続き (ConfirmDialog 修正後 + Tag タブ確認) ← ユーザー作業
 
-### 完了済 (本セッション内)
-- ✅ 旧 Search 機能の撤去 (top-nav の Search ページ + ScreenRepository + 旧 detail/search action) — PR #4 に同梱
-- ✅ `test_graph_build.py` 4 件修復 (skeletal lc_screens に is_representative + edge_type 追加、_insert_screen で is_representative=1 に)
-- ✅ `test_unmerge_edges_recalculated` 修復 + production バグ修正
-  - `_merge_edges` の fp_map 構築 SQL に `direct_fp_match` を追加
-  - 影響: `_add_all_as_new` 経由のマージで「既存 master fp と直接一致する session fp」を経由するエッジが失われていたバグを解消
-- ✅ `api/search.php` を `api/dashboard.php` (ルーター) + `_common.php` (共通初期化) + 9 個の category handlers にリファクタ
-  - handlers/: system / versions / games / sessions / screens / merge / ocr / api_usage / graph
-  - dashboard.html.twig + graph.html.twig の API_BASE/API を `api/dashboard.php` に更新
-  - 既存 actions の挙動は完全互換 (Playwright 46 件全 pass)
+### 繰越タスク (CLAUDE.md から移動、低優先)
+- `batch_processor.py --deduplicate` CLI 引数を `--cluster` にリネーム (§13 用語統一)。後方互換のため alias 残置が必要
+- `agents/log-analyzer.md` 作成 — auto_pilot ログのエラー解析を自動化するサブエージェント (§23 から繰越)
 
-## 最終セッション (2026-05-04) — マスターノードタグ機能 Phase 1〜4 一気通貫完了
+## 最終セッション (2026-05-06) — ダッシュボードバグ修正 + Gemini コスト対策 + Stuck 検知器
+
+4 コミットを `feature/tagging` に追加 (origin に未 push)。すべてテスト先行で
+実装し pytest 全 787 件 pass (新規 19 件)。
+
+### 主要 4 修正
+1. **`3ac60c1`** ダッシュボードバグ修正
+   - `EvidenceRepository::getSessions` の `device_mode` 列参照を削除
+   - 結果: Live タブのセッションフィルタが正しく動作 (混在表示解消)
+
+2. **`bcfa016`** STARTUP/LOADING 誤 artifact + クラスタ統合バグ修正
+   - `_is_truncated_capture` ヘルパー抽出: scene='STARTUP'/'LOADING' で黒比率検出スキップ
+   - `ocr_text_gemini=''` 上書きを廃止 (NULL のまま保持で OCR 状態破壊回避)
+   - 既存 22 件のフラグ修復 + cluster 1556 を 4 つに手動分割
+   - dashboard 「Gemini不採用」→「判定不採用 (Gemini or 黒比率)」に訂正
+
+3. **`707ab21`** Gemini truncated レスポンスで API コスト削減
+   - `maxOutputTokens` 8192 → 16384
+   - `finishReason=MAX_TOKENS` の早期検出 (内部リトライ無し)
+   - 永続失敗時の sentinel 化 (将来バッチで再試行されない)
+   - 1 問題画面あたり API call 3 → 1 に削減
+
+4. **`aca7bf1`** タップ無効 stuck 検知
+   - `StuckTapDetector` クラス: タップ後画面変化なしを検出
+   - 同一画面判定: phash + dHash + (OCR 類似度) の 3 段非対称判定
+   - 失敗 target `(action, x//30, y//30)` を set に集約、K=8 で停止
+   - ADV セリフ進行・バトル進行は OCR 類似度低でリセット → 誤検知なし
+
+詳細: `docs/history/2026-05-06.md`
+
+### DB クリーンアップ実行
+ユーザー指示で CLAUDE.md §14 手順を実行:
+- `lc_screens` 5,633 → 0、その他セッション関連テーブル全削除
+- スクショ全削除、DB サイズ 23M → 960K
+- **保護**: `lc_ocr_corrections` (3,167 件)、`lc_ocr_noise_words` (162 件)、`ocr_learned_patterns.json`
+
+### auto_pilot 実機検証 (周回 -c 3 -r)
+- 周回 #1 (01:00-02:30): 1948 screens, goal_reached ✓
+- ANIPLEX/POKELABO/注意事項が個別に「採用」表示で復活 ✓
+- LB ループ自動脱出 ✓ (ConfirmDialog 修正未着手のため根絶はせず)
+- 周回 #2 でキオク編成 stuck → 手動停止 (今後 stuck 検知器が自動停止する想定)
+
+## ひとつ前のセッション (2026-05-04) — マスターノードタグ機能 Phase 1〜4 一気通貫完了
 
 ユーザーから「確認なしで最後のフェーズまで一気に実装してOK」の許可を得て
 Phase 1 から Phase 4 までを同セッションで完走。pytest 101 件 + Playwright 29 件、全 green。
