@@ -472,7 +472,6 @@ Gemini API の Implicit Cache (1024+ tok の共通 prefix で input 75% 割引) 
 ### 参照実装と準拠状況
 
 `crawler/tools/ap/ocr_correction.py` (single/batch) が参照実装 — SYSTEM/USER 分離済み、後方互換変数保持。
-他ファイル (`anchor_matcher.py` の P4-P6、`tag_judgment.py`) の準拠状況は STATUS.md の中優先タスクで管理。
 
 ### 編集時のチェック
 
