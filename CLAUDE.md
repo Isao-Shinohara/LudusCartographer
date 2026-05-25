@@ -365,8 +365,7 @@ LLM 協働の即時メタルール。**毎ターン適用する**。
 
 ### スキーマ
 
-- `lc_versions` テーブルの DDL は `crawler/tools/ap/screen_recorder.py` (`CREATE TABLE IF NOT EXISTS lc_versions`) を参照
-- **version_id 必須テーブル (5)**: `lc_sessions`, `lc_master_nodes`, `lc_master_edges`, `lc_node_mappings`, `lc_session_graphs`
+- `lc_versions` テーブルの DDL および `version_id` を持つテーブル一覧は `crawler/tools/ap/screen_recorder.py` を参照 (テーブル追加時に migration と一緒に更新)
 
 ### 運用ルール
 
