@@ -145,6 +145,10 @@
 ### 別タスク
 - 実機検証の続き (ConfirmDialog 修正後 + Tag タブ確認) ← ユーザー作業
 
+### 繰越タスク (CLAUDE.md から移動、低優先)
+- `batch_processor.py --deduplicate` CLI 引数を `--cluster` にリネーム (§13 用語統一)。後方互換のため alias 残置が必要
+- `agents/log-analyzer.md` 作成 — auto_pilot ログのエラー解析を自動化するサブエージェント (§23 から繰越)
+
 ## 最終セッション (2026-05-06) — ダッシュボードバグ修正 + Gemini コスト対策 + Stuck 検知器
 
 4 コミットを `feature/tagging` に追加 (origin に未 push)。すべてテスト先行で

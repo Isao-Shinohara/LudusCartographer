@@ -190,7 +190,7 @@ PATH="/opt/homebrew/bin:$HOME/.nodebrew/current/bin:$PATH" \
 |------|---|------|
 | `LC_TEXT_SEPARATION` | `on`(default) / `off` | OFF時は §16 ルール1〜2 のテキスト判定を完全スキップし、全 screen をハッシュ判定（phash 即決 → dHash 中間域）で分類（視認用デバッグモード、本番は ON） |
 
-クラスタリングは常に **phash 即決 + dHash 中間域判定** の2段構え (旧 `LC_HASH_ALGO` 切替は廃止)。
+クラスタリングは常に **phash 即決 + dHash 中間域判定** の2段構え。
 
 - `LC_TEXT_SEPARATION=off` は **デバッグモード**。テキスト分離なしのクラスタを目視確認するため。本番運用では使わない
 - フラグを変えると同 DB 内で挙動が混在するため、**切替時は再起動 + クリーンアップ推奨**
@@ -250,7 +250,6 @@ LLM 協働の即時メタルール。**毎ターン適用する**。
 
 - 画像をクラスタに分類する処理は **「クラスタリング」** で統一 (コード/ログ/UI/ドキュメント全て)
 - 「間引き」「dedup」「deduplicate」は新規コード・コメント・ログ・UI に書かない
-- 既存の CLI 引数 `batch_processor.py --deduplicate` は後方互換のため残置 (次回別タスクで対応)
 - `cluster_id`, `cluster_decision_method` 等の DB スキーマは既に「cluster」で統一されている
 
 ---
@@ -505,7 +504,6 @@ Claude Code のサブエージェント・スキル・フックを **判断揺�
 | 3 クエリ以上の広域コードベース探索 (例: 「Gemini 関連の全実装を洗い出し」) | **Explore agent** |
 | 非自明な実装方針の設計 (複数案の比較・トレードオフ検討が必要) | **Plan agent** |
 | 1〜2 ファイルで完結する探索 / 既知ファイルの修正 | **直接 grep / Read** (Explore 不要、オーバーキル) |
-| auto_pilot ログのエラー解析 (将来作成予定) | `agents/log-analyzer.md` |
 
 ### スキル (Skill)
 
@@ -515,7 +513,7 @@ Claude Code のサブエージェント・スキル・フックを **判断揺�
 | 「セキュリティ観点で見て」 | `/security-review` |
 | `.claude/settings.json` / フック編集要望 | `update-config` skill |
 | 「もっとシンプルに」「重複削除して」 | `simplify` skill (§15-4 引き算の設計と整合) |
-| Gemini プロンプト関連ファイル編集後 (将来作成予定) | `/review-gemini-prompt` (プロジェクト固有) |
+| Gemini プロンプト関連ファイル編集後 | `/review-gemini-prompt` (プロジェクト固有) |
 
 ### 禁止事項
 
