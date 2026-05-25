@@ -412,11 +412,6 @@ UI 要素 (ボタン・セレクト・入力欄・badge 等) のモード切替�
 - モーダル/ポップアップは `hidden` で OK
 - フィルタ・ソート・サマリ等の **ヘッダ/ツールバー領域の要素** は必ず常時表示 + `disabled` 切替
 
-### 既存の例
-
-- `web/templates/dashboard.html.twig` の `#diff-filter` (差分フィルタ) — 比較モード時のみ `disabled=false`
-- `live-adopt-btn` / `live-exclude-btn` / `live-reset-btn` — 選択時のみ `disabled=false`
-
 ---
 
 ## 21. タグ機能の運用ルール
