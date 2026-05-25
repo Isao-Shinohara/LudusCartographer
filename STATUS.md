@@ -1,6 +1,6 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-05-24 (CLAUDE.md 第二弾リファクタ — 578 → 506 行 + 構造的重複排除)
+最終更新: 2026-05-25 (CLAUDE.md 第三弾リファクタ — 全 Tier 改善 + エージェント/スキル基準 + docs/_archive 整理)
 
 ## 現在のブランチ
 - `main` (最新: PR #6 マージ後、commit `1f06a6e`)
@@ -8,22 +8,28 @@
 - `feature/gemini-cost-stable-loops` (main から **3 コミット先行**、**未 push**)
   - 内容: 案 C (cluster_stable_loops で Gemini 遅延) + 案 A (プロンプト SYSTEM/USER 分離 → Implicit Cache 75% 割引) + CLAUDE.md §22 永続化
   - 新規テスト 27 件 (14 + 13) 全 pass
-- **`feature/claude-md-slim`** (`feature/gemini-cost-stable-loops` から **4 コミット先行**、**未 push**)
+- **`feature/claude-md-slim`** (`feature/gemini-cost-stable-loops` から **11 コミット先行**、**未 push**)
   - 第一弾 (3 コミット): CLAUDE.md を 985 → 578 行 (41% 削減)。詳細を docs/ 配下に外出し
     - 乖離修正: §13 find_finger_blobs (実コード残存に合わせて記述変更) / §16 BG worker OCR 間隔 (5s → 0.5s)
     - 新規 docs: tutorial_autopilot.md / evidence_recording.md / cleanup_procedure.md / gemini_prompt_design.md
     - 既存 docs 追記: troubleshooting.md (§8 リトライ + §10 ADB)
-  - **第二弾 (本日、構造リファクタ)**: 578 → 506 行 (重複排除 + ドメイン規約の外出し)
-    - §0 廃止 (`docs/tutorial_autopilot.md` 一本化、§12 に 1 行ポインタ)
-    - §13 を協働メタ 9 ルールに絞り、ドメイン実装規約 11 個を `docs/scene_detection_rules.md` (新規 83 行) に外出し
-    - §13 内ルール順を再編 (CLAUDE.md 参照義務 + コード修正前確認を冒頭へ)
-    - §12 起動コマンド表を §14 に一本化 (重複削除)
-    - §17 §21 §22 の Gemini 共通実装ルール (送信方式 / 並列化 / エラーキャッシュ) を §22 に集約
-    - §11 Gemini 4 項目 → 1 行ポインタ (§22 参照)
-    - §2 コミットテンプレを Opus 4.7 (1M context) に更新
-    - 「厳格・最重要」マーカーを §11 §13 の真の最重要 2 箇所のみに絞る (§21 §22 は「厳格」に降格)
-    - §22 「未対応 (次回タスクで揃える)」表を削除 → STATUS.md 中優先タスクで管理に一本化
-    - 番号欠番 (§0 §6) を冒頭注記
+  - 第二弾 (構造リファクタ): 578 → 506 行 (重複排除 + ドメイン規約の外出し)
+    - §0 廃止 / §13 ドメイン規約 11 個を `docs/scene_detection_rules.md` (新規 83 行) に外出し
+    - §17 §21 §22 の Gemini 共通実装ルールを §22 に集約 / §11 Gemini 4 項目 → 1 行ポインタ
+    - 「厳格・最重要」マーカーを §11 §13 の真の最重要 2 箇所のみに絞る
+  - **第三弾 (2026-05-25、全 Tier 改善)**: 506 → 554 行 (§23 で +40 + 責任分界明文化 +6)
+    - **Step 1**: settings.json SessionStart の §0 参照を §11/§13/§15 に修正、git status + STATUS.md 確認を追加
+    - **Step 2** (`743f272`): §10 ハードコード行番号 `:278` 削除
+    - **Step 3** (`55bc499`): §14 起動コマンド対応表を `-r` 判断の Single Source of Truth と宣言、§12 重複削除
+    - **Step 4** (`93b1715`): Gemini 共通実装ルールへの参照を §17/§21 で「※ ... は §22 に集約」表記で統一化
+    - **Step 5** (`551227f`): **§23 エージェント/スキル活用ルール新設** (Explore/Plan agent, /review, /security-review, update-config, simplify skill の使用基準を表化)
+    - **Step 6** (`6dc5178`): §15-5 矩形テンプレマッチ詳細を `scene_detection_rules.md` 冒頭に外出し
+    - **Step 7**: `.claude/settings.json` に PreToolUse フック追加 — §11 違反候補 (rm -rf, DROP TABLE, DELETE FROM lc_, VACUUM, --reinstall, auto_pilot.*-r) を exit 2 でブロック。8 ケース手動検証済 (grep -r, tar -rf は誤検出なし)
+    - **Step 8**: `.claude/skills/review-gemini-prompt/SKILL.md` 新規 — §22 編集時チェック 4 項目を自動化
+    - **Step 9** (`63666d4`): docs/ 孤児 6 件を `_archive/` へ移動 + 現役 5 件を `docs/README.md` でインデックス化
+      - archive: PROMPT_CONTEXT, gemini_consultation, fingerprint_redesign_plan, cross_session_merge, anchor_matching_implementation_plan, ROADMAP
+      - keep: image_recognition, setup, auto_pilot_setup, UxPlay_setup, ocr_improvement_plan
+    - **Step 10** (`4ab044a`): §5 に CLAUDE.md / STATUS.md / docs/ の責任分界明文化
   - pytest test_gemini_prompt_cache.py: 13 件 pass (リファクタ後再確認)
   - stash@{0} に feature/tagging の wip-ocr-learned-patterns あり
 - `feature/master-node-tags` / `feature/tag-search` / `feature/tag-polish` / `feature/tag-tab-polish` / `feature/screen-recorder` は **PR #1〜#6 でマージ済み・削除済み**
