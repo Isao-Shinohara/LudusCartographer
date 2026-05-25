@@ -334,17 +334,18 @@ LLM 協働の即時メタルール。**毎ターン適用する**。
 
 ### Phase 定義（6段階、順序固定）
 
-| Phase | key | 対象 | マッチ条件 | モデル |
+| Phase | key | 対象 | 判定手法 | モデル |
 |-------|-----|------|-----------|--------|
-| **P1** | `phase1_tap_text` | tap + テキストあり | 完全/前方/あいまい一致 + phash | - |
-| **P2** | `phase2_auto_text` | auto + テキストあり | P1 と同手法 + P1 アンカーとの相対位置 | - |
-| **P3** | `phase3_tap_phash` | tap + テキスト空 | phash < 15 + 前後アンカー必須 | - |
-| **P4** | `phase4_gemini_text` | テキスト Gemini | phash < 20 + sim ≥ 0.4 → テキストのみ判定 | flash-lite (テキスト) |
-| **P5** | `phase5_gemini_image` | 画像 Gemini (高確信) | phash < 8 + sim ≥ 0.4 → 画像ペア判定 | flash-lite (画像) |
-| **P6** | `phase6_gemini_flash` | 画像 Gemini (低確信) + P5 棄却再審査 | phash 8-20 + sim ≥ 0.3 → 画像ペア判定 | flash (画像) |
+| **P1** | `phase1_tap_text` | tap + テキストあり | ローカル: テキスト一致 + phash | - |
+| **P2** | `phase2_auto_text` | auto + テキストあり | ローカル: P1 と同手法 + 相対位置 | - |
+| **P3** | `phase3_tap_phash` | tap + テキスト空 | ローカル: phash 近傍 + 前後アンカー必須 | - |
+| **P4** | `phase4_gemini_text` | テキスト Gemini | テキストのみ判定 | flash-lite (テキスト) |
+| **P5** | `phase5_gemini_image` | 画像 Gemini (高確信) | 画像ペア判定 | flash-lite (画像) |
+| **P6** | `phase6_gemini_flash` | 画像 Gemini (低確信) + P5 棄却再審査 | 画像ペア判定 | flash (画像) |
 
-- **PHASE_DEFS** (`anchor_matcher.py`) で表示名・色・順序を一元管理。key は DB・API で使用するため変更禁止
+- **PHASE_DEFS** (`anchor_matcher.py`) で表示名・色・順序・閾値を一元管理。key は DB・API で使用するため変更禁止
 - データフロー: P1→P2→P3 (ローカル) → P4 (テキスト Gemini) → P5 (画像 flash-lite) → P6 (画像 flash)
+- 閾値 (phash 距離 / sim) は実装値のため `anchor_matcher.py` の `PHASE_DEFS` または `docs/anchor_matching_design.md` を参照
 
 ### Anchor 固有の Gemini 制約
 
