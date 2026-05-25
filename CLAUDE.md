@@ -360,21 +360,10 @@ LLM 協働の即時メタルール。**毎ターン適用する**。
 
 ## 18. バージョン管理ルール
 
-### スキーマ (`lc_versions`)
+### スキーマ
 
-```sql
-CREATE TABLE IF NOT EXISTS lc_versions (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT    UNIQUE NOT NULL,
-    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-    is_active  INTEGER DEFAULT 0,
-    is_deleted INTEGER DEFAULT 0
-);
-```
-
-### version_id 必須テーブル（5テーブル）
-
-`lc_sessions`, `lc_master_nodes`, `lc_master_edges`, `lc_node_mappings`, `lc_session_graphs`
+- `lc_versions` テーブルの DDL は `crawler/tools/ap/screen_recorder.py` (`CREATE TABLE IF NOT EXISTS lc_versions`) を参照
+- **version_id 必須テーブル (5)**: `lc_sessions`, `lc_master_nodes`, `lc_master_edges`, `lc_node_mappings`, `lc_session_graphs`
 
 ### 運用ルール
 
