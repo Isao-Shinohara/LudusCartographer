@@ -506,3 +506,43 @@ Gemini API の Implicit Cache (1024+ tok の共通 prefix で input 75% 割引) 
 4. 後方互換変数 (`_GEMINI_PROMPT` 等) を **削除していない** か
 
 **詳細** (REST/SDK 送信テンプレ / 効果測定 / USER 動的ヒントの例外規定): `docs/gemini_prompt_design.md`。
+
+---
+
+## 23. エージェント/スキル活用ルール
+
+Claude Code のサブエージェント・スキル・フックを **判断揺れなく** 使うための基準。
+毎ターン以下の表を参照して、適切なツールを選ぶ。
+
+### サブエージェント (Agent)
+
+| 状況 | 使用 |
+|------|------|
+| 3 クエリ以上の広域コードベース探索 (例: 「Gemini 関連の全実装を洗い出し」) | **Explore agent** |
+| 非自明な実装方針の設計 (複数案の比較・トレードオフ検討が必要) | **Plan agent** |
+| 1〜2 ファイルで完結する探索 / 既知ファイルの修正 | **直接 grep / Read** (Explore 不要、オーバーキル) |
+| auto_pilot ログのエラー解析 (将来作成予定) | `agents/log-analyzer.md` |
+
+### スキル (Skill)
+
+| ユーザー指示 / トリガ | 使用 |
+|-------------|------|
+| 「PR レビュー」「PR 確認」 | `/review` |
+| 「セキュリティ観点で見て」 | `/security-review` |
+| `.claude/settings.json` / フック編集要望 | `update-config` skill |
+| 「もっとシンプルに」「重複削除して」 | `simplify` skill (§15-4 引き算の設計と整合) |
+| Gemini プロンプト関連ファイル編集後 (将来作成予定) | `/review-gemini-prompt` (プロジェクト固有) |
+
+### 禁止事項
+
+- 1〜2 ファイルで完結する探索に **Explore agent を使わない** (コスト過剰)
+- `/init` skill は既存プロジェクトで使わない (CLAUDE.md 上書きリスク)
+- サブエージェント呼び出しと並行して自分でも同じ探索をしない (作業重複)
+
+### 自動強制 (PreToolUse フック)
+
+`§11` 違反候補 (例: `rm -rf`, `DROP TABLE`, `DELETE FROM lc_`, `VACUUM`, `--reinstall`, `--fresh-install`) は `.claude/settings.json` の PreToolUse フックで **自動ブロック** される。
+ブロックされた場合は:
+1. ユーザーの明示指示があったか確認
+2. 指示があれば一時的に allow-list 経由で再実行
+3. なければ `§11` 違反として中止・ユーザー確認
