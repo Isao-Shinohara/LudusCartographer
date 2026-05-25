@@ -357,7 +357,7 @@ LLM 協働の即時メタルール。**毎ターン適用する**。
 - **キャッシュテーブル**: `lc_anchor_judgments` に `(session_fp, master_fp)` + `model` で永続化
 - **判定ルール**: 迷ったら true (false は取り返しがつかない、true は人間が修正可能)
 
-Gemini 共通の実装ルール (SYSTEM/USER 分離 / 送信方式 / 並列化 / エラー時キャッシュ禁止) は **§22** に集約。
+※ SYSTEM/USER 分離・送信方式・並列化・エラー時キャッシュ禁止等の Gemini 共通実装ルールは **§22** に集約。
 
 **詳細** (テキスト類似度計算 / ノイズ除去 / 別画面判定 / PHP→Python サブプロセス): `docs/anchor_matching_design.md`。
 
@@ -464,7 +464,7 @@ UI 要素 (ボタン・セレクト・入力欄・badge 等) のモード切替�
 - **キャッシュキー**: `(master_fp, tag_type, prompt_hash, model)`。description/プロンプト編集で自動再判定
 - 検出器の `lc_master_nodes.scene` カラムとタグの scene は **別物** (互いに書き換えない)
 
-Gemini 共通の実装ルール (SYSTEM/USER 分離 / 並列化 / エラー時キャッシュ禁止) は **§22** に集約。
+※ SYSTEM/USER 分離・送信方式・並列化・エラー時キャッシュ禁止等の Gemini 共通実装ルールは **§22** に集約。
 
 **詳細** (シーン/詳細タグ管理 / 代表ノード変更時の挙動 / ノード詳細モーダル / プロンプト編集 / 検索機能との分離): `docs/design/master_node_tags.md`。
 
@@ -486,7 +486,7 @@ Gemini API の Implicit Cache (1024+ tok の共通 prefix で input 75% 割引) 
 - **シーン別・画像種類別の SYSTEM 分割は禁止** — 共通 prefix が壊れて Cache 無効化 → コスト 4 倍
 - **後方互換変数 (`_GEMINI_PROMPT` / `_GEMINI_BATCH_PROMPT`) は削除禁止**
 
-### Gemini 共通の実装ルール（§17 §21 から集約）
+### Gemini 共通の実装ルール
 
 - **送信方式**: `Part.from_bytes` インライン（`files.upload` は遅すぎる）
 - **並列化**: ThreadPoolExecutor 5 並列で統一
