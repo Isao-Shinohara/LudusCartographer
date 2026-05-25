@@ -483,10 +483,8 @@ Gemini API の Implicit Cache (1024+ tok の共通 prefix で input 75% 割引) 
 
 ### 編集時のチェック
 
-1. SYSTEM 編集後に動的値 placeholder (`{...}`) が混入していないか
-2. `pytest crawler/tests/test_gemini_prompt_cache.py` が pass するか
-3. SYSTEM 文字数が **1500 以上** を維持しているか (Cache 発動圏)
-4. 後方互換変数 (`_GEMINI_PROMPT` 等) を **削除していない** か
+Gemini プロンプト関連ファイル (`ocr_correction.py` / `anchor_matcher.py` / `tag_judgment.py` 等) 編集後は **`/review-gemini-prompt` スキルを実行**。
+チェック項目: ① SYSTEM placeholder 混入 / ② `test_gemini_prompt_cache.py` pass / ③ SYSTEM 文字数 ≥ 1500 / ④ 後方互換変数保持。
 
 **詳細** (REST/SDK 送信テンプレ / 効果測定 / USER 動的ヒントの例外規定): `docs/gemini_prompt_design.md`。
 
