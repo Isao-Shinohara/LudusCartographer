@@ -99,7 +99,7 @@ AIにモバイルゲームを自律実行させ、すべてのUIを「地図を�
 
 ## 10. ADB 接続・復旧マニュアル
 
-- `get_android_serial()` (`crawler/tools/lc/utils.py:278`) の優先順位: `ANDROID_UDID` → `ANDROID_SERIAL` → `adb devices` 自動検出
+- `get_android_serial()` (`crawler/tools/lc/utils.py`) の優先順位: `ANDROID_UDID` → `ANDROID_SERIAL` → `adb devices` 自動検出
 - Wi-Fi 接続が切れたら `adb connect 192.168.10.118:5555` で再接続。だめなら USB → `adb tcpip 5555` で再設定
 
 **詳細**: `docs/troubleshooting.md §5` (USB・Wi-Fi・環境変数設定例)。
