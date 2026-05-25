@@ -1,14 +1,29 @@
 # STATUS.md — LudusCartographer 進捗管理
 
-最終更新: 2026-05-25 (CLAUDE.md 第三弾リファクタ — 全 Tier 改善 + エージェント/スキル基準 + docs/_archive 整理)
+最終更新: 2026-05-26 (CLAUDE.md v3 全面書き換え — Gemini レビュー v2 ベース + 19 項目復元、522→335 行)
 
 ## 現在のブランチ
-- `main` (最新: PR #6 マージ後、commit `1f06a6e`)
-- `feature/tagging` (main から 28 コミット先行、origin に push 済み `5b6186f`)
-- `feature/gemini-cost-stable-loops` (main から **3 コミット先行**、**未 push**)
-  - 内容: 案 C (cluster_stable_loops で Gemini 遅延) + 案 A (プロンプト SYSTEM/USER 分離 → Implicit Cache 75% 割引) + CLAUDE.md §22 永続化
-  - 新規テスト 27 件 (14 + 13) 全 pass
-- **`feature/claude-md-slim`** (`feature/gemini-cost-stable-loops` から **11 コミット先行**、**未 push**)
+- `main` (最新: PR #7 マージ後、commit `01f2cd9`)
+- **`feature/tagging`** (main から **1 コミット先行**、未 push、commit `cb2ebb5`)
+  - 内容: **CLAUDE.md v3 全面書き換え** (Gemini レビュー v2 ベース + 19 項目復元)
+  - 522 → 335 行 (-36%)。23 → 10 セクション統合
+  - 採用 (v2 由来): §2 開発・テスト・コミット原則統合 / §3 インフラ堅牢性統合 / §4 起動・クリーンアップ統合 / TOC + 即時ルール ★ / 「厳格・最重要」マーカー 2 箇所限定 / rationale 追加
+  - 復元 (v2 で欠落していた 19 項目):
+    - B1: §8.6 タグ保護マトリクスを 3 行に修正 (v2 の auto_pilot/manual 統合誤りを是正)
+    - L2: Claude Code 直接起動の環境変数コマンド (PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK 等)
+    - L3: 「プロセス動作中は kill しない」共通ルール
+    - L4: LC_TEXT_SEPARATION デバッグ専用
+    - L6: -r フラグは既存データ削除を含まない明示
+    - L7-L8: バグ分析/ゲーム仕様分離 + auto_pilot 制御ルール
+    - L9-L10: テキスト定義 + セッション管理
+    - L11-L12: PHASE_DEFS key 不変 + 閾値参照
+    - L13: バージョン切替/Active 削除の自動挙動
+    - L14-L15: OperationTag IntEnum + タグ Gemini キャッシュキー
+    - L16-L18: SYSTEM/USER 分離表 + 参照実装 + /review-gemini-prompt
+    - L1, L19: docs/ クロスリファレンス全 19 件復元
+  - 検証: 厳格・最重要マーカー = 2 件 / docs/ リンク = 19 件 / §8.6 マトリクス = 3 行
+- (旧) `feature/claude-md-slim` は PR #7 でマージ済 (`01f2cd9`)、削除可能
+- (旧) `feature/gemini-cost-stable-loops` は PR #7 経由でマージ済
   - 第一弾 (3 コミット): CLAUDE.md を 985 → 578 行 (41% 削減)。詳細を docs/ 配下に外出し
     - 乖離修正: §13 find_finger_blobs (実コード残存に合わせて記述変更) / §16 BG worker OCR 間隔 (5s → 0.5s)
     - 新規 docs: tutorial_autopilot.md / evidence_recording.md / cleanup_procedure.md / gemini_prompt_design.md
@@ -44,9 +59,10 @@
 | #4 | Phase 6 polish: 一括付与 / deprecated 表示 / 確信度 UI | 2026-05-04 |
 | #5 | tag PR #3/#4 を main に取り込み (chained merge の整合) | 2026-05-04 |
 | #6 | Tag タブを Merge の隣へ + 判定ボタン統合 | 2026-05-04 |
+| #7 | CLAUDE.md 大規模スリム化 + Gemini コスト対策 + 周辺改善 (60+ コミット) | 2026-05-25 |
 
 ## オープン中の PR
-**なし** — `feature/tagging` ブランチは origin より 4 コミット先行 (未 push)、`feature/gemini-cost-stable-loops` も未 push。**ユーザー指示があるまで PR は作成しない** (CLAUDE.md §13 ルール)。
+**なし** — `feature/tagging` ブランチは v3 リファクタ 1 コミット未 push。**ユーザー指示があるまで PR は作成しない** (CLAUDE.md §2 ルール、v3 では §2 統合)。
 
 ## feature/gemini-cost-stable-loops に積まれた commits (3 件、本日)
 
